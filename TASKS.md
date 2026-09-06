@@ -1,3 +1,5 @@
+> Historical note (ADR-022, 2026-09-06): rows below that mention the dashboard, invite, egress/vendor routing, callbacks, budgets, usage/audit query APIs or guardrail implementations describe features that have since LEFT core for the control plane. They are kept as history, not as open work.
+
 # Opod — Implementation Plan
 
 Concrete task breakdown for the team building Opod. Each milestone ships a usable product; each task is sized to fit one PR (≤2 days for a single dev).
