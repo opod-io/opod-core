@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/opod-io/opod/internal/api"
 )
 
 func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +44,18 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	// would produce. The 503 itself is the autoscaler's wake signal
 	// (it shows up in /loadz unavailable_1m).
 	if !s.cfg.Router.PullDefaultModel && !s.hasServingCapacity(r.Context()) {
+		// Policy fallback (P12-2): forward instead of 503 when the snapshot
+		// names a target — after the pre guardrail chain, so a blocked prompt
+		// is refused here and never leaves the endpoint.
+		if fb := s.policy.fallbackRouting(); fb != nil {
+			checked, ok := api.ApplyPreCallGuardrails(r.Context(), w, s.store, body)
+			if !ok {
+				return
+			}
+			if s.forwardToFallback(w, r, checked, fb) {
+				return
+			}
+		}
 		w.Header().Set("Retry-After", "10")
 		writeJSONError(w, http.StatusServiceUnavailable,
 			"no workers are awake for this model — waking (scale-up in progress or floor is 0); retry shortly")

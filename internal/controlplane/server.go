@@ -43,6 +43,7 @@ type Server struct {
 	load        loadStats
 	plan        planFileState
 	authf       authFileState
+	policy      policyFileState
 	anthropicH  *api.AnthropicHandler
 	rateBuckets *api.BucketStore
 
@@ -187,6 +188,7 @@ func buildResponseCache(cfg config.ResponseCacheConfig, st store.Store, log *slo
 func (s *Server) Start(ctx context.Context) error {
 	s.StartPlanWatcher(ctx)
 	s.StartAuthWatcher(ctx)
+	s.StartPolicyWatcher(ctx)
 	s.StartTrimmer(ctx)
 	if s.Version == "" {
 		s.Version = "dev"

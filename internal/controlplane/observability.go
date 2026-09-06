@@ -17,6 +17,9 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		start := time.Now()
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
+		if !s.policy.accessLogEnabled() {
+			return // per-endpoint policy: access log off (P12-2)
+		}
 		s.log.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,
