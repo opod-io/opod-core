@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -249,6 +250,16 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
 		recordUsage(r.Context(), h.Store, "openai", requested, nil, time.Since(start), "error")
+		if status, code, msg, ok := upstreamPassthrough(err); ok {
+			// The engine answered with a status the caller must see as-is
+			// (rate limit, not ready, bad request, unknown model): relay it —
+			// a remote endpoint's leader is a proxy, not the origin of the fault.
+			if status == http.StatusServiceUnavailable || status == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", "10")
+			}
+			writeJSONError(w, status, code, msg)
+			return
+		}
 		code, msg := classifyEngineError(h.Engine, err)
 		writeJSONError(w, http.StatusBadGateway, code, msg)
 		return
@@ -545,6 +556,43 @@ func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
 	hint := engineRestartHint(eng.Name())
 	return "engine_unreachable", fmt.Sprintf("%s at %s is not reachable (%v). %s",
 		eng.Name(), eng.Endpoint(), err, hint)
+}
+
+// upstreamPassthrough decides whether an engine's non-2xx answer is relayed
+// with its own status. Client-side statuses (400, 404, 413, 422, 429) and
+// "not ready" (503) are the caller's business; auth failures against the
+// engine (401/403) and server faults stay 502 — those are ours to fix.
+// The message is the upstream's own `error.message` when the body is
+// OpenAI-shaped, else the trimmed body.
+func upstreamPassthrough(err error) (status int, code, msg string, ok bool) {
+	var up *engines.UpstreamError
+	if !errors.As(err, &up) {
+		return 0, "", "", false
+	}
+	switch up.Status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity,
+		http.StatusTooManyRequests, http.StatusServiceUnavailable:
+	default:
+		return 0, "", "", false
+	}
+	msg = up.Body
+	var shaped struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(up.Body), &shaped) == nil && shaped.Error.Message != "" {
+		msg = shaped.Error.Message
+	}
+	if msg == "" {
+		msg = http.StatusText(up.Status)
+	}
+	code = "upstream_" + strconv.Itoa(up.Status)
+	if shaped.Error.Type != "" {
+		code = shaped.Error.Type
+	}
+	return up.Status, code, up.Engine + ": " + msg, true
 }
 
 // engineRestartHint renders the driver's StartHint (owned by the driver
