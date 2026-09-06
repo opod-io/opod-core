@@ -7,8 +7,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,22 +30,7 @@ type Store interface {
 	// Cache is the persistent backend for the response cache. The
 	// cache package wraps this with its driver-shape API.
 	Cache() CacheStore
-	// Route is the persisted cross-provider routing chain — the ordered
-	// list of model ids Opod walks for model="auto" (and as fallback),
-	// editable from the CLI and dashboard.
-	Route() RouteStore
 	Close() error
-}
-
-// RouteStore persists the routing chain: an ordered list of model ids
-// (vendor-prefixed like "groq/llama-3.3-70b" or local like "qwen3.6-27b")
-// that the router tries top-to-bottom. Stored as a single JSON row.
-type RouteStore interface {
-	// Get returns the stored chain, or nil if none has been set (the caller
-	// then falls back to the computed default).
-	Get(ctx context.Context) ([]string, error)
-	// Set replaces the entire chain.
-	Set(ctx context.Context, chain []string) error
 }
 
 // CacheStore is the persistent cache surface. Values are opaque
@@ -418,47 +401,7 @@ func (s *sqliteStore) Usage() UsageStore    { return &sqliteUsage{db: s.db} }
 func (s *sqliteStore) Audit() AuditStore    { return &sqliteAudit{db: s.db} }
 func (s *sqliteStore) Budgets() BudgetStore { return &sqliteBudgets{db: s.db} }
 func (s *sqliteStore) Cache() CacheStore    { return &sqliteCache{db: s.db} }
-func (s *sqliteStore) Route() RouteStore    { return &sqliteRoute{db: s.db} }
 func (s *sqliteStore) Close() error         { return s.db.Close() }
-
-type sqliteRoute struct{ db *sql.DB }
-
-// Get returns the persisted chain, or nil when unset so the caller can fall
-// back to the computed default.
-func (s *sqliteRoute) Get(ctx context.Context) ([]string, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT chain_json FROM route_chain WHERE id = 1`)
-	var blob string
-	if err := row.Scan(&blob); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("scan route: %w", err)
-	}
-	var chain []string
-	if err := json.Unmarshal([]byte(blob), &chain); err != nil {
-		return nil, fmt.Errorf("decode route: %w", err)
-	}
-	return chain, nil
-}
-
-// Set replaces the whole chain (singleton row keyed id=1).
-func (s *sqliteRoute) Set(ctx context.Context, chain []string) error {
-	if chain == nil {
-		chain = []string{}
-	}
-	blob, err := json.Marshal(chain)
-	if err != nil {
-		return fmt.Errorf("encode route: %w", err)
-	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO route_chain(id, chain_json, updated_at) VALUES(1, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET chain_json=excluded.chain_json, updated_at=excluded.updated_at`,
-		string(blob), time.Now().Unix())
-	if err != nil {
-		return fmt.Errorf("set route: %w", err)
-	}
-	return nil
-}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -582,11 +525,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
 
-CREATE TABLE IF NOT EXISTS route_chain (
-    id         INTEGER PRIMARY KEY CHECK (id = 1),
-    chain_json TEXT NOT NULL DEFAULT '[]',
-    updated_at INTEGER NOT NULL
-);
 `
 
 func applySchema(ctx context.Context, db *sql.DB) error {

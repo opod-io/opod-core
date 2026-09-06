@@ -46,7 +46,6 @@ type Server struct {
 	plan        planFileState
 	authf       authFileState
 	anthropicH  *api.AnthropicHandler
-	egressH     *api.EgressHandler
 	rateBuckets *api.BucketStore
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
@@ -138,62 +137,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		return native
 	})
 	anthropicH := &api.AnthropicHandler{Handler: openaiH}
-	egressH := &api.EgressHandler{
-		Store: st,
-		Config: api.FallbackConfig{
-			AnthropicKey:   cfg.Router.Fallback.AnthropicKey,
-			AnthropicURL:   cfg.Router.Fallback.AnthropicURL,
-			OpenAIKey:      cfg.Router.Fallback.OpenAIKey,
-			OpenAIURL:      cfg.Router.Fallback.OpenAIURL,
-			BedrockRegion:  cfg.Router.Fallback.BedrockRegion,
-			BedrockURL:     cfg.Router.Fallback.BedrockURL,
-			VertexProject:  cfg.Router.Fallback.VertexProject,
-			VertexLocation: cfg.Router.Fallback.VertexLocation,
-			VertexURL:      cfg.Router.Fallback.VertexURL,
-			OpenRouterKey:  cfg.Router.Fallback.OpenRouterKey,
-			OpenRouterURL:  cfg.Router.Fallback.OpenRouterURL,
-			GroqKey:        cfg.Router.Fallback.GroqKey,
-			GroqURL:        cfg.Router.Fallback.GroqURL,
-			TogetherKey:    cfg.Router.Fallback.TogetherKey,
-			TogetherURL:    cfg.Router.Fallback.TogetherURL,
-			FireworksKey:   cfg.Router.Fallback.FireworksKey,
-			FireworksURL:   cfg.Router.Fallback.FireworksURL,
-			CohereKey:      cfg.Router.Fallback.CohereKey,
-			CohereURL:      cfg.Router.Fallback.CohereURL,
-			MistralKey:     cfg.Router.Fallback.MistralKey,
-			MistralURL:     cfg.Router.Fallback.MistralURL,
-			PerplexityKey:  cfg.Router.Fallback.PerplexityKey,
-			PerplexityURL:  cfg.Router.Fallback.PerplexityURL,
-		},
-	}
-	// Multi-key rotation pool. When a user configures more than one key for a
-	// provider (e.g. GROQ_API_KEY + GROQ_API_KEY_2), the egress layer rotates
-	// across them and parks any key that hits a 429 so requests fail over to
-	// the next key instead of surfacing the rate limit. The pool also carries
-	// the registry providers (DeepSeek, Cerebras, Gemini, …), whose keys +
-	// base URLs come straight from the environment via the GenericProviders
-	// table — adding a provider needs no wiring here.
-	if !cfg.Surfaces.Egress {
-		cfg.Router.Fallback.Enabled = false // surface off: no request ever leaves for a vendor, whatever keys exist
-	}
-	kp := api.NewKeyPool()
-	for vendor, keys := range cfg.Router.Fallback.Keys {
-		kp.Set(vendor, keys)
-	}
-	providerURLs := map[string]string{}
-	for _, p := range api.GenericProviders {
-		keys := api.ProviderKeysFromEnv(p)
-		if len(keys) == 0 {
-			continue
-		}
-		kp.Set(p.Name, keys)
-		providerURLs[p.Name] = api.ProviderURLFromEnv(p)
-		if cfg.Surfaces.Egress {
-			cfg.Router.Fallback.Enabled = true // any registry key enables egress — unless the surface is off
-		}
-	}
-	egressH.Keys = kp
-	egressH.ProviderURLs = providerURLs
 	buckets := api.NewBucketStore()
 	api.SetBucketStore(buckets)
 	// Wire the catalog into the per-request cost computation path. The
@@ -221,7 +164,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		orch:        orch,
 		openaiH:     openaiH,
 		anthropicH:  anthropicH,
-		egressH:     egressH,
 		rateBuckets: buckets,
 		bus:         events.New(),
 	}
@@ -305,7 +247,6 @@ func buildGuardrailRegistry(rows []config.GuardrailConfig, blockPrivate bool, lo
 	reg.LoggingOnly = guardrails.NewChain(log0...)
 	return reg
 }
-
 
 func (s *Server) Start(ctx context.Context) error {
 	s.StartPlanWatcher(ctx)
@@ -503,9 +444,6 @@ func (s *Server) routes() http.Handler {
 			// Routing chain — the ordered list of model ids walked for
 			// model="auto" / fallback. GET returns the stored chain (or the
 			// computed default); PUT replaces it; DELETE resets to default.
-			r.Get("/route", s.getRoute)
-			r.Put("/route", s.setRoute)
-			r.Delete("/route", s.resetRoute)
 
 			// Compact status used by the dashboard top-bar chips. Same
 			// data the `opod status` CLI surfaces, returned as one JSON

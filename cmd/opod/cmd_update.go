@@ -390,7 +390,6 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-
 // updateCheckCache is the JSON shape we persist between runs.
 type updateCheckCache struct {
 	CheckedAt time.Time `json:"checked_at"`

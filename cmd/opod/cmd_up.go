@@ -527,20 +527,6 @@ func printNetworkPosture(cfg *config.Config) {
 		fmt.Printf("    · Tracing:       → %s  (your collector; set OFF by clearing OPOD_OTLP_ENDPOINT)\n", cfg.Observability.OTLPEndpoint)
 	}
 
-	// Vendor egress — only print rows where the operator opted in.
-	if cfg.Router.Fallback.AnthropicKey != "" {
-		fmt.Println("    · Anthropic:     → api.anthropic.com on claude-* requests  (ANTHROPIC_API_KEY set)")
-	}
-	if cfg.Router.Fallback.OpenAIKey != "" {
-		fmt.Println("    · OpenAI:        → api.openai.com on gpt-*/o-* requests  (OPENAI_API_KEY set)")
-	}
-	if cfg.Router.Fallback.BedrockRegion != "" {
-		fmt.Printf("    · Bedrock:       → bedrock-runtime.%s.amazonaws.com on anthropic.* (SigV4 via AWS chain)\n", cfg.Router.Fallback.BedrockRegion)
-	}
-	if cfg.Router.Fallback.VertexProject != "" {
-		fmt.Printf("    · Vertex:        → %s-aiplatform.googleapis.com (ADC for project %s)\n", orDefault(cfg.Router.Fallback.VertexLocation, "us-central1"), cfg.Router.Fallback.VertexProject)
-	}
-
 	fmt.Println("    · Telemetry:     none. Opod never reports installs, usage, errors, or any data to opod.io.")
 }
 

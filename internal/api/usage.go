@@ -91,7 +91,6 @@ var globalBucketStore *BucketStore
 // based on actual completion tokens vs the upfront estimate.
 func SetBucketStore(s *BucketStore) { globalBucketStore = s }
 
-
 // globalGuardrails is the per-process registry built from
 // config.Guardrails. nil = no guardrails configured; the hot path
 // short-circuits via Registry.IsEmpty().
@@ -171,7 +170,6 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	if keyID != "" {
 		incrementBudgetsAfterUsage(ctx, st, keyID, int64(prompt+completion), cost)
 	}
-
 
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
 	// upfront estimate; once the real usage is known we either refund

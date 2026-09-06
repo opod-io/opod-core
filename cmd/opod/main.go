@@ -41,8 +41,6 @@ func main() {
 		cmdModel(args)
 	case "shard":
 		cmdShard(args)
-	case "route":
-		cmdRoute(args)
 	case "token":
 		cmdToken(args)
 	case "usage":
@@ -78,7 +76,7 @@ func main() {
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
 	"version", "up", "down", "status", "join", "node", "model", "shard",
-	"route", "token", "usage", "audit", "config", "doctor", "update", "upgrade",
+	"token", "usage", "audit", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
 
@@ -194,12 +192,6 @@ Commands:
   shard create <model> [N] Orchestrate a sharded model across N workers
   shard ls                 List shards
   shard remove <model>     Tear down a sharded model
-  route ls                 Show the cross-provider routing chain (model="auto")
-  route set a,b,c          Replace the routing chain
-  route add <id>           Add a provider/model to the chain
-  route mv <id>            Reorder an entry (--top|--bottom|--after|--before)
-  route rm <id>            Remove an entry from the chain
-  route reset              Reset to the computed default chain
   token create [name]      Issue an API key (--admin, --node)
   token ls                 List API keys
   token edit <id>          Edit a key's model allowlist / rate limits

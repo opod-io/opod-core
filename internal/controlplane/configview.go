@@ -50,13 +50,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Router: map[string]any{
 			"default_model":   s.cfg.Router.DefaultModel,
 			"sticky_sessions": s.cfg.Router.StickySessions,
-			"fallback": map[string]any{
-				"enabled":       s.cfg.Router.Fallback.Enabled,
-				"anthropic_url": s.cfg.Router.Fallback.AnthropicURL,
-				"openai_url":    s.cfg.Router.Fallback.OpenAIURL,
-				"anthropic_key": redact(s.cfg.Router.Fallback.AnthropicKey),
-				"openai_key":    redact(s.cfg.Router.Fallback.OpenAIKey),
-			},
 		},
 		Storage: map[string]string{
 			"type":       s.cfg.Storage.Type,
@@ -73,21 +66,9 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"response_cache": s.cfg.Observability.ResponseCache,
 		},
 		Egress: map[string]any{
-			"bedrock_region":  s.cfg.Router.Fallback.BedrockRegion,
-			"bedrock_status":  bedrockStatus(s.cfg.Router.Fallback.BedrockRegion),
-			"vertex_project":  s.cfg.Router.Fallback.VertexProject,
-			"vertex_location": s.cfg.Router.Fallback.VertexLocation,
-			"vertex_status":   vertexStatus(s.cfg.Router.Fallback.VertexProject),
 			// OpenAI-compatible hosted gateways. Status is the
 			// presence of the API key (the URL has a sensible
 			// default per vendor and is rarely overridden).
-			"openrouter_status": presence(s.cfg.Router.Fallback.OpenRouterKey, "OPENROUTER_API_KEY"),
-			"groq_status":       presence(s.cfg.Router.Fallback.GroqKey, "GROQ_API_KEY"),
-			"together_status":   presence(s.cfg.Router.Fallback.TogetherKey, "TOGETHER_API_KEY"),
-			"fireworks_status":  presence(s.cfg.Router.Fallback.FireworksKey, "FIREWORKS_API_KEY"),
-			"cohere_status":     presence(s.cfg.Router.Fallback.CohereKey, "COHERE_API_KEY"),
-			"mistral_status":    presence(s.cfg.Router.Fallback.MistralKey, "MISTRAL_API_KEY"),
-			"perplexity_status": presence(s.cfg.Router.Fallback.PerplexityKey, "PERPLEXITY_API_KEY"),
 		},
 		EditHint: "Edit " + s.cfg.DataDir + "/config.yaml or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPOD_* env vars, then restart opod.",
 	}

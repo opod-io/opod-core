@@ -23,7 +23,6 @@ func contractedServer(t *testing.T) (*Server, string) {
 	cfg := config.Default()
 	cfg.Listen = ":0"
 	cfg.Surfaces = config.SurfacesConfig{UI: false, Egress: false, Protocols: "openai", Callbacks: false, Managed: true}
-	cfg.Router.Fallback.Enabled = true // a key in the env would set this; egress off must still win
 	st, err := store.OpenSQLite(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +85,6 @@ func TestSurfacesOff(t *testing.T) {
 		if c := post(p); c != http.StatusNotFound {
 			t.Errorf("POST %s with protocols=openai = %d, want 404", p, c)
 		}
-	}
-	if srv.cfg.Router.Fallback.Enabled {
-		t.Error("egress off must clear Router.Fallback.Enabled")
 	}
 
 	// still on: the contract

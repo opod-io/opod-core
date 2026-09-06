@@ -403,7 +403,7 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 - Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
 - **OpenAI-compatible hosted gateways (20+)** — `openrouter/<model>`, `groq/<model>`, `together/<model>`, `fireworks/<model>`, `cohere/<model>`, `mistral/<model>`, `perplexity/<model>` plus the registry providers `deepseek/`, `cerebras/`, `nvidia/`, `gemini/` (OpenAI-compat), `huggingface/`, and `zai/`, `ollama-cloud/`, `github/`, `cloudflare/`, `ovh/`, `kilo/`, `pollinations/`, `llm7/`, `opencode-zen/`. Set the matching `*_API_KEY`; the slash prefix is stripped before forwarding so the upstream sees its native id. Providers with stable endpoints ship a default URL; the rest require `<NAME>_BASE_URL` (Opod won't ship a guessed endpoint). Adding a provider is one row in `internal/api/providers.go`.
 - **Multi-key rotation + 429 failover** — stack several keys for one provider with numbered env vars (`GROQ_API_KEY`, `GROQ_API_KEY_2`, … `_N`). Opod rotates across them round-robin and, when a key returns 429 / 5xx / a transport error, parks it (honoring `Retry-After`) and retries the request on your next key — transparently, so the client never sees the rate limit. The last key always streams through, so a real error still surfaces once every key is exhausted.
-- **Routing chain (`model="auto"`)** — an ordered, persisted list of model ids Opod walks for `model="auto"`: it tries each top-to-bottom, advances to the next on a rate-limit / transient failure, and commits the first success. Key rotation handles *within* a provider; the chain handles *across* providers; a local model pinned last is the always-available floor (never rate-limited, $0). Manage it with `opod route ls/set/add/mv/rm/reset` or the dashboard's **Routing** tab (drag to reorder) — both write the same audited `/admin/v1/route` endpoint. A sensible free → cheap → paid → local default is computed from whichever providers you've configured.
+- **`model="auto"`** resolves to this leader's default model. Cross-provider routing chains and vendor egress left core (ADR-022); a control plane that wants them builds them above the leader.
 - Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
 - **Typed fallback chains** — catalog entries can declare `fallback_on_context_length` (prompt too long → long-context variant) and `fallback_on_content_policy` (vendor refused → permissive open-weight). The router classifies the primary's error (sentinel `errors.Is` then heuristic substring) and switches the rest of the chain to the matching typed list. Generic `fallback:` is the default when no typed list matches.
 - **Per-request overrides** — clients can override the catalog chain for a single call. Body block (`opod.fallbacks`, `opod.num_retries`, `opod.retry_backoff_ms`, `opod.hedge`) or `X-Opod-*` headers; the router walks the request chain instead of the catalog one and retries each candidate with exponential backoff (cap 5 retries, 5 s backoff). Traces tag `opod.fallback.source = catalog | request` so operators can see who's overriding policy.
@@ -1375,16 +1375,6 @@ opod model unload <id>           Drain, then drop from engine RAM (weights stay
 opod shard create <model> [N]    Orchestrate a sharded model across N workers
 opod shard ls                    List shards across all sharded models
 opod shard remove <model> [--yes]  Tear down a sharded model (prompts unless --yes)
-
-# --- cross-provider routing chain (model="auto") ---
-opod route ls                    Show the current chain (top-to-bottom order)
-opod route set a,b,c             Replace the whole chain
-opod route add <id> [--top|--bottom|--after X|--before X]
-                                  Add a provider/model (default: append at bottom)
-opod route mv <id> --top|--bottom|--after X|--before X
-                                  Reorder an existing entry
-opod route rm <id>               Remove an entry from the chain
-opod route reset                 Reset to the computed free → cheap → paid → local default
 
 # --- API keys / tokens ---
 opod token create [name]         Issue an API key (--admin, --node, --models a,b,
