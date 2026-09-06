@@ -79,7 +79,10 @@ func cmdUp(args []string) {
 	defer st.Close()
 
 	// 4. Bootstrap admin key on first run
-	plainKey := bootstrapAdminKey(st, cfg)
+	plainKey := ""
+	if cfg.Auth.AdminToken == "" {
+		plainKey = bootstrapAdminKey(st, cfg) // standalone: mint + save the first admin key
+	} // managed: the configured token is seeded below; nothing is written to disk
 	seedJoinToken(st, cfg)
 	seedAdminToken(st, cfg)
 

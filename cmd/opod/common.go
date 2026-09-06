@@ -46,7 +46,15 @@ func newLogger(cfg *config.Config) *slog.Logger {
 }
 
 func openStoreOrExit(cfg *config.Config) store.Store {
-	st, err := store.OpenSQLite(cfg.Storage.DSN)
+	dsn := cfg.Storage.DSN
+	// Managed leader (OPOD_MANAGED=1): the store is a rebuildable cache —
+	// keys come from the auth snapshot, nodes from heartbeats, the manager
+	// pulls usage + events by cursor. Nothing durable lands on the machine
+	// unless the operator asks for it with OPOD_STORAGE_DSN.
+	if cfg.Surfaces.Managed && os.Getenv("OPOD_STORAGE_DSN") == "" {
+		dsn = ":memory:"
+	}
+	st, err := store.OpenSQLite(dsn)
 	if err != nil {
 		die("store: %v", err)
 	}

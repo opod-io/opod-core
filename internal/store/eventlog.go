@@ -21,6 +21,8 @@ type LogEvent struct {
 type EventLogStore interface {
 	Append(typ, subject string, data map[string]any) error
 	After(ctx context.Context, afterID int64, limit int) ([]LogEvent, error)
+	// Trim keeps only the newest keep rows (bounded ring; the manager pulls by cursor).
+	Trim(ctx context.Context, keep int) (int64, error)
 }
 
 const eventLogSchema = `
@@ -63,4 +65,15 @@ func (s *sqliteEventLog) After(ctx context.Context, afterID int64, limit int) ([
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Trim deletes every event older than the newest keep rows.
+func (s *sqliteEventLog) Trim(ctx context.Context, keep int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM event_log WHERE id < COALESCE((SELECT id FROM event_log ORDER BY id DESC LIMIT 1 OFFSET ?), 0)`, max(keep, 1)-1)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }

@@ -187,6 +187,7 @@ func buildResponseCache(cfg config.ResponseCacheConfig, st store.Store, log *slo
 func (s *Server) Start(ctx context.Context) error {
 	s.StartPlanWatcher(ctx)
 	s.StartAuthWatcher(ctx)
+	s.StartTrimmer(ctx)
 	if s.Version == "" {
 		s.Version = "dev"
 	}
