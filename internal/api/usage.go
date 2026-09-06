@@ -145,7 +145,6 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	}
 	metrics.ObserveRequest(metricsModel, protocol, outcome, latency, prompt, completion)
 
-	cost := models.CostOf(model, getCatalog(), prompt, completion)
 	rec := store.Usage{
 		TS:               time.Now(),
 		APIKeyID:         keyID,
@@ -156,19 +155,11 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		CompletionTokens: completion,
 		LatencyMS:        int(latency.Milliseconds()),
 		Outcome:          outcome,
-		CostUSD:          cost,
+		CostUSD:          0, // dollar cost left core with budgets (ADR-022); rating happens downstream
 	}
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior
 		_ = err
-	}
-
-	// Bump the per-key budgets for the actual cost and token count.
-	// Best-effort: a write failure here is logged but doesn't surface
-	// to the caller. The pre-check on the next request will reject
-	// once the running total catches up.
-	if keyID != "" {
-		incrementBudgetsAfterUsage(ctx, st, keyID, int64(prompt+completion), cost)
 	}
 
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
