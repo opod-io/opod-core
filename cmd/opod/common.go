@@ -53,6 +53,7 @@ func openStoreOrExit(cfg *config.Config) store.Store {
 	// unless the operator asks for it with OPOD_STORAGE_DSN.
 	if cfg.Surfaces.Managed && os.Getenv("OPOD_STORAGE_DSN") == "" {
 		dsn = ":memory:"
+		cfg.Storage.DSN = dsn // what /admin/v1/config reports must be what runs
 	}
 	st, err := store.OpenSQLite(dsn)
 	if err != nil {
