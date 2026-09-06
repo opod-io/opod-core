@@ -26,7 +26,6 @@ type Store interface {
 	Usage() UsageStore
 	EventLog() EventLogStore
 	Audit() AuditStore
-	Budgets() BudgetStore
 	// Cache is the persistent backend for the response cache. The
 	// cache package wraps this with its driver-shape API.
 	Cache() CacheStore
@@ -255,42 +254,6 @@ type Usage struct {
 	CostUSD          float64
 }
 
-// Budget is one rolling spend / token allowance attached to an API key.
-// Multiple budgets can apply to a single key — every request must clear
-// all of them to be admitted. Two simultaneously-valid configurations:
-//
-//   - tokens / day  (e.g. 1M tokens/day)
-//   - usd / month   (e.g. $100/month)
-//
-// CurrentValue accumulates as requests run (incremented from the
-// recordUsage path); a request is refused when CurrentValue >=
-// LimitValue. ResetAt is the unix timestamp at which the window
-// rolls — checked lazily on every read so we don't need a cron.
-type Budget struct {
-	ID           int64
-	APIKeyID     string
-	Window       string // "day" | "week" | "month"
-	LimitUnit    string // "tokens" | "usd"
-	LimitValue   float64
-	CurrentValue float64
-	ResetAt      time.Time
-	CreatedAt    time.Time
-}
-
-// BudgetStore is the persistence surface for per-key budgets.
-type BudgetStore interface {
-	Create(ctx context.Context, b Budget) (int64, error)
-	ListByKey(ctx context.Context, apiKeyID string) ([]Budget, error)
-	Delete(ctx context.Context, id int64) error
-	// Increment atomically adds delta to a single budget. Used from
-	// recordUsage after the response is known.
-	Increment(ctx context.Context, id int64, delta float64) error
-	// ResetExpired rolls every budget whose reset_at has passed:
-	// current_value = 0, reset_at = next boundary. Called from the
-	// middleware so admission decisions always see fresh state.
-	ResetExpired(ctx context.Context, apiKeyID string, now time.Time) error
-}
-
 type UsageStore interface {
 	Record(ctx context.Context, u Usage) error
 	SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
@@ -396,12 +359,11 @@ func (s *sqliteStore) EventLog() EventLogStore    { return &sqliteEventLog{db: s
 func (s *sqliteStore) DesiredPlacements() DesiredPlacementStore {
 	return &sqliteDesiredPlacements{db: s.db}
 }
-func (s *sqliteStore) Shards() ShardStore   { return &sqliteShards{db: s.db} }
-func (s *sqliteStore) Usage() UsageStore    { return &sqliteUsage{db: s.db} }
-func (s *sqliteStore) Audit() AuditStore    { return &sqliteAudit{db: s.db} }
-func (s *sqliteStore) Budgets() BudgetStore { return &sqliteBudgets{db: s.db} }
-func (s *sqliteStore) Cache() CacheStore    { return &sqliteCache{db: s.db} }
-func (s *sqliteStore) Close() error         { return s.db.Close() }
+func (s *sqliteStore) Shards() ShardStore { return &sqliteShards{db: s.db} }
+func (s *sqliteStore) Usage() UsageStore  { return &sqliteUsage{db: s.db} }
+func (s *sqliteStore) Audit() AuditStore  { return &sqliteAudit{db: s.db} }
+func (s *sqliteStore) Cache() CacheStore  { return &sqliteCache{db: s.db} }
+func (s *sqliteStore) Close() error       { return s.db.Close() }
 
 const schema = `
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -494,17 +456,6 @@ CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts);
 CREATE INDEX IF NOT EXISTS idx_usage_model_ts ON usage(model, ts);
 
-CREATE TABLE IF NOT EXISTS budgets (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    api_key_id     TEXT    NOT NULL,
-    window         TEXT    NOT NULL,                -- 'day' | 'week' | 'month'
-    limit_unit     TEXT    NOT NULL,                -- 'tokens' | 'usd'
-    limit_value    REAL    NOT NULL,
-    current_value  REAL    NOT NULL DEFAULT 0,
-    reset_at       INTEGER NOT NULL,
-    created_at     INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_budgets_key ON budgets(api_key_id);
 
 CREATE TABLE IF NOT EXISTS cache (
     key        TEXT PRIMARY KEY,

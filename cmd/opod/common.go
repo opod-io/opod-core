@@ -292,3 +292,16 @@ func ok(w io.Writer, format string, args ...any) {
 func warn(w io.Writer, format string, args ...any) {
 	fmt.Fprintf(w, "\033[1;33m⚠\033[0m "+format+"\n", args...)
 }
+
+func truncStr(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	// Count and slice by rune so a multibyte character isn't split into
+	// mojibake, and guard the n==1 edge (n-1 == 0).
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}

@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -35,10 +33,6 @@ func cmdToken(args []string) {
 			"opod token edit k_abc123 --set-models a,b,c        # replace the allowlist",
 			"opod token edit k_abc123 --clear-models            # drop the allowlist (any model)",
 			"opod token edit k_abc123 --rpm 30 --tpm 50000      # set per-minute ceilings (0 = unlimited)",
-			"opod token budget add k_abc --window month --limit 100 --unit usd  # $100/mo cap",
-			"opod token budget add k_abc --window day --limit 1000000 --unit tokens",
-			"opod token budget ls k_abc                         # show active budgets + utilization",
-			"opod token budget rm k_abc 4                       # drop budget #4",
 			"opod token ls",
 			"opod token revoke k_abc123",
 		},
@@ -161,8 +155,6 @@ func cmdToken(args []string) {
 			die("usage: opod token renew <id> --ttl DURATION | --expires-at DATE")
 		}
 		tokenRenew(args[1], args[2:])
-	case "budget":
-		tokenBudget(args[1:])
 	case "ls", "list":
 		tokenList()
 	case "revoke":
@@ -171,7 +163,7 @@ func cmdToken(args []string) {
 		}
 		tokenRevoke(args[1])
 	default:
-		dieUnknownSubcommand("token", args[0], []string{"create", "ls", "edit", "expire", "renew", "budget", "revoke"})
+		dieUnknownSubcommand("token", args[0], []string{"create", "ls", "edit", "expire", "renew", "revoke"})
 	}
 }
 
@@ -595,148 +587,6 @@ func tokenList() {
 			limitStr(k.RPMLimit), limitStr(k.TPMLimit),
 			models, k.CreatedAt.Format(time.RFC3339))
 	}
-}
-
-// tokenBudget dispatches the `opod token budget` subcommands. All
-// three (add/ls/rm) hit the admin API rather than the store directly
-// so they work against a remote leader the same way the dashboard
-// does.
-func tokenBudget(args []string) {
-	if len(args) == 0 {
-		die("usage: opod token budget <add|ls|rm> <key-id> ...")
-	}
-	switch args[0] {
-	case "add":
-		if len(args) < 2 {
-			die("usage: opod token budget add <key-id> --window day|week|month --limit N --unit tokens|usd")
-		}
-		tokenBudgetAdd(args[1], args[2:])
-	case "ls", "list":
-		if len(args) < 2 {
-			die("usage: opod token budget ls <key-id>")
-		}
-		tokenBudgetList(args[1])
-	case "rm", "remove", "delete":
-		if len(args) < 3 {
-			die("usage: opod token budget rm <key-id> <budget-id>")
-		}
-		tokenBudgetRemove(args[1], args[2])
-	default:
-		dieUnknownSubcommand("token budget", args[0], []string{"add", "ls", "rm"})
-	}
-}
-
-func tokenBudgetAdd(keyID string, args []string) {
-	window, unit := "", ""
-	var limit float64
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch a {
-		case "--window":
-			if i+1 < len(args) {
-				window = args[i+1]
-				i++
-			}
-		case "--limit":
-			if i+1 < len(args) {
-				v, err := strconv.ParseFloat(args[i+1], 64)
-				if err != nil {
-					die("invalid --limit %q", args[i+1])
-				}
-				limit = v
-				i++
-			}
-		case "--unit":
-			if i+1 < len(args) {
-				unit = args[i+1]
-				i++
-			}
-		default:
-			if strings.HasPrefix(a, "--window=") {
-				window = strings.TrimPrefix(a, "--window=")
-				continue
-			}
-			if strings.HasPrefix(a, "--limit=") {
-				v, err := strconv.ParseFloat(strings.TrimPrefix(a, "--limit="), 64)
-				if err != nil {
-					die("invalid --limit %q", a)
-				}
-				limit = v
-				continue
-			}
-			if strings.HasPrefix(a, "--unit=") {
-				unit = strings.TrimPrefix(a, "--unit=")
-				continue
-			}
-			die("unknown flag: %s", a)
-		}
-	}
-	if window == "" || unit == "" || limit <= 0 {
-		die("--window, --limit (>0), and --unit are all required")
-	}
-	cfg := loadConfigOrExit()
-	// Build the body with json.Marshal — fmt.Sprintf with %q escapes for Go
-	// string literals, not JSON, so a window/unit containing certain bytes
-	// could produce malformed JSON.
-	body, err := json.Marshal(map[string]any{
-		"window":      window,
-		"limit_unit":  unit,
-		"limit_value": limit,
-	})
-	if err != nil {
-		die("encode budget: %v", err)
-	}
-	resp, err := adminCall(context.Background(), cfg, "POST", "/admin/v1/tokens/"+url.PathEscape(keyID)+"/budgets", body)
-	if err != nil {
-		die("%v: %s", err, string(resp))
-	}
-	ok(os.Stdout, "added %s/%s budget — limit %v (key %s)", window, unit, limit, keyID)
-}
-
-func tokenBudgetList(keyID string) {
-	cfg := loadConfigOrExit()
-	body, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/tokens/"+keyID+"/budgets", nil)
-	if err != nil {
-		die("%v: %s", err, string(body))
-	}
-	type budgetView struct {
-		ID           int64     `json:"ID"`
-		Window       string    `json:"Window"`
-		LimitUnit    string    `json:"LimitUnit"`
-		LimitValue   float64   `json:"LimitValue"`
-		CurrentValue float64   `json:"CurrentValue"`
-		ResetAt      time.Time `json:"ResetAt"`
-	}
-	var bs []budgetView
-	if err := json.Unmarshal(body, &bs); err != nil {
-		die("decode budgets: %v", err)
-	}
-	if len(bs) == 0 {
-		fmt.Println("(no budgets attached)")
-		return
-	}
-	fmt.Printf("%-4s %-8s %-8s %15s %15s %-6s %s\n", "ID", "WINDOW", "UNIT", "LIMIT", "CURRENT", "USED", "RESETS")
-	for _, b := range bs {
-		pct := 0.0
-		if b.LimitValue > 0 {
-			pct = 100 * b.CurrentValue / b.LimitValue
-		}
-		fmt.Printf("%-4d %-8s %-8s %15s %15s %5.1f%% %s\n",
-			b.ID, b.Window, b.LimitUnit,
-			fmt.Sprintf("%.4f", b.LimitValue),
-			fmt.Sprintf("%.4f", b.CurrentValue),
-			pct, b.ResetAt.Format(time.RFC3339))
-	}
-}
-
-func tokenBudgetRemove(keyID, budgetID string) {
-	cfg := loadConfigOrExit()
-	body, err := adminCall(context.Background(), cfg, "DELETE",
-		fmt.Sprintf("/admin/v1/tokens/%s/budgets/%s", keyID, budgetID), nil)
-	if err != nil {
-		die("%v: %s", err, string(body))
-	}
-	ok(os.Stdout, "removed budget %s from key %s", budgetID, keyID)
 }
 
 func tokenRevoke(id string) {

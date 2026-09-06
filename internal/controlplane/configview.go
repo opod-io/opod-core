@@ -2,8 +2,6 @@ package controlplane
 
 import (
 	"net/http"
-
-	"github.com/opod-io/opod/internal/config"
 )
 
 // ---- config view ----
@@ -24,13 +22,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Observability map[string]any    `json:"observability"`
 		Egress        map[string]any    `json:"egress"`
 		EditHint      string            `json:"edit_hint"`
-	}
-	// Sanitized copies of the guardrail rows — they carry webhook secrets
-	// that must get the same redaction as the engine/vendor keys below.
-	grs := make([]config.GuardrailConfig, len(s.cfg.Observability.Guardrails))
-	for i, g := range s.cfg.Observability.Guardrails {
-		g.AuthKey = redact(g.AuthKey)
-		grs[i] = g
 	}
 	v := view{
 		Listen:      s.cfg.Listen,
@@ -62,7 +53,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Observability: map[string]any{
 			"otlp_endpoint":  s.cfg.Observability.OTLPEndpoint,
 			"otlp_status":    otlpStatus(s.cfg.Observability.OTLPEndpoint),
-			"guardrails":     grs, // mode + url; auth_key redacted
 			"response_cache": s.cfg.Observability.ResponseCache,
 		},
 		Egress: map[string]any{

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/opod-io/opod/internal/api"
@@ -16,7 +15,6 @@ import (
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/events"
-	"github.com/opod-io/opod/internal/guardrails"
 	"github.com/opod-io/opod/internal/lifecycle"
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/router"
@@ -143,8 +141,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// recordUsage step does a price lookup against this catalog +
 	// vendor pricing table to populate usage.cost_usd.
 	api.SetCatalog(cat)
-	// Guardrails (pre-call hooks). Synchronous on the request path.
-	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, cfg.BlockPrivateTargets, log))
 	// Response cache (embeddings today; chat in follow-up).
 	api.SetResponseCache(buildResponseCache(cfg.Observability.ResponseCache, st, log))
 	// Audio + rerank endpoint proxies. Empty endpoints → handler
@@ -186,66 +182,6 @@ func buildResponseCache(cfg config.ResponseCacheConfig, st store.Store, log *slo
 		log.Warn("unknown response_cache driver — disabling cache", "driver", cfg.Driver)
 		return nil
 	}
-}
-
-// buildGuardrailRegistry constructs the three-mode guardrail
-// registry from the YAML rows. Unknown kinds or modes are ignored
-// (with a warn log) so a typo'd config doesn't crash startup.
-func buildGuardrailRegistry(rows []config.GuardrailConfig, blockPrivate bool, log *slog.Logger) *guardrails.Registry {
-	if len(rows) == 0 {
-		return nil
-	}
-	reg := &guardrails.Registry{
-		Pre:         guardrails.NewChain(),
-		Post:        guardrails.NewChain(),
-		LoggingOnly: guardrails.NewChain(),
-	}
-	pre := []guardrails.Guardrail{}
-	post := []guardrails.Guardrail{}
-	log0 := []guardrails.Guardrail{}
-	for _, r := range rows {
-		mode := guardrails.Mode(r.Mode)
-		switch mode {
-		case guardrails.ModePre, guardrails.ModePost, guardrails.ModeLoggingOnly:
-		default:
-			log.Warn("guardrail with unknown mode — skipping", "name", r.Name, "mode", r.Mode)
-			continue
-		}
-		var g guardrails.Guardrail
-		switch r.Kind {
-		case "webhook":
-			if r.URL == "" {
-				log.Warn("guardrail webhook missing url — skipping", "name", r.Name)
-				continue
-			}
-			to := time.Duration(r.TimeoutSeconds) * time.Second
-			g = guardrails.NewWebhook(guardrails.WebhookConfig{
-				ID:                  r.Name,
-				Mode:                mode,
-				URL:                 r.URL,
-				AuthKey:             os.ExpandEnv(r.AuthKey),
-				Headers:             r.Headers,
-				FailOpen:            r.FailOpen,
-				Timeout:             to,
-				BlockPrivateTargets: blockPrivate,
-			})
-		default:
-			log.Warn("guardrail with unknown kind — skipping", "name", r.Name, "kind", r.Kind)
-			continue
-		}
-		switch mode {
-		case guardrails.ModePre:
-			pre = append(pre, g)
-		case guardrails.ModePost:
-			post = append(post, g)
-		case guardrails.ModeLoggingOnly:
-			log0 = append(log0, g)
-		}
-	}
-	reg.Pre = guardrails.NewChain(pre...)
-	reg.Post = guardrails.NewChain(post...)
-	reg.LoggingOnly = guardrails.NewChain(log0...)
-	return reg
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -350,11 +286,6 @@ func (s *Server) routes() http.Handler {
 		// remaining-* values include this request's deduction (the
 		// contract documented on ResponseHeadersMiddleware).
 		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
-		// Monthly + dollar budgets — refuse if any budget for this
-		// key is at or above its limit. Runs before the legacy
-		// daily-quota check (which is now a single-budget special
-		// case the new system subsumes).
-		r.Use(api.BudgetMiddleware(s.store))
 		r.Use(api.QuotaMiddleware(s.store))
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
@@ -415,18 +346,10 @@ func (s *Server) routes() http.Handler {
 			r.Post("/tokens", s.createToken)
 			r.Patch("/tokens/{id}", s.editToken)
 			r.Delete("/tokens/{id}", s.revokeToken)
-			r.Get("/tokens/{id}/budgets", s.listBudgets)
-			r.Post("/tokens/{id}/budgets", s.createBudget)
-			r.Delete("/tokens/{id}/budgets/{bid}", s.deleteBudget)
 
 			// Observability
 			r.Get("/usage/stream", s.usageStream)
 			r.Get("/events/stream", s.eventLogStream)
-			r.Get("/usage/recent", s.listUsageRecent)
-			r.Get("/usage/summary", s.usageSummary)
-			r.Get("/usage/breakdown", s.usageBreakdown)
-			r.Get("/audit/recent", s.listAuditRecent)
-			r.Get("/audit/summary", s.auditSummary)
 
 			// Shards
 			r.Get("/shards", s.listShards)

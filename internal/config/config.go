@@ -244,7 +244,6 @@ type ObservabilityConfig struct {
 	// before the engine sees it; logging_only entries observe without
 	// intervening. Post mode is reserved for a follow-up — see the
 	// CHANGELOG for the streaming-response design limitation.
-	Guardrails []GuardrailConfig `yaml:"guardrails"`
 
 	// ResponseCache stores deterministic responses (embeddings today;
 	// chat completions to follow). Disabled when Enabled=false.
@@ -257,19 +256,6 @@ type ResponseCacheConfig struct {
 	Driver            string `yaml:"driver"`              // memory | sqlite
 	MaxEntries        int    `yaml:"max_entries"`         // memory only; 0 = 1000
 	DefaultTTLSeconds int    `yaml:"default_ttl_seconds"` // 0 = 24h
-}
-
-// GuardrailConfig is one row from the observability.guardrails list.
-// Today only `kind: webhook` is implemented.
-type GuardrailConfig struct {
-	Name           string            `yaml:"name"`
-	Kind           string            `yaml:"kind"`              // webhook
-	Mode           string            `yaml:"mode"`              // pre | post | logging_only
-	URL            string            `yaml:"url"`               // webhook only
-	AuthKey        string            `yaml:"auth_key" json:"-"` // optional bearer (env-expanded)
-	Headers        map[string]string `yaml:"headers"`           // optional extra headers
-	FailOpen       bool              `yaml:"fail_open"`         // on error: true → Allow, false → Block
-	TimeoutSeconds int               `yaml:"timeout_seconds"`
 }
 
 // Default returns a Config populated with safe defaults for a single-node setup.

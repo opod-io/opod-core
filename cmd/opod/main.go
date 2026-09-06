@@ -43,10 +43,6 @@ func main() {
 		cmdShard(args)
 	case "token":
 		cmdToken(args)
-	case "usage":
-		cmdUsage(args)
-	case "audit":
-		cmdAudit(args)
 	case "config":
 		cmdConfig(args)
 	case "doctor":
@@ -76,7 +72,7 @@ func main() {
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
 	"version", "up", "down", "status", "join", "node", "model", "shard",
-	"token", "usage", "audit", "config", "doctor", "update", "upgrade",
+	"token", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
 
@@ -197,9 +193,7 @@ Commands:
   token edit <id>          Edit a key's model allowlist / rate limits
   token expire <id>        Expire a key now (or --in DURATION)
   token renew <id>         Extend a key's expiry (--ttl / --expires-at)
-  token budget <add|ls|rm> Attach / list / remove spend budgets on a key
   token revoke <id>        Revoke an API key
-  usage [--limit N]        Show recent inference usage records
   audit [--limit N]        Show recent admin audit log entries
   config show              Show effective runtime config (secrets redacted)
   config path              Print config file path

@@ -382,7 +382,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Daily token quotas per key with usage metering
 - **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
 - **Per-key dollar + token budgets** — multiple budgets compose with AND semantics (`$10/day AND $100/month AND 1M tokens/day`). Windows: `day` / `week` / `month` (UTC). HTTP 429 `budget_exceeded` with `X-Opod-Budget-Reset-At` + audit row.
-- **Per-call $ cost tracking** — every usage row stores a `cost_usd` snapshot computed at write time from a built-in vendor pricing table (current Claude + OpenAI rates) or catalog-override fields. `opod usage --summary` shows $ spent; `/admin/v1/usage/breakdown` aggregates by user/model/protocol.
+- **Usage facts, no rating** — every usage row records model, protocol, tokens, latency and outcome; dollar cost and budgets left core (ADR-022) and belong to the control plane or your billing stack.
 - **Per-key model allowlist** — pin a key to specific model ids (or vendor families via `claude-*` / `gpt-*` globs); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Opod-Request-Id` correlation token (also embedded in audit rows for traceability)
 - Audit log of every admin mutation + middleware refusals (`model_not_allowed`, `budget_exceeded`, `router.override`, `guardrail.block`)
@@ -469,8 +469,8 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 ### Observability
 
 - Prometheus metrics endpoint (`/metrics`) — per-model RPS, latency, tokens, errors
-- Per-call usage records (model, protocol, tokens, latency, outcome) via `opod usage` and the Usage tab
-- Admin audit log via `opod audit` and the Audit tab
+- Per-call usage records (model, protocol, tokens, latency, outcome) on `/admin/v1/usage/stream` (cursor + replay) — the control plane pulls and exports them
+- Admin actions are recorded and streamed to the control plane on `/admin/v1/events/stream`
 - Reference Grafana dashboards in [`dashboards/`](dashboards/) — `cluster-overview.json`, `per-model.json`, `per-node.json`. Import any of them into Grafana 10+ and point at your Prometheus scrape of Opod's `/metrics`.
 - OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Opod emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All four engine drivers (ollama, vllm, mlx, llamacpp) export the same span shape. W3C `traceparent` propagation is always on so Opod participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 
@@ -506,11 +506,11 @@ Opod ships a curated catalog of **41 open-weight models** in `catalog/*.yaml`, s
 
 ⭐ = current top picks (June 2026). All 41 catalog entries are listed; [MODELS.md](MODELS.md) has the full picker table with sizes, RAM floors, and licenses.
 
-Run `opod model search` to list everything live with sizes and capabilities, or `opod model info <id>` for one model's full spec. Add `--sort=released` for newest-first, `--since 2026-01-01` to filter by date, or `--json` for machine-readable output. `opod model ls`, `opod status`, `opod usage`, and `opod audit` also accept `--json`. Running any `opod model add|info|remove` or `opod connect` with no ID launches an interactive picker (type to filter; arrow keys to navigate). Output is colored when stdout is a TTY; set `NO_COLOR=1` (or `OPOD_NO_COLOR=1`) to disable.
+Run `opod model search` to list everything live with sizes and capabilities, or `opod model info <id>` for one model's full spec. Add `--sort=released` for newest-first, `--since 2026-01-01` to filter by date, or `--json` for machine-readable output. `opod model ls`, `opod status`, the control plane's Usage page, and the control plane's Audit page also accept `--json`. Running any `opod model add|info|remove` or `opod connect` with no ID launches an interactive picker (type to filter; arrow keys to navigate). Output is colored when stdout is a TTY; set `NO_COLOR=1` (or `OPOD_NO_COLOR=1`) to disable.
 
 The dashboard at `http://localhost:8080` mirrors the CLI: persistent top-bar chips show role + engine reachability + node/model counts (polled every 5 s); the Home tab summarizes traffic (requests-per-minute sparkline, p50/p95/p99, error rate, top model, recent activity); the Models tab includes a filterable catalog browser with per-row install; Nodes / Models / Usage / Audit refresh live while their tab is active; and "Add a worker" generates a one-time join token with copy-pasteable install-and-join snippets.
 
-The same aggregates are available from the CLI: `opod usage --summary` and `opod audit --summary` print the top-models / p50-p95-p99 / error-rate / sparkline view that the dashboard renders. Both also accept `--json`.
+Aggregates (summaries, breakdowns) are computed by the control plane from the streams; core keeps only the raw facts.
 
 Engine reliability: when Opod auto-spawned the engine itself (`opod up` with `OPOD_ENGINE=llamacpp`), a health watchdog polls every 30 s and force-restarts the process after three consecutive failures — so a hung `llama-server` no longer requires manual intervention. For user-managed engines (Ollama, vLLM) Opod leaves the process alone but `/v1/chat/completions` now returns a typed `engine_unreachable` error with the engine name, endpoint, and the exact command to start it (`ollama serve`, `mlx_lm.server …`, etc.) when the engine isn't responding.
 
@@ -1398,12 +1398,6 @@ opod connect <client>            Print the copy-paste config snippet for a clien
 opod disconnect <client>         Print the rollback commands for a client (--list)
 
 # --- observability ---
-opod usage [--limit N] [--user X] [--summary] [--json]
-                                  Recent inference records, or aggregate summary
-                                  (top models, p50/p95/p99, error rate, sparkline)
-opod audit [--limit N] [--actor X] [--summary] [--json]
-                                  Recent admin audit entries, or top-actors/top-actions
-                                  summary
 
 # --- config ---
 opod config show [--json]        Show effective runtime config (secrets redacted)
@@ -1457,8 +1451,6 @@ Every cluster action is available both ways. Pick whichever fits your workflow:
 | Tear down sharded model | `opod shard remove <model>` | Shards tab → "Tear down" |
 | Create API key | `opod token create <name>` | Tokens tab → "Create" form |
 | Revoke API key | `opod token revoke <id>` | Tokens tab → row's "revoke" |
-| View recent usage | `opod usage` | Usage tab |
-| View audit log | `opod audit` | Audit tab |
 | View effective config | `opod config show` | Settings tab |
 | Edit config | edit `~/.opod/config.yaml`, restart | (read-only via UI; CLI shows the path) |
 
