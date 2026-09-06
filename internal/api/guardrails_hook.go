@@ -120,6 +120,9 @@ func recordGuardrailAudit(ctx context.Context, st store.Store, name, action, rea
 		Target:   name,
 		Metadata: meta,
 	})
+	// P12-3: verdict metadata (never content) also rides the lifecycle stream
+	// so the manager's audit sees blocks and flags per rule.
+	_ = st.EventLog().Append("guardrail."+action, name, map[string]any{"actor": actor, "reason": reason, "request_id": RequestIDFrom(ctx)})
 }
 
 // jsonQuote is a cheap escape for the audit metadata embed. Goes
