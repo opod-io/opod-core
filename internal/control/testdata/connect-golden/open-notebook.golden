@@ -1,0 +1,28 @@
+# Open Notebook → Opod (OpenAI-compatible)
+# NotebookLM-style sources → chat + podcast, but pointed at YOUR models.
+
+# Option A — Docker Compose (recommended). Add these to .env in the
+# open-notebook clone next to docker-compose.yml:
+
+OPENAI_API_BASE_URL=http://example.local:8080/v1
+OPENAI_API_KEY=sk-orc-TEST
+# Optional — pin a default model. Pick a context-window-friendly one
+# (Qwen, Llama 4 Scout, or Gemma 4 work well for long sources):
+OPEN_NOTEBOOK_DEFAULT_MODEL=test-model
+
+# Then in the open-notebook directory:
+#   docker compose up -d
+#
+# Open http://localhost:8501 (or whatever port the compose file maps).
+
+# Option B — Configure in the UI (no env vars):
+#   Settings → API Keys → Add Credential
+#     Provider:  OpenAI Compatible
+#     Base URL:  http://example.local:8080/v1
+#     API Key:   sk-orc-TEST
+#   Save. Models list auto-populates from /v1/models.
+
+# For embedding-driven source indexing, install an embedding model
+# in Opod first:
+#   opod model add nomic-embed-text
+# then pick `nomic-embed-text` in Open Notebook's embedding provider.

@@ -1,0 +1,10 @@
+# Continue.dev → Opod (OpenAI API)
+# Add to ~/.continue/config.json under "models":
+
+{
+  "title": "Opod · test-model",
+  "provider": "openai",
+  "model": "test-model",
+  "apiBase": "http://example.local:8080/v1",
+  "apiKey": "sk-orc-TEST"
+}

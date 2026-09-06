@@ -1,0 +1,93 @@
+name: images
+# RELEASE lane only (tags + manual dispatch). Day-to-day images are built on the
+# Mac with images/build.sh — zero Actions minutes (paused 2026-09-05 after the
+# per-push matrix burned ~1,200 of the 2,000 free minutes in five days).
+# The llama.cpp CUDA RPC pair is NOT compiled here per push: it is a separate,
+# dispatch-only job that publishes ghcr.io/opod-io/llama-rpc-cuda:<LLAMA_RELEASE>
+# once per release bump; the worker build substitutes that image for the
+# `rpc-cuda` stage via build-contexts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      rpc:
+        description: "also rebuild llama-rpc-cuda:<LLAMA_RELEASE> (~60 min, only after bumping LLAMA_RELEASE)"
+        type: boolean
+        default: false
+permissions: { contents: read, packages: write }
+concurrency: { group: "images-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  rel:
+    runs-on: ubuntu-latest
+    outputs: { llama: "${{ steps.r.outputs.llama }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - id: r
+        run: echo "llama=$(sed -nE 's/^ARG LLAMA_RELEASE=(.*)$/\1/p' images/worker-llamacpp/Dockerfile.rpc-cuda)" >> "$GITHUB_OUTPUT"
+
+  rpc:
+    # ~60 min. Manual only, and only when LLAMA_RELEASE changed.
+    if: github.event_name == 'workflow_dispatch' && inputs.rpc
+    needs: rel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: jlumbroso/free-disk-space@main
+        with: { tool-cache: true, large-packages: true, docker-images: false, swap-storage: false }
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/worker-llamacpp/Dockerfile.rpc-cuda
+          target: rpc-export
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/llama-rpc-cuda:${{ needs.rel.outputs.llama }}
+          build-args: LLAMA_RELEASE=${{ needs.rel.outputs.llama }}
+
+  build:
+    needs: [rel, rpc]
+    if: always() && needs.rel.result == 'success' && (needs.rpc.result == 'success' || needs.rpc.result == 'skipped')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: opod-leader,                 file: images/leader/Dockerfile,          base: "", rpc: false }
+          - { name: opod-worker-llamacpp-nvidia, file: images/worker-llamacpp/Dockerfile.rpc-cuda, base: ghcr.io/ggml-org/llama.cpp:full-cuda, rpc: true }  # base N=1 llama-server + prebuilt /opt/llama-rpc for N>=2
+          - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile, base: ghcr.io/ggml-org/llama.cpp:full-rocm, rpc: false }
+          - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1, rpc: false }
+    steps:
+      - name: Free disk space (vLLM/ROCm bases are ~30GB)
+        if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd')
+        uses: jlumbroso/free-disk-space@main
+        with: { tool-cache: true, large-packages: true, docker-images: false, swap-storage: false }
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ${{ matrix.base != '' && format('BASE={0}', matrix.base) || '' }}
+            VERSION=${{ github.sha }}
+          # Substitute the prebuilt RPC pair for the 60-min nvcc stage.
+          build-contexts: ${{ matrix.rpc && format('rpc-cuda=docker-image://ghcr.io/{0}/llama-rpc-cuda:{1}', github.repository_owner, needs.rel.outputs.llama) || '' }}
+          # Registry cache: no 10 GB cap (the gha cache evicted every run → full rebuilds).
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:buildcache,mode=max

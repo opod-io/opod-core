@@ -1,0 +1,20 @@
+# Llama 4 Scout — MoE: 109B total, 17B active. Ultra-long 10M token context.
+# Native multimodal (text + vision). Q4 weights are ~65 GB; fits on a single
+# 80 GB GPU or splits cleanly across two 48 GB nodes via llama.cpp-RPC.
+id: llama-4-scout
+display_name: Meta Llama 4 Scout (109B MoE, 10M ctx, multimodal)
+source:
+  type: ollama
+  ollama_name: llama4:scout
+size_bytes: 67000000000
+quant: q4_k_m
+context_window: 10485760
+capabilities: [chat, tools, vision]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 80
+  min_vram_gb: 80
+tags: [moe, multimodal, long-context, meta, restricted-license]
+license: llama-4-community
+license_url: https://www.llama.com/llama4/license/
+released: 2025-04-05

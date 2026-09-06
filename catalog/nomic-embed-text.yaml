@@ -1,0 +1,22 @@
+# Nomic Embed Text v1.5 — the default catalog embedding model.
+# 137 M parameters, 768-dimensional vectors, 8192-token context.
+# Apache-2.0 license. Beats OpenAI text-embedding-ada-002 on MTEB.
+#
+# Install:  opod model add nomic-embed-text
+# Use:      POST /v1/embeddings { "model": "nomic-embed-text", "input": "..." }
+id: nomic-embed-text
+display_name: Nomic Embed Text v1.5 (768-dim, 8K ctx)
+source:
+  type: ollama
+  ollama_name: nomic-embed-text
+size_bytes: 274000000
+quant: f16
+context_window: 8192
+capabilities: [embedding]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 2
+tags: [embedding, retrieval, nomic, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/main/LICENSE
+released: 2024-02-13

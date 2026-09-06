@@ -1,0 +1,83 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: '1.25'
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      # Common Close + best-effort cleanup patterns where we knowingly drop
+      # the error. Matches what v1.61 implicitly ignored before the v2 bump.
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Stmt).Close
+        - (*os.File).Close
+        - (*compress/gzip.Reader).Close
+        - (*compress/gzip.Writer).Close
+        - (*bufio.Scanner).Buffer
+        - (github.com/opod-io/opod/internal/store.Store).Close
+        # Terminal output — error means "stdout/stderr is closed", which
+        # would already be killing the process. Not worth a check at every
+        # call site.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - io.WriteString
+        - os.RemoveAll
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment   # noisy; revisit if memory becomes a concern
+        - shadow
+    revive:
+      rules:
+        - name: var-naming
+        - name: indent-error-flow
+        - name: redefines-builtin-id
+    staticcheck:
+      # Disable QF* (Quick-Fix) refactor suggestions — these are style hints,
+      # not bugs. Default-on in v2; were opt-in in v1. Also drop:
+      #  S1017  — HasPrefix+TrimPrefix collapse; explicit form is clearer
+      #           in the bearer-token parsing path
+      #  ST1000 — "package comment should be of the form 'Package X ...'";
+      #           we have multiple files per package with file-level header
+      #           comments, which the linter mis-detects as package
+      #           comments. Disabling avoids a global rewrite for cosmetics.
+      #  ST1020 — method-comment-should-start-with-method-name; same family
+      checks:
+        - all
+        - -QF1001
+        - -QF1003
+        - -QF1008
+        - -QF1012
+        - -S1017
+        - -ST1000
+        - -ST1020
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck
+          - unused
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

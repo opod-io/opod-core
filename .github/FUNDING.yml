@@ -1,0 +1,8 @@
+# Sponsor button on the GitHub repo page. Points at the project's own
+# site for now — GitHub Sponsors integration can be added later by
+# uncommenting the github: line and enabling Sponsors on the user
+# account.
+#
+# github: opod-io
+custom:
+  - https://opod.io

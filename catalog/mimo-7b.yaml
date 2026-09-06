@@ -1,0 +1,15 @@
+id: mimo-7b
+display_name: Xiaomi MiMo 7B (reasoning-focused; small dense)
+source:
+  type: huggingface
+  repo: XiaomiMiMo/MiMo-7B-RL
+size_bytes: 4500000000
+context_window: 32768
+capabilities: [chat, tools]
+recommended_engines: [vllm, mlx]
+hardware:
+  min_ram_gb: 8
+tags: [reasoning, small, xiaomi, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/XiaomiMiMo/MiMo-7B-RL/blob/main/LICENSE
+released: 2025-09-30

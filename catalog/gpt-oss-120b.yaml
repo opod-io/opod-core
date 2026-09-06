@@ -1,0 +1,17 @@
+id: gpt-oss-120b
+display_name: OpenAI gpt-oss 120B (open-weight, Apache-2.0)
+source:
+  type: ollama
+  ollama_name: gpt-oss:120b
+size_bytes: 65000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, reasoning, tools]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 80
+  min_vram_gb: 80
+tags: [reasoning, thinking, large, openai]
+license: apache-2.0
+license_url: https://huggingface.co/openai/gpt-oss-120b/blob/main/LICENSE
+released: 2025-08-05

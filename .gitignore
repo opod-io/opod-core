@@ -1,0 +1,58 @@
+# Build artifacts
+/opod
+/opod-new
+/dist/
+
+# Local data
+/data/
+.opod/
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets & credentials (NEVER commit — repo is public)
+*.env
+.env*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+id_rsa*
+id_ed25519*
+known_hosts
+*.token
+*.kubeconfig
+kubeconfig
+
+# Editor / IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Claude Code local state
+.claude/
+
+# Node / UI
+node_modules/
+web/dist/
+web/.next/
+
+# Go test caches
+*.test
+*.out
+coverage.txt
+
+# Private working docs (not for the public repo)
+ENTERPRISE.md
+
+# Local planning workspace (per-task plans, sprint notes — never committed)
+/planning/
+
+# presentation demo (local-only)
+/demo/
+tmp/
+
+# misc local files (never committed)
+/misc/

@@ -1,0 +1,16 @@
+id: gpt-oss-20b
+display_name: OpenAI gpt-oss 20B (open-weight, Apache-2.0)
+source:
+  type: ollama
+  ollama_name: gpt-oss:20b
+size_bytes: 14000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, reasoning, tools]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 16
+tags: [reasoning, thinking, small, openai]
+license: apache-2.0
+license_url: https://huggingface.co/openai/gpt-oss-20b/blob/main/LICENSE
+released: 2025-08-05

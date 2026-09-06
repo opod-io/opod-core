@@ -1,0 +1,16 @@
+id: deepseek-r1-8b
+display_name: DeepSeek R1 Distill 8B (reasoning)
+source:
+  type: ollama
+  ollama_name: deepseek-r1:8b
+size_bytes: 4900000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, reasoning]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [reasoning, thinking]
+license: mit
+license_url: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/blob/main/LICENSE
+released: 2025-01-20

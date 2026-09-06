@@ -1,0 +1,16 @@
+id: mistral-nemo-12b
+display_name: Mistral Nemo 12B (128K context)
+source:
+  type: ollama
+  ollama_name: mistral-nemo:12b
+size_bytes: 7100000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [general, long-context, mistral]
+license: apache-2.0
+license_url: https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407/blob/main/LICENSE
+released: 2024-07-18

@@ -1,0 +1,23 @@
+# Liquid AI LFM2.5-8B-A1B — best-in-class on-device MoE.
+# 8B total / ~1B active (MoE), 128K context, reasoning-only (chain of thought).
+# Day-1 support for llama.cpp, MLX, vLLM, SGLang. MATH500 88.8.
+#
+# Source is HuggingFace — vLLM / MLX-LM can pull this directly. For Ollama
+# users, install via the community GGUF (unsloth/LFM2.5-8B-A1B-GGUF) once
+# upstream tags appear, or download manually and use `type: file`.
+id: lfm2.5-8b-a1b
+display_name: Liquid AI LFM2.5-8B-A1B (edge MoE, 1B active, reasoning)
+source:
+  type: huggingface
+  repo: LiquidAI/LFM2.5-8B-A1B
+size_bytes: 5000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, reasoning, tools]
+recommended_engines: [llamacpp, mlx, vllm]
+hardware:
+  min_ram_gb: 8
+tags: [moe, edge, reasoning, thinking, on-device, liquid-ai]
+license: lfm-open
+license_url: https://huggingface.co/LiquidAI/LFM2.5-8B-A1B/blob/main/LICENSE
+released: 2025-11-04

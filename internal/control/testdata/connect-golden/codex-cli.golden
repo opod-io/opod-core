@@ -1,0 +1,16 @@
+# Codex CLI (OpenAI's official) → Opod
+# Codex CLI honors the standard OPENAI_BASE_URL + OPENAI_API_KEY env vars.
+
+export OPENAI_BASE_URL=http://example.local:8080/v1
+export OPENAI_API_KEY=sk-orc-TEST
+
+# Run a one-shot command
+codex "summarize this file"
+
+# Or pin a model
+codex --model test-model "refactor this function"
+
+# Persistent override — drop into ~/.codex/config.yaml:
+#   provider: openai
+#   base_url: http://example.local:8080/v1
+#   model: test-model

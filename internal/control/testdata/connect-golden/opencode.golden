@@ -1,0 +1,24 @@
+# OpenCode → Opod (OpenAI + Anthropic baseURL override)
+# Put this in opencode.json at the project root (or ~/.config/opencode/opencode.json)
+
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "http://example.local:8080/v1",
+        "apiKey":  "sk-orc-TEST"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "baseURL": "http://example.local:8080",
+        "apiKey":  "sk-orc-TEST"
+      }
+    }
+  },
+  "model": "test-model"
+}
+
+# Run: opencode
+# Override per-session: opencode --model test-model

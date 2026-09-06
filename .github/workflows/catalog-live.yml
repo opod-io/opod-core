@@ -1,0 +1,35 @@
+name: Catalog live check
+
+# Catches stale catalog entries (renamed Ollama tags, gone HF repos) by
+# HEAD-ing every entry's `source:` against the upstream registry. Gated
+# behind CATALOG_LIVE_CHECK=1 in the test itself, so this workflow is the
+# only place it runs by default.
+#
+# Schedule + manual dispatch — not on every PR, because upstream flakiness
+# shouldn't block merges. If the daily run fails, someone should look.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'   # 06:17 UTC daily
+  workflow_dispatch:
+  push:
+    paths:
+      - 'catalog/**'
+      - '.github/workflows/catalog-live.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-live:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: HEAD every catalog source against upstream
+        env:
+          CATALOG_LIVE_CHECK: '1'
+        run: go test -run TestCatalogSourcesReachable -v ./cmd/opod/

@@ -1,0 +1,96 @@
+# opod worker — llama.cpp on NVIDIA, WITH RPC sharding support.
+#
+# The upstream ggml image (ghcr.io/ggml-org/llama.cpp:full-cuda) has a GPU
+# llama-server (great for whole-model N=1) but is compiled WITHOUT the RPC
+# backend: no rpc-server, no --rpc flag. So llama.cpp-RPC sharding (opod shard
+# create <model> N, N>=2) can never form a gang on it. We keep the base's GPU
+# llama-server for N=1 and ADD a source-built RPC pair in /opt/llama-rpc for
+# N>=2 (the coordinator `llama-server --rpc` + each shard host's rpc-server).
+#
+# This recipe is battle-tested against the full scenario suite on live GPUs.
+# The hard-won bits, do not "simplify" them:
+#   * current llama.cpp renamed rpc-server -> ggml-rpc-server (build that target;
+#     opod execs `rpc-server`, so a wrapper exposes that name).
+#   * llama-server's web UI assets are fetched at BUILD time keyed off the git
+#     build number; a shallow clone derives "b1" (nonexistent) and the build
+#     dies mid-compile — pin HF_UI_VERSION to the release tag.
+#   * GGML_CUDA_NO_VMM=ON drops the only CUDA DRIVER-API user (cuMem*), whose
+#     libcuda stub link fails inside the devel container.
+#   * ggml auto-discovers backend .so from the process CWD; the base image's
+#     WORKDIR=/app holds FOREIGN ggml backends, so the RPC binaries must run
+#     from /opt/llama-rpc (wrappers cd there) or they load /app's backends and
+#     crash.
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-cuda
+ARG LLAMA_RELEASE=b9934
+
+# --- 1) opod binary ---------------------------------------------------------
+# Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
+# `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
+FROM golang:1.26 AS opod
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
+
+# --- 2) RPC pair: source build (GGML_CUDA=ON + GGML_RPC=ON) ------------------
+# ~60 min of nvcc on an amd64 runner and independent of the opod source, so it
+# is built ONCE per LLAMA_RELEASE and published as ghcr.io/opod-io/llama-rpc-cuda:<rel>
+# (target `rpc-export` below). Both CI and the local lane then substitute this
+# stage with `--build-context rpc-cuda=docker-image://ghcr.io/opod-io/llama-rpc-cuda:<rel>`.
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS rpc-cuda
+ARG LLAMA_RELEASE
+ENV HF_UI_VERSION=${LLAMA_RELEASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git cmake build-essential libcurl4-openssl-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch ${LLAMA_RELEASE} https://github.com/ggml-org/llama.cpp /src
+# sm_86 covers every NVIDIA box the fleet shards on (A6000, 3060 Ti). Bump
+# CMAKE_CUDA_ARCHITECTURES if a Blackwell (sm_120) node ever joins a shard.
+RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
+      -DGGML_CUDA=ON -DGGML_RPC=ON -DGGML_NATIVE=OFF -DGGML_CUDA_NO_VMM=ON \
+      -DCMAKE_CUDA_ARCHITECTURES="86" && \
+    (cmake --build /build -j"$(nproc)" --target llama-server ggml-rpc-server || \
+     cmake --build /build -j"$(nproc)")
+RUN set -eux; mkdir -p /opt/llama-rpc; cp /build/bin/* /opt/llama-rpc/; \
+    cp -a /usr/local/cuda/lib64/libcudart.so*   /opt/llama-rpc/; \
+    cp -a /usr/local/cuda/lib64/libcublas.so*   /opt/llama-rpc/; \
+    cp -a /usr/local/cuda/lib64/libcublasLt.so* /opt/llama-rpc/; \
+    test -f /opt/llama-rpc/ggml-rpc-server; test -f /opt/llama-rpc/llama-server
+
+# --- 2b) export-only image of the RPC pair: `--target rpc-export` ------------
+FROM scratch AS rpc-export
+COPY --from=rpc-cuda /opt/llama-rpc /opt/llama-rpc
+
+# --- 3) the worker image ----------------------------------------------------
+FROM ${BASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash curl ca-certificates procps && rm -rf /var/lib/apt/lists/*
+COPY --from=opod /opod /usr/local/bin/opod
+COPY catalog /usr/local/share/opod/catalog
+COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
+# The sharding binaries (rpc-server + the --rpc coordinator), self-contained.
+COPY --from=rpc-cuda /opt/llama-rpc /opt/llama-rpc
+
+# rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends are
+# discoverable; PREPEND our cudart/cublas, then fall through to the base's CUDA.
+RUN set -eux; \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport GGML_BACKEND_PATH=/opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+      > /usr/local/bin/rpc-server; \
+    chmod +x /usr/local/bin/rpc-server
+
+# llama-server: opod execs one "llama-server" for both whole-model (N=1) and the
+# shard coordinator (N>=2, which passes --rpc). Route by args: --rpc → the RPC
+# build (the base's /app has no --rpc), otherwise → the base's GPU llama-server.
+RUN set -eux; \
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export GGML_BACKEND_PATH=/opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
+      > /usr/local/bin/llama-server; \
+    chmod +x /usr/local/bin/llama-server
+
+# /usr/local/bin BEFORE /app so the wrappers win.
+ENV PATH=/usr/local/bin:/app:$PATH \
+    OPOD_ROLE=worker OPOD_ENGINE=llamacpp \
+    OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

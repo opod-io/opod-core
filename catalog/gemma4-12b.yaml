@@ -1,0 +1,16 @@
+id: gemma4-12b
+display_name: Google Gemma 4 12B (encoder-free any-to-any, multimodal)
+source:
+  type: ollama
+  ollama_name: gemma4:12b
+size_bytes: 7600000000
+quant: q4_k_m
+context_window: 262144
+capabilities: [chat, tools, vision, audio]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [general, multilingual, google, multimodal, audio, video, restricted-license]
+license: gemma
+license_url: https://ai.google.dev/gemma/terms
+released: 2026-02-26

@@ -1,0 +1,13 @@
+# Plandex → Opod (OpenAI-compatible)
+# Plandex reads OPENAI_API_BASE + OPENAI_API_KEY from env.
+
+export OPENAI_API_BASE={{.BaseURL}}/v1
+export OPENAI_API_KEY={{.Token}}
+
+# Optional — pin the default model Plandex picks for new plans:
+export PLANDEX_MODEL={{.Model}}
+
+# Start or attach to a plan
+plandex new       # create a new plan in the current directory
+plandex tell      # add a task to the current plan
+plandex apply     # apply the plan's changes to your files

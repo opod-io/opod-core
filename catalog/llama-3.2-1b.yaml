@@ -1,0 +1,19 @@
+id: llama-3.2-1b
+display_name: Llama 3.2 1B Instruct
+source:
+  type: ollama
+  ollama_name: llama3.2:1b
+  # For engine=llamacpp: auto-spawn `llama-server -hf <repo>`. The
+  # ollama_name path still wins when engine=ollama; the two coexist.
+  repo: bartowski/Llama-3.2-1B-Instruct-GGUF
+size_bytes: 1321000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat]
+recommended_engines: [ollama, llamacpp]
+hardware:
+  min_ram_gb: 2
+tags: [small, fast, smoke-test, restricted-license]
+license: llama-3-community
+license_url: https://www.llama.com/llama3_2/license/
+released: 2024-09-25

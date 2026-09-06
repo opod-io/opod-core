@@ -1,0 +1,23 @@
+# curl → Opod — useful for smoke tests
+
+# OpenAI shape:
+curl -s {{.BaseURL}}/v1/chat/completions \
+  -H "Authorization: Bearer {{.Token}}" \
+  -H "Content-Type: application/json" \{{if .Retries}}
+  -H "X-Opod-Num-Retries: {{.Retries}}" \{{end}}
+  -d '{
+    "model": "{{.Model}}",
+    "messages": [{"role": "user", "content": "hi in 5 words"}]
+  }'
+
+# Anthropic shape (same endpoint, different path + headers):
+curl -s {{.BaseURL}}/v1/messages \
+  -H "x-api-key: {{.Token}}" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \{{if .Retries}}
+  -H "X-Opod-Num-Retries: {{.Retries}}" \{{end}}
+  -d '{
+    "model": "{{.Model}}",
+    "max_tokens": 64,
+    "messages": [{"role": "user", "content": "hi in 5 words"}]
+  }'

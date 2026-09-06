@@ -1,0 +1,23 @@
+# Non-sharded llama.cpp whole-model entry (HF GGUF) for load-balancing tests:
+# `opod model add llama-3.2-3b-gguf --node a,b,c` launches a whole llama-server
+# (-hf) on each worker; the router load-balances requests across the placements.
+# Same weights as llama-3.2-3b-sharded but WITHOUT a sharding block, so it takes
+# the per-node whole-model path (agent launchLlamaServer) instead of the shard
+# orchestrator.
+id: llama-3.2-3b-gguf
+display_name: Llama 3.2 3B Instruct (GGUF, whole-model / LB)
+source:
+  type: huggingface
+  repo: bartowski/Llama-3.2-3B-Instruct-GGUF
+  file: Llama-3.2-3B-Instruct-Q4_K_M.gguf
+size_bytes: 2019000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 4
+tags: [small, gguf, lb, restricted-license]
+license: llama-3-community
+license_url: https://www.llama.com/llama3_2/license/
+released: 2024-09-25

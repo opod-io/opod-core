@@ -1,0 +1,68 @@
+name: ✨ Feature request
+description: Suggest a new capability, command, or improvement.
+title: "feat: "
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. To help us evaluate it, please describe
+        the underlying problem first — features without a clear user problem
+        tend to bloat the codebase.
+
+        For ideas already on the roadmap, check [TASKS.md](https://github.com/opod-io/opod/blob/main/TASKS.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What can't you do today, or what's painful? Be specific.
+      placeholder: |
+        Right now, `opod model add` only accepts catalog entries — I want to
+        install any HuggingFace GGUF without writing a YAML first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would the feature look from a user's perspective? Sketch the CLI / UI / API surface.
+      placeholder: |
+        opod model add hf:bartowski/SomeModel-GGUF --file Q4_K_M.gguf
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, similar features in other tools, why this design instead of others.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which subsystem?
+      options:
+        - CLI
+        - Web UI / dashboard
+        - HTTP API (OpenAI / Anthropic compat surface)
+        - Router / placement
+        - Engines (Ollama / vLLM / MLX / llama.cpp)
+        - Sharding / multi-machine
+        - Auth / quotas / audit
+        - Catalog (model entries)
+        - Docs / site
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Links, screenshots, mockups, or anything else.
+    validations:
+      required: false

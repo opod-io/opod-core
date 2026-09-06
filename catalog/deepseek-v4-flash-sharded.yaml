@@ -1,0 +1,37 @@
+# DeepSeek V4 Flash — DeepSeek's cost-efficient frontier variant.
+# 284B total / 13B active (MoE). MIT license.
+# Q4 weights are ~150 GB — sharding recommended on smaller nodes.
+#
+# NOTE: as of June 2026, DeepSeek V4 Flash needs a llama.cpp branch with
+# native FP8 + MXFP4 support — see https://github.com/antirez/llama.cpp-deepseek-v4-flash
+# until upstream lands the architecture. Plain `brew install llama.cpp` won't
+# load this GGUF yet.
+#
+# Prereqs:
+#   1. Download GGUF, e.g.:
+#        - https://huggingface.co/lovedheart/DeepSeek-V4-Flash-GGUF   (Q2_K 100GB / MXFP4 150GB)
+#        - https://huggingface.co/antirez/deepseek-v4-gguf
+#   2. Build patched llama.cpp on every node (see link above).
+#   3. 2-4 workers joined.
+id: deepseek-v4-flash-sharded
+display_name: DeepSeek V4 Flash (284B MoE, sharded)
+source:
+  type: file
+  path: /var/lib/opod/models/deepseek-v4-flash-q4_k_m.gguf
+size_bytes: 150000000000
+quant: q4_k_m
+context_window: 163840
+capabilities: [chat, code, reasoning, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 160
+tags: [moe, sharded, frontier, agentic]
+license: mit
+license_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/main/LICENSE
+released: 2026-04-09
+sharding:
+  required: true
+  default_shards: 2
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

@@ -1,0 +1,16 @@
+id: qwen3-30b
+display_name: Qwen 3 30B-A3B (MoE, 3B active)
+source:
+  type: ollama
+  ollama_name: qwen3:30b
+size_bytes: 19000000000
+quant: q4_k_m
+context_window: 262144
+capabilities: [chat, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 24
+tags: [general, moe, fast]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen3-30B/blob/main/LICENSE
+released: 2025-04-28
