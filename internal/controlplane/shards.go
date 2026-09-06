@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod/internal/store"
 )
 
 // ---- shard endpoints ----
@@ -26,6 +27,9 @@ func (s *Server) listShards(w http.ResponseWriter, r *http.Request) {
 	alive := s.aliveNodes(r.Context())
 	for i := range shs {
 		shs[i].Status = liveShardStatus(shs[i], alive)
+	}
+	if shs == nil {
+		shs = []store.Shard{} // contract: always a JSON array, never null
 	}
 	writeJSON(w, http.StatusOK, shs)
 }

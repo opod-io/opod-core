@@ -45,6 +45,74 @@ type Config struct {
 	Router              RouterConfig        `yaml:"router"`
 	Observability       ObservabilityConfig `yaml:"observability"`
 	Placement           PlacementConfig     `yaml:"placement"`
+	// Surfaces switches product surfaces off for a leader run by an external
+	// manager (ADR-022 / P11-2). Defaults keep every surface on for a
+	// standalone `opod up`; the switches never touch the request-path
+	// mechanisms or the stable admin surface (controlplane/contract.go).
+	Surfaces SurfacesConfig `yaml:"surfaces"`
+}
+
+// SurfacesConfig — each field has an env override a manager can set on the
+// process without a config file:
+//
+//	OPOD_UI=off          no dashboard (`/`), no bootstrap-key, no connect/invite routes
+//	OPOD_EGRESS=off      never forward to a cloud vendor, whatever keys are in the env
+//	OPOD_PROTOCOLS=…     "all" (default) or a comma list; "openai" keeps only the
+//	                     OpenAI-compatible routes (anthropic / audio / rerank → 404)
+//	OPOD_CALLBACKS=off   no webhook / Langfuse / S3 sinks, no /admin/v1/callbacks
+//	OPOD_MANAGED=1       run by a manager: update check off, banner says so
+type SurfacesConfig struct {
+	UI        bool   `yaml:"ui"`
+	Egress    bool   `yaml:"egress"`
+	Protocols string `yaml:"protocols"`
+	Callbacks bool   `yaml:"callbacks"`
+	Managed   bool   `yaml:"managed"`
+}
+
+// Protocol reports whether the named request protocol ("anthropic", "audio",
+// "rerank") is enabled. "openai" is always on — it is the product.
+func (s SurfacesConfig) Protocol(name string) bool {
+	if name == "openai" {
+		return true
+	}
+	p := strings.TrimSpace(strings.ToLower(s.Protocols))
+	if p == "" || p == "all" {
+		return true
+	}
+	for _, x := range strings.Split(p, ",") {
+		if strings.TrimSpace(x) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Summary is the one-line banner form: "ui off · egress off · protocols openai · callbacks off · managed".
+func (s SurfacesConfig) Summary() string {
+	on := func(b bool) string {
+		if b {
+			return "on"
+		}
+		return "off"
+	}
+	p := s.Protocols
+	if strings.TrimSpace(p) == "" {
+		p = "all"
+	}
+	out := "ui " + on(s.UI) + " · egress " + on(s.Egress) + " · protocols " + p + " · callbacks " + on(s.Callbacks)
+	if s.Managed {
+		out += " · managed"
+	}
+	return out
+}
+
+// offSwitch: "off", "0", "false", "no" (any case) mean off.
+func offSwitch(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "0", "false", "no":
+		return true
+	}
+	return false
 }
 
 // PlacementConfig tunes the memory-lifecycle manager (admission,
@@ -288,6 +356,7 @@ func Default() *Config {
 	return &Config{
 		Listen:      ":8080",
 		ExternalURL: "",
+		Surfaces:    SurfacesConfig{UI: true, Egress: true, Protocols: "all", Callbacks: true},
 		DataDir:     dataDir,
 		LogLevel:    "info",
 		CatalogDir:  "", // empty → use built-in catalog dir resolution
@@ -372,6 +441,21 @@ func (c *Config) Save(path string) error {
 }
 
 func applyEnv(c *Config) {
+	if v := os.Getenv("OPOD_UI"); v != "" {
+		c.Surfaces.UI = !offSwitch(v)
+	}
+	if v := os.Getenv("OPOD_EGRESS"); v != "" {
+		c.Surfaces.Egress = !offSwitch(v)
+	}
+	if v := os.Getenv("OPOD_PROTOCOLS"); v != "" {
+		c.Surfaces.Protocols = v
+	}
+	if v := os.Getenv("OPOD_CALLBACKS"); v != "" {
+		c.Surfaces.Callbacks = !offSwitch(v)
+	}
+	if v := os.Getenv("OPOD_MANAGED"); v != "" {
+		c.Surfaces.Managed = !offSwitch(v)
+	}
 	if v := os.Getenv("OPOD_LISTEN"); v != "" {
 		c.Listen = v
 	}
@@ -564,6 +648,10 @@ func applyEnv(c *Config) {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			c.Placement.DrainTimeoutSeconds = n
 		}
+	}
+	// Egress off is absolute: keys in the env are ignored, nothing leaves the box.
+	if !c.Surfaces.Egress {
+		c.Router.Fallback.Enabled = false
 	}
 }
 

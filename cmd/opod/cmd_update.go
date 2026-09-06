@@ -401,8 +401,8 @@ func copyFile(src, dst string) error {
 //
 // Safe to call once per process — does not block longer than 1 second.
 func MaybeShowUpdateNotice(w io.Writer) {
-	if os.Getenv("OPOD_NO_UPDATE_CHECK") == "1" {
-		return
+	if os.Getenv("OPOD_NO_UPDATE_CHECK") == "1" || os.Getenv("OPOD_MANAGED") == "1" {
+		return // opted out, or run by a manager that owns upgrades
 	}
 
 	cachePath := updateCheckCachePath()

@@ -1187,3 +1187,24 @@ E.g. swapping LAN for Tailscale tsnet:
 ### Add a new model to the catalog
 
 Add `catalog/<id>.yaml`. The catalog is loaded at startup; no code change needed. See [catalog/README.md](catalog/README.md) for the schema and required fields.
+
+## Stable admin surface (v1)
+
+`internal/controlplane/contract.go` freezes the routes an external manager may rely on
+(probes, the two gateway routes, the worker join/heartbeat pair, and the `/admin/v1`
+manager routes: `version`, `capabilities`, `nodes`, `models`, `models/{id}/load`,
+`healthcheck`, `events/stream`, `usage/stream`, `shards` list/create/delete). The list is
+additive-only: `GET /admin/v1/capabilities` serves it together with feature flags, and
+`TestLeaderContract` walks the real router so a change that drops one of these routes
+fails `go test`. Everything else under `/admin/v1` may change between releases.
+
+## Surface switches (managed mode)
+
+A leader run by an external manager is essentials-only. `surfaces:` in the config (env overrides
+in brackets) switches product surfaces off without touching the request path or the stable admin
+surface above: `ui` (`OPOD_UI=off`: no dashboard at `/`, no bootstrap-key / connect / invite routes),
+`egress` (`OPOD_EGRESS=off`: no request ever leaves for a cloud vendor, whatever keys are in the
+environment), `protocols` (`OPOD_PROTOCOLS=openai`: only the OpenAI-compatible routes; anthropic,
+audio and rerank answer 404), `callbacks` (`OPOD_CALLBACKS=off`: no webhook / Langfuse / S3 sinks),
+`managed` (`OPOD_MANAGED=1`: update check off, banner says so). Defaults keep everything on for a
+standalone `opod up`. `TestSurfacesOff` proves the stable admin surface is intact with every switch off.
