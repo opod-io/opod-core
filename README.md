@@ -10,13 +10,17 @@
 
 [**opod.io**](https://opod.io) · [GitHub](https://github.com/opod-io/opod) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
 
-> Opod is the **self-hosted control plane for LLMs**. One Go binary turns your Macs and Linux boxes into a private inference cluster — multi-machine routing, per-user keys, daily quotas, full audit log, and a built-in admin dashboard, behind one endpoint that speaks both the **OpenAI** and **Anthropic** APIs.
 >
 > Engine-agnostic: bring **Ollama**, **vLLM**, **MLX-LM**, or **llama.cpp-RPC**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware, shard a giant model across several machines via llama.cpp-RPC, and transparently fall back to paid Claude / GPT only when you choose.
 >
 > Point Cursor, Claude Code, Aider, Continue, or any OpenAI/Anthropic SDK at Opod. It just works.
 
 ## 🗺️ Where Opod sits
+
+> **Scope (ADR-022, 2026-09-06).** Core is the CLI-only inference runtime: `opod up` / `opod join`, the OpenAI-compatible
+> gateway, API keys + join tokens, engine adapters, model load, llama.cpp-RPC sharding, and a stable `/admin/v1` surface for an
+> external manager. Everything product-shaped — console, invites, vendor egress and cloud key pools, routing chains, callbacks and
+> sinks, dollar budgets, usage/audit query APIs, guardrail implementations, update checks — lives in the control plane (`opodcp`).
 
 ```
            ┌──────────────────────────────────────────────────────────────┐
@@ -53,7 +57,6 @@
               ┌─────────────────────┼─────────────────────┐
               ▼                     ▼                     ▼
        ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-       │   Engines   │       │   Engines   │       │   Egress    │
        │  (any mix)  │       │  (any mix)  │       │   proxy     │
        │  • Ollama   │       │  • Ollama   │       │             │
        │  • vLLM     │       │  • vLLM     │       │ api.anthro- │
@@ -174,7 +177,6 @@ claude
 
 | | |
 |---|---|
-| **Status** | Beta — single-node verified end-to-end (curl, dashboard, CLI); multi-node routing has in-process E2E coverage (`internal/controlplane/two_node_e2e_test.go`); real two-machine verification via the [30-sec smoke script](scripts/two-node-smoke.sh) + [manual walkthrough](docs/TWO_NODE_VERIFICATION.md). Auto-released on every `feat:` / `fix:` commit (see [Releases](https://github.com/opod-io/opod/releases)). |
 | **License** | Apache 2.0 |
 | **Language** | Go (orchestrator + embedded HTML UI) |
 | **Platforms** | macOS (Apple Silicon), Linux (x86_64, arm64) |
@@ -255,7 +257,6 @@ You'll see:
 
   Opod is ready.
 
-  Dashboard: http://localhost:8080
   API:    http://localhost:8080/v1
   Key:    sk-orc-xK9p…  (also in UI)
 
@@ -354,7 +355,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/rerank`)
 - Anthropic-compatible API (`/v1/messages`, `/v1/messages/count_tokens`)
 - Audio endpoints (`/v1/audio/transcriptions`, `/v1/audio/speech`) — proxies to optional `OPOD_WHISPER_ENDPOINT` / `OPOD_PIPER_ENDPOINT`; returns HTTP 501 with setup hint when unconfigured
-- Rerank endpoint passes through to llama-server's native `/v1/rerank` (b3580+); Cohere-shape response
 - SSE streaming with proper client-disconnect handling (no goroutine leaks; bounded drain on cancel)
 - Tool / function calling (pass-through for capable models)
 - Vision (image input) on multimodal models — `image_url` content blocks on `/v1/chat/completions` route through the Ollama engine path
@@ -381,97 +381,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Per-user API keys with revocation, scopes (admin / user / node), and **TTL expiry** (`--ttl 7d`, `--expires-at 2026-07-01`, `opod token renew/expire`)
 - Daily token quotas per key with usage metering
 - **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
-- **Per-key dollar + token budgets** — multiple budgets compose with AND semantics (`$10/day AND $100/month AND 1M tokens/day`). Windows: `day` / `week` / `month` (UTC). HTTP 429 `budget_exceeded` with `X-Opod-Budget-Reset-At` + audit row.
-- **Usage facts, no rating** — every usage row records model, protocol, tokens, latency and outcome; dollar cost and budgets left core (ADR-022) and belong to the control plane or your billing stack.
 - **Per-key model allowlist** — pin a key to specific model ids (or vendor families via `claude-*` / `gpt-*` globs); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Opod-Request-Id` correlation token (also embedded in audit rows for traceability)
-- Audit log of every admin mutation + middleware refusals (`model_not_allowed`, `budget_exceeded`, `router.override`, `guardrail.block`)
 - OIDC / SSO login for the web UI — **not planned** (explicitly out of scope; see [ROADMAP.md](ROADMAP.md#explicitly-killed-or-sibling-projected-scope)). The UI uses a pasted admin key; per-user API keys + quotas + audit cover accountability
 
 ```bash
 opod token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
 opod token create bob   --models 'claude-*,gpt-*'          # vendor families via glob
 opod token create dave  --rpm 60 --tpm 100000 --ttl 30d    # rate-limited + expiring
-opod token budget add k_abc --window month --limit 100 --unit usd  # $100/month cap
 opod token edit k_abc --add-model gpt-4o-mini              # extend
 opod token edit k_abc --remove-model qwen3-14b             # tighten
 opod token renew k_abc --ttl 30d                           # extend expiry
 ```
-
-### Hybrid local + cloud
-
-- Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
-- **OpenAI-compatible hosted gateways (20+)** — `openrouter/<model>`, `groq/<model>`, `together/<model>`, `fireworks/<model>`, `cohere/<model>`, `mistral/<model>`, `perplexity/<model>` plus the registry providers `deepseek/`, `cerebras/`, `nvidia/`, `gemini/` (OpenAI-compat), `huggingface/`, and `zai/`, `ollama-cloud/`, `github/`, `cloudflare/`, `ovh/`, `kilo/`, `pollinations/`, `llm7/`, `opencode-zen/`. Set the matching `*_API_KEY`; the slash prefix is stripped before forwarding so the upstream sees its native id. Providers with stable endpoints ship a default URL; the rest require `<NAME>_BASE_URL` (Opod won't ship a guessed endpoint). Adding a provider is one row in `internal/api/providers.go`.
-- **Multi-key rotation + 429 failover** — stack several keys for one provider with numbered env vars (`GROQ_API_KEY`, `GROQ_API_KEY_2`, … `_N`). Opod rotates across them round-robin and, when a key returns 429 / 5xx / a transport error, parks it (honoring `Retry-After`) and retries the request on your next key — transparently, so the client never sees the rate limit. The last key always streams through, so a real error still surfaces once every key is exhausted.
-- **`model="auto"`** resolves to this leader's default model. Cross-provider routing chains and vendor egress left core (ADR-022); a control plane that wants them builds them above the leader.
-- Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
-- **Typed fallback chains** — catalog entries can declare `fallback_on_context_length` (prompt too long → long-context variant) and `fallback_on_content_policy` (vendor refused → permissive open-weight). The router classifies the primary's error (sentinel `errors.Is` then heuristic substring) and switches the rest of the chain to the matching typed list. Generic `fallback:` is the default when no typed list matches.
-- **Per-request overrides** — clients can override the catalog chain for a single call. Body block (`opod.fallbacks`, `opod.num_retries`, `opod.retry_backoff_ms`, `opod.hedge`) or `X-Opod-*` headers; the router walks the request chain instead of the catalog one and retries each candidate with exponential backoff (cap 5 retries, 5 s backoff). Traces tag `opod.fallback.source = catalog | request` so operators can see who's overriding policy.
-- **Request hedging** — opt-in per-request (`router.hedge_replicas: 2` in config + `opod.hedge: true` or `X-Opod-Hedge: 1` per call) fires the request to the top-N least-loaded workers concurrently and returns whichever stream opens first; losers are cancelled. Tail-latency win at the cost of ~2× engine load.
-- **Sticky sessions** — when `router.sticky_session_ttl_seconds > 0`, the router pins (user_id, model) to its last worker so multi-turn chats reuse the same node's KV cache. Falls through when the pinned node is in cooldown or stale.
-- **Placement cooldown (circuit breaker)** — after `router.placement_allowed_fails` consecutive engine errors, a worker is parked for `placement_cooldown_seconds`. `pick()` skips it until expiry; a single success after expiry resets the counter. Dashboard's Nodes tab shows a 🚫 cooldown badge with seconds remaining.
-
-  ```bash
-  curl -s http://localhost:8080/v1/chat/completions \
-    -H "Authorization: Bearer sk-orc-..." \
-    -H "X-Opod-Num-Retries: 3" \
-    -H "X-Opod-Hedge: 1" \
-    -d '{
-      "model": "qwen3-14b",
-      "messages": [{"role":"user","content":"hi"}],
-      "opod": {"fallbacks": ["qwen3-8b", "llama-3.2-3b"], "retry_backoff_ms": 250}
-    }'
-  ```
-
-- **AWS Bedrock**: SigV4 signing for `anthropic.*` models (non-streaming). Streaming body translation for other families pending.
-- **GCP Vertex**: ADC auth probe wired. Body translation for `generateContent` pending.
-
-### Policy + content checks
-
-- **Guardrails framework** — `observability.guardrails` in `config.yaml` chains synchronous content checks against external services before the engine sees the request. Drivers: `webhook` (today; works as a thin shim for Presidio + Bedrock Guardrails + custom in-house policy). Modes: `pre` (block / rewrite / flag), `logging_only` (observe). On block: HTTP 403 `guardrail_blocked` with the guardrail name + reason; audit row recorded. `fail_open: true|false` chooses Allow vs Block on guardrail unreachable.
-
-  ```yaml
-  observability:
-    guardrails:
-      - name: redact-pii
-        kind: webhook
-        mode: pre
-        url: "http://presidio.lan:8080/v1/check"
-        fail_open: false
-  ```
-
-- **Observability callbacks** — usage + audit events fan out to external sinks. Drivers: `webhook` (HMAC-SHA256 signed payloads), `langfuse` (maps usage to `generation-create` against `/api/public/ingestion`), and `s3` (batched NDJSON to an S3 or S3-compatible bucket — MinIO / Cloudflare R2 / GCS-interop). Each sink runs on its own goroutine with a bounded queue — a slow receiver is non-blocking on the hot path; overflow events are dropped and counted on `opod_callback_sent_total{outcome=dropped}`. Admin `GET /admin/v1/callbacks` lists sinks; `POST /admin/v1/callbacks/test[?sink=name]` fires a synthetic event for wiring verification.
-
-  ```yaml
-  observability:
-    callbacks:
-      - kind: webhook
-        url: "https://hooks.example.com/opod"
-        events: [usage, audit]
-        secret: "${WEBHOOK_SECRET}"
-      - kind: langfuse
-        public_key: "${LANGFUSE_PUBLIC_KEY}"
-        secret_key: "${LANGFUSE_SECRET_KEY}"
-      - kind: s3
-        bucket: "opod-logs"
-        region: "us-east-1"
-        prefix: "usage/"            # objects land at usage/YYYY/MM/DD/opod-<ts>.jsonl
-        events: [usage, audit]      # omit for all kinds
-        batch_size: 100             # events per object (default 100)
-        flush_seconds: 30           # max batch age before upload (default 30)
-        # endpoint: "https://<accountid>.r2.cloudflarestorage.com"  # S3-compatible
-        # access_key_id: "${AWS_ACCESS_KEY_ID}"      # omit to use the default AWS chain
-        # secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
-  ```
-
-  The `s3` sink buffers events and writes one date-partitioned NDJSON object per flush (whichever of `batch_size` / `flush_seconds` comes first; a final flush runs on shutdown). Credentials come from `access_key_id` / `secret_access_key` when set, otherwise the standard AWS chain (env, shared config, IMDS) — the same chain Bedrock egress uses. Set `endpoint` (and the SDK switches to path-style addressing) for any S3-compatible store.
 
 ### Observability
 
 - Prometheus metrics endpoint (`/metrics`) — per-model RPS, latency, tokens, errors
 - Per-call usage records (model, protocol, tokens, latency, outcome) on `/admin/v1/usage/stream` (cursor + replay) — the control plane pulls and exports them
 - Admin actions are recorded and streamed to the control plane on `/admin/v1/events/stream`
-- Reference Grafana dashboards in [`dashboards/`](dashboards/) — `cluster-overview.json`, `per-model.json`, `per-node.json`. Import any of them into Grafana 10+ and point at your Prometheus scrape of Opod's `/metrics`.
 - OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Opod emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All four engine drivers (ollama, vllm, mlx, llamacpp) export the same span shape. W3C `traceparent` propagation is always on so Opod participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 
 ### Developer experience
@@ -499,7 +426,6 @@ Opod ships a curated catalog of **41 open-weight models** in `catalog/*.yaml`, s
 | Tier | Models |
 |---|---|
 | **Edge (≤4 GB RAM)** | `llama-3.2-1b`, `llama-3.2-3b`, `nomic-embed-text` (embeddings), `moondream3` (vision) |
-| **Small / laptop (8-16 GB)** | `qwen-coder-7b`, `deepseek-r1-8b`, `lfm2.5-8b-a1b` ⭐, `qwen3-8b`, `glm-4-9b`, `mimo-7b`, `mimo-audio` (audio), `mimo-vl-7b` (vision), `gemma4-e2b` (vision+audio), `gemma4-e4b` (vision+audio), `qwen3-vl-8b` (vision), `mellum2-12b`, `mistral-nemo-12b`, `gemma4-12b` (multimodal), `pixtral-12b` (vision), `qwen3-14b`, `qwen-coder-14b`, `phi-4-14b` |
 | **Consumer big (16-32 GB)** | `gpt-oss-20b` ⭐, `qwen3.6-27b` ⭐, `gemma4-26b`, `gemma4-31b` (vision), `qwen3-30b`, `qwen3-coder-30b`, `qwen3-vl-32b` (vision), `qwen-coder-32b` |
 | **Single 80 GB GPU** | `llama-3.3-70b-sharded`, `gpt-oss-120b`, `llama-4-scout` (10M ctx, multimodal), `glm-4.5-air-sharded` (agentic MoE) |
 | **Sharded frontier (≥128 GB combined)** | `step-3.7-flash-sharded` ⭐ (Apache-2.0), `deepseek-v4-flash-sharded`, `nemotron-3-ultra-sharded` (Mamba-MoE, 1M ctx), `glm-4.6-sharded` (agentic coder), `glm-5.1-sharded`, `glm-5.2-sharded` (1M ctx), `kimi-k2.6-sharded` |
@@ -508,20 +434,9 @@ Opod ships a curated catalog of **41 open-weight models** in `catalog/*.yaml`, s
 
 Run `opod model search` to list everything live with sizes and capabilities, or `opod model info <id>` for one model's full spec. Add `--sort=released` for newest-first, `--since 2026-01-01` to filter by date, or `--json` for machine-readable output. `opod model ls`, `opod status`, the control plane's Usage page, and the control plane's Audit page also accept `--json`. Running any `opod model add|info|remove` or `opod connect` with no ID launches an interactive picker (type to filter; arrow keys to navigate). Output is colored when stdout is a TTY; set `NO_COLOR=1` (or `OPOD_NO_COLOR=1`) to disable.
 
-The dashboard at `http://localhost:8080` mirrors the CLI: persistent top-bar chips show role + engine reachability + node/model counts (polled every 5 s); the Home tab summarizes traffic (requests-per-minute sparkline, p50/p95/p99, error rate, top model, recent activity); the Models tab includes a filterable catalog browser with per-row install; Nodes / Models / Usage / Audit refresh live while their tab is active; and "Add a worker" generates a one-time join token with copy-pasteable install-and-join snippets.
-
 Aggregates (summaries, breakdowns) are computed by the control plane from the streams; core keeps only the raw facts.
 
 Engine reliability: when Opod auto-spawned the engine itself (`opod up` with `OPOD_ENGINE=llamacpp`), a health watchdog polls every 30 s and force-restarts the process after three consecutive failures — so a hung `llama-server` no longer requires manual intervention. For user-managed engines (Ollama, vLLM) Opod leaves the process alone but `/v1/chat/completions` now returns a typed `engine_unreachable` error with the engine name, endpoint, and the exact command to start it (`ollama serve`, `mlx_lm.server …`, etc.) when the engine isn't responding.
-
-### Proxied (paid APIs — shipped, works today)
-
-When a request's model name matches one of these, Opod proxies to the upstream vendor with **your** API key (env-configured) and logs the call as usage like any other request:
-
-- **Anthropic upstream**: any `claude-*` model id
-- **OpenAI upstream**: `gpt-*`, `o1*`, `o3*`, `o4*` model ids
-
-Routing logic lives in `internal/api/egress.go`; vendor detection in `internal/router/router.go`.
 
 ### Roadmap — model families not yet in catalog
 
@@ -531,7 +446,6 @@ These work today via `opod model add hf:owner/repo` but don't have curated YAML 
 
 Shipped recently (don't fall in this list):
 - **Speech / transcription** — `/v1/audio/transcriptions` (and `/v1/audio/speech`) proxy to an optional Whisper / Piper endpoint (`engine.whisper_endpoint` / `engine.piper_endpoint`, or `OPOD_WHISPER_ENDPOINT` / `OPOD_PIPER_ENDPOINT`); HTTP 501 with a setup hint when unconfigured.
-- **Rerank** — `/v1/rerank` passes through to llama-server's native rerank endpoint (b3580+); Cohere-shape response.
 - **Vision (image input)** — `gemma4-12b`, `gemma4-26b`, `gemma4-31b`, `gemma4-e2b`, `gemma4-e4b`, `qwen3-vl-8b`, `qwen3-vl-32b`, `pixtral-12b`, `moondream3`, `mimo-vl-7b`, `llama-4-scout` all serve through `/v1/chat/completions` with `image_url` content blocks.
 - **Embeddings (for RAG)** — `/v1/embeddings` is live; install `nomic-embed-text` and call it from any OpenAI-shape embedding client.
 - **Audio (input)** — `mimo-audio`, `gemma4-e2b`, `gemma4-e4b` declare `audio` capability for future routing; today they serve as `chat` models.
@@ -796,41 +710,20 @@ router:
     enabled: false                    # true → forward unknown claude-*/gpt-* models to vendor
     anthropic_url: "https://api.anthropic.com"
     openai_url:    "https://api.openai.com"
-    # Bedrock (AWS) — signed via aws-sdk-go-v2 using the standard AWS
     # credentials chain (env, shared config, instance role). Supports
-    # the anthropic.* model family non-streaming; amazon.*/meta.*/mistral.*
     # return 501 (body translation not yet shipped).
-    bedrock_region: ""                # e.g. us-east-1
-    bedrock_url: ""                   # optional endpoint override
-    # Vertex (GCP) — ADC auth probe wired; body translation for
     # generateContent not yet shipped. Set the project and a 501 with
     # ADC status returns until then.
-    vertex_project:  ""               # GCP project id
-    vertex_location: "us-central1"
-    vertex_url: ""                    # optional endpoint override
     # OpenAI-compatible hosted gateways — URL overrides only; the keys
-    # come from env (OPENROUTER_API_KEY, GROQ_API_KEY, …).
-    openrouter_url: ""
-    groq_url: ""
     together_url: ""
-    fireworks_url: ""
-    cohere_url: ""
-    mistral_url: ""
-    perplexity_url: ""
 
 observability:
   otlp_endpoint: ""                   # e.g. http://localhost:4318 — empty disables tracing (no-op overhead)
-  callbacks: []                       # usage/audit event sinks — list of
-                                      # {kind: webhook|langfuse|s3, id, url, secret,
                                       #  events, host, public_key, secret_key,
                                       #  bucket, region, prefix, endpoint,
                                       #  access_key_id, secret_access_key,
                                       #  batch_size, flush_seconds, queue_size};
-                                      #  see "Observability callbacks"
-  guardrails: []                      # synchronous content checks — list of
-                                      # {name, kind: webhook, mode: pre|logging_only,
                                       #  url, auth_key, headers, fail_open,
-                                      #  timeout_seconds}; see "Guardrails framework"
   response_cache:
     enabled: false                    # cache embeddings responses by request hash
     driver: "memory"                  # memory | sqlite
@@ -841,7 +734,6 @@ placement:                            # memory lifecycle for this node's local e
   exclusive: false                    # true → one resident model per machine: every
                                       # load evicts all other non-pinned models first
   reserve_percent: 20                 # % of total RAM held back from the admission
-                                      # budget (OS + engine overhead headroom)
   drain_timeout_seconds: 30           # max wait for in-flight requests before an
                                       # eviction unloads anyway
 ```
@@ -860,21 +752,14 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
-| `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `TOGETHER_API_KEY` / `FIREWORKS_API_KEY` | enables passthrough to the matching OpenAI-compatible hosted gateway. Models named `openrouter/<id>` / `groq/<id>` / etc are routed; the prefix is stripped before forwarding |
-| `COHERE_API_KEY` / `MISTRAL_API_KEY` / `PERPLEXITY_API_KEY` | passthrough to Cohere / Mistral La Plateforme / Perplexity. Models named `cohere/<id>` / `mistral/<id>` / `perplexity/<id>` are routed |
 | `DEEPSEEK_API_KEY` / `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `HF_TOKEN` / `ZAI_API_KEY` / `OLLAMA_CLOUD_API_KEY` / `GITHUB_MODELS_TOKEN` / `CLOUDFLARE_API_KEY` / `OVH_API_KEY` / `KILO_API_KEY` / `POLLINATIONS_API_KEY` / `LLM7_API_KEY` / `OPENCODE_ZEN_API_KEY` | registry providers — passthrough for `deepseek/<id>`, `cerebras/<id>`, `gemini/<id>`, etc. Stable ones default their URL; others need `<NAME>_BASE_URL` |
-| `<PROVIDER>_API_KEY_2` … `_N` | extra keys for the same provider — Opod rotates across them and parks any that hits a 429 (e.g. `GROQ_API_KEY`, `GROQ_API_KEY_2`, `GROQ_API_KEY_3`) |
 | `<NAME>_BASE_URL` | overrides a registry provider's base URL (e.g. `DEEPSEEK_BASE_URL`, `CLOUDFLARE_BASE_URL`) |
 | `OPOD_CATALOG_DIR` | `catalog_dir` — overrides catalog lookup. Default search order: `$OPOD_CATALOG_DIR` → `./catalog` → `<exe-dir>/catalog` → `~/.opod/catalog` (curl installer) → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) |
 | `OPOD_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `OPOD_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
 | `OPOD_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader supports HMAC node auth (any current release). |
-| `OPOD_BEDROCK_REGION` | `router.fallback.bedrock_region` — enables Bedrock with real SigV4 signing for the anthropic.* family; other families return 501 |
-| `OPOD_VERTEX_PROJECT` | `router.fallback.vertex_project` — wires ADC auth check; body translation not yet shipped |
-| `OPOD_VERTEX_LOCATION` | `router.fallback.vertex_location` (default `us-central1`) |
 | `OPOD_LATENCY_P95_SECONDS` | `router.latency_fallback_p95_seconds` — when primary p95 exceeds this, prefer a faster fallback. 0 = disabled (default) |
 | `OPOD_EXCLUSIVE` | `placement.exclusive` (truthy `1/true`) — one resident model per machine |
-| `OPOD_PLACEMENT_RESERVE_PERCENT` | `placement.reserve_percent` — RAM held back from the admission budget (default 20) |
 | `OPOD_PLACEMENT_DRAIN_TIMEOUT_SECONDS` | `placement.drain_timeout_seconds` — eviction drain bound (default 30) |
 | `OPOD_UNLOAD_ON_EXIT` | `1` → Ctrl-C of `opod up` also unloads engine-resident models (the `opod down` path already does this by default) |
 | `OPOD_SKIP_SOURCE_CHECK` | `1` → skip the pre-flight HEAD probe that `opod model add` runs against the upstream registry (use for air-gapped mirrors / custom registries) |
@@ -1069,7 +954,6 @@ memory commands control what occupies RAM *right now*, with admission control
 so a machine is never overcommitted:
 
 ```bash
-opod model ps                          # what's resident + free memory budget
 opod model load qwen-coder-14b         # bring into RAM now; REFUSES if it doesn't fit
 opod model load qwen-coder-14b --swap  # evict least-recently-used models to make room
 opod model load nomic-embed-text --pin # pinned: never evicted, no idle TTL
@@ -1079,7 +963,6 @@ opod model unload qwen-coder-14b       # drain in-flight requests, then release 
 How it works:
 
 - **Admission** checks the model's footprint (weights + ~20% overhead) against
-  live engine residency (Ollama `/api/ps`) and this machine's RAM budget
   (total minus a 20% OS reserve, tunable via `placement.reserve_percent`).
 - **`--swap`** evicts only as many models as needed, least-recently-used first
   (from the usage log), never pinned ones. Victims are **drained** — the router
@@ -1098,7 +981,6 @@ How it works:
   `--unload-on-exit`.
 
 > Residency reporting requires Ollama today. Other engines degrade gracefully:
-> admission still refuses over-budget models, and Opod-spawned llama-server
 > processes are killed (memory freed) on shutdown by the process supervisor.
 
 ### Remove a model
@@ -1114,8 +996,6 @@ LoRA adapter loading (`opod model adapter add`) is on the roadmap for a future r
 ---
 
 ## Connecting clients
-
-You have **three ways** to wire up a tool: the CLI, the dashboard, or copy-paste from the snippets below. All three produce the same config — they all invoke the same `internal/control/` code path.
 
 ### Fastest: `opod connect <client>`
 
@@ -1159,8 +1039,6 @@ Prints the exact commands to roll back whatever `opod connect` set up — does N
 opod token create hadi            # a user-scope API key, printed once
 opod connect cursor --token <key> # the snippet for their tool, with that key
 ```
-
-Share cards, quotas and the invite flow live in the control plane's console (ADR-022); core keeps the two primitives above.
 
 ### No dashboard in core
 
@@ -1259,7 +1137,6 @@ print(resp.content[0].text)
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
 | `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
-| `POST` | `/v1/rerank` | Pass-through to llama-server's native `/v1/rerank` (b3580+); Cohere-shape response |
 | `POST` | `/v1/audio/transcriptions` | Proxies to `engine.whisper_endpoint` / `OPOD_WHISPER_ENDPOINT`; HTTP 501 with setup hint when unconfigured |
 | `POST` | `/v1/audio/speech` | Proxies to `engine.piper_endpoint` / `OPOD_PIPER_ENDPOINT`; HTTP 501 with setup hint when unconfigured |
 | `GET` | `/v1/models` | Lists available models |
@@ -1289,8 +1166,6 @@ print(resp.content[0].text)
 | `POST` | `/admin/v1/models` | Install a model (auto-delegates to shard orch if `sharding.required`) |
 | `DELETE` | `/admin/v1/models/{id}` | Uninstall (auto-handles sharded teardown) |
 | `POST` | `/admin/v1/models/{id}/unload` | Drain in-flight requests, drop the model from engine RAM (weights stay; cleared from desired placements so it stays unloaded across restarts). Engines that don't support it return `status:"noop"` |
-| `POST` | `/admin/v1/models/{id}/load` | Memory-aware load: `{swap, pin, priority}`. 200 = loaded (response lists any evictions); 409 `needs_swap` with the LRU victim list; 409 `blocked_by_pinned`; 422 `impossible` (over the node's budget even when empty) |
-| `GET` | `/admin/v1/memory` | Live engine residency (per-model RAM/VRAM bytes via Ollama `/api/ps`), pins, priorities, free budget, exclusive flag |
 | `GET` | `/admin/v1/tokens` | List API keys (no hash, no plaintext) |
 | `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
@@ -1302,7 +1177,6 @@ print(resp.content[0].text)
 | `GET` | `/admin/v1/audit/recent` | Recent admin actions |
 | `GET` | `/admin/v1/audit/summary` | Top actors + top actions |
 | `GET` | `/admin/v1/config` | Effective config, secrets redacted |
-| `GET` | `/admin/v1/status` | Compact role + engine reachability + node/model counts (powers dashboard top-bar chips) |
 | `GET` | `/admin/v1/events` | Server-Sent Events stream. Push-on-change for `models` / `nodes` / `shards` topics. Sends a 25 s `keepalive` comment so proxies don't idle. Auth via Bearer or `?key=` query param. |
 
 All admin endpoints require an admin key (`opod token create --admin`).
@@ -1318,8 +1192,6 @@ All admin endpoints require an admin key (`opod token create --admin`).
 | `claude-…` | Anthropic API (proxied) |
 | `gpt-…`, `o3`, `o4` | OpenAI API (proxied) |
 | `hf:…` | local, if the model is loaded |
-
-**Routing-sort suffixes** (OpenRouter-compatible): append `:floor` (cheapest first) or `:nitro` (highest tokens/sec first) to any local model id — `qwen3.6-27b:floor` walks that model's candidate chain ordered by price instead of catalog preference. Equivalent explicit forms: `opod.sort: "price" | "latency" | "throughput"` in the body or `X-Opod-Sort` header (explicit wins over the suffix). The suffix is stripped before the engine, usage records, and per-key allowlists see the name — an allowlist of `["x"]` authorizes `x:floor`. Price comes from the catalog + vendor pricing table (free local models always beat paid egress); latency/throughput come from each model's rolling p95 / median tokens-per-second over recent requests, so rankings warm up with traffic. Audit-logged like every routing override.
 
 ---
 
@@ -1360,7 +1232,6 @@ opod model info <id> [--json]    Full details for one catalog model
 opod model remove <id> [--yes]   Uninstall a model (prompts unless --yes)
 
 # --- memory lifecycle (which models occupy RAM right now) ---
-opod model ps [--json]           Resident models + RAM/VRAM sizes, pins, free budget
 opod model load <id> [--swap] [--pin] [--priority N]
                                   Bring a model into engine RAM with admission
                                   control: refuses when it doesn't fit; --swap
@@ -1385,10 +1256,6 @@ opod token edit <id>             Change a key's model allowlist / rate limits
                                   --clear-models, --rpm, --tpm)
 opod token renew <id>            Extend expiry (--ttl DURATION | --expires-at DATE)
 opod token expire <id> [--in D]  Expire a key now (or in DURATION, e.g. --in 1h)
-opod token budget add <key-id> --window day|week|month --limit N --unit tokens|usd
-                                  Attach a token / dollar budget to a key
-opod token budget ls <key-id>    List a key's budgets
-opod token budget rm <key-id> <budget-id>  Remove a budget
 opod token revoke <id>           Revoke a key
 
 # --- connecting clients ---
@@ -1408,30 +1275,6 @@ opod config edit                 Print the editor command for the config file
 Output is colored when stdout is a TTY. Set `NO_COLOR=1` (or `OPOD_NO_COLOR=1`) to disable. Top-level subcommand typos get a "did you mean ..." suggestion via Damerau-Levenshtein over the registered subcommand list.
 
 ---
-
-## Web UI
-
-The UI is shipped embedded in the Go binary via `//go:embed`. It is *not* a separate deployment. Open `http://localhost:8080` and paste the admin key.
-
-All admin actions are also doable via CLI — see the [CLI reference](#cli-reference).
-
-Persistent top-bar chips (every view) show: role (leader/worker), engine reachability, node count, model count — polled every 5 s. Most tabs subscribe to the `/admin/v1/events` SSE stream and re-fetch instantly when the relevant topic fires; a 15 s polling fallback runs underneath in case the stream drops (also pauses when the browser tab is hidden).
-
-| Tab | Capabilities |
-|---|---|
-| **Dashboard (home)** | 4 KPI cards (nodes, models, requests, tokens served); latency card with p50/p95/p99; tier-colored error-rate card; top-model card; full-width SVG sparkline of requests-per-minute over the last 60 minutes; recent-activity strip (last 6 requests with outcome badges); copy-paste curl example |
-| **Nodes** | List + status; **Add a worker** modal generates a one-time node-scope token and shows both an install-and-join curl one-liner and a `opod join` command for boxes that already have the binary; per-row **drain** and **remove** with confirmation |
-| **Models** | **Engine memory card** (resident models with RAM sizes, pin badges, usage bar against the admission budget, per-row pin/unload); installed models table with per-row **test** (opens Playground pre-wired to the model), **load** (memory-aware; offers an LRU swap with a victim-list confirm when the model doesn't fit), **unload** (drain, then drop from engine RAM, keep weights on disk), and **remove** (confirmed; auto-handles sharded teardown) buttons; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button) |
-| **Shards** | List shards grouped by sharded model; **Create sharded model** form (id + shard count); per-model **Tear down** button |
-| **Tokens** | List API keys (id/name/scope/quota/status); **Create** form with name + scope (user/admin/node) + daily quota; **Revoke** button per row; new keys shown ONCE in a modal |
-| **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome (live polling) |
-| **Audit** | Recent admin actions with actor + action + target (live polling) |
-| **Settings** | Read-only effective config with secrets redacted; instructions for editing `~/.opod/config.yaml` and the env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPOD_*`) |
-
-Mutating actions surface results via a toast notification (bottom-right, 3 s auto-dismiss) instead of inline error sprawl.
-
-Keyboard shortcuts (vim-style leader sequence; skipped while typing in any input):
-`g d` Dashboard · `g c` Connect · `g p` Playground · `g n` Nodes · `g m` Models · `g h` Shards · `g t` Tokens · `g u` Usage · `g a` Audit · `g s` Settings · `?` help · `Esc` close modals. Click the `?` chip in the top bar for the same cheatsheet.
 
 ## CLI vs UI parity
 
@@ -1544,7 +1387,6 @@ Workers no (no MLX, no native vLLM). Leader/CLI yes via WSL2. Native Windows isn
 
 Opod is a **self-hosted LLM gateway** and **inference router**. If you found this repo searching for an alternative to a hosted service or a frontend for a local engine, the answer is yes:
 
-- **OpenRouter alternative** (self-hosted) — same one-endpoint-for-many-models idea, but on your hardware with your keys.
 - **LiteLLM alternative** (Go binary instead of Python) — same OpenAI + Anthropic protocol shim, plus multi-node routing.
 - **Self-hosted Claude proxy / Claude Code proxy** — point `ANTHROPIC_BASE_URL` at Opod; serve local models or transparently proxy to real Anthropic per request.
 - **Ollama frontend / multi-machine Ollama** — Opod orchestrates several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with auth, quotas, and audit.
@@ -1574,7 +1416,6 @@ Opod stands on the shoulders of:
 - **Tailscale** — for the mesh and the `tsnet` library
 - **LiteLLM** — for cross-provider protocol translation
 - **Hugging Face** — for the open-weight model ecosystem
-- The teams behind **Qwen, Llama, DeepSeek, Mistral, GLM, Phi, Gemma, StarCoder** — for releasing open weights
 
 ---
 

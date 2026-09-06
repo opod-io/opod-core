@@ -1,5 +1,7 @@
 # Opod Architecture
 
+> Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs and guardrail implementations moved to the control plane; this document describes what remains. The stable manager surface is listed at the end.
+
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For the active implementation plan, see [TASKS.md](TASKS.md).
 
 > **Doc-vs-code currency:** this document covers the shipped feature set — cross-node routing, sharding auto-orchestration, CLI/UI parity, HMAC mutual auth, GGUF distribution, OTLP traces, 19 connect clients, interactive picker, shell completion, `--json` on every read command, `--summary` aggregates for usage/audit, first-run wizard, real progress bar, colored output, engine health watchdog, typed `engine_unreachable` errors. The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
@@ -62,7 +64,6 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
    ┌──────────────────────────────────────────────────┐
    │  GATEWAY (leader)                                │
    │  OpenAI + Anthropic compatible · auth · quotas   │
-   │  egress dispatcher (claude-* / gpt-* → vendor)   │
    └────────────────────┬─────────────────────────────┘
                         │
    ┌────────────────────▼─────────────────────────────┐
@@ -210,7 +211,6 @@ engine**:
 
 - **Residency ground truth** comes from the engine, not the DB: Ollama's
   `/api/ps` reports per-model RAM/VRAM bytes (`engines.ResidentLister`).
-  Engines without the interface degrade to budget-only admission.
 - **Admission**: `opod model load` / `POST /admin/v1/models/{id}/load`
   checks footprint (weights + ~20%) against `total RAM × (1 − reserve)` minus
   live resident bytes, and refuses rather than overcommit.
@@ -342,7 +342,6 @@ intra-node, not cross-machine sharding.)
    All state above lives in SQLite via the `store` package.
    Eventing between leader and agents is direct HTTP (heartbeats POST to
    the leader's admin API). `internal/events` is an in-process pub/sub
-   bus that fans state changes out to dashboard SSE clients — it never
    leaves the leader process.
 ```
 
@@ -358,46 +357,6 @@ intra-node, not cross-machine sharding.)
 - **Model registry** — what models exist (catalog), where they live (placement), what state they're in
 - **Model puller** — download GGUFs from HuggingFace, delegate `ollama:` sources to the engine's own pull, use `file:` sources as-is
 
-### CLI / Admin API / Web UI contract
-
-This is a load-bearing architectural rule, not a style preference:
-
-**The `opod` CLI is the canonical control surface.** Every user-facing mutation — `opod model add`, `opod model remove`, `opod shard create`, `opod node drain`, `opod token create`, etc. — is implemented as an exported Go function in `internal/control/`. The CLI command in `cmd/opod/` is a thin arg-parser that calls this function. The admin HTTP endpoint that backs the same action in the web UI is a thin request-decoder that calls the **same** function.
-
-```
-   ┌──────────────┐         ┌──────────────┐
-   │   CLI cmd    │         │  Web UI POST │
-   │   (cmd/opod)│         │  (internal/  │
-   │              │         │   ui/*.html) │
-   └──────┬───────┘         └──────┬───────┘
-          │                        │
-          ▼                        ▼
-   ┌──────────────┐         ┌──────────────┐
-   │ arg-parsing  │         │ req-decoding │
-   │ + flag       │         │ + auth       │
-   │ resolution   │         │ check        │
-   └──────┬───────┘         └──────┬───────┘
-          │                        │
-          └────────────┬───────────┘
-                       ▼
-            ┌────────────────────┐
-            │ internal/control/  │  ◄── one place mutating logic lives
-            │  ModelAdd()        │
-            │  ModelRemove()     │
-            │  SetDefault()      │
-            │  ShardCreate()     │
-            │  …                 │
-            └────────────────────┘
-```
-
-**Why this matters:**
-- Anything you can do in the dashboard, you can do in a script. Anything you can do in a script, the dashboard can do.
-- Behavior is identical across surfaces — the same audit log entry, the same validation, the same error messages.
-- A web UI bug can't drift from CLI behavior (or vice versa) because there's only one implementation.
-- New capabilities ship CLI-first (with `--help`), and the UI follows. This forces the developer to think about scriptability and headless operation before pixel-pushing.
-
-See **M4-T20** in TASKS.md for the refactor that codifies this. After M4-T20 lands, `internal/api/admin_*.go` contains no mutating logic — only request decoding and a call into `internal/control/`.
-
 ### Implemented examples (the pattern in production)
 
 As of 2026-06-05 the onboarding-and-sharing endpoints follow this pattern strictly — use them as references when writing new ones:
@@ -406,8 +365,6 @@ As of 2026-06-05 the onboarding-and-sharing endpoints follow this pattern strict
 |---|---|---|
 | `opod connect <client>` | `control.ConnectSnippet()` + `control.Clients()` | `POST /admin/v1/connect/snippet`, `GET /admin/v1/connect/clients` (in `admin_connect.go`) |
 | `opod disconnect <client>` | `control.DisconnectSnippet()` | (no HTTP endpoint — purely local string lookup; the reversal text is static per client) |
-| `opod invite <name>` | `control.Invite()` | `POST /admin/v1/invite` (in `admin_invite.go`) |
-| (dashboard-only) | — | `POST /admin/v1/healthcheck` (in `admin_healthcheck.go`) — calls `s.openaiH.ResolveModel()` + `s.router.Chat()` to send a tiny ping through the same path real requests take |
 
 `internal/control/snippets/*.tmpl` are `go:embed`-ed templates — adding a new supported client is a one-file change. Existing CLI/admin pairs (model add, token create, node drain, etc.) still duplicate logic and will move into `internal/control/` as part of the rest of M4-T20.
 
@@ -500,8 +457,6 @@ model_placements    (node_id, model_id, status, last_seen)
 desired_placements  (node_id, model_id, priority, pinned, created_at)
 shards              (id, model_id, role, node_id, address, process_id, status, …)
 api_keys            (id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, revoked, …)
-usage               (id, ts, api_key_id, user_id, model, protocol, prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd)
-budgets             (id, api_key_id, window, limit_unit, limit_value, current_value, reset_at, …)
 cache               (key, namespace, value, expires_at)
 audit_log           (id, ts, actor, action, target, metadata_json)
 ```
@@ -562,7 +517,6 @@ LiteLLM is used as a reference for edge cases in protocol translation but we don
 
 Given an authenticated `InferenceRequest`, the router decides:
 
-1. Is `model` a **proxied vendor model**? If yes → forward to vendor adapter (Anthropic / OpenAI / Bedrock) with team-scoped API key.
 2. Is `model` `auto`? Apply heuristics:
    - Short prompt with code shape → coder pool
    - Long agentic context with tools → flagship pool
@@ -617,8 +571,6 @@ The router uses this list **only on failure** — not for load-balancing or capa
 - The leader's stderr also logs each fallback hit for live observability.
 
 **Why failure-based, not policy-based**:
-
-We intentionally do **not** support fallback by user, by request shape, or by capacity. Those are policy concerns and would invite scope creep into tenant isolation / content policy (both [explicitly killed](#out-of-scope) in ROADMAP). The catalog `fallback:` field is purely about graceful degradation when a specific model breaks.
 
 **Implementation**: `internal/router/router.go` resolves `[primary, ...fallback]` from the catalog, then walks the chain in order on each retriable error (`Chat()` and `Embed()` both do this). The chain length is whatever the catalog YAML declares — keep it short (≤ 3 usually) so a single bad request can't cascade through your whole catalog. See `internal/router/router_fallback_test.go` for the test coverage.
 
@@ -745,7 +697,6 @@ Loaded into the model registry at startup. Users add via `opod model add qwen3-c
 
 Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `file`. CLI shorthand: `hf:owner/repo[:file.gguf]`, `ollama:name[:tag]`, `file:/abs/path/x.gguf`. There is no `https://`, `s3://`, or `minio://` support.
 
-- `ollama` sources delegate to the engine's own pull (with progress callbacks)
 - `huggingface` sources (GGUFs for sharding) are a single streaming GET from `huggingface.co/<repo>/resolve/main/<file>` into `storage.models_dir`, written to a `.partial` file and renamed on success; skipped if already present (`internal/scheduler/hf_download.go`). Resume of interrupted transfers is planned — not implemented; today an interrupted download starts over.
 - `file` sources are used in place — Opod just verifies the path exists
 - Shard fan-out copies the leader's GGUF to workers via `/v1/process/file` + `/v1/process/upload`, sha256-verified and skipped when the worker already has the file
@@ -769,12 +720,6 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
 | `user` | Inference keys for `/v1/...` | until revoked or expired |
 | `admin` | Cluster admin operations (`/admin/v1/...`) | until revoked or expired |
 | `node` | Worker join + register/heartbeat | until revoked or expired |
-
-`opod invite <name>` mints a `user`-scope key (optionally with a daily token quota) and renders paste-ready client snippets — there is no separate invite token kind.
-
-### Web UI auth
-
-The dashboard authenticates with an API key, same as any other client (header, or `?key=` query param for `EventSource`/SSE, which can't set headers). There is no OIDC, no SSO, and no login session — OIDC/RBAC were explicitly killed in ROADMAP.md as enterprise feature creep for a gateway on a trusted network.
 
 ### Bootstrap and worker auth
 
@@ -843,8 +788,6 @@ vLLM / MLX / llamacpp drivers all carry the same `<driver>.Chat` span shape via 
 
 ### Dashboards
 
-Importable Grafana JSON lives in [`dashboards/`](dashboards/) — see [`dashboards/README.md`](dashboards/README.md) for import steps and the underlying metric schema.
-
 - `cluster-overview.json` — total RPS, p50/p95/p99 latency, error rate, tokens/s (prompt vs completion), nodes up, loaded models inventory
 - `per-model.json` — same questions filtered to one model (Grafana template variable picks the model)
 - `per-node.json` — per-node fleet view: nodes up, models loaded per node, full inventory
@@ -897,7 +840,6 @@ All three bind to whichever Prometheus data source you pick at import time via t
 | Go | Rust, Python | Single binary, fast enough, big ecosystem for networking |
 | LAN mesh (`tsnet` planned) | libp2p, raw WireGuard, custom | LAN + plain HTTP needs zero deps and works today; tsnet would add NAT traversal + mTLS + discovery in one import when it lands |
 | SQLite via `modernc.org/sqlite` (default) | Postgres, etcd, mattn/go-sqlite3 | Embedded, file-backed, no operator; pure Go (no CGO) keeps cross-compilation trivial |
-| Direct HTTP + in-process event bus | Embedded NATS, Redis pub/sub, gRPC streaming | Heartbeats are plain HTTP POSTs; dashboard SSE only needs a process-local pub/sub (`internal/events`) — no broker to embed or operate |
 | vLLM / MLX / llama.cpp | Build our own engine | Years of perf work; we'd never catch up |
 | Hand-written adapters | LiteLLM as a library | LiteLLM is Python; we want one binary. We use it as a reference. |
 | Single embedded HTML page (`go:embed`) | Next.js SPA, separate web server | Embedded UI = one binary, no Node toolchain in the build |
@@ -954,7 +896,6 @@ opod/
 ├── internal/
 │   ├── controlplane/          # leader HTTP server + admin API + middlewares
 │   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
-│   ├── api/                   # openai.go + anthropic.go + egress.go + usage.go
 │   ├── router/                # model → node dispatch, least-loaded, shard coordinator
 │   ├── scheduler/             # sharding orchestrator + llama-server bootstrap + GGUF download/distribute
 │   ├── mesh/                  # mesh.go — LAN backend (tsnet planned)
@@ -963,10 +904,8 @@ opod/
 │   ├── store/                 # SQLite backend (api_keys / models / nodes / placements / shards / usage / audit)
 │   ├── auth/                  # API keys (sha256) + scope middleware + HMAC worker auth
 │   ├── control/               # mutating ops shared by CLI + admin API
-│   ├── events/                # in-process pub/sub bus for dashboard SSE
 │   ├── cache/                 # response cache (memory + SQLite drivers)
 │   ├── lifecycle/             # local-engine memory lifecycle (load/evict/pin)
-│   ├── callbacks/, guardrails/ # observability event sinks + content-check hooks
 │   ├── config/                # YAML + env loader
 │   ├── metrics/               # Prometheus declarations
 │   └── ui/                    # embed.go + index.html (single embedded page)
@@ -983,8 +922,6 @@ opod/
     └── homebrew/opod.rb      # tap formula template (publishing disabled until tap repo exists)
 ```
 
-*Planned dirs* (not present yet): `web/` (separate Next.js UI alternative — UI is currently embedded HTML at `internal/ui/index.html`), `deploy/{launchd,systemd,docker}/`, `test/{integration,e2e}/`. `dashboards/` and `docs/` exist on `main`.
-
 ### Naming conventions
 
 - Packages: short, lowercase, no underscores (`controlplane`, not `control_plane`)
@@ -998,7 +935,6 @@ opod/
 
 ## Coding conventions
 
-- **Go**: stdlib first, then well-vetted deps (chi, modernc.org/sqlite, prometheus/client_golang, OpenTelemetry, aws-sdk-go-v2 for Bedrock). No frameworks.
 - **Error handling**: wrap with `fmt.Errorf("operation: %w", err)`. Never swallow.
 - **Logging**: `slog` only. Levels: debug (verbose), info (user-relevant), warn (degraded), error (request failed).
 - **Tests**: table-driven where it fits. No mocks for stdlib. Use real SQLite (in-memory or temp file) and `httptest.Server` for HTTP.
@@ -1010,8 +946,6 @@ opod/
 - **File length**: aim under 600 lines; split at 800.
 
 ### UI conventions
-
-The dashboard is one embedded HTML file — `internal/ui/index.html`, compiled in via `//go:embed` (`internal/ui/embed.go`). No build step, no Node toolchain.
 
 - Vanilla JavaScript, inline at the bottom of the file
 - Tailwind via CDN for styles
@@ -1109,14 +1043,12 @@ Start with these files in order. Each top-of-file comment explains what the pack
 3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
 4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
 5. `internal/api/anthropic.go` — Anthropic protocol adapter (`/v1/messages`, `/v1/messages/count_tokens`)
-6. `internal/api/egress.go` — fallback proxy to real Anthropic/OpenAI when a request asks for a vendor model
 7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule from § CLI / Admin API / Web UI contract above)
 8. `internal/router/router.go` — picks the backing engine per request (local → remote → fallback)
 9. `internal/scheduler/sharding.go` — orchestrates sharded models (rpc-server + coordinator)
 10. `internal/engines/types.go` — `Engine` interface; `registry.go` — `Register`/`New`/`NativeName`/`CatalogID`; `internal/engines/{ollama,vllm,mlx,llamacpp}/` are the drivers; `all/` links them
 11. `internal/agent/loop.go` — worker register + heartbeat loop; `internal/agent/server.go` is the worker HTTP server
 12. `internal/store/sqlite.go` — schema, migrations, query helpers
-13. `internal/ui/index.html` (embedded via `//go:embed` in `internal/ui/embed.go`) — admin dashboard, single HTML + Tailwind via CDN
 
 ### Common contributor tasks
 
@@ -1124,7 +1056,6 @@ Start with these files in order. Each top-of-file comment explains what the pack
 |---|---|
 | Add a new inference engine | `internal/engines/<name>/` (implement `Engine`, `engines.Register` in `init`), one line in `internal/engines/all`, `enginetest.Run` conformance test |
 | Add a new model to the catalog | `catalog/<id>.yaml` — see [catalog/README.md](catalog/README.md) for the schema |
-| Add a new API surface (e.g. Cohere) | `internal/api/<name>.go`, wire route in `internal/controlplane/server.go` |
 | Add a new CLI subcommand | `cmd/opod/cmd_<name>.go` + add a case in `cmd/opod/main.go` + add the mutating function in `internal/control/` first (CLI is the source of truth) |
 | Add a new admin HTTP endpoint | `internal/controlplane/admin_<name>.go` — must delegate to `internal/control/` |
 | Add a UI page or tab | edit `internal/ui/index.html` directly; the JS is inline at the bottom |
@@ -1161,10 +1092,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 
 ### Add a new client protocol
 
-E.g. supporting Cohere's API:
-
 1. Read `internal/api/openai.go` as the simplest example.
-2. Create `internal/api/cohere.go` with handlers that translate Cohere's request shape into `engines.ChatRequest` (the internal canonical form) and back.
 3. Wire the routes in `internal/controlplane/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern).
 4. Document in [README.md → Supported clients](README.md#supported-clients) and in [README.md → API reference](README.md#api-reference).
 
@@ -1202,9 +1130,6 @@ fails `go test`. Everything else under `/admin/v1` may change between releases.
 
 A leader run by an external manager is essentials-only. `surfaces:` in the config (env overrides
 in brackets) switches product surfaces off without touching the request path or the stable admin
-surface above: `ui` (`OPOD_UI=off`: no dashboard at `/`, no bootstrap-key / connect / invite routes),
-`egress` (`OPOD_EGRESS=off`: no request ever leaves for a cloud vendor, whatever keys are in the
 environment), `protocols` (`OPOD_PROTOCOLS=openai`: only the OpenAI-compatible routes; anthropic,
-audio and rerank answer 404), `callbacks` (`OPOD_CALLBACKS=off`: no webhook / Langfuse / S3 sinks),
 `managed` (`OPOD_MANAGED=1`: update check off, banner says so). Defaults keep everything on for a
 standalone `opod up`. `TestSurfacesOff` proves the stable admin surface is intact with every switch off.
