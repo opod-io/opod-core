@@ -18,6 +18,14 @@ import (
 // The Anthropic handler uses evalPreCallGuardrails directly and writes
 // its own protocol-shaped error.
 func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
+	return ApplyPreCallGuardrails(ctx, w, st, body)
+}
+
+// ApplyPreCallGuardrails is the exported form for the controlplane's
+// dispatcher: a request that leaves this leader (policy fallback, P12-2) must
+// pass the same pre chain a served request does — a blocked prompt is never
+// forwarded.
+func ApplyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
 	current, blockedBy, reason := evalPreCallGuardrails(ctx, st, body)
 	if blockedBy != "" {
 		writeGuardrailBlocked(w, blockedBy, reason)
@@ -37,7 +45,7 @@ func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store
 // the latest body (so a `rewrite` from guardrail #1 is what
 // guardrail #2 sees).
 func evalPreCallGuardrails(ctx context.Context, st store.Store, body []byte) (out []byte, blockedBy, reason string) {
-	reg := globalGuardrails
+	reg := globalGuardrails.Load()
 	if reg.IsEmpty() {
 		return body, "", ""
 	}

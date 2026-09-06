@@ -66,7 +66,8 @@ func contractFeatures() map[string]bool {
 		"auth_file":         true, // /etc/opod-auth/auth.json watched: keys + requireKeys at runtime
 		"router_only_ready": true, // /readyz answers ready with no local engine
 		"vram_budget":       true, // `opod join --gpu --vram-budget`
-		"stream_boot":       true, // stream batches carry "boot": cursor ids restart when the leader restarts
+		"stream_boot":       true,
+		"policy_file":       true, // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
 	}
 }
 

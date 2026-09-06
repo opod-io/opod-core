@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod/internal/auth"
@@ -94,11 +95,16 @@ func SetBucketStore(s *BucketStore) { globalBucketStore = s }
 // globalGuardrails is the per-process registry built from
 // config.Guardrails. nil = no guardrails configured; the hot path
 // short-circuits via Registry.IsEmpty().
-var globalGuardrails *guardrails.Registry
+// The pointer is swapped atomically: the controlplane's policy watcher
+// replaces the registry at runtime (P12-2) while requests are in flight.
+var globalGuardrails atomic.Pointer[guardrails.Registry]
 
 // SetGuardrails wires the registry. Called from the controlplane at
-// startup.
-func SetGuardrails(r *guardrails.Registry) { globalGuardrails = r }
+// startup and on every policy snapshot change; nil clears it.
+func SetGuardrails(r *guardrails.Registry) { globalGuardrails.Store(r) }
+
+// Guardrails returns the active registry (nil when none is configured).
+func Guardrails() *guardrails.Registry { return globalGuardrails.Load() }
 
 // globalResponseCache is the configured response cache (memory or
 // SQLite). nil = caching disabled; handler hot paths short-circuit.
