@@ -62,7 +62,8 @@ func contractFeatures() map[string]bool {
 		"usage_stream":      true, // /admin/v1/usage/stream with cursor + replay
 		"loadz":             true, // in-flight / rpm / plan revision for autoscaling
 		"shards":            true, // llama.cpp-RPC gangs, live status per part
-		"plan_file":         true, // /etc/opod/plan.yaml watched (managed mode)
+		"plan_file":         true, // /etc/opod/plan.json watched (managed mode)
+		"auth_file":         true, // /etc/opod-auth/auth.json watched: keys + requireKeys at runtime
 		"router_only_ready": true, // /readyz answers ready with no local engine
 		"vram_budget":       true, // `opod join --gpu --vram-budget`
 	}

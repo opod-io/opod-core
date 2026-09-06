@@ -46,6 +46,7 @@ type Server struct {
 	openaiH     *api.Handler
 	load        loadStats
 	plan        planFileState
+	authf       authFileState
 	anthropicH  *api.AnthropicHandler
 	egressH     *api.EgressHandler
 	rateBuckets *api.BucketStore
@@ -385,6 +386,7 @@ func buildCallbackDispatcher(rows []config.CallbackConfig, blockPrivate bool, lo
 
 func (s *Server) Start(ctx context.Context) error {
 	s.StartPlanWatcher(ctx)
+	s.StartAuthWatcher(ctx)
 	if s.Version == "" {
 		s.Version = "dev"
 	}
@@ -490,7 +492,7 @@ func (s *Server) routes() http.Handler {
 		// Cap request bodies first so nothing downstream (rate-limit
 		// estimation, the dispatch handlers) buffers an unbounded body.
 		r.Use(s.limitRequestBody)
-		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
+		r.Use(auth.MiddlewareFn(s.store.APIKeys(), s.requireKeys))
 		// Per-key model allowlist runs BEFORE quota: a key with no quota
 		// to spend on an unauthorized model would otherwise burn a 429
 		// instead of the more accurate 403.
@@ -534,7 +536,7 @@ func (s *Server) routes() http.Handler {
 		// node-scope token (reachable via /nodes/register + /heartbeat) could
 		// otherwise stream an unbounded body. Mirrors the /v1 group.
 		r.Use(s.limitRequestBody)
-		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
+		r.Use(auth.MiddlewareFn(s.store.APIKeys(), s.requireKeys))
 		r.Use(s.auditMiddleware)
 
 		// Node lifecycle endpoints accept either admin or node scope so
