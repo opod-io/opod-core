@@ -313,7 +313,11 @@ func (s *Server) routes() http.Handler {
 		// node-scope token (reachable via /nodes/register + /heartbeat) could
 		// otherwise stream an unbounded body. Mirrors the /v1 group.
 		r.Use(s.limitRequestBody)
-		r.Use(auth.MiddlewareFn(s.store.APIKeys(), s.requireKeys))
+		// The admin surface ALWAYS needs a key (the seeded manager token, the
+		// local admin key, or a node token): requireKeys only gates the
+		// gateway. Before P12-3 the keyless dev shortcut left /admin/v1 open
+		// on every managed leader whose endpoint had keys optional.
+		r.Use(auth.MiddlewareFn(s.store.APIKeys(), func() bool { return true }))
 		r.Use(s.auditMiddleware)
 
 		// Node lifecycle endpoints accept either admin or node scope so
