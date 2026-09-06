@@ -1,0 +1,16 @@
+id: qwen-coder-32b
+display_name: Qwen 2.5 Coder 32B Instruct
+source:
+  type: ollama
+  ollama_name: qwen2.5-coder:32b
+size_bytes: 19850000000
+quant: q4_k_m
+context_window: 32768
+capabilities: [chat, code, fim, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 32
+tags: [coding, agent]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct/blob/main/LICENSE
+released: 2024-11-12

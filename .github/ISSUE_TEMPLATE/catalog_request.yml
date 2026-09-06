@@ -1,0 +1,113 @@
+name: 📦 New catalog model
+description: Suggest a new open-weight model for the curated catalog.
+title: "catalog: add "
+labels: [catalog, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any model you can `ollama pull` or download from HuggingFace already
+        works with Opod — the catalog just adds curated YAML so it shows up
+        in `opod model search`, the picker table, and the dashboard.
+
+        Before filing, please check that no entry already exists:
+
+        ```
+        opod model search <name>
+        ```
+
+        and skim [MODELS.md → Picker table](https://github.com/opod-io/opod/blob/main/MODELS.md#-picker-table--what-to-install).
+
+  - type: input
+    id: name
+    attributes:
+      label: Model name
+      placeholder: "Qwen 3.7 Coder 14B"
+    validations:
+      required: true
+
+  - type: input
+    id: org
+    attributes:
+      label: Publishing organization
+      placeholder: "Alibaba / Qwen"
+    validations:
+      required: true
+
+  - type: input
+    id: license
+    attributes:
+      label: License
+      placeholder: "Apache-2.0 / MIT / Llama 3 / Gemma / NVIDIA Open Model / ..."
+    validations:
+      required: true
+
+  - type: input
+    id: hf_repo
+    attributes:
+      label: HuggingFace repo
+      placeholder: "Qwen/Qwen3.7-Coder-14B-Instruct"
+    validations:
+      required: true
+
+  - type: input
+    id: ollama
+    attributes:
+      label: Ollama tag (if available)
+      placeholder: "qwen3.7-coder:14b"
+    validations:
+      required: false
+
+  - type: input
+    id: size
+    attributes:
+      label: Disk size at Q4_K_M (approx.)
+      placeholder: "9 GB"
+    validations:
+      required: true
+
+  - type: input
+    id: context
+    attributes:
+      label: Context window
+      placeholder: "131072"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Which hardware tier?
+      options:
+        - Edge (≤ 4 GB RAM)
+        - Small (8-16 GB)
+        - Mid (24-32 GB)
+        - Single 80 GB GPU
+        - Sharded frontier (≥ 128 GB combined)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: capabilities
+    attributes:
+      label: Capabilities
+      options:
+        - label: chat
+        - label: code (general coding)
+        - label: code (FIM / autocomplete)
+        - label: reasoning ("thinking" mode)
+        - label: tools / function calling
+        - label: vision (image input)
+        - label: audio (speech / audio input)
+        - label: long context (≥ 200K tokens)
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why add it?
+      description: What does this model do better than what's already in the catalog? Benchmark links welcome.
+      placeholder: |
+        Beats qwen3-coder-30b on SWE-Bench Pro (link), Apache-2.0, MoE 3B
+        active = laptop-friendly.
+    validations:
+      required: true

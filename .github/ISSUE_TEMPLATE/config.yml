@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions, help, or general discussion
+    url: https://github.com/opod-io/opod/discussions
+    about: Use Discussions for setup help, "how do I...", and design conversations. Issues are for bugs and specific feature requests.
+  - name: 🔒 Security disclosure
+    url: https://github.com/opod-io/opod/blob/main/SECURITY.md
+    about: Please report security issues privately, not as a public GitHub Issue.

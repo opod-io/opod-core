@@ -1,0 +1,28 @@
+# Lightweight SHARDABLE test model. Same weights as llama-3.2-3b but configured
+# for the sharding orchestrator (sharding.required + an auto-downloadable GGUF),
+# so shard/load-balance scenarios can be validated without staging a 40 GB+ file.
+# source.type=huggingface -> the leader auto-pulls the single Q4_K_M GGUF, then
+# llama.cpp RPC-splits it across the chosen nodes (N=1 = one whole llama-server).
+id: llama-3.2-3b-sharded
+display_name: Llama 3.2 3B Instruct (GGUF, shardable — lightweight test)
+source:
+  type: huggingface
+  repo: bartowski/Llama-3.2-3B-Instruct-GGUF
+  file: Llama-3.2-3B-Instruct-Q4_K_M.gguf
+size_bytes: 2019000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 4
+tags: [sharded, small, test, restricted-license]
+license: llama-3-community
+license_url: https://www.llama.com/llama3_2/license/
+released: 2024-09-25
+sharding:
+  required: true
+  default_shards: 2
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

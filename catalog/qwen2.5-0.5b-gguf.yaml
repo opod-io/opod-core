@@ -1,0 +1,19 @@
+# Tiny non-sharded GGUF model for a fast llama.cpp single-node demo (loads in
+# seconds even on the Intel CPU build). Distinct id so it's its own endpoint.
+id: qwen2.5-0.5b-gguf
+display_name: Qwen 2.5 0.5B Instruct (GGUF, tiny — single-node demo)
+source:
+  type: huggingface
+  repo: bartowski/Qwen2.5-0.5B-Instruct-GGUF
+  file: Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+size_bytes: 400000000
+quant: q4_k_m
+context_window: 32768
+capabilities: [chat]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 2
+tags: [tiny, gguf, demo]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/blob/main/LICENSE
+released: 2024-09-19

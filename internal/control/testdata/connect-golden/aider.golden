@@ -1,0 +1,11 @@
+# Aider → Opod (OpenAI API)
+
+aider \
+  --openai-api-base http://example.local:8080/v1 \
+  --openai-api-key sk-orc-TEST \
+  --model openai/test-model
+
+# Or set permanently in ~/.aider.conf.yml:
+#   openai-api-base: http://example.local:8080/v1
+#   openai-api-key: sk-orc-TEST
+#   model: openai/test-model

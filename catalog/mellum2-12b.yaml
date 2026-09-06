@@ -1,0 +1,27 @@
+# JetBrains Mellum2-12B-A2.5B — Apache-2.0 coding MoE.
+# 12B total / 2.5B active per token (64 experts, 8 active). 10.6 T training tokens
+# focused on software engineering. 2× faster inference than similar-sized models.
+#
+# Two post-trained variants ship alongside the base model:
+#   - mellum2-12b-instruct  (direct answers)
+#   - mellum2-12b-thinking  (explicit reasoning trace before answering)
+# This entry tracks the "thinking" variant — swap source.repo for the instruct one.
+#
+# Source is HuggingFace — vLLM / MLX-LM can pull this directly. For Ollama
+# users, install via a community GGUF once tags appear, or use `type: file`.
+id: mellum2-12b
+display_name: JetBrains Mellum2-12B-A2.5B-Thinking (Apache-2.0, coder MoE)
+source:
+  type: huggingface
+  repo: JetBrains/Mellum-2-12B-A2.5B-Thinking
+size_bytes: 7000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, code, fim, reasoning, tools]
+recommended_engines: [llamacpp, mlx, vllm]
+hardware:
+  min_ram_gb: 12
+tags: [moe, coding, thinking, jetbrains, fast]
+license: apache-2.0
+license_url: https://huggingface.co/JetBrains/Mellum-2-12B-A2.5B-Thinking/blob/main/LICENSE
+released: 2025-09-12

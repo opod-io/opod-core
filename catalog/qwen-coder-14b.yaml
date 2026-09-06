@@ -1,0 +1,16 @@
+id: qwen-coder-14b
+display_name: Qwen 2.5 Coder 14B Instruct
+source:
+  type: ollama
+  ollama_name: qwen2.5-coder:14b
+size_bytes: 9000000000
+quant: q4_k_m
+context_window: 32768
+capabilities: [chat, code, fim, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 16
+tags: [coding, agent]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct/blob/main/LICENSE
+released: 2024-11-12

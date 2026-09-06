@@ -1,0 +1,178 @@
+version: 2
+project_name: opod
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: opod
+    main: ./cmd/opod
+    binary: opod
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: default
+    name_template: 'opod-{{ .Os }}-{{ .Arch }}'
+    files:
+      - LICENSE
+      - README.md
+      - ARCHITECTURE.md
+      - SECURITY.md
+      - catalog/*
+
+# .deb + .rpm packages for edge / NAS deployments. Raspberry Pi OS,
+# Debian, Ubuntu, and most Linux-based NAS (QNAP, Asustor) accept .deb;
+# Fedora / CentOS / RHEL accept .rpm. Synology .spk packaging requires
+# a different toolchain (Synology's `pkgcreate` against a DSM SDK) and
+# lands as a v0.7 follow-up.
+#
+# Install path: /usr/bin/opod (so it's on PATH out of the box).
+# Catalog ships under /usr/share/opod/catalog/ — the binary's
+# resolveCatalogDir() already picks it up via the
+# /usr/local/share/opod/catalog fallback path, which most distros
+# also probe; we go one step further by placing it where APT controls.
+nfpms:
+  - id: linux-pkgs
+    package_name: opod
+    file_name_template: 'opod_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    vendor: Hadi Honarvar Nazari
+    homepage: https://github.com/opod-io/opod
+    maintainer: Hadi Honarvar Nazari <hadi.work.ca@gmail.com>
+    description: |
+      Self-hosted control plane for LLMs — one URL + one key for your
+      team's models. Single Go binary; supports Ollama, vLLM, MLX-LM
+      and llama.cpp drivers; multi-machine routing + sharding via
+      llama.cpp RPC.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    contents:
+      - src: catalog/
+        dst: /usr/share/opod/catalog
+      - src: LICENSE
+        dst: /usr/share/doc/opod/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/opod/README.md
+      - src: QUICKSTART.md
+        dst: /usr/share/doc/opod/QUICKSTART.md
+      - src: scripts/two-node-smoke.sh
+        dst: /usr/share/opod/scripts/two-node-smoke.sh
+        file_info:
+          mode: 0755
+    overrides:
+      deb:
+        recommends:
+          - llama.cpp     # sharded models need rpc-server + llama-server
+      rpm:
+        recommends:
+          - llama-cpp
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-snapshot'
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: opod-io
+    name: opod
+  draft: false
+  prerelease: auto
+  header: |
+    ## Install
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh
+    ```
+
+    More options (specific version, custom install dir, join an existing cluster) — see [QUICKSTART.md](https://github.com/opod-io/opod/blob/main/QUICKSTART.md).
+
+    ## Upgrading
+
+    Already running an earlier version? Just run:
+
+    ```bash
+    opod update
+    ```
+
+    ## Links
+
+    - Website: [opod.io](https://opod.io)
+    - Maintainer: [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) — `hadi.work.ca@gmail.com`
+  footer: |
+    ---
+
+    **About Opod** — self-hosted LLM gateway for teams. One Go binary
+    behind one URL serves OpenAI- and Anthropic-compatible APIs across a
+    fleet of Macs / Linux boxes running Ollama, vLLM, MLX-LM, or
+    llama.cpp-RPC. Per-user keys, daily quotas, full audit log,
+    sharded-inference orchestration, Prometheus + OTLP observability,
+    embedded admin dashboard. Engine-agnostic. Apache-2.0.
+
+    Searching for an **OpenRouter alternative**, a **LiteLLM alternative**,
+    a **self-hosted Claude Code proxy**, a **multi-machine Ollama**
+    frontend, or a **private inference cluster**? You're in the right
+    place — see the [README](https://github.com/opod-io/opod#also-known-as--search-terms)
+    for the full landing context.
+
+    Full feature inventory: [CHANGELOG.md](https://github.com/opod-io/opod/blob/main/CHANGELOG.md).
+    What's coming next: [ROADMAP.md](https://github.com/opod-io/opod/blob/main/ROADMAP.md).
+
+# Homebrew tap publishing is disabled until the opod-io/homebrew-tap
+# repo exists. To re-enable:
+#   1. Create the repo: gh repo create opod-io/homebrew-tap --public
+#   2. Generate a fine-grained PAT with contents:write on that repo
+#   3. Add it as GitHub secret HOMEBREW_TAP_GITHUB_TOKEN
+#   4. Uncomment the brews block below
+#
+# brews:
+#   - name: opod
+#     homepage: 'https://github.com/opod-io/opod'
+#     description: 'Orchestrate open-weight LLMs across your machines.'
+#     license: Apache-2.0
+#     repository:
+#       owner: opod-io
+#       name: homebrew-tap
+#       branch: main
+#     install: |
+#       bin.install "opod"
+#     test: |
+#       system "#{bin}/opod", "version"

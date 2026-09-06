@@ -1,0 +1,21 @@
+# curl → Opod — useful for smoke tests
+
+# OpenAI shape:
+curl -s http://example.local:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-orc-TEST" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "test-model",
+    "messages": [{"role": "user", "content": "hi in 5 words"}]
+  }'
+
+# Anthropic shape (same endpoint, different path + headers):
+curl -s http://example.local:8080/v1/messages \
+  -H "x-api-key: sk-orc-TEST" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "test-model",
+    "max_tokens": 64,
+    "messages": [{"role": "user", "content": "hi in 5 words"}]
+  }'

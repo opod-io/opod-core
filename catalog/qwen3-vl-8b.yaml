@@ -1,0 +1,16 @@
+id: qwen3-vl-8b
+display_name: Qwen 3 VL 8B (vision-language; strong on charts, OCR, UI)
+source:
+  type: ollama
+  ollama_name: qwen3-vl:8b
+size_bytes: 5500000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools, vision]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 10
+tags: [vision, small, qwen, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/blob/main/LICENSE
+released: 2025-11-08

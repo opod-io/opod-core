@@ -1,0 +1,658 @@
+// Package controlplane wires together the gateway, control-plane HTTP routes,
+// and protocol adapters. It owns the chi router and the *http.Server lifecycle.
+package controlplane
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/opod-io/opod/internal/api"
+	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod/internal/cache"
+	"github.com/opod-io/opod/internal/callbacks"
+	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/events"
+	"github.com/opod-io/opod/internal/guardrails"
+	"github.com/opod-io/opod/internal/lifecycle"
+	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/ui"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+)
+
+// Server is the leader-side HTTP server.
+type Server struct {
+	cfg    *config.Config
+	store  store.Store
+	engine engines.Engine
+	cat    []models.Entry
+	log    *slog.Logger
+	http   *http.Server
+
+	router      *router.Router
+	orch        *scheduler.Orchestrator
+	lifecycle   *lifecycle.Manager
+	openaiH     *api.Handler
+	load        loadStats
+	plan        planFileState
+	anthropicH  *api.AnthropicHandler
+	egressH     *api.EgressHandler
+	rateBuckets *api.BucketStore
+	callbacks   *callbacks.Dispatcher
+
+	// bus fans out dashboard refresh events. /admin/v1/events streams
+	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
+	// publish topic strings on state change.
+	bus *events.Bus
+
+	// Version is stamped into traces and the access log. Set by callers
+	// before Start; defaults to "dev" if unset.
+	Version string
+
+	tracerShutdown func(context.Context) error
+}
+
+func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger, orch *scheduler.Orchestrator) *Server {
+	routed := router.New(eng, st)
+
+	// Wire catalog-driven fallback chains: when a request to model X fails,
+	// retry against X's catalog fallback list in order. The resolver
+	// returns the typed chains (generic + per-error-class) so the router
+	// can pick the right list after classifying the primary's failure.
+	// Closure captures the catalog slice — fresh lookups happen per call
+	// so a catalog reload would be observed (catalog hot-reload isn't
+	// shipped yet but this leaves room).
+	routed.SetFallbackResolver(func(modelID string) router.FallbackChains {
+		entry := models.FindByID(cat, modelID)
+		if entry == nil {
+			return router.FallbackChains{}
+		}
+		return router.FallbackChains{
+			Generic:       entry.Fallback,
+			ContextLength: entry.FallbackOnContextLength,
+			ContentPolicy: entry.FallbackOnContentPolicy,
+		}
+	})
+	// Price resolver for `sort: price` / `:floor` — combined prompt +
+	// completion $/1K from the catalog + vendor pricing table. Free
+	// local models return 0 and sort first.
+	routed.SetPriceResolver(func(modelID string) float64 {
+		pp, pc := models.PriceFor(modelID, cat)
+		return pp + pc
+	})
+	// Latency-aware fallback (Bet #1): opt-in via router.latency_fallback_p95_seconds.
+	// Zero (default) leaves behavior unchanged.
+	if cfg.Router.LatencyFallbackP95Seconds > 0 {
+		routed.SetLatencyConfig(router.LatencyConfig{
+			P95Threshold: time.Duration(cfg.Router.LatencyFallbackP95Seconds) * time.Second,
+		})
+	}
+	// Placement cooldown ("penalty box"): a worker that errors N times
+	// in a row gets parked for the cooldown duration so pick() skips it.
+	// Both knobs must be > 0 to enable.
+	if cfg.Router.PlacementAllowedFails > 0 && cfg.Router.PlacementCooldownSeconds > 0 {
+		routed.SetPlacementCooldown(
+			cfg.Router.PlacementAllowedFails,
+			time.Duration(cfg.Router.PlacementCooldownSeconds)*time.Second,
+		)
+	}
+	// Sticky sessions: pin (user_id, model) to its last worker for the
+	// TTL so multi-turn chats reuse KV cache. Disabled when ttl == 0.
+	if cfg.Router.StickySessionTTLSeconds > 0 {
+		routed.SetStickyTTL(time.Duration(cfg.Router.StickySessionTTLSeconds) * time.Second)
+	}
+	// Request hedging — opt-in per request via opod.hedge.
+	if cfg.Router.HedgeReplicas > 1 {
+		routed.SetHedgeReplicas(cfg.Router.HedgeReplicas)
+	}
+	// Heartbeat reaper: never dispatch to a worker that stopped
+	// heartbeating (dead pod, partitioned node). Default 30s (workers
+	// heartbeat every 5s); heartbeat_max_age_seconds: 0 disables.
+	if cfg.Router.HeartbeatMaxAgeSeconds > 0 {
+		routed.SetHeartbeatMaxAge(time.Duration(cfg.Router.HeartbeatMaxAgeSeconds) * time.Second)
+	}
+
+	openaiH := &api.Handler{
+		Engine:  routed,
+		Store:   st,
+		Catalog: cat,
+		Default: cfg.Router.DefaultModel,
+	}
+	// The router routes by catalog id; hand it the local engine's catalog→native
+	// resolver so a request picked to run on THIS leader's engine still gets a
+	// name the engine understands. Remote workers resolve on their own side.
+	routed.SetLocalResolver(func(catalogID string) string {
+		native, err := openaiH.ResolveModel(catalogID)
+		if err != nil {
+			return catalogID
+		}
+		return native
+	})
+	anthropicH := &api.AnthropicHandler{Handler: openaiH}
+	egressH := &api.EgressHandler{
+		Store: st,
+		Config: api.FallbackConfig{
+			AnthropicKey:   cfg.Router.Fallback.AnthropicKey,
+			AnthropicURL:   cfg.Router.Fallback.AnthropicURL,
+			OpenAIKey:      cfg.Router.Fallback.OpenAIKey,
+			OpenAIURL:      cfg.Router.Fallback.OpenAIURL,
+			BedrockRegion:  cfg.Router.Fallback.BedrockRegion,
+			BedrockURL:     cfg.Router.Fallback.BedrockURL,
+			VertexProject:  cfg.Router.Fallback.VertexProject,
+			VertexLocation: cfg.Router.Fallback.VertexLocation,
+			VertexURL:      cfg.Router.Fallback.VertexURL,
+			OpenRouterKey:  cfg.Router.Fallback.OpenRouterKey,
+			OpenRouterURL:  cfg.Router.Fallback.OpenRouterURL,
+			GroqKey:        cfg.Router.Fallback.GroqKey,
+			GroqURL:        cfg.Router.Fallback.GroqURL,
+			TogetherKey:    cfg.Router.Fallback.TogetherKey,
+			TogetherURL:    cfg.Router.Fallback.TogetherURL,
+			FireworksKey:   cfg.Router.Fallback.FireworksKey,
+			FireworksURL:   cfg.Router.Fallback.FireworksURL,
+			CohereKey:      cfg.Router.Fallback.CohereKey,
+			CohereURL:      cfg.Router.Fallback.CohereURL,
+			MistralKey:     cfg.Router.Fallback.MistralKey,
+			MistralURL:     cfg.Router.Fallback.MistralURL,
+			PerplexityKey:  cfg.Router.Fallback.PerplexityKey,
+			PerplexityURL:  cfg.Router.Fallback.PerplexityURL,
+		},
+	}
+	// Multi-key rotation pool. When a user configures more than one key for a
+	// provider (e.g. GROQ_API_KEY + GROQ_API_KEY_2), the egress layer rotates
+	// across them and parks any key that hits a 429 so requests fail over to
+	// the next key instead of surfacing the rate limit. The pool also carries
+	// the registry providers (DeepSeek, Cerebras, Gemini, …), whose keys +
+	// base URLs come straight from the environment via the GenericProviders
+	// table — adding a provider needs no wiring here.
+	kp := api.NewKeyPool()
+	for vendor, keys := range cfg.Router.Fallback.Keys {
+		kp.Set(vendor, keys)
+	}
+	providerURLs := map[string]string{}
+	for _, p := range api.GenericProviders {
+		keys := api.ProviderKeysFromEnv(p)
+		if len(keys) == 0 {
+			continue
+		}
+		kp.Set(p.Name, keys)
+		providerURLs[p.Name] = api.ProviderURLFromEnv(p)
+		cfg.Router.Fallback.Enabled = true // any registry key enables egress
+	}
+	egressH.Keys = kp
+	egressH.ProviderURLs = providerURLs
+	buckets := api.NewBucketStore()
+	api.SetBucketStore(buckets)
+	// Wire the catalog into the per-request cost computation path. The
+	// recordUsage step does a price lookup against this catalog +
+	// vendor pricing table to populate usage.cost_usd.
+	api.SetCatalog(cat)
+	// Observability callbacks (webhooks / Langfuse). Each configured
+	// sink runs in its own goroutine with a bounded queue.
+	dispatcher := buildCallbackDispatcher(cfg.Observability.Callbacks, cfg.BlockPrivateTargets, log)
+	api.SetCallbackDispatcher(dispatcher)
+	// Guardrails (pre-call hooks). Synchronous on the request path.
+	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, cfg.BlockPrivateTargets, log))
+	// Response cache (embeddings today; chat in follow-up).
+	api.SetResponseCache(buildResponseCache(cfg.Observability.ResponseCache, st, log))
+	// Audio + rerank endpoint proxies. Empty endpoints → handler
+	// returns 501 with setup hint instead of trying.
+	api.SetRerankAudioConfig(api.RerankAudioConfig{
+		LlamaCppEndpoint: cfg.Engine.LlamaCppEndpoint,
+		WhisperEndpoint:  cfg.Engine.WhisperEndpoint,
+		PiperEndpoint:    cfg.Engine.PiperEndpoint,
+	})
+	return &Server{
+		cfg:         cfg,
+		store:       st,
+		engine:      eng,
+		cat:         cat,
+		log:         log,
+		router:      routed,
+		orch:        orch,
+		openaiH:     openaiH,
+		anthropicH:  anthropicH,
+		egressH:     egressH,
+		rateBuckets: buckets,
+		callbacks:   dispatcher,
+		bus:         events.New(),
+	}
+}
+
+// buildResponseCache instantiates the configured driver (memory or
+// sqlite). Returns nil when disabled — the api package short-circuits
+// the cache path on nil.
+func buildResponseCache(cfg config.ResponseCacheConfig, st store.Store, log *slog.Logger) cache.Cache {
+	if !cfg.Enabled {
+		return nil
+	}
+	ttl := time.Duration(cfg.DefaultTTLSeconds) * time.Second
+	switch cfg.Driver {
+	case "", "memory":
+		return cache.NewMemory(cfg.MaxEntries, ttl)
+	case "sqlite":
+		return cache.NewSQLite(st.Cache(), ttl)
+	default:
+		log.Warn("unknown response_cache driver — disabling cache", "driver", cfg.Driver)
+		return nil
+	}
+}
+
+// buildGuardrailRegistry constructs the three-mode guardrail
+// registry from the YAML rows. Unknown kinds or modes are ignored
+// (with a warn log) so a typo'd config doesn't crash startup.
+func buildGuardrailRegistry(rows []config.GuardrailConfig, blockPrivate bool, log *slog.Logger) *guardrails.Registry {
+	if len(rows) == 0 {
+		return nil
+	}
+	reg := &guardrails.Registry{
+		Pre:         guardrails.NewChain(),
+		Post:        guardrails.NewChain(),
+		LoggingOnly: guardrails.NewChain(),
+	}
+	pre := []guardrails.Guardrail{}
+	post := []guardrails.Guardrail{}
+	log0 := []guardrails.Guardrail{}
+	for _, r := range rows {
+		mode := guardrails.Mode(r.Mode)
+		switch mode {
+		case guardrails.ModePre, guardrails.ModePost, guardrails.ModeLoggingOnly:
+		default:
+			log.Warn("guardrail with unknown mode — skipping", "name", r.Name, "mode", r.Mode)
+			continue
+		}
+		var g guardrails.Guardrail
+		switch r.Kind {
+		case "webhook":
+			if r.URL == "" {
+				log.Warn("guardrail webhook missing url — skipping", "name", r.Name)
+				continue
+			}
+			to := time.Duration(r.TimeoutSeconds) * time.Second
+			g = guardrails.NewWebhook(guardrails.WebhookConfig{
+				ID:                  r.Name,
+				Mode:                mode,
+				URL:                 r.URL,
+				AuthKey:             os.ExpandEnv(r.AuthKey),
+				Headers:             r.Headers,
+				FailOpen:            r.FailOpen,
+				Timeout:             to,
+				BlockPrivateTargets: blockPrivate,
+			})
+		default:
+			log.Warn("guardrail with unknown kind — skipping", "name", r.Name, "kind", r.Kind)
+			continue
+		}
+		switch mode {
+		case guardrails.ModePre:
+			pre = append(pre, g)
+		case guardrails.ModePost:
+			post = append(post, g)
+		case guardrails.ModeLoggingOnly:
+			log0 = append(log0, g)
+		}
+	}
+	reg.Pre = guardrails.NewChain(pre...)
+	reg.Post = guardrails.NewChain(post...)
+	reg.LoggingOnly = guardrails.NewChain(log0...)
+	return reg
+}
+
+// buildCallbackDispatcher constructs the observability fan-out from
+// the YAML rows. Each row maps to either a Webhook or a Langfuse
+// driver; unknown kinds are ignored (with a warn log) so a typo'd
+// config doesn't crash startup.
+func buildCallbackDispatcher(rows []config.CallbackConfig, blockPrivate bool, log *slog.Logger) *callbacks.Dispatcher {
+	if len(rows) == 0 {
+		return nil
+	}
+	sinks := make([]callbacks.Sink, 0, len(rows))
+	for _, r := range rows {
+		switch r.Kind {
+		case "webhook":
+			if r.URL == "" {
+				log.Warn("webhook callback missing url — skipping", "id", r.ID)
+				continue
+			}
+			sinks = append(sinks, callbacks.NewWebhook(callbacks.WebhookConfig{
+				ID:                  r.ID,
+				URL:                 r.URL,
+				Secret:              os.ExpandEnv(r.Secret),
+				Events:              r.Events,
+				QueueSz:             r.QueueSize,
+				BlockPrivateTargets: blockPrivate,
+			}, log))
+		case "langfuse":
+			pub := os.ExpandEnv(r.PublicKey)
+			sec := os.ExpandEnv(r.SecretKey)
+			if pub == "" || sec == "" {
+				log.Warn("langfuse callback missing keys — skipping", "id", r.ID)
+				continue
+			}
+			sinks = append(sinks, callbacks.NewLangfuse(callbacks.LangfuseConfig{
+				ID:        r.ID,
+				Host:      r.Host,
+				PublicKey: pub,
+				SecretKey: sec,
+				QueueSz:   r.QueueSize,
+			}, log))
+		case "s3":
+			if r.Bucket == "" {
+				log.Warn("s3 callback missing bucket — skipping", "id", r.ID)
+				continue
+			}
+			sinks = append(sinks, callbacks.NewS3(callbacks.S3Config{
+				ID:              r.ID,
+				Bucket:          r.Bucket,
+				Region:          r.Region,
+				Prefix:          r.Prefix,
+				Endpoint:        r.Endpoint,
+				AccessKeyID:     os.ExpandEnv(r.AccessKeyID),
+				SecretAccessKey: os.ExpandEnv(r.SecretAccessKey),
+				Events:          r.Events,
+				BatchSize:       r.BatchSize,
+				FlushSeconds:    r.FlushSeconds,
+				QueueSz:         r.QueueSize,
+			}, log))
+		default:
+			log.Warn("unknown callback kind — skipping", "kind", r.Kind)
+		}
+	}
+	if len(sinks) == 0 {
+		return nil
+	}
+	return callbacks.NewDispatcher(log, sinks...)
+}
+
+func (s *Server) Start(ctx context.Context) error {
+	s.StartPlanWatcher(ctx)
+	if s.Version == "" {
+		s.Version = "dev"
+	}
+	// Init OTLP tracing (no-op if endpoint not configured).
+	shutdown, err := initTracing(ctx, s.cfg.Observability.OTLPEndpoint, s.Version, s.log)
+	if err != nil {
+		return fmt.Errorf("init tracing: %w", err)
+	}
+	s.tracerShutdown = shutdown
+
+	// Wrap chi router with otelhttp so each inbound request gets a span.
+	// Even when tracing is disabled (NoopTracerProvider), the wrapper still
+	// participates in W3C traceparent propagation — cheap.
+	handler := otelhttp.NewHandler(s.routes(), "http.request",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
+
+	s.http = &http.Server{
+		Addr:              s.cfg.Listen,
+		Handler:           handler,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+	s.log.Info("listening", "addr", s.cfg.Listen)
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.http.ListenAndServe() }()
+	select {
+	case <-ctx.Done():
+		return s.Shutdown(context.Background())
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("listen: %w", err)
+		}
+		return nil
+	}
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.http == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	httpErr := s.http.Shutdown(ctx)
+	if s.tracerShutdown != nil {
+		// Best-effort: flush any pending spans. Don't mask the http shutdown
+		// error if both fail.
+		if err := s.tracerShutdown(ctx); err != nil {
+			s.log.Warn("tracer shutdown", "err", err)
+		}
+	}
+	return httpErr
+}
+
+func (s *Server) routes() http.Handler {
+	r := chi.NewRouter()
+	// Recoverer first: a panic anywhere downstream is caught, and the
+	// accessLog middleware can still record the 500.
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID)
+	// Stash the kernel-reported peer address BEFORE RealIP rewrites
+	// RemoteAddr from forwarding headers — bootstrapAdminKey must check
+	// loopback against the real TCP peer, not a spoofable header.
+	r.Use(stashRemoteAddr)
+	r.Use(middleware.RealIP)
+	r.Use(s.accessLog)
+
+	// Public
+	r.Get("/healthz", s.healthz)
+	r.Get("/readyz", s.readyz)
+	r.Get("/loadz", s.loadz)
+	r.Handle("/metrics", promhttp.Handler())
+
+	// Web UI (single embedded HTML page; assets via CDN)
+	r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(ui.IndexHTML)
+	})
+
+	// Localhost-only bootstrap: hand the dashboard the saved admin key
+	// so first-time / returning users don't have to copy it from the
+	// terminal. The endpoint is unauthenticated by design — it's how
+	// you GET the credential in the first place — but it's gated to:
+	//   1. requests from a loopback peer (127.0.0.1 / ::1), AND
+	//   2. requests with no proxy-forwarding headers (otherwise a
+	//      remote attacker could spoof loopback by setting
+	//      X-Forwarded-For: 127.0.0.1 through a misconfigured proxy).
+	// If either check fails we return 404, indistinguishable from
+	// "endpoint doesn't exist."
+	r.Get("/admin/v1/bootstrap-key", s.bootstrapAdminKey)
+
+	// OpenAI-compatible + Anthropic-compatible (auth + quota)
+	r.Route("/v1", func(r chi.Router) {
+		// Load accounting first so /loadz sees every inference request,
+		// including ones a later middleware rejects.
+		r.Use(s.trackLoad)
+		// Cap request bodies first so nothing downstream (rate-limit
+		// estimation, the dispatch handlers) buffers an unbounded body.
+		r.Use(s.limitRequestBody)
+		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
+		// Per-key model allowlist runs BEFORE quota: a key with no quota
+		// to spend on an unauthorized model would otherwise burn a 429
+		// instead of the more accurate 403.
+		r.Use(api.ModelAllowMiddleware(s.store))
+		// RPM/TPM ceilings. Wired before the daily quota check so a
+		// runaway client gets the more-actionable 429 with Retry-After
+		// instead of the daily 429.
+		r.Use(api.RateLimitMiddleware(s.rateBuckets))
+		// Stamp a request id + standard rate-limit headers on every
+		// response so client SDKs see throttling status without
+		// special-casing Opod. Runs after RateLimitMiddleware so the
+		// remaining-* values include this request's deduction (the
+		// contract documented on ResponseHeadersMiddleware).
+		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
+		// Monthly + dollar budgets — refuse if any budget for this
+		// key is at or above its limit. Runs before the legacy
+		// daily-quota check (which is now a single-budget special
+		// case the new system subsumes).
+		r.Use(api.BudgetMiddleware(s.store))
+		r.Use(api.QuotaMiddleware(s.store))
+		r.Get("/models", s.openaiH.ListModels)
+		r.Post("/chat/completions", s.dispatchOpenAIChat)
+		r.Post("/embeddings", s.openaiH.Embeddings)
+		r.Post("/rerank", s.openaiH.Rerank)
+		r.Post("/audio/transcriptions", s.openaiH.AudioTranscriptions)
+		r.Post("/audio/speech", s.openaiH.AudioSpeech)
+		r.Post("/messages", s.dispatchAnthropicMessages)
+		r.Post("/messages/count_tokens", s.anthropicH.CountTokens)
+	})
+
+	// Admin (admin-only)
+	r.Route("/admin/v1", func(r chi.Router) {
+		// Cap bodies first — every admin handler json.Decodes r.Body, and a
+		// node-scope token (reachable via /nodes/register + /heartbeat) could
+		// otherwise stream an unbounded body. Mirrors the /v1 group.
+		r.Use(s.limitRequestBody)
+		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
+		r.Use(s.auditMiddleware)
+
+		// Node lifecycle endpoints accept either admin or node scope so
+		// agents can register and heartbeat with a scope=node token.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireScopeAny("admin", "node"))
+			r.Post("/nodes/register", s.registerNode)
+			r.Post("/nodes/heartbeat", s.heartbeatNode)
+		})
+
+		// Everything else is admin only.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireScope("admin"))
+
+			// Nodes
+			r.Get("/nodes", s.listNodes)
+			r.Post("/nodes/{id}/drain", s.drainNode)
+			r.Delete("/nodes/{id}", s.deleteNode)
+
+			// Models
+			r.Get("/models", s.listInstalledModels)
+			r.Get("/catalog", s.listCatalog)
+			r.Post("/models", s.addModel)
+			r.Delete("/models/{id}", s.deleteModel)
+			r.Post("/models/{id}/unload", s.unloadModel)
+			r.Post("/models/{id}/load", s.loadModel)
+
+			// Memory: live engine residency + the desired-placement set.
+			r.Get("/memory", s.memoryStatus)
+
+			// Tokens
+			r.Get("/tokens", s.listTokens)
+			r.Post("/tokens", s.createToken)
+			r.Patch("/tokens/{id}", s.editToken)
+			r.Delete("/tokens/{id}", s.revokeToken)
+			r.Get("/tokens/{id}/budgets", s.listBudgets)
+			r.Post("/tokens/{id}/budgets", s.createBudget)
+			r.Delete("/tokens/{id}/budgets/{bid}", s.deleteBudget)
+
+			// Observability
+			r.Get("/usage/stream", s.usageStream)
+			r.Get("/events/stream", s.eventLogStream)
+			r.Get("/usage/recent", s.listUsageRecent)
+			r.Get("/usage/summary", s.usageSummary)
+			r.Get("/usage/breakdown", s.usageBreakdown)
+			r.Get("/audit/recent", s.listAuditRecent)
+			r.Get("/audit/summary", s.auditSummary)
+
+			// Shards
+			r.Get("/shards", s.listShards)
+			r.Get("/shards/processes", s.listShardProcesses)
+			r.Post("/shards/create", s.createShards)
+			r.Delete("/shards/{model_id}", s.deleteShards)
+
+			// Config (read-only sanitized view)
+			r.Get("/config", s.getConfig)
+
+			// Routing chain — the ordered list of model ids walked for
+			// model="auto" / fallback. GET returns the stored chain (or the
+			// computed default); PUT replaces it; DELETE resets to default.
+			r.Get("/route", s.getRoute)
+			r.Put("/route", s.setRoute)
+			r.Delete("/route", s.resetRoute)
+
+			// Compact status used by the dashboard top-bar chips. Same
+			// data the `opod status` CLI surfaces, returned as one JSON
+			// blob so the UI can poll a single endpoint.
+			r.Get("/status", s.statusSummary)
+
+			// Server-Sent Events stream. Dashboards subscribe once and
+			// re-fetch the relevant view on every event. Replaces the
+			// per-tab 5 s polling with push-on-change.
+			r.Get("/events", s.eventsStream)
+
+			// Onboarding-and-sharing (M3-T23 / M3-T24 / M3-T26)
+			r.Get("/connect/clients", s.listConnectClients)
+			r.Post("/connect/snippet", s.renderConnectSnippet)
+			r.Post("/invite", s.inviteUser)
+			r.Post("/healthcheck", s.healthcheck)
+
+			// Observability callbacks — list configured sinks +
+			// fire a synthetic test event.
+			r.Get("/callbacks", s.listCallbacks)
+			r.Post("/callbacks/test", s.testCallback)
+
+			// Response cache stats + flush.
+			r.Get("/cache/stats", s.cacheStats)
+			r.Delete("/cache", s.cacheFlush)
+		})
+	})
+
+	return r
+}
+
+// realRemoteAddrKey carries the pre-RealIP RemoteAddr on the request
+// context. Unexported struct type — no collision with other packages.
+type realRemoteAddrKey struct{}
+
+// stashRemoteAddr records the kernel-reported peer address before
+// middleware.RealIP rewrites RemoteAddr from True-Client-IP /
+// X-Real-IP / X-Forwarded-For. Loopback-gated handlers must trust only
+// this value.
+func stashRemoteAddr(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), realRemoteAddrKey{}, r.RemoteAddr)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// realRemoteAddr returns the TCP peer address stashed by
+// stashRemoteAddr, falling back to r.RemoteAddr when the middleware
+// didn't run (e.g. handlers exercised directly in tests).
+func realRemoteAddr(r *http.Request) string {
+	if v, ok := r.Context().Value(realRemoteAddrKey{}).(string); ok && v != "" {
+		return v
+	}
+	return r.RemoteAddr
+}
+
+// defaultMaxBodyBytes caps /v1/* request bodies at 32 MiB — generous
+// for chat/embedding payloads (vision requests inline base64 images)
+// while keeping a single request from buffering unbounded memory.
+// Override via `max_body_bytes` in config.yaml / OPOD_MAX_BODY_BYTES.
+const defaultMaxBodyBytes = 32 << 20
+
+// limitRequestBody wraps every /v1 request body in http.MaxBytesReader
+// so downstream io.ReadAll calls fail fast at the cap instead of
+// buffering whatever a client streams at us.
+func (s *Server) limitRequestBody(next http.Handler) http.Handler {
+	limit := s.cfg.MaxBodyBytes
+	if limit <= 0 {
+		limit = defaultMaxBodyBytes
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// dispatchOpenAIChat inspects the request body's "model" field. If it names
+// a vendor model (claude-*, gpt-*) AND fallback is configured, the request is
+// proxied to the vendor; otherwise it goes to the local engine.

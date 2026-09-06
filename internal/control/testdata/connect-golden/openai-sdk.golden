@@ -1,0 +1,18 @@
+# OpenAI Python SDK → Opod
+
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://example.local:8080/v1",
+    api_key="sk-orc-TEST",
+)
+
+resp = client.chat.completions.create(
+    model="test-model",
+    messages=[{"role": "user", "content": "hi in 5 words"}],
+)
+print(resp.choices[0].message.content)
+
+# Node/TS:
+#   import OpenAI from "openai";
+#   const client = new OpenAI({ baseURL: "http://example.local:8080/v1", apiKey: "sk-orc-TEST" });

@@ -1,0 +1,13 @@
+# OpenClaw → Opod (OpenAI API)
+# Put this in your OpenClaw config (config.yaml or .env in the project root)
+
+base_url: {{.BaseURL}}/v1
+api_key:  {{.Token}}
+model:    {{.Model}}
+
+# Or as env vars:
+#   export OPENAI_BASE_URL={{.BaseURL}}/v1
+#   export OPENAI_API_KEY={{.Token}}
+#   export OPENCLAW_MODEL={{.Model}}
+#
+# Then in the project folder: openclaw start

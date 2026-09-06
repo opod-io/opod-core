@@ -1,0 +1,15 @@
+id: pixtral-12b
+display_name: Mistral Pixtral 12B (vision-language; Mistral Nemo + visual encoder)
+source:
+  type: huggingface
+  repo: mistralai/Pixtral-12B-2409
+size_bytes: 7800000000
+context_window: 131072
+capabilities: [chat, vision]
+recommended_engines: [vllm, mlx]
+hardware:
+  min_ram_gb: 16
+tags: [vision, mistral, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/mistralai/Pixtral-12B-2409/blob/main/LICENSE
+released: 2024-09-17

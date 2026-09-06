@@ -1,0 +1,18 @@
+# Zed → Opod (OpenAI API)
+# Add to ~/.config/zed/settings.json:
+
+{
+  "language_models": {
+    "openai_compatible": {
+      "Opod": {
+        "api_url": "http://example.local:8080/v1",
+        "available_models": [
+          { "name": "test-model", "max_tokens": 32768 }
+        ]
+      }
+    }
+  }
+}
+
+# Then set the API key in Zed: ⌘P → "assistant: configure" → paste:
+#   sk-orc-TEST

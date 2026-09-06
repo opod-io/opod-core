@@ -1,0 +1,89 @@
+{
+  "annotations": {"list": []},
+  "description": "Opod per-node fleet view: which nodes are up, which models each has loaded, churn over time.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Nodes up over time",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "sum(opod_node_up == 1)", "legendFormat": "up", "refId": "A"},
+        {"expr": "count(opod_node_up)", "legendFormat": "total", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "title": "Current node status",
+      "type": "table",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "opod_node_up", "format": "table", "instant": true, "refId": "A"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true}, "renameByName": {"node": "Node", "hostname": "Hostname", "Value": "Up (1) / Down (0)"}}}
+      ],
+      "options": {"showHeader": true}
+    },
+    {
+      "title": "Models loaded per node",
+      "type": "bargauge",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "sum by (node) (opod_model_loaded == 1)", "legendFormat": "{{node}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "color": {"mode": "continuous-GrYlRd"}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true}
+    },
+    {
+      "title": "Loaded models inventory",
+      "type": "table",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "opod_model_loaded == 1", "format": "table", "instant": true, "refId": "A"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "Value": true, "instance": true, "job": true}, "renameByName": {"model": "Model", "node": "Node"}}}
+      ],
+      "options": {"showHeader": true, "sortBy": [{"desc": false, "displayName": "Node"}]}
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["opod"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "default", "value": "default"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Opod — Per-Node",
+  "uid": "opod-per-node",
+  "version": 1,
+  "weekStart": ""
+}

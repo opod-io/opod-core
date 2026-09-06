@@ -1,0 +1,7 @@
+# Cline / Roo Code (VS Code extension) → Opod
+# In the extension's provider settings panel:
+
+API Provider:  OpenAI Compatible    (or "Anthropic" for /v1/messages)
+Base URL:      http://example.local:8080/v1      (use http://example.local:8080 for Anthropic mode)
+API Key:       sk-orc-TEST
+Model ID:      test-model

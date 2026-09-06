@@ -1,0 +1,36 @@
+# GLM-5.2 — Z.ai's flagship agentic model, successor to GLM-5.1.
+# MoE (glm_moe_dsa, 256 routed experts / 8 active), 1M context. MIT.
+# Q4 weights are ~460 GB (unsloth's dynamic UD-Q4_K_XL ships ~467 GB
+# across 11 parts; 2-bit dynamic shrinks it well under half).
+# Sharding required on anything below a top-tier server.
+#
+# Prereqs:
+#   1. Download the GGUF, e.g.:
+#        - https://huggingface.co/unsloth/GLM-5.2-GGUF          (recommended; dynamic quants)
+#        - https://huggingface.co/zai-org/GLM-5.2               (original weights)
+#      Concatenate the multi-part Q4 files into one .gguf, or point
+#      llama.cpp at the first shard.
+#   2. brew install llama.cpp on every node.
+#   3. At least 4 workers joined.
+id: glm-5.2-sharded
+display_name: Z.ai GLM-5.2 (MoE, 1M context, sharded, agentic)
+source:
+  type: file
+  path: /var/lib/opod/models/glm-5.2-q4_k_m.gguf
+size_bytes: 460000000000
+quant: q4_k_m
+context_window: 1048576
+capabilities: [chat, code, reasoning, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 480
+tags: [moe, sharded, frontier, coding, agentic]
+license: mit
+license_url: https://huggingface.co/zai-org/GLM-5.2
+released: 2026-06-16
+sharding:
+  required: true
+  default_shards: 4
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

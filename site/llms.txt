@@ -1,0 +1,39 @@
+# Opod
+
+> Opod is a free, open-source (Apache-2.0) self-hosted LLM gateway and control plane. A single Go binary turns your Macs and Linux boxes into a private inference cluster behind one endpoint that speaks both the OpenAI and Anthropic APIs — run open-weight models on your own hardware, route across 20+ hosted providers with automatic failover, and keep the team controls (per-user keys, quotas, budgets, audit) that vendor APIs lack.
+
+Opod sits one layer above inference engines (Ollama, vLLM, MLX-LM, llama.cpp-RPC). Your tools speak OpenAI or Anthropic; your engines speak their native API; Opod is the one URL + one key in between. It is not open-core and has no telemetry, license fee, or paid tier.
+
+## What it does
+
+- One OpenAI- and Anthropic-compatible endpoint (`/v1/chat/completions`, `/v1/embeddings`, `/v1/messages`, plus rerank, vision, and audio) for every client — Cursor, Claude Code, Aider, Continue, Zed, and any OpenAI/Anthropic SDK.
+- Runs 40+ open-weight models (Qwen, Llama, DeepSeek, GLM, gpt-oss, Gemma, Mistral, Phi and more) on hardware you own, load-balanced across machines.
+- Shards a single model too large for one box across several machines via llama.cpp-RPC.
+- Intelligent router: cross-provider `model="auto"` chains, automatic fallback, request hedging, sticky sessions for KV-cache reuse, placement-cooldown circuit breaking, and latency-aware routing.
+- 20+ hosted providers behind one key (Anthropic, OpenAI, AWS Bedrock, GCP Vertex, OpenRouter, Groq, Together, Fireworks, Cohere, Mistral, Perplexity, DeepSeek, Cerebras, NVIDIA, Gemini, Hugging Face and more) with multi-key rotation and 429 failover.
+- Team controls: per-user API keys with scopes, model allowlists, RPM/TPM rate limits, token + dollar budgets, an audit log, and a built-in admin dashboard.
+- Observability: Prometheus metrics, OTLP tracing, Grafana dashboards, and webhook/Langfuse/S3 callback sinks. Optional embeddings response cache and a guardrails framework.
+- Engine-agnostic, single static Go binary (~23 MB). No Docker, no Python, no Kubernetes.
+
+## Quick start
+
+- Install: `curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh`
+- `opod doctor` — checks your machine and prints the one command to install an engine if you lack one.
+- `opod up` — starts the gateway and prints your admin API key.
+- Add a machine: run the same install on another box, then `opod join http://leader:8080?token=...`.
+- Point Claude Code at a local model: set `ANTHROPIC_BASE_URL=http://localhost:8080`, `ANTHROPIC_AUTH_TOKEN=<your-opod-key>`, `ANTHROPIC_MODEL=<local-catalog-id>`.
+
+## Links
+
+- [Website](https://opod.io/): overview, quick start, dashboard tour, and feature list.
+- [GitHub repository](https://github.com/opod-io/opod): source, issues, and README.
+- [Latest release](https://github.com/opod-io/opod/releases/latest): prebuilt binaries for macOS and Linux (arm64/amd64) plus `.deb`/`.rpm`.
+- [License](https://www.apache.org/licenses/LICENSE-2.0): Apache-2.0.
+
+## Facts
+
+- License: Apache-2.0 (permissive, no open-core).
+- Cost: free; no telemetry, no paid tier.
+- Platforms: macOS (Apple Silicon), Linux (x86_64 / arm64).
+- Engines: Ollama, vLLM, MLX-LM, llama.cpp (single-node and RPC sharding).
+- APIs exposed: OpenAI-compatible and Anthropic-compatible.

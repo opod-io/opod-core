@@ -1,0 +1,16 @@
+id: qwen3-14b
+display_name: Qwen3 14B Instruct
+source:
+  type: ollama
+  ollama_name: qwen3:14b
+size_bytes: 9000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 16
+tags: [chat, general, capable]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen3-14B/blob/main/LICENSE
+released: 2025-04-28

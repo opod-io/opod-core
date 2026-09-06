@@ -1,0 +1,11 @@
+# Aider → Opod (OpenAI API)
+
+aider \
+  --openai-api-base {{.BaseURL}}/v1 \
+  --openai-api-key {{.Token}} \
+  --model openai/{{.Model}}
+
+# Or set permanently in ~/.aider.conf.yml:
+#   openai-api-base: {{.BaseURL}}/v1
+#   openai-api-key: {{.Token}}
+#   model: openai/{{.Model}}

@@ -1,0 +1,21 @@
+# GLM-4-9B — Z.ai's compact dense chat model. Runs anywhere; auto-pulls
+# from Ollama. 128K context, strong tool-calling for its size.
+# NOTE: ships under the custom "glm-4-9b License" (not MIT like the
+# newer GLM-4.5+/5.1) — carries `restricted-license`; read the terms
+# before commercial use.
+id: glm-4-9b
+display_name: Z.ai GLM-4 9B (dense, 128K context)
+source:
+  type: ollama
+  ollama_name: glm4:9b
+size_bytes: 5500000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [general, small, tools, restricted-license]
+license: glm-4
+license_url: https://huggingface.co/THUDM/glm-4-9b-chat/blob/main/LICENSE
+released: 2024-06-05

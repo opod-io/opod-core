@@ -1,0 +1,133 @@
+name: Auto-release (conventional commits)
+
+# Runs on every push to main. Decides whether to cut a new release based on
+# the Conventional Commits prefix of the commits since the last tag:
+#
+#   feat:  / feat(scope):              → minor bump (e.g. v0.2.x → v0.3.0)
+#   fix:   / fix(scope):               → patch bump (e.g. v0.2.0 → v0.2.1)
+#   feat!: / BREAKING CHANGE in body   → major bump (e.g. v0.x.y → v1.0.0)
+#   any other prefix (docs:, chore:,   → no release
+#       refactor:, test:, ci:, …)
+#
+# Skip a specific push from cutting a release by adding the literal token
+# "noautotag" (in square brackets) to the commit message subject. The token
+# is kept obscure so it won't accidentally appear in normal commit prose.
+#
+# Manual tags pushed via `git tag v… && git push origin v…` still trigger
+# the existing release.yml — this workflow only handles the auto path.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  bump:
+    # Opt-out token must be the literal string in brackets — see header.
+    if: "!contains(github.event.head_commit.message, '[noautotag]')"
+    runs-on: ubuntu-24.04
+    outputs:
+      new_tag: ${{ steps.tag.outputs.new_tag }}
+      release_type: ${{ steps.tag.outputs.release_type }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump from Conventional Commits
+        # Inline bash replaces mathieudutour/github-tag-action@v6.2, which
+        # has been unmaintained since 2024 and still runs on Node 20 (gone
+        # from GitHub Actions on 2026-06-16). Logic kept identical:
+        #   feat!:/BREAKING CHANGE → major
+        #   feat:                   → minor
+        #   fix:                    → patch
+        #   anything else           → no bump (default_bump: false)
+        id: tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Last tag (defaults to v0.0.0 if there are no tags yet).
+          last_tag=$(git tag --sort=-v:refname | head -1)
+          last_tag="${last_tag:-v0.0.0}"
+          echo "previous tag: $last_tag"
+          # Walk commits since last tag and classify by Conventional Commits prefix.
+          commits=$(git log --pretty=format:'%s%n%b%n---' "$last_tag"..HEAD)
+          bump=""
+          # BREAKING CHANGE per the Conventional Commits spec must be a
+          # footer line — i.e. a line that STARTS with "BREAKING CHANGE:"
+          # (or "BREAKING-CHANGE:"). The looser substring match here used
+          # to mean any commit describing the script in prose triggered a
+          # major bump on itself (this footer doesn't, because of the ^).
+          # The optional (\([^)]*\))? covers the scoped breaking form, e.g.
+          # "feat(api)!:" — without it a scoped breaking change matched
+          # neither this regex nor the minor one and produced NO release.
+          if grep -qE '^(feat|fix|chore|refactor|test|docs|ci|build|perf|style)(\([^)]*\))?!:' <<< "$commits" \
+             || grep -qE '^BREAKING[ -]CHANGE:' <<< "$commits"; then
+            bump="major"
+          elif grep -qE '^feat(\([^)]*\))?:' <<< "$commits"; then
+            bump="minor"
+          elif grep -qE '^fix(\([^)]*\))?:' <<< "$commits"; then
+            bump="patch"
+          fi
+          if [ -z "$bump" ]; then
+            echo "no feat/fix/breaking commits since $last_tag — skipping release"
+            echo "new_tag=" >> "$GITHUB_OUTPUT"
+            echo "release_type=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Bump <major>.<minor>.<patch> per the classification.
+          ver="${last_tag#v}"
+          IFS='.' read -r maj min pat <<< "$ver"
+          # Prerelease/build tags like v1.2.3-rc1 leave "3-rc1" in pat, and
+          # $((pat+1)) on that is an arithmetic error that kills the job
+          # under set -euo pipefail. Strip the -suffix/+metadata first.
+          pat="${pat%%[-+]*}"
+          if ! [[ "$maj" =~ ^[0-9]+$ && "$min" =~ ^[0-9]+$ && "$pat" =~ ^[0-9]+$ ]]; then
+            echo "cannot parse semver from last tag '$last_tag' (got maj='$maj' min='$min' pat='$pat')" >&2
+            exit 1
+          fi
+          case "$bump" in
+            major) maj=$((maj+1)); min=0; pat=0 ;;
+            minor) min=$((min+1)); pat=0 ;;
+            patch) pat=$((pat+1)) ;;
+          esac
+          new_tag="v${maj}.${min}.${pat}"
+          echo "new tag: $new_tag (bump: $bump)"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "$new_tag" -m "Release $new_tag"
+          git push origin "$new_tag"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "release_type=$bump" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: bump
+    if: needs.bump.outputs.new_tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # Check out the freshly-created tag, not main. Otherwise
+          # GoReleaser sees an untagged commit and refuses to release.
+          ref: ${{ needs.bump.outputs.new_tag }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only used if opod-io/homebrew-tap exists (it doesn't yet,
+          # and the goreleaser config already skips brew publishing).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

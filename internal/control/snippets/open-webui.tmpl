@@ -1,0 +1,19 @@
+# Open WebUI → Opod (OpenAI-compatible API)
+# Easiest path is Docker — points Open WebUI at Opod at container startup.
+
+docker run -d -p 3000:8080 \
+  -e OPENAI_API_BASE_URL={{.BaseURL}}/v1 \
+  -e OPENAI_API_KEY={{.Token}} \
+  -v open-webui:/app/backend/data \
+  --name open-webui --restart always \
+  ghcr.io/open-webui/open-webui:main
+
+# Open http://localhost:3000, sign up (the first account is admin).
+# Settings → Admin Panel → Connections → confirm "OpenAI API" is enabled.
+# The model dropdown auto-populates from Opod's /v1/models, including
+# {{.Model}} and every other model in `opod model ls`.
+
+# Already running Open WebUI? Edit it in the UI instead:
+#   Settings → Admin Panel → Connections → OpenAI API
+#     API URL: {{.BaseURL}}/v1
+#     API Key: {{.Token}}

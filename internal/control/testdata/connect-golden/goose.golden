@@ -1,0 +1,13 @@
+# Goose → Opod (OpenAI-compatible provider)
+# Edit ~/.config/goose/config.yaml:
+
+GOOSE_PROVIDER: openai
+GOOSE_MODEL: test-model
+OPENAI_BASE_URL: http://example.local:8080/v1
+OPENAI_API_KEY: sk-orc-TEST
+
+# Or run `goose configure` interactively and pick "OpenAI Compatible"
+# with the URL, key, and model above.
+
+goose session                       # start an interactive session
+goose run "summarize this repo"     # one-shot

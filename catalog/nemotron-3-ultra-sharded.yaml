@@ -1,0 +1,40 @@
+# NVIDIA Nemotron 3 Ultra — first US-developed 550B open-weight model.
+# Hybrid Mamba-2 + Transformer MoE: 550B total, 55B active per forward pass.
+# 1M context, MMLU 89.1, AA Index 48 (June 2026).
+#
+# Q4 weights are ~280 GB — sharding required.
+#
+# IMPORTANT: this model uses a hybrid Mamba-Transformer architecture. Upstream
+# llama.cpp added Mamba-2 support in 2025, but the Nemotron hybrid MoE +
+# NVFP4 path may need a recent build. Same caveat as DeepSeek V4 Flash —
+# expect to build llama.cpp from main rather than relying on `brew install`.
+#
+# Prereqs:
+#   1. Download weights, e.g.:
+#        - https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4    (NVFP4, ~5x faster on Blackwell)
+#        - https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16     (BF16 full)
+#        - HF community GGUF quants once they appear
+#   2. Build patched llama.cpp on every node (Mamba-2 + NVFP4 support).
+#   3. At least 4 workers joined.
+id: nemotron-3-ultra-sharded
+display_name: NVIDIA Nemotron 3 Ultra (550B hybrid Mamba-MoE, sharded)
+source:
+  type: file
+  path: /var/lib/opod/models/nemotron-3-ultra-q4_k_m.gguf
+size_bytes: 280000000000
+quant: q4_k_m
+context_window: 1048576
+capabilities: [chat, code, reasoning, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 320
+tags: [moe, mamba, sharded, frontier, nvidia, long-context, restricted-license]
+license: nvidia-open
+license_url: https://huggingface.co/nvidia/Nemotron-3-Ultra/blob/main/LICENSE
+released: 2026-01-15
+sharding:
+  required: true
+  default_shards: 4
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

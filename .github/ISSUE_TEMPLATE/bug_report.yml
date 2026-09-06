@@ -1,0 +1,88 @@
+name: 🐛 Bug report
+description: Something is broken or behaves wrong.
+title: "bug: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the
+        fields below — the more specific you are, the faster we can fix it.
+
+        Before filing, please:
+        - Search [existing issues](https://github.com/opod-io/opod/issues?q=is%3Aissue) to avoid duplicates
+        - Try `opod update` to see if it's already fixed on `main`
+        - Run `opod doctor` and attach the output below
+
+  - type: input
+    id: version
+    attributes:
+      label: Opod version
+      description: Output of `opod version`
+      placeholder: "v0.2.0 (build abc123)"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / architecture
+      placeholder: "macOS 14.5 (arm64) — M3 Pro, 36 GB"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Inference engine
+      options:
+        - Ollama
+        - vLLM
+        - MLX-LM
+        - llama.cpp (single node)
+        - llama.cpp-RPC (sharded)
+        - Vendor proxy (Anthropic / OpenAI egress)
+        - Don't know / N/A
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Exact commands or API calls. Pretend the reviewer has never run Opod before.
+      placeholder: |
+        1. opod up
+        2. opod model add qwen3.6-27b
+        3. curl :8080/v1/chat/completions -d '{...}'
+        ↳ expected: streaming response
+        ↳ actual: 500 Internal Server Error
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`opod doctor` output"
+      description: Paste verbatim. Redact API keys.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Stderr from `opod up`, browser console, or the engine's log.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else — hunches, related issues, what you've already tried.
+    validations:
+      required: false

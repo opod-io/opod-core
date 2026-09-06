@@ -1,0 +1,19 @@
+# Llama 3.1 8B Instruct — safetensors from an ungated mirror (the meta-llama repo is gated).
+# vLLM path: `vllm serve NousResearch/Meta-Llama-3.1-8B-Instruct` (bf16, ~16 GB VRAM + KV).
+id: llama-3.1-8b
+display_name: Meta Llama 3.1 8B Instruct
+source:
+  type: huggingface
+  repo: NousResearch/Meta-Llama-3.1-8B-Instruct
+size_bytes: 16070000000
+quant: bf16
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [vllm]
+hardware:
+  min_ram_gb: 32
+  min_vram_gb: 20
+tags: [chat, general, meta, restricted-license]
+license: llama-3.1-community
+license_url: https://www.llama.com/llama3_1/license/
+released: 2024-07-23

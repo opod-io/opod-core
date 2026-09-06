@@ -1,0 +1,84 @@
+name: e2e
+
+# Full-stack smoke: brings up `opod up` against Ollama, installs a
+# tiny model, round-trips chat completions both sync and streaming.
+# Catches "binary builds but doesn't actually serve requests"
+# regressions that unit tests can't.
+#
+# Runs nightly + on label (`run-e2e`) — not on every PR because the
+# Ollama model pull is slow even with the cache. Manual:
+#   gh workflow run e2e.yml
+
+on:
+  schedule:
+    - cron: "17 5 * * 0"  # weekly, Sunday 05:17 UTC (was nightly: macOS leg = ~110 billed min/night on a private repo)
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-e2e'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build opod binary
+        run: go build -o opod ./cmd/opod
+
+      - name: Install Ollama (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Install Ollama (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ollama
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ollama/models
+            ~/Library/Application Support/ollama/models
+          key: ollama-${{ matrix.os }}-llama-3.2-1b-v1
+
+      - name: Start Ollama
+        shell: bash
+        run: |
+          nohup ollama serve >ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:11434/api/version >/dev/null; then
+              echo "ollama up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ollama failed to start" >&2
+          cat ollama.log >&2
+          exit 1
+
+      - name: Run E2E smoke
+        env:
+          MODEL: llama-3.2-1b
+        run: ./scripts/single-node-e2e.sh
+
+      - name: Upload opod log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opod-log-${{ matrix.os }}
+          path: |
+            /tmp/opod-e2e-*/opod.log
+            ollama.log
+          if-no-files-found: ignore

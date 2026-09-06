@@ -1,0 +1,22 @@
+id: mimo-7b-ray
+display_name: Xiaomi MiMo 7B (vLLM multi-node / Ray — TEST)
+source:
+  type: huggingface
+  repo: XiaomiMiMo/MiMo-7B-RL
+size_bytes: 4500000000
+context_window: 32768
+capabilities: [chat, tools]
+recommended_engines: [vllm]
+hardware:
+  min_ram_gb: 8
+# Sharding via the vLLM multi-node (Ray) backend — Phase 1 exercises the Ray
+# cluster bring-up. The model itself fits on one GPU, so a cross-node split here
+# is ARTIFICIAL (just to prove the path); real payoff is a model too big for one
+# box. engine=vllm routes opod's shard orchestrator to createShardedVLLMRay.
+sharding:
+  required: true
+  engine: vllm
+  default_shards: 2
+tags: [reasoning, small, xiaomi, vllm, ray, test]
+license: apache-2.0
+released: 2025-09-30

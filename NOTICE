@@ -1,0 +1,17 @@
+Opod
+Copyright 2026 Hadi Honarvar Nazari
+
+This product is licensed under the Opod Community License (PolyForm Shield License
+1.0.0); see LICENSE.
+
+Required Notice: Copyright 2026 Hadi Honarvar Nazari — Opod (https://opod.io)
+
+"Opod" and the Opod name, logo, and branding are trademarks of the licensor. The
+license grants rights to the software's copyright; it does NOT grant any right to use
+the Opod name or marks. Forks and derivative works must be renamed and must not present
+themselves as Opod.
+
+This software includes and builds upon third-party components under their own licenses
+(e.g. the Go standard library and, in container images, upstream inference engines such
+as vLLM and llama.cpp and their bases). Those components remain under their respective
+licenses.
