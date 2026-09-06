@@ -81,7 +81,8 @@ func (s *Server) cacheFlush(w http.ResponseWriter, r *http.Request) {
 // would otherwise be persisted in plaintext to the audit_log table.
 func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
 		actor := "anonymous"
 		if k := auth.KeyFrom(r.Context()); k != nil {
 			actor = k.Name
@@ -100,7 +101,13 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			Action: action,
 			Target: target,
 		})
-
+		// P12-3: the audit table above is a local cache; the durable record is
+		// the manager's. Every state-changing admin call rides the lifecycle
+		// stream as admin.call (reads and the heartbeat are not audit events —
+		// the manager polls this leader every few seconds).
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/admin/v1/nodes/heartbeat" {
+			s.logEvent("admin.call", action, map[string]any{"actor": actor, "status": ww.Status(), "from": target})
+		}
 	})
 }
 
