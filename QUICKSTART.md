@@ -114,12 +114,11 @@ After step 3, Opod prints:
     →  Wire up Claude Code:  opod connect claude-code
     →  Wire up Cursor:       opod connect cursor
     →  See all clients:      opod connect --list
-    →  Invite a teammate:    opod invite <name>
 
   Press Ctrl-C to stop.
 ```
 
-**Copy that admin key now.** You won't see it again. (It's also saved to `~/.opod/admin.key` for subsequent CLI commands like `opod connect` and `opod invite`.)
+**Copy that admin key now.** You won't see it again. (It's also saved to `~/.opod/admin.key` for subsequent CLI commands like `opod connect` and `opod token`.)
 
 ---
 
@@ -137,13 +136,9 @@ opod connect                 # no arg → interactive picker
 opod connect --list          # see all 19
 ```
 
-### B) Web dashboard
+### B) The console
 
-1. Open <http://localhost:8080> in a browser
-2. Paste the admin key (auto-saved as `~/.opod/admin.key` so subsequent CLI calls don't need it)
-3. Click **Connect** in the nav — pick a tool, click Copy, you're done
-4. Or click **Playground** for an in-browser chat to sanity-check the model
-5. Other tabs: Dashboard, Nodes, Models, Shards, Tokens, Usage, Audit, Settings
+Core has no web dashboard (ADR-022). The console — Connect cards, Playground, keys, teams — is the control plane (`opodcp`, `helm install opod`). From core alone, use the CLI (`opod connect`, `opod token`) or curl.
 
 ### C) curl from your terminal
 
@@ -217,12 +212,11 @@ You'll get back an OpenAI-shape `{"data":[{"embedding":[…768 floats…]}]}` re
 Once you've confirmed it works:
 
 ```bash
-opod invite hadi --quota 100000
+opod token create hadi
 ```
 
 This creates a user-scope token for `hadi` (capped at 100k tokens/day) and prints a paste-into-Slack markdown card with config snippets for every supported client (Claude Code, Cursor, Aider, Continue, Zed, Cline, Qwen-Code, **Hermes Agent**, **OpenClaw**, **OpenCode**, **Open WebUI**, **Open Notebook**, **Goose**, **Plandex**, **OpenHands**, **Codex CLI**, OpenAI SDK, Anthropic SDK, curl). Your teammate copies the snippet for the tool they use → they're talking to your hardware.
 
-The same flow works in the dashboard: **Tokens → + Invite teammate**.
 
 ---
 

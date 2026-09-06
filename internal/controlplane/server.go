@@ -13,7 +13,6 @@ import (
 	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/cache"
-	"github.com/opod-io/opod/internal/callbacks"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/events"
@@ -23,7 +22,6 @@ import (
 	"github.com/opod-io/opod/internal/router"
 	"github.com/opod-io/opod/internal/scheduler"
 	"github.com/opod-io/opod/internal/store"
-	"github.com/opod-io/opod/internal/ui"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -50,7 +48,6 @@ type Server struct {
 	anthropicH  *api.AnthropicHandler
 	egressH     *api.EgressHandler
 	rateBuckets *api.BucketStore
-	callbacks   *callbacks.Dispatcher
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
@@ -203,14 +200,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// recordUsage step does a price lookup against this catalog +
 	// vendor pricing table to populate usage.cost_usd.
 	api.SetCatalog(cat)
-	// Observability callbacks (webhooks / Langfuse). Each configured
-	// sink runs in its own goroutine with a bounded queue.
-	callbackRows := cfg.Observability.Callbacks
-	if !cfg.Surfaces.Callbacks {
-		callbackRows = nil // surface off: no sinks, whatever the file says
-	}
-	dispatcher := buildCallbackDispatcher(callbackRows, cfg.BlockPrivateTargets, log)
-	api.SetCallbackDispatcher(dispatcher)
 	// Guardrails (pre-call hooks). Synchronous on the request path.
 	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, cfg.BlockPrivateTargets, log))
 	// Response cache (embeddings today; chat in follow-up).
@@ -234,7 +223,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		anthropicH:  anthropicH,
 		egressH:     egressH,
 		rateBuckets: buckets,
-		callbacks:   dispatcher,
 		bus:         events.New(),
 	}
 }
@@ -318,71 +306,6 @@ func buildGuardrailRegistry(rows []config.GuardrailConfig, blockPrivate bool, lo
 	return reg
 }
 
-// buildCallbackDispatcher constructs the observability fan-out from
-// the YAML rows. Each row maps to either a Webhook or a Langfuse
-// driver; unknown kinds are ignored (with a warn log) so a typo'd
-// config doesn't crash startup.
-func buildCallbackDispatcher(rows []config.CallbackConfig, blockPrivate bool, log *slog.Logger) *callbacks.Dispatcher {
-	if len(rows) == 0 {
-		return nil
-	}
-	sinks := make([]callbacks.Sink, 0, len(rows))
-	for _, r := range rows {
-		switch r.Kind {
-		case "webhook":
-			if r.URL == "" {
-				log.Warn("webhook callback missing url — skipping", "id", r.ID)
-				continue
-			}
-			sinks = append(sinks, callbacks.NewWebhook(callbacks.WebhookConfig{
-				ID:                  r.ID,
-				URL:                 r.URL,
-				Secret:              os.ExpandEnv(r.Secret),
-				Events:              r.Events,
-				QueueSz:             r.QueueSize,
-				BlockPrivateTargets: blockPrivate,
-			}, log))
-		case "langfuse":
-			pub := os.ExpandEnv(r.PublicKey)
-			sec := os.ExpandEnv(r.SecretKey)
-			if pub == "" || sec == "" {
-				log.Warn("langfuse callback missing keys — skipping", "id", r.ID)
-				continue
-			}
-			sinks = append(sinks, callbacks.NewLangfuse(callbacks.LangfuseConfig{
-				ID:        r.ID,
-				Host:      r.Host,
-				PublicKey: pub,
-				SecretKey: sec,
-				QueueSz:   r.QueueSize,
-			}, log))
-		case "s3":
-			if r.Bucket == "" {
-				log.Warn("s3 callback missing bucket — skipping", "id", r.ID)
-				continue
-			}
-			sinks = append(sinks, callbacks.NewS3(callbacks.S3Config{
-				ID:              r.ID,
-				Bucket:          r.Bucket,
-				Region:          r.Region,
-				Prefix:          r.Prefix,
-				Endpoint:        r.Endpoint,
-				AccessKeyID:     os.ExpandEnv(r.AccessKeyID),
-				SecretAccessKey: os.ExpandEnv(r.SecretAccessKey),
-				Events:          r.Events,
-				BatchSize:       r.BatchSize,
-				FlushSeconds:    r.FlushSeconds,
-				QueueSz:         r.QueueSize,
-			}, log))
-		default:
-			log.Warn("unknown callback kind — skipping", "kind", r.Kind)
-		}
-	}
-	if len(sinks) == 0 {
-		return nil
-	}
-	return callbacks.NewDispatcher(log, sinks...)
-}
 
 func (s *Server) Start(ctx context.Context) error {
 	s.StartPlanWatcher(ctx)
@@ -461,28 +384,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/loadz", s.loadz)
 	r.Handle("/metrics", promhttp.Handler())
 
-	// Web UI (single embedded HTML page; assets via CDN). OPOD_UI=off (a
-	// managed leader) leaves "/" a 404 — the CP's console is the UI then.
-	if s.cfg.Surfaces.UI {
-		r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write(ui.IndexHTML)
-		})
-	}
-
-	// Localhost-only bootstrap: hand the dashboard the saved admin key
-	// so first-time / returning users don't have to copy it from the
-	// terminal. The endpoint is unauthenticated by design — it's how
-	// you GET the credential in the first place — but it's gated to:
-	//   1. requests from a loopback peer (127.0.0.1 / ::1), AND
-	//   2. requests with no proxy-forwarding headers (otherwise a
-	//      remote attacker could spoof loopback by setting
-	//      X-Forwarded-For: 127.0.0.1 through a misconfigured proxy).
-	// If either check fails we return 404, indistinguishable from
-	// "endpoint doesn't exist."
-	if s.cfg.Surfaces.UI {
-		r.Get("/admin/v1/bootstrap-key", s.bootstrapAdminKey)
-	}
+	// No dashboard in core (ADR-022): "/" is a 404. The product console lives in the control plane.
 
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
@@ -616,19 +518,10 @@ func (s *Server) routes() http.Handler {
 			r.Get("/events", s.eventsStream)
 
 			// Onboarding-and-sharing (M3-T23 / M3-T24 / M3-T26)
-			if s.cfg.Surfaces.UI { // dashboard-only helpers
-				r.Get("/connect/clients", s.listConnectClients)
-				r.Post("/connect/snippet", s.renderConnectSnippet)
-				r.Post("/invite", s.inviteUser)
-			}
 			r.Post("/healthcheck", s.healthcheck)
 
 			// Observability callbacks — list configured sinks +
 			// fire a synthetic test event.
-			if s.cfg.Surfaces.Callbacks {
-				r.Get("/callbacks", s.listCallbacks)
-				r.Post("/callbacks/test", s.testCallback)
-			}
 
 			// Response cache stats + flush.
 			r.Get("/cache/stats", s.cacheStats)

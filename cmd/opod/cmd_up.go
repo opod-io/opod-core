@@ -473,7 +473,6 @@ func printReady(cfg *config.Config, adminKey string) {
 		nx("Wire up Claude Code:", "opod connect claude-code")
 		nx("Wire up Cursor:", "opod connect cursor")
 		nx("See all clients:", "opod connect --list")
-		nx("Invite a teammate:", "opod invite <name>")
 		nx("Mint another admin key:", "opod token create dashboard --admin")
 		fmt.Println()
 		fmt.Println("  Quick test from the shell:")
@@ -505,7 +504,6 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println("    opod connect claude-code   # or: cursor, aider, continue, …")
 		fmt.Println("    opod connect --list        # see all supported clients")
 	}
-	MaybeShowUpdateNotice(os.Stdout)
 	printNetworkPosture(cfg)
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")
@@ -527,15 +525,6 @@ func printNetworkPosture(cfg *config.Config) {
 		fmt.Println("    · Tracing:       OFF  (set OPOD_OTLP_ENDPOINT=… to your collector to enable)")
 	} else {
 		fmt.Printf("    · Tracing:       → %s  (your collector; set OFF by clearing OPOD_OTLP_ENDPOINT)\n", cfg.Observability.OTLPEndpoint)
-	}
-
-	// Update check
-	if cfg.Surfaces.Managed {
-		fmt.Println("    · Update check:  OFF  (managed by an external manager — OPOD_MANAGED=1)")
-	} else if os.Getenv("OPOD_NO_UPDATE_CHECK") == "1" {
-		fmt.Println("    · Update check:  OFF  (OPOD_NO_UPDATE_CHECK=1)")
-	} else {
-		fmt.Println("    · Update check:  github.com/opod-io/opod/releases/latest, max 1× per 24h  (OPOD_NO_UPDATE_CHECK=1 to disable)")
 	}
 
 	// Vendor egress — only print rows where the operator opted in.

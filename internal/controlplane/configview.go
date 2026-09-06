@@ -25,19 +25,8 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Egress        map[string]any    `json:"egress"`
 		EditHint      string            `json:"edit_hint"`
 	}
-	// Sanitized copies of the callback / guardrail rows — the structs
-	// carry webhook signing secrets and Langfuse keys that must get the
-	// same redaction as the engine/vendor keys below. Copies, not
-	// in-place edits: s.cfg stays untouched.
-	cbs := make([]config.CallbackConfig, len(s.cfg.Observability.Callbacks))
-	for i, cb := range s.cfg.Observability.Callbacks {
-		cb.Secret = redact(cb.Secret)
-		cb.PublicKey = redact(cb.PublicKey)
-		cb.SecretKey = redact(cb.SecretKey)
-		cb.AccessKeyID = redact(cb.AccessKeyID)
-		cb.SecretAccessKey = redact(cb.SecretAccessKey)
-		cbs[i] = cb
-	}
+	// Sanitized copies of the guardrail rows — they carry webhook secrets
+	// that must get the same redaction as the engine/vendor keys below.
 	grs := make([]config.GuardrailConfig, len(s.cfg.Observability.Guardrails))
 	for i, g := range s.cfg.Observability.Guardrails {
 		g.AuthKey = redact(g.AuthKey)
@@ -80,7 +69,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Observability: map[string]any{
 			"otlp_endpoint":  s.cfg.Observability.OTLPEndpoint,
 			"otlp_status":    otlpStatus(s.cfg.Observability.OTLPEndpoint),
-			"callbacks":      cbs, // names + kinds; secret / langfuse keys redacted
 			"guardrails":     grs, // mode + url; auth_key redacted
 			"response_cache": s.cfg.Observability.ResponseCache,
 		},

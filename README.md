@@ -41,7 +41,7 @@
       ║  ════════════════════════════════════════════════════════════════    ║
       ║  Gateway     OpenAI + Anthropic on /v1/chat/completions              ║
       ║              per-user keys · daily quotas · full audit log           ║
-      ║              admin dashboard at :8080                                ║
+      ║              CLI-only core · the console is the control plane        ║
       ║                                                                      ║
       ║  Router      Same model on N nodes  → load-balance                   ║
       ║              Different models per node → route by placement          ║
@@ -157,8 +157,6 @@ curl http://localhost:8080/v1/chat/completions \
 ```
 
 You should see a JSON response with a 5-word reply. 🎉
-
-**Or use the web dashboard**: open `http://localhost:8080` and paste the admin key.
 
 **Or wire up Claude Code**: in any terminal where you use Claude Code, set:
 
@@ -1155,36 +1153,18 @@ opod disconnect --list             # same 19 clients
 
 Prints the exact commands to roll back whatever `opod connect` set up — does NOT modify any shell, editor, or config file. You run the commands when you're ready. Once disconnected, the client talks straight to the vendor (`api.anthropic.com`, `api.openai.com`); nothing about your Opod host needs to change. Re-run `opod connect <client>` anytime to go back.
 
-### For a teammate: `opod invite <name>`
+### For a teammate: `opod token create <name>`
 
 ```bash
-opod invite hadi --quota 100000
-# Creates a user-scope token with a 100k tokens/day cap.
-# Prints a paste-into-Slack markdown card with snippets for every supported client.
-# Recipient picks the tool they use and pastes — done.
-
-# Filter the share card to specific clients
-opod invite alice --clients claude-code,cursor,curl
-
-# Suggest a specific default model in the snippets
-opod invite bob --model qwen-coder-14b
-
-# Override the gateway URL printed in the card (useful behind a reverse proxy)
-opod invite carol --base-url https://opod.example.com
-
-# Machine-readable output for scripting
-opod invite dave --format json | jq '.token'
+opod token create hadi            # a user-scope API key, printed once
+opod connect cursor --token <key> # the snippet for their tool, with that key
 ```
 
-Flags: `--quota N` (daily token cap, 0 = unlimited), `--clients id1,id2,…` (subset of clients to include), `--format markdown|json`, `--base-url <url>`, `--model <id>`. The token is shown exactly once — capture it then. Revoke later with `opod token revoke <id>`.
+Share cards, quotas and the invite flow live in the control plane's console (ADR-022); core keeps the two primitives above.
 
-### In the dashboard
+### No dashboard in core
 
-Open `http://localhost:8080` after `opod up`. Tabs:
-
-- **Connect** — pick a tool from a dropdown, copy the snippet, click "Test connection" to verify the gateway works end-to-end
-- **Playground** — in-browser chat box: pick a model, send a message, see the streaming response. Useful sanity check before configuring Cursor.
-- **Tokens → + Invite teammate** — same as `opod invite`, with a modal that copies the share card as markdown.
+Core is CLI-only since ADR-022: `/` answers 404. The console — Connect cards, Playground, keys, teams — is the control plane (`opodcp`).
 
 ### Reference snippets (manual)
 
@@ -1426,9 +1406,6 @@ opod connect <client>            Print the copy-paste config snippet for a clien
                                   (--list shows the 19-client roster; --model,
                                   --base-url, --token overrides)
 opod disconnect <client>         Print the rollback commands for a client (--list)
-opod invite <name>               Create a user token + shareable per-client
-                                  snippet card (--quota N, --clients a,b,
-                                  --model <id>, --base-url <url>, --format markdown|json)
 
 # --- observability ---
 opod usage [--limit N] [--user X] [--summary] [--json]
