@@ -60,9 +60,15 @@ func Hash(plain string) string {
 // Middleware returns an http middleware that enforces API key auth.
 // If requireKeys is false, requests proceed without auth (dev only).
 func Middleware(keys store.APIKeyStore, requireKeys bool) func(http.Handler) http.Handler {
+	return MiddlewareFn(keys, func() bool { return requireKeys })
+}
+
+// MiddlewareFn is Middleware with the gate evaluated per request — a mounted
+// auth snapshot can turn key enforcement on or off at runtime.
+func MiddlewareFn(keys store.APIKeyStore, requireKeys func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !requireKeys {
+			if !requireKeys() {
 				// Dev mode: no auth enforced. Inject an admin scope so the
 				// scope-gated routes (admin + node register/heartbeat) stay
 				// reachable — otherwise ScopeFrom returns "" and every
