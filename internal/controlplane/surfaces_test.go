@@ -24,7 +24,6 @@ func contractedServer(t *testing.T) (*Server, string) {
 	cfg.Listen = ":0"
 	cfg.Surfaces = config.SurfacesConfig{UI: false, Egress: false, Protocols: "openai", Callbacks: false, Managed: true}
 	cfg.Router.Fallback.Enabled = true // a key in the env would set this; egress off must still win
-	cfg.Observability.Callbacks = []config.CallbackConfig{{Kind: "webhook", URL: "http://127.0.0.1:1/x"}}
 	st, err := store.OpenSQLite(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -74,22 +73,14 @@ func TestSurfacesOff(t *testing.T) {
 	}
 
 	// off
-	if c, _ := get("/", false); c != http.StatusNotFound {
-		t.Errorf("GET / with UI off = %d, want 404", c)
-	}
-	// under /admin/v1 the auth middleware answers before routing, so an
-	// unauthenticated probe reads 401; the point is that the key is never handed out
-	if c, _ := get("/admin/v1/bootstrap-key", false); c == http.StatusOK {
-		t.Errorf("bootstrap-key with UI off must not answer 200")
-	}
-	if c, _ := get("/admin/v1/bootstrap-key", true); c != http.StatusNotFound {
-		t.Errorf("GET /admin/v1/bootstrap-key (authenticated) with UI off = %d, want 404", c)
+	// ADR-022: no dashboard, no bootstrap-key, no connect/invite in core at all
+	for _, p := range []string{"/", "/admin/v1/bootstrap-key", "/admin/v1/connect/clients"} {
+		if c, _ := get(p, true); c != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404 (removed from core)", p, c)
+		}
 	}
 	if c, _ := get("/admin/v1/callbacks", true); c != http.StatusNotFound {
-		t.Errorf("GET /admin/v1/callbacks with callbacks off = %d, want 404", c)
-	}
-	if c, _ := get("/admin/v1/connect/clients", true); c != http.StatusNotFound {
-		t.Errorf("GET /admin/v1/connect/clients with UI off = %d, want 404", c)
+		t.Errorf("GET /admin/v1/callbacks = %d, want 404 (callbacks left core, ADR-022)", c)
 	}
 	for _, p := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/rerank"} {
 		if c := post(p); c != http.StatusNotFound {
@@ -98,9 +89,6 @@ func TestSurfacesOff(t *testing.T) {
 	}
 	if srv.cfg.Router.Fallback.Enabled {
 		t.Error("egress off must clear Router.Fallback.Enabled")
-	}
-	if srv.callbacks != nil && len(srv.cfg.Observability.Callbacks) > 0 && srv.cfg.Surfaces.Callbacks {
-		t.Error("callbacks surface reported on")
 	}
 
 	// still on: the contract

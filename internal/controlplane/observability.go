@@ -4,10 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/callbacks"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -321,49 +317,6 @@ func (s *Server) cacheFlush(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "flushed", "namespace": ns, "all": all})
 }
 
-// listCallbacks returns the names of every configured observability
-// sink so an operator can confirm which ones are running.
-func (s *Server) listCallbacks(w http.ResponseWriter, r *http.Request) {
-	out := []map[string]string{}
-	if s.callbacks != nil {
-		for _, sink := range s.callbacks.Sinks() {
-			out = append(out, map[string]string{"name": sink.Name()})
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"sinks": out})
-}
-
-// testCallback fires a synthetic event so the operator can verify a
-// receiver is wired up without waiting for real traffic. Optional
-// query param `?sink=<name>` targets a single sink; otherwise every
-// sink that subscribes to "test" gets a copy. The "test" event kind
-// piggybacks on existing subscriptions — sinks that listen to "all"
-// (empty events filter) will pick it up.
-func (s *Server) testCallback(w http.ResponseWriter, r *http.Request) {
-	if s.callbacks == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "no-callbacks-configured"})
-		return
-	}
-	target := r.URL.Query().Get("sink")
-	evt := callbacks.Event{
-		Kind: "test",
-		Payload: map[string]any{
-			"request_id": api.RequestIDFrom(r.Context()),
-			"sent_by":    "/admin/v1/callbacks/test",
-			"note":       "synthetic event — if you see this, the sink is reachable",
-		},
-	}
-	fired := 0
-	for _, sink := range s.callbacks.Sinks() {
-		if target != "" && sink.Name() != target {
-			continue
-		}
-		sink.Send(r.Context(), evt)
-		fired++
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"fired": fired, "target": target})
-}
-
 // auditMiddleware records every admin action.
 //
 // Target is set to the caller's remote address (useful for forensics) rather
@@ -390,65 +343,8 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			Action: action,
 			Target: target,
 		})
-		// Mirror to any configured observability callbacks. Same
-		// shape as the audit_log row so a receiver doesn't need to
-		// keep a separate schema.
-		if s.callbacks != nil {
-			s.callbacks.Publish(ctx, callbacks.Event{
-				Kind: "audit",
-				Payload: map[string]any{
-					"actor":      actor,
-					"action":     action,
-					"target":     target,
-					"request_id": api.RequestIDFrom(r.Context()),
-				},
-			})
-		}
-	})
-}
 
-// bootstrapAdminKey hands the local dashboard the admin key saved at
-// `<DataDir>/admin.key` so the UI can auto-log-in without making the
-// operator copy it from the terminal. See the route comment in
-// `routes()` for the security model.
-func (s *Server) bootstrapAdminKey(w http.ResponseWriter, r *http.Request) {
-	// Reject any request that has been proxied — RealIP middleware
-	// rewrites RemoteAddr from these headers (True-Client-IP takes
-	// precedence in chi v5), so without this guard a remote attacker
-	// behind a misconfigured reverse proxy could pose as loopback.
-	for _, h := range []string{"True-Client-IP", "X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host"} {
-		if r.Header.Get(h) != "" {
-			http.NotFound(w, r)
-			return
-		}
-	}
-	// Belt and braces: check loopback against the pre-RealIP peer
-	// address stashed by stashRemoteAddr, never the rewritten
-	// r.RemoteAddr — header spoofing then can't matter even if the
-	// guard list above falls behind RealIP's header set.
-	addr := realRemoteAddr(r)
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		http.NotFound(w, r)
-		return
-	}
-	data, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "admin.key"))
-	if err != nil {
-		// "Not bootstrapped" surfaces as 404 so the UI can render the
-		// CLI-recovery hint instead of mistaking it for a server error.
-		http.NotFound(w, r)
-		return
-	}
-	key := strings.TrimSpace(string(data))
-	if key == "" {
-		http.NotFound(w, r)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"key": key})
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

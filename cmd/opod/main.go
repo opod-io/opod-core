@@ -59,8 +59,6 @@ func main() {
 		cmdConnect(args)
 	case "disconnect":
 		cmdDisconnect(args)
-	case "invite":
-		cmdInvite(args)
 	case "completion":
 		cmdCompletion(args)
 	case "help", "--help", "-h":
@@ -81,7 +79,7 @@ func main() {
 var topLevelCommands = []string{
 	"version", "up", "down", "status", "join", "node", "model", "shard",
 	"route", "token", "usage", "audit", "config", "doctor", "update", "upgrade",
-	"connect", "disconnect", "invite", "completion", "help",
+	"connect", "disconnect", "completion", "help",
 }
 
 // suggestSubcommand returns the closest registered top-level command by edit
@@ -217,7 +215,6 @@ Commands:
   connect <client>         Print copy-paste config for a tool (Claude Code, Cursor, …)
   connect --list           List supported clients
   disconnect <client>      Print reversal steps for a previous 'connect'
-  invite <name>            Create a user-scope token + share card for a teammate
   doctor                   Diagnose common problems
   update [--check]         Check / install the latest Opod release
   upgrade                  Alias for 'update'

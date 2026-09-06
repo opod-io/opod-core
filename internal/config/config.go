@@ -55,7 +55,7 @@ type Config struct {
 // SurfacesConfig — each field has an env override a manager can set on the
 // process without a config file:
 //
-//	OPOD_UI=off          no dashboard (`/`), no bootstrap-key, no connect/invite routes
+//	OPOD_UI              accepted for compatibility; core has no dashboard since ADR-022 ("/" is always 404)
 //	OPOD_EGRESS=off      never forward to a cloud vendor, whatever keys are in the env
 //	OPOD_PROTOCOLS=…     "all" (default) or a comma list; "openai" keeps only the
 //	                     OpenAI-compatible routes (anthropic / audio / rerank → 404)
@@ -283,7 +283,6 @@ type ObservabilityConfig struct {
 	// in its own goroutine with a bounded queue — a slow receiver
 	// can't stall the gateway. Drops on overflow are counted via
 	// opod_callback_sent_total{outcome="dropped"}.
-	Callbacks []CallbackConfig `yaml:"callbacks"`
 
 	// Guardrails run synchronously on the request path. Each entry
 	// chooses a mode (pre | post | logging_only) and a driver (today:
@@ -319,35 +318,6 @@ type GuardrailConfig struct {
 	TimeoutSeconds int               `yaml:"timeout_seconds"`
 }
 
-// CallbackConfig is one row from the observability.callbacks list.
-// Different `kind` values use different fields; the loader builds the
-// matching internal/callbacks driver.
-type CallbackConfig struct {
-	Kind   string   `yaml:"kind"`            // "webhook" | "langfuse" | "s3"
-	ID     string   `yaml:"id"`              // optional human label; defaults to kind
-	URL    string   `yaml:"url"`             // webhook only
-	Secret string   `yaml:"secret" json:"-"` // webhook only — env-expanded
-	Events []string `yaml:"events"`          // webhook + s3 — defaults to all kinds
-
-	// Langfuse-specific. PublicKey / SecretKey are env-expanded.
-	Host      string `yaml:"host"`
-	PublicKey string `yaml:"public_key" json:"-"`
-	SecretKey string `yaml:"secret_key" json:"-"`
-
-	// S3-specific (also S3-compatible: MinIO / R2 / GCS-interop).
-	// AccessKeyID / SecretAccessKey are env-expanded; when blank the
-	// standard AWS credential chain is used.
-	Bucket          string `yaml:"bucket"`
-	Region          string `yaml:"region"`
-	Prefix          string `yaml:"prefix"`
-	Endpoint        string `yaml:"endpoint"`
-	AccessKeyID     string `yaml:"access_key_id" json:"-"`
-	SecretAccessKey string `yaml:"secret_access_key" json:"-"`
-	BatchSize       int    `yaml:"batch_size"`    // events per object; 0 = 100
-	FlushSeconds    int    `yaml:"flush_seconds"` // max batch age; 0 = 30
-
-	QueueSize int `yaml:"queue_size"` // 0 = 100 (s3 default 1000)
-}
 
 // Default returns a Config populated with safe defaults for a single-node setup.
 func Default() *Config {

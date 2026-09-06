@@ -390,56 +390,6 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// MaybeShowUpdateNotice prints a one-line "newer version available" notice
-// if a fresher Opod release exists. Designed to run during `opod up`:
-//
-//   - 24h cache at ~/.opod/update-check.json keeps GitHub API hits down to
-//     once per day per machine.
-//   - On cache miss, the network probe has a hard 1-second budget; if GitHub
-//     is slow we skip the notice for this run rather than block startup.
-//   - OPOD_NO_UPDATE_CHECK=1 disables the check entirely (offline / privacy).
-//
-// Safe to call once per process — does not block longer than 1 second.
-func MaybeShowUpdateNotice(w io.Writer) {
-	if os.Getenv("OPOD_NO_UPDATE_CHECK") == "1" || os.Getenv("OPOD_MANAGED") == "1" {
-		return // opted out, or run by a manager that owns upgrades
-	}
-
-	cachePath := updateCheckCachePath()
-	if cached, ok := readCachedLatest(cachePath, 24*time.Hour); ok {
-		// Self-heal: only when the cached "latest" is strictly OLDER than
-		// what we're already running (e.g. cache was written before
-		// `opod update` jumped us several patches) is it useless —
-		// discard it and refetch. Otherwise we'd cheerfully advertise a
-		// downgrade for the next 24h. An up-to-date cache (==) is valid:
-		// honor the TTL and stay off the network.
-		if cmpVersion(normalizeVersion(cached), normalizeVersion("v"+version)) >= 0 {
-			printUpdateNoticeIfNewer(w, cached)
-			return
-		}
-	}
-
-	// Cache stale or missing — bounded async fetch.
-	ch := make(chan string, 1)
-	go func() {
-		latest, err := fetchLatestVersion()
-		if err != nil {
-			close(ch)
-			return
-		}
-		writeCachedLatest(cachePath, latest)
-		ch <- latest
-	}()
-
-	select {
-	case latest, ok := <-ch:
-		if ok {
-			printUpdateNoticeIfNewer(w, latest)
-		}
-	case <-time.After(1 * time.Second):
-		// budget exceeded; skip notice this run, refresh next run
-	}
-}
 
 // updateCheckCache is the JSON shape we persist between runs.
 type updateCheckCache struct {

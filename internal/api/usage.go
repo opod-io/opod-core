@@ -9,7 +9,6 @@ import (
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/cache"
-	"github.com/opod-io/opod/internal/callbacks"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/guardrails"
 	"github.com/opod-io/opod/internal/metrics"
@@ -92,18 +91,6 @@ var globalBucketStore *BucketStore
 // based on actual completion tokens vs the upfront estimate.
 func SetBucketStore(s *BucketStore) { globalBucketStore = s }
 
-// globalCallbackDispatcher is the per-process fan-out for observability
-// events. nil = no sinks configured; Publish is a no-op.
-var globalCallbackDispatcher *callbacks.Dispatcher
-
-// SetCallbackDispatcher wires the dispatcher so recordUsage can emit
-// usage events to webhooks / Langfuse / etc.
-func SetCallbackDispatcher(d *callbacks.Dispatcher) { globalCallbackDispatcher = d }
-
-// CallbackDispatcher returns the configured dispatcher (or nil).
-// Exposed so the audit middleware in the controlplane package can
-// publish "audit" events without re-importing the global.
-func CallbackDispatcher() *callbacks.Dispatcher { return globalCallbackDispatcher }
 
 // globalGuardrails is the per-process registry built from
 // config.Guardrails. nil = no guardrails configured; the hot path
@@ -185,26 +172,6 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		incrementBudgetsAfterUsage(ctx, st, keyID, int64(prompt+completion), cost)
 	}
 
-	// Publish the usage event to any configured observability sinks
-	// (webhook / Langfuse / etc). Non-blocking; a slow receiver can't
-	// stall the response path.
-	if globalCallbackDispatcher != nil {
-		globalCallbackDispatcher.Publish(ctx, callbacks.Event{
-			Kind: "usage",
-			Payload: map[string]any{
-				"request_id":        RequestIDFrom(ctx),
-				"key_id":            keyID,
-				"user_id":           userID,
-				"model":             model,
-				"protocol":          protocol,
-				"prompt_tokens":     float64(prompt),
-				"completion_tokens": float64(completion),
-				"latency_ms":        latency.Milliseconds(),
-				"outcome":           outcome,
-				"cost_usd":          cost,
-			},
-		})
-	}
 
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
 	// upfront estimate; once the real usage is known we either refund
