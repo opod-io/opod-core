@@ -188,9 +188,8 @@ type RouterConfig struct {
 	// StickySessions is the legacy boolean. Now superseded by
 	// StickySessionTTLSeconds — keep parseable for old configs but the
 	// new field is the source of truth.
-	StickySessions          bool           `yaml:"sticky_sessions"`
-	StickySessionTTLSeconds int            `yaml:"sticky_session_ttl_seconds"`
-	Fallback                FallbackConfig `yaml:"fallback"`
+	StickySessions          bool `yaml:"sticky_sessions"`
+	StickySessionTTLSeconds int  `yaml:"sticky_session_ttl_seconds"`
 
 	// LatencyFallbackP95Seconds enables ROADMAP Bet #1 (latency-aware
 	// fallback). When the rolling p95 latency for a primary model exceeds
@@ -222,51 +221,6 @@ type RouterConfig struct {
 	// opts in individually via `opod.hedge: true` body field or
 	// `X-Opod-Hedge: 1` header. Cap is router.MaxHedgeReplicas.
 	HedgeReplicas int `yaml:"hedge_replicas"`
-}
-
-type FallbackConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	AnthropicURL string `yaml:"anthropic_url"`
-	OpenAIURL    string `yaml:"openai_url"`
-	AnthropicKey string `yaml:"-" json:"-"` // populated from env at runtime
-	OpenAIKey    string `yaml:"-" json:"-"` // populated from env at runtime
-
-	// Bedrock (AWS) — auth uses the standard AWS credentials chain (env,
-	// shared config, instance role). Empty BedrockRegion disables routing.
-	BedrockRegion string `yaml:"bedrock_region"`
-	BedrockURL    string `yaml:"bedrock_url"` // optional override
-
-	// Vertex (GCP) — auth uses Application Default Credentials. Empty
-	// VertexProject disables routing.
-	VertexProject  string `yaml:"vertex_project"`
-	VertexLocation string `yaml:"vertex_location"` // default us-central1
-	VertexURL      string `yaml:"vertex_url"`      // optional override
-
-	// OpenAI-compatible hosted gateways. The corresponding env vars
-	// (OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY,
-	// FIREWORKS_API_KEY, COHERE_API_KEY, MISTRAL_API_KEY,
-	// PERPLEXITY_API_KEY) populate the key fields at runtime.
-	OpenRouterURL string `yaml:"openrouter_url"`
-	OpenRouterKey string `yaml:"-" json:"-"`
-	GroqURL       string `yaml:"groq_url"`
-	GroqKey       string `yaml:"-" json:"-"`
-	TogetherURL   string `yaml:"together_url"`
-	TogetherKey   string `yaml:"-" json:"-"`
-	FireworksURL  string `yaml:"fireworks_url"`
-	FireworksKey  string `yaml:"-" json:"-"`
-	CohereURL     string `yaml:"cohere_url"`
-	CohereKey     string `yaml:"-" json:"-"`
-	MistralURL    string `yaml:"mistral_url"`
-	MistralKey    string `yaml:"-" json:"-"`
-	PerplexityURL string `yaml:"perplexity_url"`
-	PerplexityKey string `yaml:"-" json:"-"`
-
-	// Keys holds, per vendor, the full ordered list of API keys for
-	// rotation/failover. The single Xxxkey fields above remain the primary
-	// (first) key for back-compat; this captures every key including the
-	// numbered overflow vars (e.g. GROQ_API_KEY, GROQ_API_KEY_2, …_N).
-	// Populated from env at runtime; the egress KeyPool is built from it.
-	Keys map[string][]string `yaml:"-" json:"-"`
 }
 
 // ObservabilityConfig holds knobs for traces/logs/metrics integrations
@@ -317,7 +271,6 @@ type GuardrailConfig struct {
 	FailOpen       bool              `yaml:"fail_open"`         // on error: true → Allow, false → Block
 	TimeoutSeconds int               `yaml:"timeout_seconds"`
 }
-
 
 // Default returns a Config populated with safe defaults for a single-node setup.
 func Default() *Config {
@@ -505,76 +458,8 @@ func applyEnv(c *Config) {
 			c.Router.PullDefaultModel = b
 		}
 	}
-	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
-		c.Router.Fallback.AnthropicKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
-		c.Router.Fallback.OpenAIKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
-		c.Router.Fallback.OpenRouterKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("GROQ_API_KEY"); v != "" {
-		c.Router.Fallback.GroqKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("TOGETHER_API_KEY"); v != "" {
-		c.Router.Fallback.TogetherKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("FIREWORKS_API_KEY"); v != "" {
-		c.Router.Fallback.FireworksKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("COHERE_API_KEY"); v != "" {
-		c.Router.Fallback.CohereKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("MISTRAL_API_KEY"); v != "" {
-		c.Router.Fallback.MistralKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("PERPLEXITY_API_KEY"); v != "" {
-		c.Router.Fallback.PerplexityKey = v
-		c.Router.Fallback.Enabled = true
-	}
-	// Multi-key pools for rotation/failover. Each vendor reads its primary
-	// env var plus numbered overflow vars (<ENV>_2 .. <ENV>_N) so a user can
-	// stack several keys for one provider and Opod rotates across them,
-	// parking any that hits a 429. Populating any pool also enables fallback.
-	c.Router.Fallback.Keys = map[string][]string{}
-	for vendor, env := range map[string]string{
-		"anthropic":  "ANTHROPIC_API_KEY",
-		"openai":     "OPENAI_API_KEY",
-		"openrouter": "OPENROUTER_API_KEY",
-		"groq":       "GROQ_API_KEY",
-		"together":   "TOGETHER_API_KEY",
-		"fireworks":  "FIREWORKS_API_KEY",
-		"cohere":     "COHERE_API_KEY",
-		"mistral":    "MISTRAL_API_KEY",
-		"perplexity": "PERPLEXITY_API_KEY",
-	} {
-		if ks := envKeyList(env); len(ks) > 0 {
-			c.Router.Fallback.Keys[vendor] = ks
-			c.Router.Fallback.Enabled = true
-		}
-	}
 	if v := os.Getenv("OPOD_OTLP_ENDPOINT"); v != "" {
 		c.Observability.OTLPEndpoint = v
-	}
-	if v := os.Getenv("OPOD_BEDROCK_REGION"); v != "" {
-		c.Router.Fallback.BedrockRegion = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("OPOD_VERTEX_PROJECT"); v != "" {
-		c.Router.Fallback.VertexProject = v
-		c.Router.Fallback.Enabled = true
-	}
-	if v := os.Getenv("OPOD_VERTEX_LOCATION"); v != "" {
-		c.Router.Fallback.VertexLocation = v
 	}
 	if v := os.Getenv("OPOD_LATENCY_P95_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -619,28 +504,6 @@ func applyEnv(c *Config) {
 			c.Placement.DrainTimeoutSeconds = n
 		}
 	}
-	// Egress off is absolute: keys in the env are ignored, nothing leaves the box.
-	if !c.Surfaces.Egress {
-		c.Router.Fallback.Enabled = false
-	}
-}
-
-// envKeyList reads a primary env var plus its numbered overflow siblings
-// (<base>_2 .. <base>_20) and returns the non-empty values in order. This is
-// how a user stacks multiple keys for one provider — e.g. GROQ_API_KEY,
-// GROQ_API_KEY_2, GROQ_API_KEY_3 — for rotation. The cap is a sanity bound,
-// not a real limit anyone is expected to hit.
-func envKeyList(base string) []string {
-	var out []string
-	if v := strings.TrimSpace(os.Getenv(base)); v != "" {
-		out = append(out, v)
-	}
-	for i := 2; i <= 20; i++ {
-		if v := strings.TrimSpace(os.Getenv(fmt.Sprintf("%s_%d", base, i))); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 // expand replaces ~ at the start of paths with the home directory.

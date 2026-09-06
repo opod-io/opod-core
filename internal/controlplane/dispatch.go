@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/opod-io/opod/internal/api"
 )
 
 func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
@@ -19,10 +17,10 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := peekModel(body)
-	if isAutoModel(model) {
-		// "auto" → walk the routing chain (rate-limit / failure failover).
-		s.serveAutoOpenAI(w, r, body)
-		return
+	if isAutoModel(model) && s.cfg.Router.DefaultModel != "" {
+		// "auto" → this leader's default model (ADR-022: the vendor routing chain left core)
+		model = s.cfg.Router.DefaultModel
+		body = setModel(body, model)
 	}
 	s.routeOneOpenAI(w, r, model, body)
 }
@@ -32,40 +30,6 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 // both directly (specific model requested) and per-candidate by the auto
 // chain walker (with w wrapped in a failoverWriter).
 func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model string, body []byte) {
-	if vendor := api.Vendor(model); vendor != "" && s.cfg.Router.Fallback.Enabled {
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		switch vendor {
-		case "openai":
-			s.egressH.ServeOpenAI(w, r)
-		case "vertex":
-			s.egressH.ServeVertex(w, r)
-		case "openrouter":
-			s.egressH.ServeOpenRouter(w, r)
-		case "groq":
-			s.egressH.ServeGroq(w, r)
-		case "together":
-			s.egressH.ServeTogether(w, r)
-		case "fireworks":
-			s.egressH.ServeFireworks(w, r)
-		case "cohere":
-			s.egressH.ServeCohere(w, r)
-		case "mistral":
-			s.egressH.ServeMistral(w, r)
-		case "perplexity":
-			s.egressH.ServePerplexity(w, r)
-		case "anthropic", "bedrock":
-			// Protocol mismatch: OpenAI-format request with a Claude model.
-			// Anthropic's API only accepts /v1/messages, so return an actionable
-			// error rather than forwarding garbage upstream.
-			writeJSONError(w, http.StatusBadRequest,
-				fmt.Sprintf("model %q uses the Anthropic message shape; POST to /v1/messages instead of /v1/chat/completions", model))
-		default:
-			// Registry providers (deepseek/, cerebras/, gemini/, …) all speak
-			// the OpenAI shape and route through the one generic handler.
-			s.egressH.ServeGeneric(w, r, vendor)
-		}
-		return
-	}
 	// One model identity per leader (D5): when a plan file is mounted, this
 	// endpoint serves exactly that model — refuse anything else up front.
 	if planModel, ok := s.planAllowsModel(model); !ok {
@@ -95,30 +59,15 @@ func (s *Server) dispatchAnthropicMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	model := peekModel(body)
-	if isAutoModel(model) {
-		s.serveAutoAnthropic(w, r, body)
-		return
+	if isAutoModel(model) && s.cfg.Router.DefaultModel != "" {
+		model = s.cfg.Router.DefaultModel
+		body = setModel(body, model)
 	}
 	s.routeOneAnthropic(w, r, model, body)
 }
 
 // routeOneAnthropic serves a single concrete model on the Anthropic path.
 func (s *Server) routeOneAnthropic(w http.ResponseWriter, r *http.Request, model string, body []byte) {
-	if vendor := api.Vendor(model); vendor != "" && s.cfg.Router.Fallback.Enabled {
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		switch vendor {
-		case "anthropic":
-			s.egressH.ServeAnthropic(w, r)
-		case "bedrock":
-			s.egressH.ServeBedrock(w, r)
-		default:
-			// Protocol mismatch: Anthropic-format request with a non-Anthropic
-			// (OpenAI-shape) model.
-			writeJSONError(w, http.StatusBadRequest,
-				fmt.Sprintf("model %q does not use the Anthropic message shape; POST to /v1/chat/completions instead", model))
-		}
-		return
-	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	s.anthropicH.Messages(w, r)
 }

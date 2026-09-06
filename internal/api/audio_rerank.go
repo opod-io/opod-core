@@ -162,3 +162,28 @@ func (h *Handler) proxyAudio(w http.ResponseWriter, r *http.Request, endpoint, p
 	// model id today — operators can grep by protocol.
 	recordUsage(r.Context(), h.Store, protocol, "", nil, time.Since(start), outcome)
 }
+
+// copyUpstreamHeaders forwards the upstream engine's content headers to the client (was shared with the vendor egress, which left core).
+func copyUpstreamHeaders(dst, src http.Header) {
+	for k, vs := range src {
+		if hopByHopHeaders[http.CanonicalHeaderKey(k)] {
+			continue
+		}
+		for _, v := range vs {
+			dst.Add(k, v)
+		}
+	}
+}
+
+var hopByHopHeaders = map[string]bool{
+	"Connection":          true,
+	"Proxy-Connection":    true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Te":                  true,
+	"Trailers":            true,
+	"Transfer-Encoding":   true,
+	"Upgrade":             true,
+	"Content-Length":      true,
+}
