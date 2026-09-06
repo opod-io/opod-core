@@ -53,5 +53,5 @@ func (s *Server) eventLogStream(w http.ResponseWriter, r *http.Request) {
 		events = append(events, event{ID: e.ID, Type: e.Type, Subject: e.Subject, TS: e.TS, Data: e.Data})
 		next = e.ID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next, "more": more})
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next, "more": more, "boot": bootUnix})
 }

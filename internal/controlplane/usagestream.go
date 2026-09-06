@@ -58,5 +58,5 @@ func (s *Server) usageStream(w http.ResponseWriter, r *http.Request) {
 		})
 		next = u.ID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next, "more": more})
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next, "more": more, "boot": bootUnix})
 }

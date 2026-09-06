@@ -263,6 +263,8 @@ type UsageStore interface {
 	// LRU victim ordering.
 	LastUsedByModel(ctx context.Context) (map[string]time.Time, error)
 	RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error)
+	// Trim keeps only the newest keep rows (bounded ring; the manager pulls by cursor).
+	Trim(ctx context.Context, keep int) (int64, error)
 	Recent(ctx context.Context, limit int) ([]Usage, error)
 	// After returns up to limit rows with id > afterID in id order — the
 	// cursor pull an external collector uses for at-least-once capture.
@@ -335,6 +337,9 @@ func OpenSQLite(dsn string) (Store, error) {
 	db, err := sql.Open("sqlite", appendPragmas(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	if dsn == ":memory:" || strings.Contains(dsn, "mode=memory") {
+		db.SetMaxOpenConns(1) // an in-memory database lives in one connection
 	}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()

@@ -220,3 +220,14 @@ func scanUsage(rows *sql.Rows) ([]Usage, error) {
 	}
 	return out, rows.Err()
 }
+
+// Trim deletes every usage row older than the newest keep rows.
+func (s *sqliteUsage) Trim(ctx context.Context, keep int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM usage WHERE id < COALESCE((SELECT id FROM usage ORDER BY id DESC LIMIT 1 OFFSET ?), 0)`, max(keep, 1)-1)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
