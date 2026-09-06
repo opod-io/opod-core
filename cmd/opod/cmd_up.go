@@ -441,7 +441,11 @@ func printReady(cfg *config.Config, adminKey string) {
 	if listen == "" {
 		listen = ":8080"
 	}
-	base := "http://localhost" + listen
+	// ":8080" → http://localhost:8080; "127.0.0.1:8080" → http://127.0.0.1:8080
+	base := "http://" + listen
+	if strings.HasPrefix(listen, ":") {
+		base = "http://localhost" + listen
+	}
 	if cfg.ExternalURL != "" {
 		base = cfg.ExternalURL
 	}
@@ -514,6 +518,8 @@ func printReady(cfg *config.Config, adminKey string) {
 // the live config so it reflects what *this* invocation will actually do.
 func printNetworkPosture(cfg *config.Config) {
 	fmt.Println()
+	fmt.Println("  Surfaces:        " + cfg.Surfaces.Summary() + "  (OPOD_UI / OPOD_EGRESS / OPOD_PROTOCOLS / OPOD_CALLBACKS / OPOD_MANAGED)")
+	fmt.Println()
 	fmt.Println("  Network behavior on this node:")
 
 	// Tracing
@@ -524,7 +530,9 @@ func printNetworkPosture(cfg *config.Config) {
 	}
 
 	// Update check
-	if os.Getenv("OPOD_NO_UPDATE_CHECK") == "1" {
+	if cfg.Surfaces.Managed {
+		fmt.Println("    · Update check:  OFF  (managed by an external manager — OPOD_MANAGED=1)")
+	} else if os.Getenv("OPOD_NO_UPDATE_CHECK") == "1" {
 		fmt.Println("    · Update check:  OFF  (OPOD_NO_UPDATE_CHECK=1)")
 	} else {
 		fmt.Println("    · Update check:  github.com/opod-io/opod/releases/latest, max 1× per 24h  (OPOD_NO_UPDATE_CHECK=1 to disable)")

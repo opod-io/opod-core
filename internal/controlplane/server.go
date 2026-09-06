@@ -175,6 +175,9 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// the registry providers (DeepSeek, Cerebras, Gemini, …), whose keys +
 	// base URLs come straight from the environment via the GenericProviders
 	// table — adding a provider needs no wiring here.
+	if !cfg.Surfaces.Egress {
+		cfg.Router.Fallback.Enabled = false // surface off: no request ever leaves for a vendor, whatever keys exist
+	}
 	kp := api.NewKeyPool()
 	for vendor, keys := range cfg.Router.Fallback.Keys {
 		kp.Set(vendor, keys)
@@ -187,7 +190,9 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		}
 		kp.Set(p.Name, keys)
 		providerURLs[p.Name] = api.ProviderURLFromEnv(p)
-		cfg.Router.Fallback.Enabled = true // any registry key enables egress
+		if cfg.Surfaces.Egress {
+			cfg.Router.Fallback.Enabled = true // any registry key enables egress — unless the surface is off
+		}
 	}
 	egressH.Keys = kp
 	egressH.ProviderURLs = providerURLs
@@ -199,7 +204,11 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	api.SetCatalog(cat)
 	// Observability callbacks (webhooks / Langfuse). Each configured
 	// sink runs in its own goroutine with a bounded queue.
-	dispatcher := buildCallbackDispatcher(cfg.Observability.Callbacks, cfg.BlockPrivateTargets, log)
+	callbackRows := cfg.Observability.Callbacks
+	if !cfg.Surfaces.Callbacks {
+		callbackRows = nil // surface off: no sinks, whatever the file says
+	}
+	dispatcher := buildCallbackDispatcher(callbackRows, cfg.BlockPrivateTargets, log)
 	api.SetCallbackDispatcher(dispatcher)
 	// Guardrails (pre-call hooks). Synchronous on the request path.
 	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, cfg.BlockPrivateTargets, log))
@@ -450,11 +459,14 @@ func (s *Server) routes() http.Handler {
 	r.Get("/loadz", s.loadz)
 	r.Handle("/metrics", promhttp.Handler())
 
-	// Web UI (single embedded HTML page; assets via CDN)
-	r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(ui.IndexHTML)
-	})
+	// Web UI (single embedded HTML page; assets via CDN). OPOD_UI=off (a
+	// managed leader) leaves "/" a 404 — the CP's console is the UI then.
+	if s.cfg.Surfaces.UI {
+		r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(ui.IndexHTML)
+		})
+	}
 
 	// Localhost-only bootstrap: hand the dashboard the saved admin key
 	// so first-time / returning users don't have to copy it from the
@@ -466,7 +478,9 @@ func (s *Server) routes() http.Handler {
 	//      X-Forwarded-For: 127.0.0.1 through a misconfigured proxy).
 	// If either check fails we return 404, indistinguishable from
 	// "endpoint doesn't exist."
-	r.Get("/admin/v1/bootstrap-key", s.bootstrapAdminKey)
+	if s.cfg.Surfaces.UI {
+		r.Get("/admin/v1/bootstrap-key", s.bootstrapAdminKey)
+	}
 
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
@@ -500,11 +514,18 @@ func (s *Server) routes() http.Handler {
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)
-		r.Post("/rerank", s.openaiH.Rerank)
-		r.Post("/audio/transcriptions", s.openaiH.AudioTranscriptions)
-		r.Post("/audio/speech", s.openaiH.AudioSpeech)
-		r.Post("/messages", s.dispatchAnthropicMessages)
-		r.Post("/messages/count_tokens", s.anthropicH.CountTokens)
+		// Non-OpenAI protocols are surfaces (OPOD_PROTOCOLS): off → 404.
+		if s.cfg.Surfaces.Protocol("rerank") {
+			r.Post("/rerank", s.openaiH.Rerank)
+		}
+		if s.cfg.Surfaces.Protocol("audio") {
+			r.Post("/audio/transcriptions", s.openaiH.AudioTranscriptions)
+			r.Post("/audio/speech", s.openaiH.AudioSpeech)
+		}
+		if s.cfg.Surfaces.Protocol("anthropic") {
+			r.Post("/messages", s.dispatchAnthropicMessages)
+			r.Post("/messages/count_tokens", s.anthropicH.CountTokens)
+		}
 	})
 
 	// Admin (admin-only)
@@ -569,6 +590,10 @@ func (s *Server) routes() http.Handler {
 			r.Delete("/shards/{model_id}", s.deleteShards)
 
 			// Config (read-only sanitized view)
+			// stable manager surface (contract.go): discovery of what this leader speaks
+			r.Get("/version", s.adminVersion)
+			r.Get("/capabilities", s.adminCapabilities)
+
 			r.Get("/config", s.getConfig)
 
 			// Routing chain — the ordered list of model ids walked for
@@ -589,15 +614,19 @@ func (s *Server) routes() http.Handler {
 			r.Get("/events", s.eventsStream)
 
 			// Onboarding-and-sharing (M3-T23 / M3-T24 / M3-T26)
-			r.Get("/connect/clients", s.listConnectClients)
-			r.Post("/connect/snippet", s.renderConnectSnippet)
-			r.Post("/invite", s.inviteUser)
+			if s.cfg.Surfaces.UI { // dashboard-only helpers
+				r.Get("/connect/clients", s.listConnectClients)
+				r.Post("/connect/snippet", s.renderConnectSnippet)
+				r.Post("/invite", s.inviteUser)
+			}
 			r.Post("/healthcheck", s.healthcheck)
 
 			// Observability callbacks — list configured sinks +
 			// fire a synthetic test event.
-			r.Get("/callbacks", s.listCallbacks)
-			r.Post("/callbacks/test", s.testCallback)
+			if s.cfg.Surfaces.Callbacks {
+				r.Get("/callbacks", s.listCallbacks)
+				r.Post("/callbacks/test", s.testCallback)
+			}
 
 			// Response cache stats + flush.
 			r.Get("/cache/stats", s.cacheStats)
