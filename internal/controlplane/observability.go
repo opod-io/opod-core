@@ -118,5 +118,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": "invalid_request"}})
+	writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": errorTypeFor(status)}})
+}
+
+// errorTypeFor names the error class the way OpenAI-style clients switch on
+// it: a waking / not-configured 503 is "unavailable", never "invalid_request"
+// (the client did nothing wrong and should retry after Retry-After).
+func errorTypeFor(status int) string {
+	switch {
+	case status == http.StatusUnauthorized:
+		return "authentication_error"
+	case status == http.StatusForbidden:
+		return "permission_error"
+	case status == http.StatusNotFound:
+		return "not_found"
+	case status == http.StatusTooManyRequests:
+		return "rate_limit_exceeded"
+	case status == http.StatusServiceUnavailable:
+		return "unavailable"
+	case status >= 500:
+		return "server_error"
+	default:
+		return "invalid_request"
+	}
 }
