@@ -11,9 +11,7 @@ import (
 	"github.com/opod-io/opod/internal/auth"
 )
 
-// Header names — OpenAI-style. Anthropic-style aliases are added to
-// /v1/messages by the same middleware so Claude Code's retry helper
-// works without per-route writers.
+// Header names — OpenAI-style, stamped by one middleware on every /v1 route.
 const (
 	HeaderRequestID         = "X-Opod-Request-Id"
 	HeaderBudgetResetAt     = "X-Opod-Budget-Reset-At"

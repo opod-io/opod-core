@@ -15,21 +15,20 @@ var snippetFS embed.FS
 // Client describes one supported tool that can be wired up to Opod.
 type Client struct {
 	ID          string // stable identifier, kebab-case
-	Protocol    string // "OpenAI" | "Anthropic" | "Both" | "Raw HTTP"
+	Protocol    string // "OpenAI" | "Both" (tool also speaks other shapes; Opod serves the OpenAI one) | "Raw HTTP"
 	Description string // one-line "what is this"
 }
 
 // clients is the registry of supported tools. Order here is the order
-// they appear in `opod connect --list` and in invite share cards.
+// they appear in `opod connect --list`. Tools that only speak the Anthropic
+// Messages shape (Claude Code, qwen-code, hermes, the Anthropic SDK) left
+// with ADR-022 step 4 (2026-09-07): core serves OpenAI chat/embeddings only.
 var clients = []Client{
-	{ID: "claude-code", Protocol: "Anthropic", Description: "Anthropic's official CLI coding agent"},
 	{ID: "cursor", Protocol: "OpenAI", Description: "IDE with built-in AI"},
 	{ID: "aider", Protocol: "OpenAI", Description: "Terminal-based AI pair programmer"},
 	{ID: "continue", Protocol: "Both", Description: "VS Code / JetBrains AI assistant"},
 	{ID: "zed", Protocol: "OpenAI", Description: "Fast multiplayer code editor"},
 	{ID: "cline", Protocol: "Both", Description: "VS Code AI extension (Cline / Roo Code)"},
-	{ID: "qwen-code", Protocol: "Anthropic", Description: "Open-source Claude Code fork"},
-	{ID: "hermes", Protocol: "Anthropic", Description: "Nous Research's CLI agent (persistent memory + auto skills)"},
 	{ID: "openclaw", Protocol: "OpenAI", Description: "Open-source CLI coding agent (OpenAI-compatible)"},
 	{ID: "opencode", Protocol: "Both", Description: "Open-source terminal coding agent (per-provider baseURL override)"},
 	{ID: "open-webui", Protocol: "OpenAI", Description: "Self-hosted ChatGPT-style web UI (~85k★ on GitHub)"},
@@ -39,7 +38,6 @@ var clients = []Client{
 	{ID: "openhands", Protocol: "Both", Description: "Autonomous coding agent (formerly OpenDevin; MIT)"},
 	{ID: "codex-cli", Protocol: "OpenAI", Description: "OpenAI's official CLI (supports base-URL override)"},
 	{ID: "openai-sdk", Protocol: "OpenAI", Description: "OpenAI Python/JS SDK"},
-	{ID: "anthropic-sdk", Protocol: "Anthropic", Description: "Anthropic Python/JS SDK"},
 	{ID: "curl", Protocol: "Raw HTTP", Description: "Direct HTTP calls for testing"},
 }
 

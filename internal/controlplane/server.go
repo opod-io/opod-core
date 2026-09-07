@@ -44,7 +44,6 @@ type Server struct {
 	plan        planFileState
 	authf       authFileState
 	policy      policyFileState
-	anthropicH  *api.AnthropicHandler
 	rateBuckets *api.BucketStore
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
@@ -135,7 +134,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		}
 		return native
 	})
-	anthropicH := &api.AnthropicHandler{Handler: openaiH}
 	buckets := api.NewBucketStore()
 	api.SetBucketStore(buckets)
 	// Wire the catalog into the per-request cost computation path. The
@@ -144,13 +142,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	api.SetCatalog(cat)
 	// Response cache (embeddings today; chat in follow-up).
 	api.SetResponseCache(buildResponseCache(cfg.Observability.ResponseCache, st, log))
-	// Audio + rerank endpoint proxies. Empty endpoints → handler
-	// returns 501 with setup hint instead of trying.
-	api.SetRerankAudioConfig(api.RerankAudioConfig{
-		LlamaCppEndpoint: cfg.Engine.LlamaCppEndpoint,
-		WhisperEndpoint:  cfg.Engine.WhisperEndpoint,
-		PiperEndpoint:    cfg.Engine.PiperEndpoint,
-	})
 	return &Server{
 		cfg:         cfg,
 		store:       st,
@@ -160,7 +151,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		router:      routed,
 		orch:        orch,
 		openaiH:     openaiH,
-		anthropicH:  anthropicH,
 		rateBuckets: buckets,
 		bus:         events.New(),
 	}
@@ -293,18 +283,8 @@ func (s *Server) routes() http.Handler {
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)
-		// Non-OpenAI protocols are surfaces (OPOD_PROTOCOLS): off → 404.
-		if s.cfg.Surfaces.Protocol("rerank") {
-			r.Post("/rerank", s.openaiH.Rerank)
-		}
-		if s.cfg.Surfaces.Protocol("audio") {
-			r.Post("/audio/transcriptions", s.openaiH.AudioTranscriptions)
-			r.Post("/audio/speech", s.openaiH.AudioSpeech)
-		}
-		if s.cfg.Surfaces.Protocol("anthropic") {
-			r.Post("/messages", s.dispatchAnthropicMessages)
-			r.Post("/messages/count_tokens", s.anthropicH.CountTokens)
-		}
+		// OpenAI chat + embeddings are the whole protocol surface (ADR-022 step 4,
+		// 2026-09-07: Anthropic Messages, audio and rerank left core).
 	})
 
 	// Admin (admin-only)

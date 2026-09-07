@@ -106,12 +106,12 @@ Then either `opod model add <id>` (which will call shard create with `default_sh
 
 | Capability | What it does | API surface |
 |---|---|---|
-| `chat` | Model accepts conversational messages | `POST /v1/chat/completions`, `POST /v1/messages` |
-| `tools` | Model supports tool/function calling | Both chat endpoints; tool blocks in request/response |
+| `chat` | Model accepts conversational messages | `POST /v1/chat/completions` |
+| `tools` | Model supports tool/function calling | `POST /v1/chat/completions`; tool blocks in request/response |
 | `vision` | Model accepts image content blocks | `POST /v1/chat/completions` with `image_url` (Ollama path) |
 | `audio` | Model accepts audio content (discovery tag) | API path pending; declare on models with audio understanding |
 | `embedding` | Model returns vector embeddings | `POST /v1/embeddings` |
-| `rerank` | Cross-encoder reranking | `POST /v1/rerank` (Cohere-shape response; passes through to llama-server's native `/v1/rerank`, b3580+) |
+| `rerank` | Cross-encoder reranking | discovery tag only — core has no `/v1/rerank` route since ADR-022 (2026-09-07); call the engine directly |
 
 The router uses capabilities to match a request to a model. A request for embeddings will never hit a `chat`-only model.
 

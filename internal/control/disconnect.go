@@ -28,18 +28,6 @@ func DisconnectSnippet(clientID string) (string, error) {
 // with the connect-side templates: any env var or settings field that
 // connect sets should appear in the matching disconnect block.
 var disconnectSnippets = map[string]string{
-	"claude-code": `# Stop pointing Claude Code at Opod:
-unset ANTHROPIC_BASE_URL
-unset ANTHROPIC_AUTH_TOKEN
-unset ANTHROPIC_MODEL
-
-# Then either let Claude Code use its built-in API key handling,
-# or point it at your own Anthropic account directly:
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Verify with:
-claude --help
-`,
 
 	"cursor": `# Cursor's Opod override lives in the GUI, not env vars.
 # Reverse it like this:
@@ -105,34 +93,6 @@ aider                                  # picks up the key automatically
 #   4. Pick a provider (Anthropic / OpenAI) and paste your own key.
 #
 # Cline picks up the change on the next message.
-`,
-
-	"qwen-code": `# Qwen-Code uses the same Anthropic-compatible env vars as Claude Code.
-# Reverse the Opod override:
-unset ANTHROPIC_BASE_URL
-unset ANTHROPIC_AUTH_TOKEN
-unset ANTHROPIC_MODEL
-
-# Then point it at your own Anthropic account if you want vendor:
-export ANTHROPIC_API_KEY=sk-ant-...
-
-qwen-code --help
-`,
-
-	"hermes": `# Hermes Agent reads the same Anthropic env vars as Claude Code.
-# Reverse the Opod override:
-unset ANTHROPIC_BASE_URL
-unset ANTHROPIC_AUTH_TOKEN
-unset ANTHROPIC_MODEL
-
-# Hermes also caches per-session state in ~/.hermes/. The cached config
-# is keyed by base_url, so it'll refresh on next run; you can also blow
-# away the session if you want a clean slate:
-#   rm -rf ~/.hermes/sessions/<project>
-
-# Point it at OpenRouter / Anthropic / a local model however you prefer:
-export ANTHROPIC_API_KEY=sk-ant-...   # vendor
-# or just rerun ` + "`hermes`" + ` and pick a provider in the first prompt.
 `,
 
 	"open-webui": `# Open WebUI's Opod override lives inside the container (env vars at
@@ -295,21 +255,6 @@ unset OPENAI_API_KEY
 
 # Then set your own:
 export OPENAI_API_KEY=sk-...
-`,
-
-	"anthropic-sdk": `# If you set base_url in your Python/JS code, remove that argument:
-#
-#   # before
-#   client = Anthropic(base_url="http://your-opod-host:8080", auth_token="sk-orc-...")
-#   # after
-#   client = Anthropic()                         # uses ANTHROPIC_API_KEY env var
-#
-# If you used the env-var form, unset them:
-unset ANTHROPIC_BASE_URL
-unset ANTHROPIC_AUTH_TOKEN
-
-# Then set your own:
-export ANTHROPIC_API_KEY=sk-ant-...
 `,
 
 	"curl": `# Just point curl at the vendor URL with your own key, no Opod cleanup needed:

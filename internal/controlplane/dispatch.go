@@ -65,27 +65,6 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	s.openaiH.ChatCompletions(w, r)
 }
 
-func (s *Server) dispatchAnthropicMessages(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	_ = r.Body.Close()
-	if err != nil {
-		writeBodyReadError(w, err)
-		return
-	}
-	model := peekModel(body)
-	if isAutoModel(model) && s.cfg.Router.DefaultModel != "" {
-		model = s.cfg.Router.DefaultModel
-		body = setModel(body, model)
-	}
-	s.routeOneAnthropic(w, r, model, body)
-}
-
-// routeOneAnthropic serves a single concrete model on the Anthropic path.
-func (s *Server) routeOneAnthropic(w http.ResponseWriter, r *http.Request, model string, body []byte) {
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	s.anthropicH.Messages(w, r)
-}
-
 // writeBodyReadError maps a request-body read failure to the matching
 // JSON error: 413 when the limitRequestBody cap tripped, 400 otherwise.
 func writeBodyReadError(w http.ResponseWriter, err error) {

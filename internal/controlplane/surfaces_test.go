@@ -22,7 +22,7 @@ func contractedServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Listen = ":0"
-	cfg.Surfaces = config.SurfacesConfig{UI: false, Egress: false, Protocols: "openai", Callbacks: false, Managed: true}
+	cfg.Surfaces = config.SurfacesConfig{UI: false, Egress: false, Callbacks: false, Managed: true}
 	st, err := store.OpenSQLite(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -118,18 +118,5 @@ func TestSurfacesDefaultsOn(t *testing.T) {
 	cfg := config.Default()
 	if !cfg.Surfaces.UI || !cfg.Surfaces.Egress || !cfg.Surfaces.Callbacks || cfg.Surfaces.Managed {
 		t.Fatalf("defaults must keep every surface on: %+v", cfg.Surfaces)
-	}
-	for _, p := range []string{"openai", "anthropic", "audio", "rerank"} {
-		if !cfg.Surfaces.Protocol(p) {
-			t.Errorf("protocol %s off by default", p)
-		}
-	}
-	only := config.SurfacesConfig{Protocols: "openai"}
-	if !only.Protocol("openai") || only.Protocol("anthropic") || only.Protocol("audio") {
-		t.Error("protocols=openai must keep only openai")
-	}
-	both := config.SurfacesConfig{Protocols: "openai, anthropic"}
-	if !both.Protocol("anthropic") || both.Protocol("audio") {
-		t.Error("comma list not honoured")
 	}
 }

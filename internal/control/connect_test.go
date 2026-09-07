@@ -10,9 +10,9 @@ func TestClients_OrderAndCompleteness(t *testing.T) {
 	if len(cs) < 10 {
 		t.Fatalf("expected at least 10 clients, got %d", len(cs))
 	}
-	// First entry must be claude-code (it's the headline use case).
-	if cs[0].ID != "claude-code" {
-		t.Errorf("expected first client to be claude-code, got %q", cs[0].ID)
+	// First entry must be cursor (the headline OpenAI-shape tool since ADR-022 step 4).
+	if cs[0].ID != "cursor" {
+		t.Errorf("expected first client to be cursor, got %q", cs[0].ID)
 	}
 	seen := map[string]bool{}
 	for _, c := range cs {
@@ -77,7 +77,7 @@ func TestConnectSnippet_UnknownClient(t *testing.T) {
 
 func TestConnectSnippet_DefaultModel(t *testing.T) {
 	out, err := ConnectSnippet(ConnectInput{
-		Client:  "claude-code",
+		Client:  "cursor",
 		BaseURL: "http://localhost:8080",
 		Token:   "sk-orc-TEST",
 		// Model intentionally empty
