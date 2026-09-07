@@ -17,16 +17,16 @@ import (
 // has already been written to the response in the OpenAI error shape.
 // The Anthropic handler uses evalPreCallGuardrails directly and writes
 // its own protocol-shaped error.
-func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
-	return ApplyPreCallGuardrails(ctx, w, st, body)
+func (h *Handler) applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, body []byte) ([]byte, bool) {
+	return ApplyPreCallGuardrails(ctx, w, h.Store, h.Policy().Guardrails, body)
 }
 
 // ApplyPreCallGuardrails is the exported form for the controlplane's
 // dispatcher: a request that leaves this leader (policy fallback, P12-2) must
 // pass the same pre chain a served request does — a blocked prompt is never
 // forwarded.
-func ApplyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
-	current, blockedBy, reason := evalPreCallGuardrails(ctx, st, body)
+func ApplyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, reg *guardrails.Registry, body []byte) ([]byte, bool) {
+	current, blockedBy, reason := evalPreCallGuardrails(ctx, st, reg, body)
 	if blockedBy != "" {
 		writeGuardrailBlocked(w, blockedBy, reason)
 		return nil, false
@@ -44,8 +44,7 @@ func ApplyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store
 // chain; logging_only entries can't block. Each guardrail observes
 // the latest body (so a `rewrite` from guardrail #1 is what
 // guardrail #2 sees).
-func evalPreCallGuardrails(ctx context.Context, st store.Store, body []byte) (out []byte, blockedBy, reason string) {
-	reg := globalGuardrails.Load()
+func evalPreCallGuardrails(ctx context.Context, st store.Store, reg *guardrails.Registry, body []byte) (out []byte, blockedBy, reason string) {
 	if reg.IsEmpty() {
 		return body, "", ""
 	}
@@ -127,4 +126,3 @@ func jsonQuote(s string) string {
 }
 
 // ensure guardrails is imported when registry use compiles out.
-var _ = (*guardrails.Registry)(nil)

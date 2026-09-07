@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/guardrails"
 )
 
@@ -118,7 +117,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	s.policy.mu.Lock()
 	defer s.policy.mu.Unlock()
 	reg, skipped := buildGuardrailRegistry(doc.Guardrails)
-	api.SetGuardrails(reg)
+	s.openaiH.SetPolicy(s.openaiH.Policy().WithGuardrails(reg))
 	r := doc.Routing
 	r.FallbackURL = strings.TrimRight(strings.TrimSpace(r.FallbackURL), "/")
 	r.FallbackURL = strings.TrimSuffix(r.FallbackURL, "/v1")

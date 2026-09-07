@@ -68,7 +68,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	// Pre-call guardrails see the embedding input text too. Applied
 	// before the cache lookup so a rewrite (e.g. PII masking) drives the
 	// cache key and a blocked request can't be served from cache.
-	body, ok := applyPreCallGuardrails(r.Context(), w, h.Store, body)
+	body, ok := h.applyPreCallGuardrails(r.Context(), w, body)
 	if !ok {
 		// Guardrail blocked the request; response already written.
 		return
@@ -78,9 +78,9 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	// (model, input), so this is the highest-ROI cache path. Skipped
 	// when Cache-Control: no-cache / no-store is set, or when the
 	// global cache isn't configured.
-	if globalResponseCache != nil && !cacheBypass(r) {
+	if h.Policy().Cache != nil && !cacheBypass(r) {
 		key := cache.KeyForRequest("/v1/embeddings", body, cacheNamespaceFromBody(body))
-		if v, ok := globalResponseCache.Get(r.Context(), key); ok {
+		if v, ok := h.Policy().Cache.Get(r.Context(), key); ok {
 			metrics.ObserveCacheHit("embeddings")
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Opod-Cache", "hit")
@@ -143,7 +143,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
-		recordUsage(r.Context(), h.Store, "openai", requested, nil, time.Since(start), "error")
+		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
 		return
 	}
 
@@ -171,16 +171,16 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	if res.Usage != nil {
 		u = &engines.Usage{PromptTokens: res.Usage.PromptTokens, TotalTokens: res.Usage.TotalTokens}
 	}
-	recordUsage(r.Context(), h.Store, "openai", requested, u, time.Since(start), "ok")
+	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
 
 	encoded, err := json.Marshal(out)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "encode_error", err.Error())
 		return
 	}
-	if globalResponseCache != nil {
+	if h.Policy().Cache != nil {
 		if key, ok := embeddingCacheKeyFrom(r.Context()); ok {
-			globalResponseCache.Set(r.Context(), key, encoded, 0) // use driver default TTL
+			h.Policy().Cache.Set(r.Context(), key, encoded, 0) // use driver default TTL
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

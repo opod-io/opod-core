@@ -107,8 +107,6 @@ func TestRateLimitMiddleware_429OnExhaustion(t *testing.T) {
 	defer st.Close()
 
 	buckets := NewBucketStore()
-	SetBucketStore(buckets)
-	t.Cleanup(func() { SetBucketStore(nil) })
 
 	key := &store.APIKey{
 		ID:       "k_rl",

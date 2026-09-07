@@ -135,13 +135,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		return native
 	})
 	buckets := api.NewBucketStore()
-	api.SetBucketStore(buckets)
-	// Wire the catalog into the per-request cost computation path. The
-	// recordUsage step does a price lookup against this catalog +
-	// vendor pricing table to populate usage.cost_usd.
-	api.SetCatalog(cat)
-	// Response cache (embeddings today; chat in follow-up).
-	api.SetResponseCache(buildResponseCache(cfg.Observability.ResponseCache, st, log))
+	// The request-path policy is one value the handler serves under (P13-8):
+	// catalog (label bounding), rate-limit buckets, response cache; the
+	// guardrail registry is swapped in by the policy-file watcher.
+	openaiH.SetPolicy(&api.Policy{Catalog: cat, Buckets: buckets, Cache: buildResponseCache(cfg.Observability.ResponseCache, st, log)})
 	return &Server{
 		cfg:         cfg,
 		store:       st,

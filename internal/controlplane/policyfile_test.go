@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
@@ -40,7 +39,6 @@ func newPolicyTestServer(t *testing.T, eng interface{ Health(context.Context) er
 	}
 	ts := httptest.NewServer(srv.routes())
 	t.Cleanup(ts.Close)
-	t.Cleanup(func() { api.SetGuardrails(nil) })
 	return srv, ts
 }
 
@@ -98,7 +96,7 @@ func TestPolicyFileWatcher(t *testing.T) {
 	defer cancel()
 	srv.StartPolicyWatcher(ctx)
 
-	reg := api.Guardrails()
+	reg := srv.openaiH.Policy().Guardrails
 	if reg == nil || len(reg.Pre.Guards()) != 1 || len(reg.LoggingOnly.Guards()) != 1 || !reg.Post.IsEmpty() {
 		t.Fatalf("registry from file: %+v", reg)
 	}
@@ -117,7 +115,7 @@ func TestPolicyFileWatcher(t *testing.T) {
 
 	// a bad file keeps the last good policy
 	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "p2"})
-	if api.Guardrails() != nil || srv.policy.fallbackRouting() != nil || !srv.policy.accessLogEnabled() {
+	if srv.openaiH.Policy().Guardrails != nil || srv.policy.fallbackRouting() != nil || !srv.policy.accessLogEnabled() {
 		t.Fatal("an empty snapshot must clear every knob")
 	}
 	var bad PolicySnapshot
