@@ -12,9 +12,9 @@ package controlplane
 // plan.updated. Additive — consumers must ignore unknown types.
 
 import (
+	"github.com/opod-io/opod/pkg/adminapi"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 // logEvent appends one lifecycle event; best-effort (a full disk must not
@@ -40,18 +40,11 @@ func (s *Server) eventLogStream(w http.ResponseWriter, r *http.Request) {
 	if more {
 		rows = rows[:limit]
 	}
-	type event struct {
-		ID      int64          `json:"id"`
-		Type    string         `json:"type"`
-		Subject string         `json:"subject"`
-		TS      time.Time      `json:"ts"`
-		Data    map[string]any `json:"data"`
-	}
-	events := make([]event, 0, len(rows))
+	events := make([]adminapi.LifecycleEvent, 0, len(rows))
 	next := after
 	for _, e := range rows {
-		events = append(events, event{ID: e.ID, Type: e.Type, Subject: e.Subject, TS: e.TS, Data: e.Data})
+		events = append(events, adminapi.LifecycleEvent{ID: e.ID, Type: e.Type, Subject: e.Subject, TS: e.TS, Data: e.Data})
 		next = e.ID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next, "more": more, "boot": bootUnix})
+	writeJSON(w, http.StatusOK, adminapi.EventsBatch{Events: events, Next: next, More: more, Boot: bootUnix})
 }

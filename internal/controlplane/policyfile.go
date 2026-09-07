@@ -21,6 +21,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"github.com/opod-io/opod/pkg/adminapi"
 	"os"
 	"strings"
 	"sync"
@@ -33,35 +34,13 @@ import (
 
 const defaultPolicyPath = "/etc/opod-auth/policy.json"
 
-// PolicySnapshot is the wire shape of the policy file (mirrored by the manager).
-type PolicySnapshot struct {
-	Revision   string          `json:"revision"`
-	Routing    PolicyRouting   `json:"routing"`
-	Logging    PolicyLogging   `json:"logging"`
-	Guardrails []GuardrailRule `json:"guardrails"`
-}
-
-type PolicyRouting struct {
-	// FallbackURL is an OpenAI-compatible base URL (".../v1" optional). Empty = no fallback.
-	FallbackURL   string `json:"fallbackUrl,omitempty"`
-	FallbackModel string `json:"fallbackModel,omitempty"` // model id to request there; empty = keep the request's
-	FallbackKey   string `json:"fallbackKey,omitempty"`   // bearer for the fallback; empty = forward the caller's
-}
-
-type PolicyLogging struct {
-	// AccessLog nil means "unchanged" (config default); the manager sends an explicit bool.
-	AccessLog *bool `json:"accessLog,omitempty"`
-}
-
-type GuardrailRule struct {
-	ID        string            `json:"id"`
-	Phase     string            `json:"phase"` // pre | post | logging_only
-	URL       string            `json:"url"`
-	AuthKey   string            `json:"authKey,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	FailOpen  bool              `json:"failOpen"`
-	TimeoutMs int               `json:"timeoutMs,omitempty"`
-}
+// PolicySnapshot and its parts are the shared wire types (pkg/adminapi).
+type (
+	PolicySnapshot = adminapi.PolicySnapshot
+	PolicyRouting  = adminapi.PolicyRouting
+	PolicyLogging  = adminapi.PolicyLogging
+	GuardrailRule  = adminapi.GuardrailRule
+)
 
 type policyFileState struct {
 	mu       sync.Mutex

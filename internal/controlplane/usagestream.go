@@ -12,9 +12,9 @@ package controlplane
 //	→ {"events":[{"id","type":"usage","ts","data":{…row…}}], "next":<last id>, "more":bool}
 
 import (
+	"github.com/opod-io/opod/pkg/adminapi"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 func (s *Server) usageStream(w http.ResponseWriter, r *http.Request) {
@@ -33,31 +33,18 @@ func (s *Server) usageStream(w http.ResponseWriter, r *http.Request) {
 	if more {
 		rows = rows[:limit]
 	}
-	type event struct {
-		ID   int64          `json:"id"`
-		Type string         `json:"type"`
-		TS   time.Time      `json:"ts"`
-		Data map[string]any `json:"data"`
-	}
-	events := make([]event, 0, len(rows))
+	events := make([]adminapi.UsageEvent, 0, len(rows))
 	next := after
 	for _, u := range rows {
-		events = append(events, event{
+		events = append(events, adminapi.UsageEvent{
 			ID: u.ID, Type: "usage", TS: u.TS,
-			Data: map[string]any{
-				"api_key_id":        u.APIKeyID,
-				"user_id":           u.UserID,
-				"model":             u.Model,
-				"protocol":          u.Protocol,
-				"prompt_tokens":     u.PromptTokens,
-				"completion_tokens": u.CompletionTokens,
-				"latency_ms":        u.LatencyMS,
-				"outcome":           u.Outcome,
-				"cost_usd":          u.CostUSD,
-				"node_id":           u.NodeID, // worker that served it ("" = local)
+			Data: adminapi.UsageData{
+				APIKeyID: u.APIKeyID, UserID: u.UserID, Model: u.Model, Protocol: u.Protocol,
+				PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, LatencyMS: u.LatencyMS,
+				Outcome: u.Outcome, CostUSD: u.CostUSD, NodeID: u.NodeID,
 			},
 		})
 		next = u.ID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next, "more": more, "boot": bootUnix})
+	writeJSON(w, http.StatusOK, adminapi.UsageBatch{Events: events, Next: next, More: more, Boot: bootUnix})
 }
