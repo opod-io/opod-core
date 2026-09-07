@@ -39,3 +39,15 @@ func TestEngineFlags(t *testing.T) {
 		t.Fatal("unset → empty")
 	}
 }
+
+func TestLlamaModelSource(t *testing.T) {
+	if got := strings.Join(llamaModelSource("id", "org/repo-GGUF", "q4.gguf", ""), " "); got != "-hf org/repo-GGUF --hf-file q4.gguf" {
+		t.Fatalf("repo+file: %q", got)
+	}
+	if got := strings.Join(llamaModelSource("id", "org/repo", "", "/data/models/q4.gguf"), " "); got != "-m /data/models/q4.gguf" {
+		t.Fatalf("cached path wins: %q", got)
+	}
+	if got := strings.Join(llamaModelSource("id", "org/repo", "", ""), " "); got != "-hf org/repo" {
+		t.Fatalf("repo only: %q", got)
+	}
+}

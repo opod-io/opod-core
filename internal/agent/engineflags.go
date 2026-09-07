@@ -144,3 +144,20 @@ func shellQuoteAll(args []string) string {
 	}
 	return strings.Join(q, " ")
 }
+
+// llamaModelSource picks how llama-server finds the weights: a cached file
+// path wins; a Hugging Face repo needs the GGUF file name when the repo holds
+// several quantisations (--hf-file); a bare name only when nothing else is
+// known (llama-server then expects <user>/<model>[:quant]).
+func llamaModelSource(nativeName, repo, file, path string) []string {
+	switch {
+	case path != "":
+		return []string{"-m", path}
+	case repo != "" && file != "":
+		return []string{"-hf", repo, "--hf-file", file}
+	case repo != "":
+		return []string{"-hf", repo}
+	default:
+		return []string{"-hf", nativeName}
+	}
+}

@@ -305,6 +305,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 		ID         string `json:"id"`
 		OllamaName string `json:"ollama_name"`
 		Repo       string `json:"repo"`
+		File       string `json:"file"` // GGUF file inside the repo (multi-file repos)
 		Path       string `json:"path"`
 		Pin        bool   `json:"pin"`
 	}
@@ -343,7 +344,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	// on its own for a non-sharded placement (only the shard orchestrator does),
 	// so `model add --node a,b,c` would otherwise leave nothing serving.
 	if strings.HasPrefix(s.Engine.Name(), "llamacpp") || strings.HasPrefix(s.Engine.Name(), "llama-cpp") {
-		if err := s.launchLlamaServer(name, req.Repo, req.Path, req.ID); err != nil {
+		if err := s.launchLlamaServer(name, req.Repo, req.File, req.Path, req.ID); err != nil {
 			http.Error(w, "llama-server: "+err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -445,7 +446,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 // per worker), fire-and-forget (llama-server binds its port only after a possibly
 // multi-GB HF pull, so a readiness gate would time out). --alias makes it serve
 // under the catalog id so the model routes end-to-end by id with no translation.
-func (s *Server) launchLlamaServer(nativeName, repo, path, alias string) error {
+func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) error {
 	host, port := "127.0.0.1", 8080
 	if ep, ok := s.Engine.(interface{ Endpoint() string }); ok {
 		if u, err := url.Parse(ep.Endpoint()); err == nil {
@@ -459,15 +460,7 @@ func (s *Server) launchLlamaServer(nativeName, repo, path, alias string) error {
 			}
 		}
 	}
-	var src []string
-	switch {
-	case repo != "":
-		src = []string{"-hf", repo}
-	case path != "":
-		src = []string{"-m", path}
-	default:
-		src = []string{"-hf", nativeName}
-	}
+	src := llamaModelSource(nativeName, repo, file, path)
 	if alias == "" {
 		alias = nativeName
 	}
