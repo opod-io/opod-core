@@ -414,6 +414,9 @@ func (s *Server) launchVLLM(model, servedName string) error {
 	// (clamped 0.05–0.95) so several workers can share one device under a
 	// ledger instead of each grabbing 85% of it. Budget is only honoured when
 	// nvidia-smi can report the device size; otherwise the default stands.
+	// Plan flags (OPOD_ENGINE_FLAGS) may pin TP / utilisation and add the
+	// capacity knobs the control plane exposes (max_model_len, kv dtype, …).
+	flagOverrides, flagArgs := engineFlagsFromEnv().vllmShellOverrides()
 	cmdline := fmt.Sprintf(
 		"N=$(nvidia-smi -L 2>/dev/null | grep -c GPU); "+
 			"[ \"$N\" -ge 1 ] || N=$(ls /dev/dri/renderD* 2>/dev/null | wc -l); "+
@@ -422,9 +425,10 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			"U=0.85; B=\"${OPOD_VRAM_BUDGET_GB:-0}\"; "+
 			"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); "+
 			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
+			"%s "+
 			"exec vllm serve '%s' --served-model-name '%s' '%s' --host %s --port %d "+
-			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\"",
-		model, servedName, model, host, port)
+			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s",
+		flagOverrides, model, servedName, model, host, port, flagArgs)
 	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
 		ID:          "vllm-serve",
 		Command:     "/bin/sh",
@@ -468,7 +472,8 @@ func (s *Server) launchLlamaServer(nativeName, repo, path, alias string) error {
 		alias = nativeName
 	}
 	args := append(src, "--host", host, "--port", strconv.Itoa(port), "--alias", alias)
-	_ = s.Supervisor.Stop("llama-server") // exclusive: one model per worker
+	args = append(args, engineFlagsFromEnv().llamaArgs()...) // plan flags: ctx, ngl, parallel, kv cache type, extra
+	_ = s.Supervisor.Stop("llama-server")                    // exclusive: one model per worker
 	// Launch via a login shell + exec, NOT a bare exec.Command: the direct
 	// supervisor launch (new process group, null stdin) makes the Intel CPU
 	// llama-server SEGFAULT, but it runs fine from a shell (same fix as the vLLM
