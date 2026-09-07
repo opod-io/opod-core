@@ -71,7 +71,7 @@ if [ -n "${OPOD_LOAD_MODEL:-}" ]; then
   PATHARG=""
   if [ -n "$FILE" ] && [ -f "$MODELS/$FILE" ]; then PATHARG="$MODELS/$FILE"; fi   # cached whole file wins
   if [ -n "$PATHARG" ]; then body=$(printf '{"id":"%s","path":"%s"}' "$OPOD_LOAD_MODEL" "$PATHARG")
-  else body=$(printf '{"id":"%s","repo":"%s"}' "$OPOD_LOAD_MODEL" "$REPO"); fi
+  else body=$(printf '{"id":"%s","repo":"%s","file":"%s"}' "$OPOD_LOAD_MODEL" "$REPO" "$FILE"); fi
   log "load: $body"
   for i in $(seq 1 5); do
     out=$(curl -s -m 900 -X POST http://${POD_IP:-127.0.0.1}:8081/v1/model/load -H "Authorization: Bearer $OPOD_JOIN_TOKEN" -H 'Content-Type: application/json' -d "$body" || true)
