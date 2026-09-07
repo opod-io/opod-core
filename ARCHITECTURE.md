@@ -1031,7 +1031,7 @@ There is no `make dev`, `make ui`, or `make test-e2e` — those are not needed f
 Start with these files in order. Each top-of-file comment explains what the package owns; no file exceeds ~600 lines.
 
 1. `cmd/opod/main.go` — switch statement over subcommand verbs
-2. `cmd/opod/cmd_*.go` — one file per CLI subcommand; each is a thin arg-parser that delegates to `internal/control/`
+2. `cmd/opod/cmd_*.go` — one file per CLI subcommand (no file over 400 lines); each parses flags, calls a package and prints: model install/search → `internal/models` (`Install`, `Search`, `PersistUserCatalogEntry`), boot steps → `internal/control/bootstrap.go`, self-update → `internal/update`
 3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
 4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
 7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule from § CLI / Admin API / Web UI contract above)
