@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/opod-io/opod/internal/router"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -161,7 +162,8 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		CompletionTokens: completion,
 		LatencyMS:        int(latency.Milliseconds()),
 		Outcome:          outcome,
-		CostUSD:          0, // dollar cost left core with budgets (ADR-022); rating happens downstream
+		CostUSD:          0,                    // dollar cost left core with budgets (ADR-022); rating happens downstream
+		NodeID:           router.NodeFrom(ctx), // "" when answered locally / never dispatched
 	}
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior

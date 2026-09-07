@@ -74,6 +74,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 			}
 			continue
 		}
+		noteNode(attemptCtx, nodeID) // usage attribution: the worker this attempt dispatches to
 		attemptSpan.SetAttributes(
 			attribute.String("opod.engine", eng.Name()),
 			attribute.String("opod.node_id", nodeID),

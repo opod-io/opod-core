@@ -15,10 +15,10 @@ type sqliteUsage struct{ db *sql.DB }
 func (s *sqliteUsage) Record(ctx context.Context, u Usage) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage(ts, api_key_id, user_id, model, protocol,
-		    prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		    prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd, node_id)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		u.TS.Unix(), u.APIKeyID, u.UserID, u.Model, u.Protocol,
-		u.PromptTokens, u.CompletionTokens, u.LatencyMS, u.Outcome, u.CostUSD)
+		u.PromptTokens, u.CompletionTokens, u.LatencyMS, u.Outcome, u.CostUSD, u.NodeID)
 	return err
 }
 
@@ -56,7 +56,7 @@ func (s *sqliteUsage) LastUsedByModel(ctx context.Context) (map[string]time.Time
 func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd
+		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd, node_id
 		 FROM usage ORDER BY ts DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
 func (s *sqliteUsage) After(ctx context.Context, afterID int64, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd
+		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd, node_id
 		 FROM usage WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
 	if err != nil {
 		return nil, err
@@ -80,7 +80,7 @@ func (s *sqliteUsage) After(ctx context.Context, afterID int64, limit int) ([]Us
 func (s *sqliteUsage) RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd
+		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd, node_id
 		 FROM usage WHERE user_id = ? ORDER BY ts DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err
@@ -212,7 +212,7 @@ func scanUsage(rows *sql.Rows) ([]Usage, error) {
 		var u Usage
 		var ts int64
 		if err := rows.Scan(&u.ID, &ts, &u.APIKeyID, &u.UserID, &u.Model, &u.Protocol,
-			&u.PromptTokens, &u.CompletionTokens, &u.LatencyMS, &u.Outcome, &u.CostUSD); err != nil {
+			&u.PromptTokens, &u.CompletionTokens, &u.LatencyMS, &u.Outcome, &u.CostUSD, &u.NodeID); err != nil {
 			return nil, err
 		}
 		u.TS = time.Unix(ts, 0)
