@@ -1,8 +1,0 @@
-# Claude Code → Opod (Anthropic API)
-# Add to ~/.zshrc or ~/.bashrc to make permanent.
-
-export ANTHROPIC_BASE_URL=http://example.local:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-TEST
-export ANTHROPIC_MODEL=test-model
-
-claude  # now talks to Opod instead of Anthropic

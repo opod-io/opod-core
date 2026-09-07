@@ -1,6 +1,7 @@
-// Package api implements the public HTTP surface. OpenAI-compatible
-// (/v1/models, /v1/chat/completions) and Anthropic-compatible
-// (/v1/messages, /v1/messages/count_tokens) live in this package.
+// Package api implements the public HTTP surface: the OpenAI-compatible
+// routes (/v1/models, /v1/chat/completions, /v1/embeddings). Other protocol
+// shapes left core with ADR-022 (2026-09-07) — a shim in front of the
+// gateway is the place for them.
 package api
 
 import (

@@ -57,37 +57,16 @@ type Config struct {
 //
 //	OPOD_UI              accepted for compatibility; core has no dashboard since ADR-022 ("/" is always 404)
 //	OPOD_EGRESS=off      never forward to a cloud vendor, whatever keys are in the env
-//	OPOD_PROTOCOLS=…     "all" (default) or a comma list; "openai" keeps only the
-//	                     OpenAI-compatible routes (anthropic / audio / rerank → 404)
 //	OPOD_CALLBACKS=off   no webhook / Langfuse / S3 sinks, no /admin/v1/callbacks
 //	OPOD_MANAGED=1       run by a manager: update check off, banner says so
 type SurfacesConfig struct {
-	UI        bool   `yaml:"ui"`
-	Egress    bool   `yaml:"egress"`
-	Protocols string `yaml:"protocols"`
-	Callbacks bool   `yaml:"callbacks"`
-	Managed   bool   `yaml:"managed"`
+	UI        bool `yaml:"ui"`
+	Egress    bool `yaml:"egress"`
+	Callbacks bool `yaml:"callbacks"`
+	Managed   bool `yaml:"managed"`
 }
 
-// Protocol reports whether the named request protocol ("anthropic", "audio",
-// "rerank") is enabled. "openai" is always on — it is the product.
-func (s SurfacesConfig) Protocol(name string) bool {
-	if name == "openai" {
-		return true
-	}
-	p := strings.TrimSpace(strings.ToLower(s.Protocols))
-	if p == "" || p == "all" {
-		return true
-	}
-	for _, x := range strings.Split(p, ",") {
-		if strings.TrimSpace(x) == name {
-			return true
-		}
-	}
-	return false
-}
-
-// Summary is the one-line banner form: "ui off · egress off · protocols openai · callbacks off · managed".
+// Summary is the one-line banner form: "ui off · egress off · callbacks off · managed".
 func (s SurfacesConfig) Summary() string {
 	on := func(b bool) string {
 		if b {
@@ -95,11 +74,7 @@ func (s SurfacesConfig) Summary() string {
 		}
 		return "off"
 	}
-	p := s.Protocols
-	if strings.TrimSpace(p) == "" {
-		p = "all"
-	}
-	out := "ui " + on(s.UI) + " · egress " + on(s.Egress) + " · protocols " + p + " · callbacks " + on(s.Callbacks)
+	out := "ui " + on(s.UI) + " · egress " + on(s.Egress) + " · callbacks " + on(s.Callbacks)
 	if s.Managed {
 		out += " · managed"
 	}
@@ -169,11 +144,6 @@ type EngineConfig struct {
 	VLLMAPIKey       string `yaml:"-" json:"-"` // populated from VLLM_API_KEY env
 	MLXEndpoint      string `yaml:"mlx_endpoint"`
 	LlamaCppEndpoint string `yaml:"llamacpp_endpoint"`
-	// WhisperEndpoint and PiperEndpoint are optional engines for the
-	// audio endpoints; the gateway proxies to them when set and
-	// returns 501 with a setup hint otherwise.
-	WhisperEndpoint string `yaml:"whisper_endpoint"`
-	PiperEndpoint   string `yaml:"piper_endpoint"`
 }
 
 type RouterConfig struct {
@@ -265,7 +235,7 @@ func Default() *Config {
 	return &Config{
 		Listen:      ":8080",
 		ExternalURL: "",
-		Surfaces:    SurfacesConfig{UI: true, Egress: true, Protocols: "all", Callbacks: true},
+		Surfaces:    SurfacesConfig{UI: true, Egress: true, Callbacks: true},
 		DataDir:     dataDir,
 		LogLevel:    "info",
 		CatalogDir:  "", // empty → use built-in catalog dir resolution
@@ -356,9 +326,6 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("OPOD_EGRESS"); v != "" {
 		c.Surfaces.Egress = !offSwitch(v)
 	}
-	if v := os.Getenv("OPOD_PROTOCOLS"); v != "" {
-		c.Surfaces.Protocols = v
-	}
 	if v := os.Getenv("OPOD_CALLBACKS"); v != "" {
 		c.Surfaces.Callbacks = !offSwitch(v)
 	}
@@ -415,12 +382,6 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPOD_LLAMACPP_ENDPOINT"); v != "" {
 		c.Engine.LlamaCppEndpoint = v
-	}
-	if v := os.Getenv("OPOD_WHISPER_ENDPOINT"); v != "" {
-		c.Engine.WhisperEndpoint = v
-	}
-	if v := os.Getenv("OPOD_PIPER_ENDPOINT"); v != "" {
-		c.Engine.PiperEndpoint = v
 	}
 	if v := os.Getenv("OPOD_ENGINE"); v != "" {
 		c.Engine.Preferred = v

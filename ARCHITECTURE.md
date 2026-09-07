@@ -41,7 +41,7 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
 
 1. Run on a single laptop *and* a multi-node cluster with the same binary.
 2. One-command install. Zero config to first response.
-3. Drop-in compatibility with OpenAI and Anthropic APIs.
+3. Drop-in compatibility with the OpenAI API (chat, embeddings, models) — the one protocol surface (ADR-022).
 4. Mac + Linux + NVIDIA in one fleet, transparently.
 5. Strong defaults; expert overrides via YAML.
 6. Maintainable by junior engineers — small surface, no magic.
@@ -63,7 +63,7 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
                        ▼  one endpoint, one key
    ┌──────────────────────────────────────────────────┐
    │  GATEWAY (leader)                                │
-   │  OpenAI + Anthropic compatible · auth · quotas   │
+   │  OpenAI-compatible · auth · quotas               │
    └────────────────────┬─────────────────────────────┘
                         │
    ┌────────────────────▼─────────────────────────────┐
@@ -348,7 +348,7 @@ intra-node, not cross-machine sharding.)
 ### Subsystem responsibilities
 
 - **HTTP server** — request routing, TLS termination, middleware stack
-- **API adapters** — translate OpenAI/Anthropic requests to internal `InferenceRequest`; translate responses back
+- **API adapter** — translates OpenAI requests to the internal `InferenceRequest`; translates responses back
 - **Admin API** — node management, model management, token issuance, usage queries
 - **Auth** — API key validation (scope-gated routes), token issuance, HMAC verification for worker traffic
 - **Router** — given a request, pick a target node + engine endpoint
@@ -477,18 +477,10 @@ Not in SQLite. GGUFs downloaded for sharding land in `storage.models_dir` as `<m
 
 - Parses `/v1/chat/completions` request into `InferenceRequest`
 - Streams tokens back as SSE `data: {...}\n\n`
-- Handles function-call format conversion if backend uses Anthropic native tools
 
-### Anthropic adapter (`internal/api/anthropic.go`)
+### Other protocol shapes
 
-- Parses `/v1/messages` request into `InferenceRequest`
-- Maps `system` field → system message in internal format
-- Maps Anthropic tool blocks → internal tool calls
-- Translates streaming events:
-  - `message_start` → opens stream
-  - `content_block_start` / `content_block_delta` / `content_block_stop` per block
-  - `message_delta` for usage updates
-  - `message_stop` to close
+None. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); a shim in front of the gateway is the place for them.
 
 ### Internal request shape
 
@@ -1014,7 +1006,7 @@ The first `opod up` will:
 1. Bootstrap `~/.opod/state.db` (SQLite)
 2. Print an admin API key to stderr — copy it; it's shown only once
 3. Auto-pick a model based on hardware (`opod model search` for the list)
-4. Start serving on `http://localhost:8080` (OpenAI + Anthropic API + admin UI)
+4. Start serving on `http://localhost:8080` (OpenAI API + `/admin/v1`)
 
 From there: edit code → `make build` → restart `./opod up` → done.
 
@@ -1042,7 +1034,6 @@ Start with these files in order. Each top-of-file comment explains what the pack
 2. `cmd/opod/cmd_*.go` — one file per CLI subcommand; each is a thin arg-parser that delegates to `internal/control/`
 3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
 4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
-5. `internal/api/anthropic.go` — Anthropic protocol adapter (`/v1/messages`, `/v1/messages/count_tokens`)
 7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule from § CLI / Admin API / Web UI contract above)
 8. `internal/router/router.go` — picks the backing engine per request (local → remote → fallback)
 9. `internal/scheduler/sharding.go` — orchestrates sharded models (rpc-server + coordinator)
@@ -1130,6 +1121,10 @@ fails `go test`. Everything else under `/admin/v1` may change between releases.
 
 A leader run by an external manager is essentials-only. `surfaces:` in the config (env overrides
 in brackets) switches product surfaces off without touching the request path or the stable admin
-environment), `protocols` (`OPOD_PROTOCOLS=openai`: only the OpenAI-compatible routes; anthropic,
-`managed` (`OPOD_MANAGED=1`: update check off, banner says so). Defaults keep everything on for a
-standalone `opod up`. `TestSurfacesOff` proves the stable admin surface is intact with every switch off.
+contract: `ui` (`OPOD_UI`, accepted for compatibility — core has had no dashboard since ADR-022, `/`
+is always 404), `egress` (`OPOD_EGRESS=off`: never forward to a remote vendor whatever keys are in the
+environment), `callbacks` (`OPOD_CALLBACKS=off`: no sinks, no `/admin/v1/callbacks`) and
+`managed` (`OPOD_MANAGED=1`: update check off, in-memory store under a mounted plan, banner says so).
+The request surface itself is fixed — OpenAI chat, embeddings, models — since the Anthropic/audio/rerank
+adapters and their `protocols` switch left on 2026-09-07 (ADR-022 step 4). Defaults keep everything on
+for a standalone `opod up`. `TestSurfacesOff` proves the stable admin surface is intact with every switch off.

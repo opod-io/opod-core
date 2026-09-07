@@ -95,16 +95,6 @@ func writeGuardrailBlocked(w http.ResponseWriter, name, reason string) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// writeAnthropicGuardrailBlocked mirrors writeGuardrailBlocked in the
-// Anthropic error envelope so SDK clients surface the refusal cleanly.
-func writeAnthropicGuardrailBlocked(w http.ResponseWriter, name, reason string) {
-	msg := "request blocked by guardrail " + name
-	if reason != "" {
-		msg += ": " + reason
-	}
-	writeAnthropicError(w, http.StatusForbidden, "permission_error", msg)
-}
-
 func recordGuardrailAudit(ctx context.Context, st store.Store, name, action, reason string) {
 	if st == nil {
 		return

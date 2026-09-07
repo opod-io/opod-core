@@ -33,10 +33,9 @@ func TestDisconnectSnippet_UnknownClient(t *testing.T) {
 	}
 }
 
-// The Anthropic-protocol snippets should mention ANTHROPIC_BASE_URL and
-// ANTHROPIC_AUTH_TOKEN (the two env vars `opod connect` sets for those
-// clients) so the reversal is symmetric. OpenAI snippets should mention
-// OPENAI_BASE_URL / OPENAI_API_KEY / base_url.
+// Each disconnect snippet must name the env vars / settings `opod connect`
+// sets for that client, so the reversal is symmetric (OPENAI_BASE_URL /
+// OPENAI_API_KEY / base_url).
 //
 // This locks the symmetry: if someone changes connect.go to set a NEW env
 // var, this test fails until they also add it to the disconnect snippet.
@@ -45,11 +44,8 @@ func TestDisconnectSnippet_SymmetricEnvVars(t *testing.T) {
 		clientID string
 		mustHave []string
 	}{
-		{"claude-code", []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"}},
-		{"qwen-code", []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"}},
 		{"aider", []string{"OPENAI_API_BASE", "OPENAI_API_KEY"}},
 		{"openai-sdk", []string{"OPENAI_BASE_URL", "base_url"}},
-		{"anthropic-sdk", []string{"ANTHROPIC_BASE_URL", "base_url"}},
 	}
 	for _, c := range cases {
 		t.Run(c.clientID, func(t *testing.T) {

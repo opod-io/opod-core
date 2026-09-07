@@ -13,7 +13,7 @@
 >
 > Engine-agnostic: bring **Ollama**, **vLLM**, **MLX-LM**, or **llama.cpp-RPC**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware, shard a giant model across several machines via llama.cpp-RPC, and transparently fall back to paid Claude / GPT only when you choose.
 >
-> Point Cursor, Claude Code, Aider, Continue, or any OpenAI/Anthropic SDK at Opod. It just works.
+> Point Cursor, Aider, Continue, Codex CLI, or any OpenAI SDK at Opod. It just works.
 
 ## 🗺️ Where Opod sits
 
@@ -30,11 +30,11 @@
                   │           │          │             │            │
                   ▼           ▼          ▼             ▼            ▼
             ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-            │  Cursor  │ │  Claude  │ │  Aider   │ │  Custom  │ │   curl   │
-            │          │ │   Code   │ │          │ │ Python   │ │  scripts │
+            │  Cursor  │ │  Codex   │ │  Aider   │ │  Custom  │ │   curl   │
+            │          │ │   CLI    │ │          │ │ Python   │ │  scripts │
             │          │ │          │ │          │ │   SDK    │ │          │
             └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
-                 │  OpenAI    │ Anthropic  │  OpenAI    │  Either    │  HTTP
+                 │  OpenAI    │  OpenAI    │  OpenAI    │  OpenAI    │  HTTP
                  └────────────┴────────────┴────────────┴────────────┘
                                           │
                                           │   ONE URL · ONE API KEY
@@ -43,40 +43,33 @@
       ║                  ⬢ ⬢ ⬢   OPOD   ⬢ ⬢ ⬢                              ║
       ║                  (this is what we built)                             ║
       ║  ════════════════════════════════════════════════════════════════    ║
-      ║  Gateway     OpenAI + Anthropic on /v1/chat/completions              ║
-      ║              per-user keys · daily quotas · full audit log           ║
+      ║  Gateway     OpenAI-compatible /v1/chat/completions + /v1/embeddings ║
+      ║              per-key rpm/tpm/daily quotas · typed event stream       ║
       ║              CLI-only core · the console is the control plane        ║
       ║                                                                      ║
       ║  Router      Same model on N nodes  → load-balance                   ║
       ║              Different models per node → route by placement          ║
       ║              Model bigger than any node → split via llama.cpp-RPC    ║
-      ║              Claude / GPT requested → proxy to vendor                ║
       ║              Engine error or timeout  → retry catalog fallback chain ║
       ╚═════════════════════════════╤════════════════════════════════════════╝
                                     │
-              ┌─────────────────────┼─────────────────────┐
-              ▼                     ▼                     ▼
-       ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-       │  (any mix)  │       │  (any mix)  │       │   proxy     │
-       │  • Ollama   │       │  • Ollama   │       │             │
-       │  • vLLM     │       │  • vLLM     │       │ api.anthro- │
-       │  • MLX-LM   │       │  • MLX-LM   │       │ pic.com     │
-       │  • llama.cpp│       │  • llama.cpp│       │ api.openai  │
-       └──────┬──────┘       └──────┬──────┘       │ .com        │
-              │                     │              └──────┬──────┘
-              ▼                     ▼                     ▼
+                    ┌───────────────┴───────────────┐
+                    ▼                               ▼
+             ┌─────────────┐                 ┌─────────────┐
+             │  (any mix)  │                 │  (any mix)  │
+             │  • Ollama   │                 │  • Ollama   │
+             │  • vLLM     │                 │  • vLLM     │
+             │  • MLX-LM   │                 │  • MLX-LM   │
+             │  • llama.cpp│                 │  • llama.cpp│
+             └──────┬──────┘                 └──────┬──────┘
+                    ▼                               ▼
       ┌──────────────────────────────────────────────────────────────────────┐
-      │                    UNDERLYING LLMs / WEIGHTS                         │
-      │                                                                      │
-      │   YOUR HARDWARE                              VENDOR APIs             │
-      │   • Mac Studio · Mac Mini                    • Claude (Anthropic)    │
-      │   • Linux + RTX GPU                          • GPT, o3, o4 (OpenAI)  │
-      │                                                                      │
-      │   41 curated catalog models (Qwen 3.6, GLM,   Each request routed   │
-      │   gpt-oss, Llama 4, Gemma 4, DeepSeek V4,     to EITHER your hard-  │
-      │   Kimi K2.6, Nemotron 3 Ultra, vision +       ware OR a vendor —    │
-      │   embedding models)                           you pay vendors only  │
-      │   + any HuggingFace or Ollama model.          when YOU chose to.    │
+      │                    UNDERLYING LLMs / WEIGHTS — YOUR HARDWARE         │
+      │   • Mac Studio · Mac Mini · Linux + NVIDIA / AMD GPUs                │
+      │   41 curated catalog models (Qwen 3.6, GLM, gpt-oss, Llama 4,        │
+      │   Gemma 4, DeepSeek V4, Kimi K2.6, Nemotron 3 Ultra, vision +        │
+      │   embedding models) + any HuggingFace or Ollama model.               │
+      │   Nothing leaves your network: core has no vendor egress (ADR-022). │
       └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -161,15 +154,15 @@ curl http://localhost:8080/v1/chat/completions \
 
 You should see a JSON response with a 5-word reply. 🎉
 
-**Or wire up Claude Code**: in any terminal where you use Claude Code, set:
+**Or wire up an OpenAI-shape tool** (Codex CLI, Aider, Cursor, the OpenAI SDK): in any terminal, set:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-xK9p…
-claude
+export OPENAI_BASE_URL=http://localhost:8080/v1
+export OPENAI_API_KEY=sk-orc-xK9p…
+codex
 ```
 
-…and Claude Code talks to your local model instead of paying for the API.
+…and the tool talks to your local model instead of paying for the API. `opod connect <tool>` prints the exact lines for each one.
 
 **If something breaks**, run `opod doctor` — it tells you exactly what to fix. Common issues are in the [Troubleshooting installation](#troubleshooting-installation) section.
 
@@ -230,7 +223,7 @@ There are excellent open-weight models now — Qwen3-Coder, Llama 3.3, DeepSeek-
 2. **Zero config to first response.** Smart defaults everywhere. Hardware auto-detected. Model auto-picked. Network auto-meshed.
 3. **The UI tells you the next step.** Every state in the web UI has a clear, copy-pasteable next action. Juniors should never stare at a blank prompt.
 4. **Heterogeneous is invisible.** Mac and NVIDIA today (AMD/Intel on the roadmap) — the user picks models, not hardware.
-5. **OpenAI- and Anthropic-compatible from day one.** Same endpoint serves both protocols.
+5. **OpenAI-compatible, one protocol.** Every OpenAI-shape client connects with a base URL and a key; other wire shapes are a shim in front of the gateway, not core's job (ADR-022).
 6. **Permissive open source.** Apache 2.0. No open-core gotchas.
 7. **The CLI is the source of truth.** Every user-facing capability ships as a `opod` CLI command first. The web UI is a thin wrapper — it invokes the same Go functions the CLI invokes, never reimplements logic. If you can do it in the UI, you can do it in CI / scripts / SSH sessions, and vice versa.
 8. **Adding or switching a model is one action.** No hand-written YAML, no manual GGUF downloads, no separate worker-side setup. `opod model add hf:owner/repo` does the rest — picks engine, picks quant, shards if needed, distributes weights, warms the model. The default model is auto-picked from hardware on first `opod up`; to change it later, set `router.default_model` in `~/.opod/config.yaml` and restart, or `OPOD_DEFAULT_MODEL=<id> opod up`.
@@ -284,15 +277,15 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-### Use it from Claude Code
+### Use it from an OpenAI-shape tool
 
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-xK9p…
-claude
+export OPENAI_BASE_URL=http://localhost:8080/v1
+export OPENAI_API_KEY=sk-orc-xK9p…
+aider --model openai/qwen3-coder-30b
 ```
 
-Claude Code is now talking to your local Qwen-Coder. Same UX, your hardware.
+Aider is now talking to your local Qwen-Coder. Same UX, your hardware.
 
 ---
 
@@ -310,7 +303,7 @@ Claude Code is now talking to your local Qwen-Coder. Same UX, your hardware.
 ### Non-goals
 
 - **Training or fine-tuning** — Opod serves inference. Use Axolotl / Unsloth / torchtune for training, import the adapter.
-- **Replacing real Claude Opus** — open models won't match Anthropic's frontier for long agentic runs. Opod makes the hybrid clean, not the choice unnecessary.
+- **Replacing frontier vendor models** — open models won't match the closed frontier for long agentic runs. Opod serves what runs on your hardware; it does not proxy to vendors (that left core with ADR-022).
 - **A SaaS product** — Opod is the software you run. The OSS is always complete.
 
 ---
@@ -322,7 +315,7 @@ Claude Code is now talking to your local Qwen-Coder. Same UX, your hardware.
                        │
                        ▼  one endpoint, one key
    ┌──────────────────────────────────────────────────┐
-   │  GATEWAY      OpenAI + Anthropic compatible      │
+   │  GATEWAY      OpenAI-compatible                  │
    │               auth · routing · streaming · log   │
    └────────────────────┬─────────────────────────────┘
                         │
@@ -352,9 +345,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Inference
 
-- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/rerank`)
-- Anthropic-compatible API (`/v1/messages`, `/v1/messages/count_tokens`)
-- Audio endpoints (`/v1/audio/transcriptions`, `/v1/audio/speech`) — proxies to optional `OPOD_WHISPER_ENDPOINT` / `OPOD_PIPER_ENDPOINT`; returns HTTP 501 with setup hint when unconfigured
+- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) — the only protocol surface (ADR-022)
 - SSE streaming with proper client-disconnect handling (no goroutine leaks; bounded drain on cancel)
 - Tool / function calling (pass-through for capable models)
 - Vision (image input) on multimodal models — `image_url` content blocks on `/v1/chat/completions` route through the Ollama engine path
@@ -445,7 +436,6 @@ These work today via `opod model add hf:owner/repo` but don't have curated YAML 
 - **Larger general / agent models** — Qwen3-235B, MiniMax-M2.7, MiMo-V2 sharded variants — pending sharded YAML entries.
 
 Shipped recently (don't fall in this list):
-- **Speech / transcription** — `/v1/audio/transcriptions` (and `/v1/audio/speech`) proxy to an optional Whisper / Piper endpoint (`engine.whisper_endpoint` / `engine.piper_endpoint`, or `OPOD_WHISPER_ENDPOINT` / `OPOD_PIPER_ENDPOINT`); HTTP 501 with a setup hint when unconfigured.
 - **Vision (image input)** — `gemma4-12b`, `gemma4-26b`, `gemma4-31b`, `gemma4-e2b`, `gemma4-e4b`, `qwen3-vl-8b`, `qwen3-vl-32b`, `pixtral-12b`, `moondream3`, `mimo-vl-7b`, `llama-4-scout` all serve through `/v1/chat/completions` with `image_url` content blocks.
 - **Embeddings (for RAG)** — `/v1/embeddings` is live; install `nomic-embed-text` and call it from any OpenAI-shape embedding client.
 - **Audio (input)** — `mimo-audio`, `gemma4-e2b`, `gemma4-e4b` declare `audio` capability for future routing; today they serve as `chat` models.
@@ -459,16 +449,14 @@ The web UI generates a copy-pasteable config snippet for each tool.
 | Client | Protocol | Config |
 |---|---|---|
 | **Cursor** | OpenAI | Settings → Models → Override OpenAI Base URL |
-| **Continue.dev** | OpenAI or Anthropic | `~/.continue/config.json` → `apiBase` |
+| **Continue.dev** | OpenAI | `~/.continue/config.json` → `apiBase` |
 | **Aider** | OpenAI | `aider --openai-api-base http://opod:8080/v1` |
 | **Zed** | OpenAI | `language_models.openai_compatible.api_url` |
-| **Cline / Roo Code** (VS Code) | OpenAI or Anthropic | Provider settings panel |
-| **Claude Code** | Anthropic | `ANTHROPIC_BASE_URL` env var |
+| **Cline / Roo Code** (VS Code) | OpenAI | Provider settings panel (OpenAI-compatible provider) |
 | **OpenAI Python SDK** | OpenAI | `OpenAI(base_url=…, api_key=…)` |
-| **Anthropic Python SDK** | Anthropic | `Anthropic(base_url=…, api_key=…)` |
-| **LangChain / LlamaIndex** | Either | `openai_api_base` or `anthropic_api_url` |
-| **`qwen-code` / `OpenCode`** | Anthropic | Same as Claude Code |
-| **curl** | Either | Direct |
+| **LangChain / LlamaIndex** | OpenAI | `openai_api_base` |
+| **OpenCode** | OpenAI | per-provider `baseURL` override |
+| **curl** | HTTP | Direct |
 
 ---
 
@@ -686,10 +674,6 @@ engine:
   vllm_endpoint:     "http://127.0.0.1:8000"
   mlx_endpoint:      "http://127.0.0.1:8080"
   llamacpp_endpoint: "http://127.0.0.1:8089"   # llama-server (single-node or RPC coordinator) — port chosen to avoid Opod leader :8080 and worker :8081
-  whisper_endpoint: ""                # optional Whisper-compatible server for
-                                      # /v1/audio/transcriptions; empty → 501
-  piper_endpoint: ""                  # optional Piper-compatible server for
-                                      # /v1/audio/speech; empty → 501
 
 router:
   default_model: ""                   # empty → auto-pick on first up
@@ -706,17 +690,7 @@ router:
                                        # for a faster candidate FIRST whenever
                                        # the primary's recent p95 latency
                                        # exceeds this many seconds. Bet #1.
-  fallback:
-    enabled: false                    # true → forward unknown claude-*/gpt-* models to vendor
-    anthropic_url: "https://api.anthropic.com"
-    openai_url:    "https://api.openai.com"
-    # credentials chain (env, shared config, instance role). Supports
-    # return 501 (body translation not yet shipped).
-    # generateContent not yet shipped. Set the project and a 501 with
-    # ADC status returns until then.
-    # OpenAI-compatible hosted gateways — URL overrides only; the keys
-    together_url: ""
-
+  # vendor fallback (claude-*/gpt-* proxying) left core with ADR-022 — nothing leaves your network
 observability:
   otlp_endpoint: ""                   # e.g. http://localhost:4318 — empty disables tracing (no-op overhead)
                                       #  events, host, public_key, secret_key,
@@ -751,8 +725,6 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent). The old unprefixed `VLLM_API_KEY` still works as a deprecated fallback; the prefixed form wins when both are set |
 | `OPOD_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
-| `DEEPSEEK_API_KEY` / `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `HF_TOKEN` / `ZAI_API_KEY` / `OLLAMA_CLOUD_API_KEY` / `GITHUB_MODELS_TOKEN` / `CLOUDFLARE_API_KEY` / `OVH_API_KEY` / `KILO_API_KEY` / `POLLINATIONS_API_KEY` / `LLM7_API_KEY` / `OPENCODE_ZEN_API_KEY` | registry providers — passthrough for `deepseek/<id>`, `cerebras/<id>`, `gemini/<id>`, etc. Stable ones default their URL; others need `<NAME>_BASE_URL` |
 | `<NAME>_BASE_URL` | overrides a registry provider's base URL (e.g. `DEEPSEEK_BASE_URL`, `CLOUDFLARE_BASE_URL`) |
 | `OPOD_CATALOG_DIR` | `catalog_dir` — overrides catalog lookup. Default search order: `$OPOD_CATALOG_DIR` → `./catalog` → `<exe-dir>/catalog` → `~/.opod/catalog` (curl installer) → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) |
 | `OPOD_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
@@ -771,7 +743,6 @@ These features are mentioned elsewhere in this README but have no YAML knob toda
 - **Mesh backend selection** — only the LAN backend ships today; there are no `mesh.*` config keys. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation. Tracked in [ROADMAP.md](ROADMAP.md).
 - **OIDC for the UI** — out of scope (see [ROADMAP.md → Explicitly killed scope](ROADMAP.md#explicitly-killed-or-sibling-projected-scope)). `internal/auth/` ships API keys only; the UI uses a pasted admin key.
 - **Scheduler policy / replication** — `internal/scheduler/` ships sharding orchestration + GGUF distribution; placement is naive least-loaded with no policy tunables.
-- **Per-model fallback routing** — the vendor fallback is all-or-nothing today (any unknown `claude-*` → Anthropic, any unknown `gpt-*` → OpenAI). Per-model vendor whitelists are not parsed.
 - **Separate metrics listener** — Prometheus is hardcoded to the main `/metrics` endpoint on the gateway port; there's no dedicated metrics listener. (OTLP tracing *is* configurable — `observability.otlp_endpoint` / `OPOD_OTLP_ENDPOINT` above.)
 - **Per-node config (`~/.opod/node.yaml`)** — not read. Workers inherit engine endpoints from the leader's config or their own env vars.
 
@@ -1000,9 +971,7 @@ LoRA adapter loading (`opod model adapter add`) is on the roadmap for a future r
 ### Fastest: `opod connect <client>`
 
 ```bash
-opod connect claude-code                          # Anthropic-shape: Claude Code, qwen-code, hermes
 opod connect cursor                               # OpenAI-shape: Cursor, Aider, Zed, OpenClaw, Codex CLI, …
-opod connect hermes                               # Nous Research's CLI agent w/ persistent memory
 opod connect open-webui                           # self-hosted ChatGPT-style web UI (Docker)
 opod connect open-notebook                        # OSS NotebookLM clone (sources → chat + podcast)
 opod connect goose                                # Block's OSS terminal agent
@@ -1010,7 +979,7 @@ opod connect plandex                              # terminal-native agentic plan
 opod connect openhands                            # autonomous coding agent (formerly OpenDevin)
 opod connect codex-cli                            # OpenAI's official CLI
 opod connect opencode                             # terminal coding agent w/ per-provider baseURL
-opod connect --list                               # full client roster (19 today)
+opod connect --list                               # full client roster (15 today)
 
 # Overrides
 opod connect cursor --model qwen-coder-14b        # suggest a specific model
@@ -1019,14 +988,14 @@ OPOD_TOKEN=sk-orc-… opod connect aider           # use a non-default token
 opod connect aider --token sk-orc-…               # same, via flag
 ```
 
-Anything that speaks OpenAI or Anthropic's API shape connects with one line. The full roster today: **claude-code**, **cursor**, **aider**, **continue**, **zed**, **cline**, **qwen-code**, **hermes**, **openclaw**, **opencode**, **open-webui**, **open-notebook**, **goose**, **plandex**, **openhands**, **codex-cli**, **openai-sdk**, **anthropic-sdk**, **curl**.
+Anything that speaks the OpenAI API shape connects with one line. The full roster today: **cursor**, **aider**, **continue**, **zed**, **cline**, **openclaw**, **opencode**, **open-webui**, **open-notebook**, **goose**, **plandex**, **openhands**, **codex-cli**, **openai-sdk**, **curl**. Tools that only speak the Anthropic Messages shape (Claude Code, qwen-code, hermes) need a protocol shim in front of the gateway; core does not ship one (ADR-022).
 
 Token comes from `--token`, then `$OPOD_TOKEN`, then `~/.opod/admin.key` (written when you ran `opod up`). Base URL comes from `--base-url`, then `external_url` in `~/.opod/config.yaml`, then `http://localhost:<listen>`.
 
 ### Reversing: `opod disconnect <client>`
 
 ```bash
-opod disconnect claude-code        # prints the unset + sk-ant-… export commands
+opod disconnect aider              # prints the unset commands for the env vars connect set
 opod disconnect cursor             # GUI steps to clear the override
 opod disconnect --list             # same 19 clients
 ```
@@ -1055,16 +1024,6 @@ Settings → Models → Add Model:
 - Provider: OpenAI Compatible
 - Base URL: `http://opod.your-tailnet.ts.net/v1`
 - API Key: `sk-orc-…`
-
-### Claude Code
-
-```bash
-export ANTHROPIC_BASE_URL=http://opod.your-tailnet.ts.net
-export ANTHROPIC_AUTH_TOKEN=sk-orc-…
-claude
-```
-
-Add to `~/.zshrc` or `~/.bashrc` to make permanent.
 
 ### Continue.dev
 
@@ -1109,26 +1068,6 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
-### Anthropic Python SDK
-
-```python
-from anthropic import Anthropic
-
-client = Anthropic(
-    base_url="http://opod.your-tailnet.ts.net",
-    api_key="sk-orc-…",
-)
-
-resp = client.messages.create(
-    model="qwen3-coder-30b",
-    max_tokens=1024,
-    messages=[{"role": "user", "content": "explain CRDTs"}],
-)
-print(resp.content[0].text)
-```
-
----
-
 ## API reference
 
 ### OpenAI surface
@@ -1137,18 +1076,9 @@ print(resp.content[0].text)
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
 | `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
-| `POST` | `/v1/audio/transcriptions` | Proxies to `engine.whisper_endpoint` / `OPOD_WHISPER_ENDPOINT`; HTTP 501 with setup hint when unconfigured |
-| `POST` | `/v1/audio/speech` | Proxies to `engine.piper_endpoint` / `OPOD_PIPER_ENDPOINT`; HTTP 501 with setup hint when unconfigured |
 | `GET` | `/v1/models` | Lists available models |
 
 (Planned: `/v1/completions`.)
-
-### Anthropic surface
-
-| Method | Path | Notes |
-|---|---|---|
-| `POST` | `/v1/messages` | Streaming (SSE) + non-streaming |
-| `POST` | `/v1/messages/count_tokens` | Pre-flight token count |
 
 ### Opod admin surface
 
@@ -1189,8 +1119,6 @@ All admin endpoints require an admin key (`opod token create --admin`).
 |---|---|
 | exact catalog ID (`qwen3-coder-30b`) | local cluster, that model |
 | `auto` | local; gateway picks based on heuristics |
-| `claude-…` | Anthropic API (proxied) |
-| `gpt-…`, `o3`, `o4` | OpenAI API (proxied) |
 | `hf:…` | local, if the model is loaded |
 
 ---
@@ -1343,7 +1271,7 @@ Common issues:
 ## FAQ
 
 **Can I run Claude or GPT on my hardware?**
-No — those are closed-weight proprietary models. Opod proxies to their APIs when you ask for them, so they appear in the same endpoint, but inference happens at Anthropic/OpenAI and you pay per token.
+No — those are closed-weight proprietary models, and core does not proxy to vendor APIs (that surface left with ADR-022). Opod serves open-weight models on your hardware; the control plane can front a vendor as a *remote endpoint* when you want one in the same fleet.
 
 **Do I need a GPU?**
 For real coding work, yes — either an NVIDIA GPU on Linux or an Apple Silicon Mac. CPU-only works via llama.cpp for tiny models (3B and under) and is useful for testing only.
@@ -1361,7 +1289,7 @@ Ollama is a great single-node inference engine. Opod is the *orchestration layer
 vLLM is a single-node inference server. Opod orchestrates vLLM (and others) across your fleet.
 
 **How is this different from exo?**
-exo is the closest project conceptually. Opod differs by: (1) Anthropic-API compatibility for Claude Code, (2) explicit hybrid local+vendor routing, (3) multi-tenant API keys / quotas / audit log, (4) embedded UI and observability stack, (5) Go single-binary install.
+exo is the closest project conceptually. Opod differs by: (1) an OpenAI-compatible gateway with per-key quotas, (2) explicit placement + llama.cpp-RPC sharding, (3) multi-tenant API keys / quotas / audit log, (4) embedded UI and observability stack, (5) Go single-binary install.
 
 **Does Opod train models?**
 No. Use Axolotl / Unsloth / torchtune for training. Bring back a LoRA adapter; Opod will serve it.
@@ -1387,10 +1315,9 @@ Workers no (no MLX, no native vLLM). Leader/CLI yes via WSL2. Native Windows isn
 
 Opod is a **self-hosted LLM gateway** and **inference router**. If you found this repo searching for an alternative to a hosted service or a frontend for a local engine, the answer is yes:
 
-- **LiteLLM alternative** (Go binary instead of Python) — same OpenAI + Anthropic protocol shim, plus multi-node routing.
-- **Self-hosted Claude proxy / Claude Code proxy** — point `ANTHROPIC_BASE_URL` at Opod; serve local models or transparently proxy to real Anthropic per request.
+- **LiteLLM alternative** (Go binary instead of Python) — one OpenAI-compatible gateway in front of your own engines, plus multi-node routing (no vendor proxying).
 - **Ollama frontend / multi-machine Ollama** — Opod orchestrates several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with auth, quotas, and audit.
-- **Private inference cluster / on-prem LLM gateway** — keep all inference on a trusted LAN or Tailscale; opt in to vendor fallback only when you choose.
+- **Private inference cluster / on-prem LLM gateway** — keep all inference on a trusted LAN or Tailscale; nothing leaves your network.
 - **Self-hosted Cursor / Aider / Continue backend** — drop-in OpenAI-compatible URL for IDE coding tools.
 - **AI gateway with per-user keys + quotas + audit** for teams of 10-50 spending $30k+/yr on Claude / GPT.
 - **Sharded inference orchestrator** — split a model larger than any single machine across multiple workers via `llama.cpp-RPC`.

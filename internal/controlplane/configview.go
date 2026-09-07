@@ -35,8 +35,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"vllm_api_key":      redact(s.cfg.Engine.VLLMAPIKey),
 			"mlx_endpoint":      s.cfg.Engine.MLXEndpoint,
 			"llamacpp_endpoint": s.cfg.Engine.LlamaCppEndpoint,
-			"whisper_endpoint":  s.cfg.Engine.WhisperEndpoint,
-			"piper_endpoint":    s.cfg.Engine.PiperEndpoint,
 		},
 		Router: map[string]any{
 			"default_model":   s.cfg.Router.DefaultModel,
