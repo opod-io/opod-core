@@ -1,4 +1,4 @@
-package main
+package update
 
 import (
 	"archive/tar"
@@ -53,7 +53,7 @@ func TestExtractTarGz_RejectsTraversalAndSymlinks(t *testing.T) {
 	bodies := [][]byte{[]byte("bin"), []byte("pwn!"), []byte("pwn!"), nil}
 	writeTarGz(t, src, entries, bodies)
 
-	if err := extractTarGz(src, out); err != nil {
+	if err := ExtractTarGz(src, out); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 
@@ -87,9 +87,9 @@ func TestLookupChecksum_NormalizesNamePrefixes(t *testing.T) {
 		"opod-linux-arm64.tar.gz":  "ccc",
 	}
 	for artifact, want := range cases {
-		got, ok := lookupChecksum(sums, artifact)
+		got, ok := LookupChecksum(sums, artifact)
 		if !ok || got != want {
-			t.Errorf("lookupChecksum(%q) = %q,%v; want %q,true", artifact, got, ok, want)
+			t.Errorf("LookupChecksum(%q) = %q,%v; want %q,true", artifact, got, ok, want)
 		}
 	}
 }
