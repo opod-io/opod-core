@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod/internal/auth"
@@ -29,6 +30,8 @@ type Handler struct {
 	Store   store.Store
 	Catalog []models.Entry
 	Default string // default model when request.model is "" or "auto"
+
+	policy atomic.Pointer[Policy] // request-path policy, swapped by the owner (see policy.go)
 }
 
 // ---- /v1/models ----
@@ -191,7 +194,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 		return
 	}
-	rewritten, ok := applyPreCallGuardrails(r.Context(), w, h.Store, body)
+	rewritten, ok := h.applyPreCallGuardrails(r.Context(), w, body)
 	if !ok {
 		// Guardrail blocked the request; response already written.
 		return
@@ -252,7 +255,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
-		recordUsage(r.Context(), h.Store, "openai", requested, nil, time.Since(start), "error")
+		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
 		if status, code, msg, ok := upstreamPassthrough(err); ok {
 			// The engine answered with a status the caller must see as-is
 			// (rate limit, not ready, bad request, unknown model): relay it —
@@ -305,11 +308,11 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	for ev := range stream {
 		// Bail before writing if the client is gone — avoids broken-pipe noise.
 		if r.Context().Err() != nil {
-			recordUsage(r.Context(), h.Store, "openai", modelOut, nil, time.Since(start), "cancelled")
+			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "cancelled")
 			return
 		}
 		if ev.Err != nil {
-			recordUsage(r.Context(), h.Store, "openai", modelOut, nil, time.Since(start), "error")
+			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
 			writeSSEError(w, flusher, h.Engine, ev.Err)
 			return
 		}
@@ -338,7 +341,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			if flusher != nil {
 				flusher.Flush()
 			}
-			recordUsage(r.Context(), h.Store, "openai", modelOut, ev.Usage, time.Since(start), "ok")
+			h.recordUsage(r.Context(), "openai", modelOut, ev.Usage, time.Since(start), "ok")
 			return
 		}
 		if ev.Delta != "" {
@@ -372,7 +375,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	reason := "stop"
 	for ev := range stream {
 		if ev.Err != nil {
-			recordUsage(r.Context(), h.Store, "openai", modelOut, nil, time.Since(start), "error")
+			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
 			writeJSONError(w, http.StatusBadGateway, "upstream_error", ev.Err.Error())
 			return
 		}
@@ -401,7 +404,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
-	recordUsage(r.Context(), h.Store, "openai", modelOut, u, time.Since(start), "ok")
+	h.recordUsage(r.Context(), "openai", modelOut, u, time.Since(start), "ok")
 }
 
 // ResolveModel maps the OpenAI "model" field to the engine-native identifier.

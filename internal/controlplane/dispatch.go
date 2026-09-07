@@ -48,7 +48,7 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 		// names a target — after the pre guardrail chain, so a blocked prompt
 		// is refused here and never leaves the endpoint.
 		if fb := s.policy.fallbackRouting(); fb != nil {
-			checked, ok := api.ApplyPreCallGuardrails(r.Context(), w, s.store, body)
+			checked, ok := api.ApplyPreCallGuardrails(r.Context(), w, s.store, s.openaiH.Policy().Guardrails, body)
 			if !ok {
 				return
 			}

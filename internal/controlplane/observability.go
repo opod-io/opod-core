@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/store"
 )
@@ -36,7 +35,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 // rather than a 404 — that way the dashboard's settings tab always
 // gets a parseable payload.
 func (s *Server) cacheStats(w http.ResponseWriter, r *http.Request) {
-	c := api.ResponseCache()
+	c := s.openaiH.Policy().Cache
 	if c == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
@@ -52,7 +51,7 @@ func (s *Server) cacheStats(w http.ResponseWriter, r *http.Request) {
 // dangerous on a busy cache; require an explicit namespace (or `all=1`
 // for the nuclear option). The audit middleware records the call.
 func (s *Server) cacheFlush(w http.ResponseWriter, r *http.Request) {
-	c := api.ResponseCache()
+	c := s.openaiH.Policy().Cache
 	if c == nil {
 		writeJSONError(w, http.StatusOK, "cache_disabled")
 		return

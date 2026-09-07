@@ -5,54 +5,13 @@ import (
 	"encoding/json"
 	"github.com/opod-io/opod/internal/router"
 	"net/http"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/cache"
 	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/guardrails"
 	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/store"
 )
-
-// catalogMu protects globalCatalog. Cost lookups happen per-request
-// from concurrent handlers; the catalog only changes on
-// SetCatalog (called once from the server constructor today, but the
-// mutex leaves room for a future hot-reload).
-var (
-	catalogMu     sync.RWMutex
-	globalCatalog []models.Entry
-)
-
-// SetCatalog wires the loaded catalog into the recordUsage path so it
-// can compute per-call dollar cost via models.CostOf. Safe to call
-// multiple times (e.g. on catalog reload) — the swap is atomic.
-func SetCatalog(cat []models.Entry) {
-	catalogMu.Lock()
-	globalCatalog = cat
-	catalogMu.Unlock()
-}
-
-func getCatalog() []models.Entry {
-	catalogMu.RLock()
-	defer catalogMu.RUnlock()
-	return globalCatalog
-}
-
-// modelInCatalog reports whether `model` is a known catalog id. Used
-// to bound Prometheus label cardinality — a client-supplied model
-// string that never resolved is not safe as a label value.
-func modelInCatalog(model string) bool {
-	for _, e := range getCatalog() {
-		if e.ID == model {
-			return true
-		}
-	}
-	return false
-}
 
 // rateLimitEstimateKey is unexported so other packages can't shadow the
 // estimate (which is meaningful only to the rate-limit reconciliation
@@ -83,41 +42,6 @@ func rateLimitEstimateFrom(ctx context.Context) rateLimitEstimate {
 	return v
 }
 
-// globalBucketStore holds the per-process bucket map so middleware
-// instances and the recordUsage reconciliation point share state.
-// nil until SetBucketStore is called from the server wiring.
-var globalBucketStore *BucketStore
-
-// SetBucketStore wires the per-process bucket store. Called from the
-// control plane at startup; recordUsage uses it to refund / deduct
-// based on actual completion tokens vs the upfront estimate.
-func SetBucketStore(s *BucketStore) { globalBucketStore = s }
-
-// globalGuardrails is the per-process registry built from
-// config.Guardrails. nil = no guardrails configured; the hot path
-// short-circuits via Registry.IsEmpty().
-// The pointer is swapped atomically: the controlplane's policy watcher
-// replaces the registry at runtime (P12-2) while requests are in flight.
-var globalGuardrails atomic.Pointer[guardrails.Registry]
-
-// SetGuardrails wires the registry. Called from the controlplane at
-// startup and on every policy snapshot change; nil clears it.
-func SetGuardrails(r *guardrails.Registry) { globalGuardrails.Store(r) }
-
-// Guardrails returns the active registry (nil when none is configured).
-func Guardrails() *guardrails.Registry { return globalGuardrails.Load() }
-
-// globalResponseCache is the configured response cache (memory or
-// SQLite). nil = caching disabled; handler hot paths short-circuit.
-var globalResponseCache cache.Cache
-
-// SetResponseCache wires the response cache. Called from controlplane
-// startup; passing nil disables caching.
-func SetResponseCache(c cache.Cache) { globalResponseCache = c }
-
-// ResponseCache returns the configured cache (or nil).
-func ResponseCache() cache.Cache { return globalResponseCache }
-
 // recordUsage writes a usage row for a completed request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already
 // completed successfully from the user's perspective).
@@ -126,8 +50,9 @@ func ResponseCache() cache.Cache { return globalResponseCache }
 // with require_keys=false). The DB row is written with empty key/user
 // identifiers in that case; the per-key index simply has more empty-string
 // rows but everything stays observable.
-func recordUsage(ctx context.Context, st store.Store, protocol, model string,
+func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 	u *engines.Usage, latency time.Duration, outcome string) {
+	st, pol := h.Store, h.Policy()
 
 	var keyID, userID string
 	if k := auth.KeyFrom(ctx); k != nil {
@@ -147,7 +72,7 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	// "unknown". The usage row below keeps the raw string — it's useful
 	// for debugging there and the DB column isn't a Prometheus label.
 	metricsModel := model
-	if outcome != "ok" && !modelInCatalog(model) {
+	if outcome != "ok" && !pol.modelInCatalog(model) {
 		metricsModel = "unknown"
 	}
 	metrics.ObserveRequest(metricsModel, protocol, outcome, latency, prompt, completion)
@@ -175,9 +100,9 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	// (over-estimated) or deduct the delta (under-estimated). The
 	// bucket can go briefly negative — that's fine; subsequent
 	// requests refill and rate-limit normally.
-	if est := rateLimitEstimateFrom(ctx); est.KeyID != "" && globalBucketStore != nil {
+	if est := rateLimitEstimateFrom(ctx); est.KeyID != "" && pol.Buckets != nil {
 		actual := prompt + completion
-		if _, tpm := globalBucketStore.Get(est.KeyID); tpm != nil {
+		if _, tpm := pol.Buckets.Get(est.KeyID); tpm != nil {
 			switch {
 			case actual > est.Estimate:
 				tpm.Deduct(float64(actual - est.Estimate))
