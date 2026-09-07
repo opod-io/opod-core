@@ -1,6 +1,10 @@
 package controlplane
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/opod-io/opod/pkg/adminapi"
+)
 
 // The leader's stable admin surface, v1.
 //
@@ -17,40 +21,37 @@ import "net/http"
 // to a curl on a laptop.
 
 // ContractVersion is reported by /admin/v1/version and /admin/v1/capabilities.
-const ContractVersion = "v1"
+const ContractVersion = adminapi.ContractVersion
 
-// ContractRoute is one method+pattern pair of the frozen surface. Patterns
-// use chi placeholders exactly as registered in routes().
-type ContractRoute struct {
-	Method string `json:"method"`
-	Path   string `json:"path"`
-}
+// ContractRoute is one method+pattern pair of the frozen surface — the shared
+// wire type (pkg/adminapi); patterns use chi placeholders exactly as registered.
+type ContractRoute = adminapi.Route
 
 // LeaderContract is the frozen list. Keep it sorted by section; append only.
 var LeaderContract = []ContractRoute{
 	// probes — unauthenticated
-	{http.MethodGet, "/healthz"},
-	{http.MethodGet, "/readyz"},
-	{http.MethodGet, "/loadz"},
-	{http.MethodGet, "/metrics"},
+	{Method: http.MethodGet, Path: "/healthz"},
+	{Method: http.MethodGet, Path: "/readyz"},
+	{Method: http.MethodGet, Path: "/loadz"},
+	{Method: http.MethodGet, Path: "/metrics"},
 	// gateway — API key
-	{http.MethodGet, "/v1/models"},
-	{http.MethodPost, "/v1/chat/completions"},
+	{Method: http.MethodGet, Path: "/v1/models"},
+	{Method: http.MethodPost, Path: "/v1/chat/completions"},
 	// worker protocol — node-scoped key (what `opod join` speaks)
-	{http.MethodPost, "/admin/v1/nodes/register"},
-	{http.MethodPost, "/admin/v1/nodes/heartbeat"},
+	{Method: http.MethodPost, Path: "/admin/v1/nodes/register"},
+	{Method: http.MethodPost, Path: "/admin/v1/nodes/heartbeat"},
 	// manager surface — admin-scoped key
-	{http.MethodGet, "/admin/v1/version"},
-	{http.MethodGet, "/admin/v1/capabilities"},
-	{http.MethodGet, "/admin/v1/nodes"},
-	{http.MethodGet, "/admin/v1/models"},
-	{http.MethodPost, "/admin/v1/models/{id}/load"},
-	{http.MethodPost, "/admin/v1/healthcheck"},
-	{http.MethodGet, "/admin/v1/events/stream"},
-	{http.MethodGet, "/admin/v1/usage/stream"},
-	{http.MethodGet, "/admin/v1/shards"},
-	{http.MethodPost, "/admin/v1/shards/create"},
-	{http.MethodDelete, "/admin/v1/shards/{model_id}"},
+	{Method: http.MethodGet, Path: "/admin/v1/version"},
+	{Method: http.MethodGet, Path: "/admin/v1/capabilities"},
+	{Method: http.MethodGet, Path: "/admin/v1/nodes"},
+	{Method: http.MethodGet, Path: "/admin/v1/models"},
+	{Method: http.MethodPost, Path: "/admin/v1/models/{id}/load"},
+	{Method: http.MethodPost, Path: "/admin/v1/healthcheck"},
+	{Method: http.MethodGet, Path: "/admin/v1/events/stream"},
+	{Method: http.MethodGet, Path: "/admin/v1/usage/stream"},
+	{Method: http.MethodGet, Path: "/admin/v1/shards"},
+	{Method: http.MethodPost, Path: "/admin/v1/shards/create"},
+	{Method: http.MethodDelete, Path: "/admin/v1/shards/{model_id}"},
 }
 
 // contractFeatures names the mechanisms a manager may probe for instead of
@@ -78,16 +79,12 @@ func (s *Server) adminVersion(w http.ResponseWriter, _ *http.Request) {
 	if v == "" {
 		v = "dev"
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"version": v, "contract": ContractVersion})
+	writeJSON(w, http.StatusOK, adminapi.Version{Version: v, Contract: ContractVersion})
 }
 
 // capabilities → the frozen route list + feature flags. A manager compares
 // this against the list it was built with: a missing route means "do not
 // manage this leader", never a guess.
 func (s *Server) adminCapabilities(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"contract": ContractVersion,
-		"routes":   LeaderContract,
-		"features": contractFeatures(),
-	})
+	writeJSON(w, http.StatusOK, adminapi.Capabilities{Contract: ContractVersion, Routes: LeaderContract, Features: contractFeatures()})
 }

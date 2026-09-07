@@ -9,6 +9,7 @@ package controlplane
 // /v1/models polling must not read as demand.
 
 import (
+	"github.com/opod-io/opod/pkg/adminapi"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -76,13 +77,13 @@ func (s *Server) trackLoad(next http.Handler) http.Handler {
 func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	rev, planModel := s.plan.get()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"plan_revision":     rev,
-		"plan_model":        planModel,
-		"in_flight":         atomic.LoadInt64(&s.load.inFlight),
-		"rpm_1m":            s.load.sum(&s.load.reqRing, &s.load.reqSec, now),
-		"unavailable_1m":    s.load.sum(&s.load.errRing, &s.load.errSec, now),
-		"last_request_unix": atomic.LoadInt64(&s.load.lastReq),
-		"ts":                now.Unix(),
+	writeJSON(w, http.StatusOK, adminapi.Load{
+		PlanRevision:    rev,
+		PlanModel:       planModel,
+		InFlight:        atomic.LoadInt64(&s.load.inFlight),
+		RPM1m:           s.load.sum(&s.load.reqRing, &s.load.reqSec, now),
+		Unavailable1m:   s.load.sum(&s.load.errRing, &s.load.errSec, now),
+		LastRequestUnix: atomic.LoadInt64(&s.load.lastReq),
+		TS:              now.Unix(),
 	})
 }

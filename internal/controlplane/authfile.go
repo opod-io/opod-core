@@ -19,6 +19,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"github.com/opod-io/opod/pkg/adminapi"
 	"os"
 	"strings"
 	"sync"
@@ -42,23 +43,9 @@ type authFileState struct {
 	keys        int
 }
 
-// AuthSnapshot is the wire shape of the auth file (mirrored by the manager).
-type AuthSnapshot struct {
-	Revision    string        `json:"revision"`
-	RequireKeys bool          `json:"requireKeys"`
-	Keys        []SnapshotKey `json:"keys"`
-}
-
-type SnapshotKey struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Hash          string   `json:"hash"` // sha256 hex of the plaintext key
-	Scope         string   `json:"scope,omitempty"`
-	RPMLimit      int      `json:"rpmLimit,omitempty"`
-	TPMLimit      int      `json:"tpmLimit,omitempty"`
-	AllowedModels []string `json:"allowedModels,omitempty"`
-	ExpiresAt     string   `json:"expiresAt,omitempty"` // RFC 3339
-}
+// AuthSnapshot / SnapshotKey are the shared wire types (pkg/adminapi).
+type AuthSnapshot = adminapi.AuthSnapshot
+type SnapshotKey = adminapi.SnapshotKey
 
 // requireKeys is the dynamic gate the auth middleware consults: config says
 // yes, or a mounted snapshot says yes.
