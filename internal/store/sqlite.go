@@ -252,6 +252,7 @@ type Usage struct {
 	LatencyMS        int
 	Outcome          string
 	CostUSD          float64
+	NodeID           string // worker node that served the request ("" = local / not dispatched)
 }
 
 type UsageStore interface {
@@ -454,7 +455,8 @@ CREATE TABLE IF NOT EXISTS usage (
     completion_tokens INTEGER NOT NULL,
     latency_ms        INTEGER NOT NULL,
     outcome           TEXT NOT NULL,
-    cost_usd          REAL NOT NULL DEFAULT 0
+    cost_usd          REAL NOT NULL DEFAULT 0,
+    node_id           TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
@@ -521,6 +523,9 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		// v0.9 — first-use node↔key binding. '' = unbound (legacy rows);
 		// bound on the node's next successful register.
 		{table: "nodes", column: "bound_key_id", ddl: `ALTER TABLE nodes ADD COLUMN bound_key_id TEXT NOT NULL DEFAULT ''`},
+		// v0.10 — the worker that served each request (per-worker attribution
+		// downstream). '' = answered locally / never dispatched (legacy rows).
+		{table: "usage", column: "node_id", ddl: `ALTER TABLE usage ADD COLUMN node_id TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)

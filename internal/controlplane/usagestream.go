@@ -54,6 +54,7 @@ func (s *Server) usageStream(w http.ResponseWriter, r *http.Request) {
 				"latency_ms":        u.LatencyMS,
 				"outcome":           u.Outcome,
 				"cost_usd":          u.CostUSD,
+				"node_id":           u.NodeID, // worker that served it ("" = local)
 			},
 		})
 		next = u.ID

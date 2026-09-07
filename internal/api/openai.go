@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/opod-io/opod/internal/router"
 	"io"
 	"net/http"
 	"strconv"
@@ -180,6 +181,7 @@ type chatChunkChoice struct {
 // ChatCompletions handles POST /v1/chat/completions, both streaming and not.
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	r = r.WithContext(router.WithTrace(r.Context())) // which worker served it → usage row
 	// Read the body so pre-call guardrails can inspect (or rewrite)
 	// it before we decode. The hot-path short-circuits when no
 	// guardrails are configured.
