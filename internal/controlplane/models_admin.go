@@ -1,21 +1,15 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/events"
 	"github.com/opod-io/opod/internal/lifecycle"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/scheduler"
-	"github.com/opod-io/opod/internal/store"
 )
 
 // ---- model admin ----
@@ -45,160 +39,39 @@ func (s *Server) catalogSources() []engines.Source {
 
 func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	var req struct {
-		ID    string   `json:"id"`
-		Nodes []string `json:"nodes"` // optional: pin this (non-sharded) model to these exact workers
-	}
+	var req AddModelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	// Scheme-prefixed ids (hf:/ollama:/file:) bypass the catalog so the
-	// dashboard "Add custom model" input can install anything the engine
-	// supports — same surface as `opod model add hf:owner/repo`.
-	var entry *models.Entry
-	if e, ok := models.ParseSchemeID(req.ID); ok {
-		entry = e
-	} else {
-		entry = models.FindByID(s.cat, req.ID)
-	}
-	if entry == nil {
+	out, err := s.AddModel(r.Context(), req)
+	switch {
+	case errors.Is(err, ErrNoCatalogEntry):
 		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ID+" (try a scheme-prefixed id like hf:owner/repo, ollama:tag, or file:/path)")
-		return
-	}
-	// Pre-flight source probe — mirror the CLI: refuse on a certain 404
-	// so the dashboard's "Add custom model" input gets a clear error
-	// instead of a deferred engine-launch failure; warn-and-proceed when
-	// the upstream merely couldn't be verified (network trouble).
-	{
-		probeCtx, probeCancel := context.WithTimeout(r.Context(), models.ProbeTimeout)
-		verdict, reason := models.ProbeSource(probeCtx, nil, entry)
-		probeCancel()
-		switch verdict {
-		case models.ProbeNotFound:
-			writeJSONError(w, http.StatusNotFound, "source for "+entry.ID+" does not exist: "+reason)
-			return
-		case models.ProbeIndeterminate:
-			s.log.Warn("could not verify model source — proceeding", "model", entry.ID, "reason", reason)
-		}
-	}
-	// Sharded models delegate to the orchestrator.
-	if entry.Sharding.Required {
-		if s.orch == nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
-			return
-		}
-		if err := s.orch.CreateSharded(r.Context(), *entry, 0, nil, scheduler.Parallelism{}); err != nil {
-			writeJSONError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		s.router.InvalidateModel(req.ID)
-		s.bus.Publish(events.Event{Topic: events.TopicModels, ID: req.ID})
-		s.bus.Publish(events.Event{Topic: events.TopicShards, ID: req.ID})
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "sharded"})
-		return
-	}
-	// Node-pinned placement: load this model on specific workers (their engines
-	// pull + load it, then report it on heartbeat → the leader reconciles the
-	// placement). No leader-local pull happens for this path.
-	if len(req.Nodes) > 0 {
-		if s.orch == nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "placement orchestrator not configured")
-			return
-		}
-		if err := s.orch.PlaceOnNodes(r.Context(), *entry, req.Nodes, false); err != nil {
-			writeJSONError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		// Register the model as installed (for `model ls`); placement rows are
-		// written by heartbeat reconciliation, keyed to the worker's own
-		// engine-native name.
-		_ = s.store.Models().Upsert(r.Context(), store.Model{
-			ID: entry.ID, CatalogID: entry.ID,
-			Source: "node:" + strings.Join(req.Nodes, ","),
-			Status: "ready", SizeBytes: entry.SizeBytes,
-			InstalledAt: time.Now(),
-		})
-		s.router.InvalidateModel(req.ID)
-		s.bus.Publish(events.Event{Topic: events.TopicModels, ID: req.ID})
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "node"})
-		return
-	}
-	// Non-sharded: pull via the local engine.
-	engineName := ""
-	switch s.engine.Name() {
-	case "ollama":
-		engineName = entry.Source.OllamaName
-	case "vllm", "mlx", "mlx-lm":
-		engineName = entry.Source.Repo
-		if engineName == "" {
-			engineName = entry.Source.Path
-		}
-	default:
-		// llamacpp variants accept either an HF repo (-hf) or a local path (-m).
-		if entry.Source.Repo != "" {
-			engineName = entry.Source.Repo
-		} else if entry.Source.Path != "" {
-			engineName = entry.Source.Path
-		}
-	}
-	if engineName == "" {
-		engineName = entry.ID
-	}
-	// Synchronous pull — may take minutes. Future: stream progress via SSE.
-	if err := s.engine.Pull(r.Context(), engineName, nil); err != nil {
+	case errors.Is(err, ErrSourceNotFound):
+		writeJSONError(w, http.StatusNotFound, "source for "+req.ID+" does not exist: "+err.Error())
+	case errors.Is(err, ErrNoOrchestrator):
+		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, ErrUpstream):
 		writeJSONError(w, http.StatusBadGateway, err.Error())
-		return
+	case err != nil:
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": out.ID, "kind": out.Kind})
 	}
-	_ = s.store.Models().Upsert(r.Context(), store.Model{
-		ID: entry.ID, CatalogID: entry.ID,
-		Source: s.engine.Name() + ":" + engineName,
-		Status: "ready", SizeBytes: entry.SizeBytes,
-		InstalledAt: time.Now(),
-	})
-	_ = s.store.Placements().Upsert(r.Context(), store.Placement{
-		NodeID: "local", ModelID: engineName, Status: "ready", LastSeen: time.Now(),
-	})
-	s.bus.Publish(events.Event{Topic: events.TopicModels, ID: req.ID})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "local"})
 }
 
 func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	// Sharded model? Tear down via the orchestrator.
-	shards, _ := s.store.Shards().GetByModel(r.Context(), id)
-	if len(shards) > 0 {
-		if s.orch == nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
-			return
-		}
-		if err := s.orch.RemoveSharded(r.Context(), id); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		s.router.InvalidateModel(id)
-		s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
-		s.bus.Publish(events.Event{Topic: events.TopicShards, ID: id})
-		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "sharded"})
-		return
-	}
-	// Non-sharded: delete from store + engine.
-	m, _ := s.store.Models().Get(r.Context(), id)
-	if m != nil {
-		engineName := id
-		if idx := indexByte(m.Source, ':'); idx >= 0 && idx < len(m.Source)-1 {
-			engineName = m.Source[idx+1:]
-		}
-		_ = s.engine.Delete(r.Context(), engineName)
-		_ = s.store.Placements().Delete(r.Context(), "local", engineName)
-		_ = s.store.DesiredPlacements().Delete(r.Context(), "local", id)
-	}
-	if err := s.store.Models().Delete(r.Context(), id); err != nil {
+	out, err := s.DeleteModel(r.Context(), id)
+	switch {
+	case errors.Is(err, ErrNoOrchestrator):
+		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": out.ID, "kind": out.Kind})
 	}
-	s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "local"})
 }
 
 // eventsStream serves Server-Sent Events to dashboard subscribers. Each
@@ -259,61 +132,17 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 // manager.
 func (s *Server) unloadModel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if s.lifecycle != nil {
-		err := s.lifecycle.Unload(r.Context(), id, actorFrom(r))
-		switch {
-		case errors.Is(err, lifecycle.ErrNotInstalled):
-			writeJSONError(w, http.StatusNotFound, err.Error())
-		case errors.Is(err, engines.ErrUnloadNotSupported):
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status": "noop", "id": id,
-				"reason": s.engine.Name() + " does not support online unload",
-			})
-		case err != nil:
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-		default:
-			s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
-			writeJSON(w, http.StatusOK, map[string]string{"status": "unloaded", "id": id})
-		}
-		return
-	}
-	m, _ := s.store.Models().Get(r.Context(), id)
-	engineName := id
-	if m != nil {
-		if idx := indexByte(m.Source, ':'); idx >= 0 && idx < len(m.Source)-1 {
-			engineName = m.Source[idx+1:]
-		}
-	}
-	// Bounded context: a wedged-but-listening engine should fail fast
-	// rather than tying up the admin connection.
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	if err := s.engine.Health(ctx); err != nil {
-		writeJSONError(w, http.StatusServiceUnavailable,
-			"engine not reachable: "+err.Error())
-		return
-	}
-	if err := s.engine.Unload(ctx, engineName); err != nil {
-		if errors.Is(err, engines.ErrUnloadNotSupported) {
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status": "noop",
-				"id":     id,
-				"reason": s.engine.Name() + " does not support online unload",
-			})
-			return
-		}
+	err := s.UnloadModel(r.Context(), id, actorFrom(r))
+	switch {
+	case errors.Is(err, lifecycle.ErrNotInstalled):
+		writeJSONError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, engines.ErrUnloadNotSupported):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "noop", "id": id, "reason": s.engine.Name() + " does not support online unload"})
+	case errors.Is(err, errEngineUnreachable):
+		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "unloaded", "id": id})
 	}
-	s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "unloaded", "id": id})
-}
-
-func indexByte(s string, c byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }

@@ -1084,12 +1084,14 @@ print(resp.choices[0].message.content)
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/healthz` `/readyz` | Liveness / readiness |
+| `GET` | `/healthz` `/readyz` | Liveness / readiness (`/readyz` modes: local engine · `router-only` · `sleeping` · `sleeping-workers` · `shard-coordinator`) |
+| `GET` | `/loadz` | Load for an external autoscaler: in-flight, rpm, waking 503s, plus the workers' engine signals (`kv_used_pct`, `queue_depth`, `tokens_per_s`, `prefix_hit_pct`, `workers`, `reporting`) |
 | `GET` | `/metrics` | Prometheus exposition |
 | `GET` | `/admin/v1/nodes` | List nodes |
 | `POST` | `/admin/v1/nodes/register` | (scope=admin or node) Worker registration |
-| `POST` | `/admin/v1/nodes/heartbeat` | (scope=admin or node) Worker heartbeat with loaded models |
+| `POST` | `/admin/v1/nodes/heartbeat` | (scope=admin or node) Worker heartbeat with loaded models, the engine's load sample and whether it sleeps |
 | `POST` | `/admin/v1/nodes/{id}/drain` | Mark node as draining |
+| `POST` | `/admin/v1/nodes/{id}/sleep` `/resume` | Sleep tier: the worker's engine drops its GPU working set / wakes (vLLM sleep mode; engines without one answer 501 `unsupported`) |
 | `DELETE` | `/admin/v1/nodes/{id}` | Forget a node |
 | `GET` | `/admin/v1/models` | List installed models |
 | `GET` | `/admin/v1/catalog` | List catalog entries |

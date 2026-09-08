@@ -3,7 +3,7 @@ package controlplane
 import (
 	"net/http"
 
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-sdk/adminapi"
 )
 
 // The leader's stable admin surface, v1.
@@ -24,7 +24,7 @@ import (
 const ContractVersion = adminapi.ContractVersion
 
 // ContractRoute is one method+pattern pair of the frozen surface — the shared
-// wire type (pkg/adminapi); patterns use chi placeholders exactly as registered.
+// wire type (opod-sdk/adminapi); patterns use chi placeholders exactly as registered.
 type ContractRoute = adminapi.Route
 
 // LeaderContract is the frozen list. Keep it sorted by section; append only.
@@ -44,6 +44,8 @@ var LeaderContract = []ContractRoute{
 	{Method: http.MethodGet, Path: "/admin/v1/version"},
 	{Method: http.MethodGet, Path: "/admin/v1/capabilities"},
 	{Method: http.MethodGet, Path: "/admin/v1/nodes"},
+	{Method: http.MethodPost, Path: "/admin/v1/nodes/{id}/sleep"},
+	{Method: http.MethodPost, Path: "/admin/v1/nodes/{id}/resume"},
 	{Method: http.MethodGet, Path: "/admin/v1/models"},
 	{Method: http.MethodPost, Path: "/admin/v1/models/{id}/load"},
 	{Method: http.MethodPost, Path: "/admin/v1/healthcheck"},
@@ -68,6 +70,8 @@ func contractFeatures() map[string]bool {
 		"router_only_ready": true, // /readyz answers ready with no local engine
 		"vram_budget":       true, // `opod join --gpu --vram-budget`
 		"stream_boot":       true,
+		"load_signals":      true,
+		"worker_sleep":      true, // POST /admin/v1/nodes/{id}/sleep|resume → worker engine sleep mode; placements read "sleeping"; /readyz mode sleeping-workers // /loadz carries kv_used_pct / queue_depth / tokens_per_s / prefix_hit_pct from the workers' heartbeats
 		"policy_file":       true, // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
 	}
 }

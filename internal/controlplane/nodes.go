@@ -1,13 +1,16 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/events"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -49,153 +52,41 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID           string `json:"id"`
-		Hostname     string `json:"hostname"`
-		OS           string `json:"os"`
-		Arch         string `json:"arch"`
-		RAMGB        int    `json:"ram_gb"`
-		Address      string `json:"address"`
-		HardwareJSON string `json:"hardware_json"`
-	}
+	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	// First-use binding: the key that first registers a node id owns it.
-	// A node-scope key presenting a different id is refused, so one
-	// leaked node token can't impersonate every node. Admin keys always
-	// pass; legacy rows (no binding) bind on this register.
-	key := auth.KeyFrom(r.Context())
-	existing, err := s.store.Nodes().Get(r.Context(), req.ID)
-	if err != nil {
+	n, err := s.RegisterNode(r.Context(), req, callerFrom(r.Context()), extractBearer(r))
+	switch {
+	case errors.Is(err, ErrNodeBoundToOtherKey):
+		writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
+		return
+	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	boundKeyID := ""
-	if key != nil {
-		boundKeyID = key.ID
-	}
-	if existing != nil && existing.BoundKeyID != "" {
-		if auth.ScopeFrom(r.Context()) != "admin" && (key == nil || key.ID != existing.BoundKeyID) {
-			writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
-			return
-		}
-		// Keep the original binding — an admin re-register shouldn't
-		// silently re-own the node.
-		boundKeyID = existing.BoundKeyID
-	}
-	// The presented bearer token doubles as the shared secret for both
-	// directions of communication. Store it on the node row so the router
-	// can authenticate outbound calls to the worker.
-	// NOTE: stored plaintext today — assumes a trusted network (LAN or
-	// Tailscale). Replace with HMAC-based mutual auth once the OIDC +
-	// key-management story lands.
-	workerToken := extractBearer(r)
-	n := store.Node{
-		ID:            req.ID,
-		Hostname:      req.Hostname,
-		OS:            req.OS,
-		Arch:          req.Arch,
-		RAMGB:         req.RAMGB,
-		Address:       req.Address,
-		WorkerToken:   workerToken,
-		BoundKeyID:    boundKeyID,
-		HardwareJSON:  req.HardwareJSON,
-		LastHeartbeat: time.Now(),
-		State:         "ready",
-	}
-	if err := s.store.Nodes().Upsert(r.Context(), n); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: n.ID})
-	s.logEvent("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "registered", "id": n.ID})
 }
 
 func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID           string   `json:"id"`
-		LoadedModels []string `json:"loaded_models"`
-	}
+	var req HeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	n, err := s.store.Nodes().Get(r.Context(), req.ID)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if n == nil {
+	err := s.HeartbeatNode(r.Context(), req, callerFrom(r.Context()))
+	switch {
+	case errors.Is(err, ErrUnknownNode):
 		writeJSONError(w, http.StatusNotFound, "unknown node — register first")
 		return
-	}
-	// Enforce the register-time key binding. Admin keys always pass;
-	// unbound legacy rows pass too (they bind on their next register).
-	if n.BoundKeyID != "" && auth.ScopeFrom(r.Context()) != "admin" {
-		if key := auth.KeyFrom(r.Context()); key == nil || key.ID != n.BoundKeyID {
-			writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
-			return
-		}
-	}
-	n.LastHeartbeat = time.Now()
-	if n.State == "joining" {
-		n.State = "ready"
-	}
-	if err := s.store.Nodes().Upsert(r.Context(), *n); err != nil {
+	case errors.Is(err, ErrNodeBoundToOtherKey):
+		writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
+		return
+	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Reconcile placements with what the worker reports loaded right now.
-	// Workers report the ENGINE-NATIVE name (e.g. vLLM's HF repo
-	// "XiaomiMiMo/MiMo-7B-RL"); map it back to the catalog id ("mimo-7b") so the
-	// router matches a request for the catalog id to this placement instead of
-	// falling back to the leader-local engine.
-	// Dedupe after mapping: an engine may list one model under several names
-	// (vLLM serves both the catalog id and the native repo name) that all
-	// resolve to the same catalog id — one placement row per (node, model).
-	placements := make([]store.Placement, 0, len(req.LoadedModels))
-	seen := make(map[string]bool, len(req.LoadedModels))
-	for _, m := range req.LoadedModels {
-		id := s.catalogIDForNative(m)
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		placements = append(placements, store.Placement{
-			NodeID:   req.ID,
-			ModelID:  id,
-			Status:   "ready",
-			LastSeen: time.Now(),
-		})
-	}
-	// Diff before/after so the event log records model residency changes.
-	prev := map[string]bool{}
-	if old, err := s.store.Placements().GetByNode(r.Context(), req.ID); err == nil {
-		for _, p := range old {
-			prev[p.ModelID] = true
-		}
-	}
-	if err := s.store.Placements().ReplaceForNode(r.Context(), req.ID, placements); err != nil {
-		s.log.Warn("placements replace failed", "node", req.ID, "err", err)
-	} else {
-		cur := map[string]bool{}
-		for _, p := range placements {
-			cur[p.ModelID] = true
-			if !prev[p.ModelID] {
-				s.logEvent("model.loaded", p.ModelID, map[string]any{"node": req.ID})
-			}
-		}
-		for m := range prev {
-			if !cur[m] {
-				s.logEvent("model.unloaded", m, map[string]any{"node": req.ID})
-			}
-		}
-	}
-
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -203,42 +94,78 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) drainNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	n, err := s.store.Nodes().Get(r.Context(), id)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if n == nil {
+	err := s.DrainNode(r.Context(), id)
+	switch {
+	case errors.Is(err, ErrUnknownNode):
 		writeJSONError(w, http.StatusNotFound, "no such node: "+id)
 		return
-	}
-	n.State = "draining"
-	if err := s.store.Nodes().Upsert(r.Context(), *n); err != nil {
+	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: id})
-	s.logEvent("node.drained", id, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "draining", "id": id})
 }
 
 func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.store.Nodes().Delete(r.Context(), id); err != nil {
+	if err := s.RemoveNode(r.Context(), id); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Also clean up placements for the removed node so the router doesn't
-	// keep trying it.
-	if ps, _ := s.store.Placements().GetByNode(r.Context(), id); ps != nil {
-		for _, p := range ps {
-			_ = s.store.Placements().Delete(r.Context(), p.NodeID, p.ModelID)
-		}
-	}
-	// Drop the router's cached remote engine for this node so in-flight
-	// routing stops picking the removed worker immediately.
-	s.router.InvalidateNode(id)
-	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: id})
-	s.logEvent("node.removed", id, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id})
 }
+
+// PlacementSleeping marks a placement whose worker engine sleeps (sleep
+// tier): the model is resident on that worker but not routable until resumed.
+const PlacementSleeping = "sleeping"
+
+// sleepWorker / resumeWorker proxy the sleep tier to a worker's agent
+// (POST /admin/v1/nodes/{id}/sleep|resume → worker /v1/model/sleep|resume).
+// The worker's answer is passed through: 501 "unsupported" tells the caller
+// to park the pod instead.
+func (s *Server) sleepWorker(w http.ResponseWriter, r *http.Request) {
+	s.workerSleepCall(w, r, "sleep")
+}
+func (s *Server) resumeWorker(w http.ResponseWriter, r *http.Request) {
+	s.workerSleepCall(w, r, "resume")
+}
+
+func (s *Server) workerSleepCall(w http.ResponseWriter, r *http.Request, action string) {
+	id := chi.URLParam(r, "id")
+	n, err := s.store.Nodes().Get(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == nil || n.Address == "" {
+		writeJSONError(w, http.StatusNotFound, "unknown node "+id)
+		return
+	}
+	addr := n.Address
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		addr = "http://" + addr
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(addr, "/")+"/v1/model/"+action, nil)
+	req.Header.Set("Authorization", "Bearer "+n.WorkerToken)
+	auth.SignRequest(req, n.ID, n.WorkerToken)
+	resp, err := s.workerHTTP().Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "worker "+id+": "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusOK {
+		s.record("worker."+action, id, map[string]any{"node": id})
+		if action == "resume" {
+			s.router.InvalidateModel("") // placements change on the next heartbeat; drop any cached pick
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) workerHTTP() *http.Client { return &http.Client{Timeout: 2 * time.Minute} }

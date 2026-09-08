@@ -12,7 +12,7 @@ package controlplane
 // plan.updated. Additive — consumers must ignore unknown types.
 
 import (
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-sdk/adminapi"
 	"net/http"
 	"strconv"
 )

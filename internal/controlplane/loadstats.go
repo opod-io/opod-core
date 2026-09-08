@@ -9,8 +9,11 @@ package controlplane
 // /v1/models polling must not read as demand.
 
 import (
-	"github.com/opod-io/opod/pkg/adminapi"
+	"context"
 	"net/http"
+
+	"github.com/opod-io/opod-sdk/adminapi"
+	"github.com/opod-io/opod/internal/engines"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,11 +76,21 @@ func (s *Server) trackLoad(next http.Handler) http.Handler {
 	})
 }
 
+// nodeLoadSample is a worker's last engine load, stamped when it arrived.
+type nodeLoadSample struct {
+	engines.EngineLoad
+	at time.Time
+}
+
+// loadSampleMaxAge: a worker's sample older than this is not "reporting" —
+// a stuck engine must not hold a stale pressure number on /loadz.
+const loadSampleMaxAge = 30 * time.Second
+
 // loadz answers "how busy is this leader right now?" for the autoscaler.
 func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	rev, planModel := s.plan.get()
-	writeJSON(w, http.StatusOK, adminapi.Load{
+	out := adminapi.Load{
 		PlanRevision:    rev,
 		PlanModel:       planModel,
 		InFlight:        atomic.LoadInt64(&s.load.inFlight),
@@ -85,5 +98,44 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 		Unavailable1m:   s.load.sum(&s.load.errRing, &s.load.errSec, now),
 		LastRequestUnix: atomic.LoadInt64(&s.load.lastReq),
 		TS:              now.Unix(),
-	})
+	}
+	s.aggregateWorkerLoad(r.Context(), &out, now)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// aggregateWorkerLoad folds the live workers' engine samples into the
+// leader's /loadz (build item 14): max KV use (one full cache is pressure),
+// summed queue and tokens/s, mean prefix hits. Only alive workers count
+// (liveness.go), only fresh samples report.
+func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, now time.Time) {
+	nodes, err := s.store.Nodes().List(ctx)
+	if err != nil {
+		return
+	}
+	maxAge := s.heartbeatMaxAge()
+	var prefixSum float64
+	for _, n := range nodes {
+		if n.ID == "local" || !nodeAlive(n, maxAge, now) {
+			continue
+		}
+		out.Workers++
+		v, ok := s.nodeLoad.Load(n.ID)
+		if !ok {
+			continue
+		}
+		ld := v.(nodeLoadSample)
+		if now.Sub(ld.at) > loadSampleMaxAge {
+			continue
+		}
+		out.Reporting++
+		if ld.KVUsedPct > out.KVUsedPct {
+			out.KVUsedPct = ld.KVUsedPct
+		}
+		out.QueueDepth += ld.QueueDepth
+		out.TokensPerSec += ld.TokensPerSec
+		prefixSum += ld.PrefixHitPct
+	}
+	if out.Reporting > 0 {
+		out.PrefixHitPct = prefixSum / float64(out.Reporting)
+	}
 }
