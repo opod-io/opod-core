@@ -68,9 +68,17 @@ Quick map. Deeper explanation in [ARCHITECTURE.md](ARCHITECTURE.md).
 3. One change per PR.
 4. Add or update tests and docs in the **same** PR — no "I'll fix docs later" follow-ups.
 5. `make check` passes locally.
+5b. Every commit is signed off (`git commit -s`, the DCO — see below).
 6. If the change adds or modifies a CLI verb, README's CLI reference is updated.
 7. If the change adds a config field, README's "Full reference" includes it.
 8. PR title references the task ID if applicable (e.g. `M1-T07: add API key bootstrap`).
+
+## Licence and the Developer Certificate of Origin
+
+Opod core is Apache-2.0 (see [LICENSE](LICENSE)). There is no contributor licence agreement.
+Every commit must carry a [Developer Certificate of Origin](https://developercertificate.org/) sign-off —
+`git commit -s` adds the `Signed-off-by:` trailer — which states that you wrote the change or have the
+right to submit it under the project's licence. Unsigned commits are not merged.
 
 ## Reporting bugs
 
