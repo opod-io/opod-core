@@ -56,7 +56,10 @@ jobs:
           last_tag="${last_tag:-v0.0.0}"
           echo "previous tag: $last_tag"
           # Walk commits since last tag and classify by Conventional Commits prefix.
-          commits=$(git log --pretty=format:'%s%n%b%n---' "$last_tag"..HEAD)
+          # No tag yet (a fresh history): every commit counts.
+          range="$last_tag..HEAD"
+          git rev-parse -q --verify "refs/tags/$last_tag" >/dev/null 2>&1 || range=HEAD
+          commits=$(git log --pretty=format:'%s%n%b%n---' "$range")
           bump=""
           # BREAKING CHANGE per the Conventional Commits spec must be a
           # footer line — i.e. a line that STARTS with "BREAKING CHANGE:"
