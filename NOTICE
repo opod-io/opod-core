@@ -1,17 +1,19 @@
 Opod
 Copyright 2026 Hadi Honarvar Nazari
 
-This product is licensed under the Opod Community License (PolyForm Shield License
-1.0.0); see LICENSE.
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this software except in compliance with the License. You may obtain a copy of the
+License at http://www.apache.org/licenses/LICENSE-2.0 — see LICENSE.
 
-Required Notice: Copyright 2026 Hadi Honarvar Nazari — Opod (https://opod.io)
+"Opod" and the Opod name, logo, and branding are trademarks of the copyright
+holder. The License grants rights to the software's copyright; it does not grant
+any right to use the Opod name or marks (Apache License, Section 6). Forks and
+derivative works should be renamed and must not present themselves as Opod.
 
-"Opod" and the Opod name, logo, and branding are trademarks of the licensor. The
-license grants rights to the software's copyright; it does NOT grant any right to use
-the Opod name or marks. Forks and derivative works must be renamed and must not present
-themselves as Opod.
+This software includes and builds upon third-party components under their own
+licenses: the Go standard library and the Go modules listed in go.mod, and, in
+container images, the upstream inference engines (vLLM, llama.cpp, Ollama) and
+their base images. Those components remain under their respective licenses.
 
-This software includes and builds upon third-party components under their own licenses
-(e.g. the Go standard library and, in container images, upstream inference engines such
-as vLLM and llama.cpp and their bases). Those components remain under their respective
-licenses.
+The control plane (opodcp) is a separate, proprietary product and is not part of
+this software or this License.

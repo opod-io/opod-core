@@ -1110,12 +1110,29 @@ Add `catalog/<id>.yaml`. The catalog is loaded at startup; no code change needed
 ## Stable admin surface (v1)
 
 `internal/controlplane/contract.go` freezes the routes an external manager may rely on
-(probes, the two gateway routes, the worker join/heartbeat pair, and the `/admin/v1`
-manager routes: `version`, `capabilities`, `nodes`, `models`, `models/{id}/load`,
-`healthcheck`, `events/stream`, `usage/stream`, `shards` list/create/delete). The list is
-additive-only: `GET /admin/v1/capabilities` serves it together with feature flags, and
-`TestLeaderContract` walks the real router so a change that drops one of these routes
-fails `go test`. Everything else under `/admin/v1` may change between releases.
+(probes incl. `/loadz`, the two gateway routes, the worker join/heartbeat pair, and the `/admin/v1`
+manager routes: `version`, `capabilities`, `nodes`, `nodes/{id}/sleep|resume`, `models`,
+`models/{id}/load`, `healthcheck`, `events/stream`, `usage/stream`, `shards` list/create/delete). The
+list is additive-only: `GET /admin/v1/capabilities` serves it together with feature flags
+(`events_stream usage_stream loadz shards plan_file auth_file router_only_ready vram_budget stream_boot
+policy_file load_signals worker_sleep`), and `TestLeaderContract` walks the real router so a change that
+drops one of these routes fails `go test`. Everything else under `/admin/v1` may change between releases.
+
+The wire types of this surface — `Load`, the usage and lifecycle stream batches, the auth and policy
+snapshot documents, `Route`/`Version`/`Capabilities` — live in the SDK module
+`github.com/opod-io/opod-sdk/adminapi` (Apache-2.0, stdlib only). The leader marshals those exact structs,
+so a manager imports the package instead of mirroring it; a field changed there is a field changed on the wire.
+
+Two mechanisms a manager drives through this surface (2026-09-07):
+
+- **Load signals** (`load_signals`): a worker engine that implements `engines.LoadReporter` (vLLM and
+  llama.cpp scrape their own `/metrics`) sends `{kv_used_pct, queue_depth, tokens_per_s, prefix_hit_pct}`
+  with every heartbeat; `/loadz` aggregates the ALIVE workers of the plan model (max KV, Σ queue, Σ tok/s,
+  mean prefix hits, `workers`, `reporting`); a sample older than 30 s stops reporting.
+- **Sleep tier** (`worker_sleep`): `engines.Sleeper` (vLLM sleep mode) behind the worker's
+  `/v1/model/sleep|resume`; the heartbeat says `sleeping`, the leader keeps those placements as
+  `sleeping` (not routable), `/readyz` answers `sleeping-workers`, requests get `503 waking`; an engine with
+  no sleep mode answers `501 unsupported` and the manager parks the pod instead.
 
 ## Surface switches (managed mode)
 
