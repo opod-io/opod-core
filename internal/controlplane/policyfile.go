@@ -21,7 +21,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-sdk/adminapi"
 	"os"
 	"strings"
 	"sync"
@@ -33,7 +33,7 @@ import (
 
 const defaultPolicyPath = "/etc/opod-auth/policy.json"
 
-// PolicySnapshot and its parts are the shared wire types (pkg/adminapi).
+// PolicySnapshot and its parts are the shared wire types (opod-sdk/adminapi).
 type (
 	PolicySnapshot = adminapi.PolicySnapshot
 	PolicyRouting  = adminapi.PolicyRouting

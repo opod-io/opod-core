@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/opod-io/opod/internal/api"
@@ -41,6 +42,7 @@ type Server struct {
 	lifecycle   *lifecycle.Manager
 	openaiH     *api.Handler
 	load        loadStats
+	nodeLoad    sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
 	plan        planFileState
 	authf       authFileState
 	policy      policyFileState
@@ -312,6 +314,8 @@ func (s *Server) routes() http.Handler {
 			// Nodes
 			r.Get("/nodes", s.listNodes)
 			r.Post("/nodes/{id}/drain", s.drainNode)
+			r.Post("/nodes/{id}/sleep", s.sleepWorker)   // sleep tier (build item 13)
+			r.Post("/nodes/{id}/resume", s.resumeWorker) // wake it
 			r.Delete("/nodes/{id}", s.deleteNode)
 
 			// Models

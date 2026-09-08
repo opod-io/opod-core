@@ -40,6 +40,7 @@ package llamacpp
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/engines/openaicompat"
@@ -61,6 +62,7 @@ func init() {
 // may or may not be configured with --rpc — the driver doesn't care.
 type Driver struct {
 	openaicompat.Client
+	genRate engines.RateTracker // tokens_predicted_total → tokens/s between Load samples
 }
 
 // New returns a driver for a llama-server at endpoint.
@@ -110,3 +112,35 @@ func (l *Driver) Unload(ctx context.Context, modelID string) error {
 }
 
 var _ engines.Engine = (*Driver)(nil)
+
+// Load scrapes llama-server's /metrics (needs `--metrics`, which the worker
+// passes): KV-cache usage, deferred requests (every slot busy) and predicted
+// tokens/s since the last sample. llama-server reports no prefix-cache hit
+// rate, so that stays 0.
+func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.BaseURL+"/metrics", nil)
+	if err != nil {
+		return engines.EngineLoad{}, err
+	}
+	resp, err := l.HTTP.Do(req)
+	if err != nil {
+		return engines.EngineLoad{}, engines.Unreachable(name, l.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return engines.EngineLoad{}, engines.Upstream(name, "GET /metrics", resp.StatusCode, nil)
+	}
+	m := engines.ParsePromText(resp.Body)
+	now := time.Now()
+	ld := engines.EngineLoad{SampledAt: now.Unix()}
+	if kv, ok := engines.First(m, "llamacpp:kv_cache_usage_ratio"); ok {
+		ld.KVUsedPct = kv * 100
+	}
+	if q, ok := engines.First(m, "llamacpp:requests_deferred"); ok {
+		ld.QueueDepth = int64(q)
+	}
+	if gen, ok := engines.First(m, "llamacpp:tokens_predicted_total"); ok {
+		ld.TokensPerSec = l.genRate.Rate(gen, now)
+	}
+	return ld, nil
+}

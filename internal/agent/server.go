@@ -52,7 +52,9 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
-	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad)) // leader-side placement: pull+load a model on this worker
+	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))     // leader-side placement: pull+load a model on this worker
+	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))   // sleep tier (build item 13): engine drops its GPU working set, process stays
+	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume)) // wake it (sub-second on vLLM)
 	mux.HandleFunc("/v1/process/start", s.auth(s.processStart))
 	mux.HandleFunc("/v1/process/stop", s.auth(s.processStop))
 	mux.HandleFunc("/v1/process/list", s.auth(s.processList))
@@ -428,13 +430,17 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
 			"%s "+
 			"exec vllm serve '%s' --served-model-name '%s' '%s' --host %s --port %d "+
-			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s",
-		flagOverrides, model, servedName, model, host, port, flagArgs)
+			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
+		flagOverrides, model, servedName, model, host, port, flagArgs, sleepModeArgs())
+	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
+	if sleepModeArgs() != "" {
+		env["VLLM_SERVER_DEV_MODE"] = "1" // exposes /sleep, /wake_up, /is_sleeping
+	}
 	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
 		ID:          "vllm-serve",
 		Command:     "/bin/sh",
 		Args:        []string{"-lc", cmdline},
-		Env:         map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"},
+		Env:         env,
 		Restart:     true,
 		MaxRestarts: 3,
 	})
@@ -464,9 +470,9 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 	if alias == "" {
 		alias = nativeName
 	}
-	args := append(src, "--host", host, "--port", strconv.Itoa(port), "--alias", alias)
-	args = append(args, engineFlagsFromEnv().llamaArgs()...) // plan flags: ctx, ngl, parallel, kv cache type, extra
-	_ = s.Supervisor.Stop("llama-server")                    // exclusive: one model per worker
+	args := append(src, "--host", host, "--port", strconv.Itoa(port), "--alias", alias, "--metrics") // --metrics: /metrics for the load signals the heartbeat carries
+	args = append(args, engineFlagsFromEnv().llamaArgs()...)                                         // plan flags: ctx, ngl, parallel, kv cache type, extra
+	_ = s.Supervisor.Stop("llama-server")                                                            // exclusive: one model per worker
 	// Launch via a login shell + exec, NOT a bare exec.Command: the direct
 	// supervisor launch (new process group, null stdin) makes the Intel CPU
 	// llama-server SEGFAULT, but it runs fine from a shell (same fix as the vLLM
@@ -761,4 +767,57 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// sleepModeArgs: the control plane sets OPOD_SLEEP_MODE=1 on a worker whose
+// plan uses the sleep tier; vLLM then starts with sleep mode on (CUDA only —
+// the planner keeps the tier off other vendors).
+func sleepModeArgs() string {
+	if os.Getenv("OPOD_SLEEP_MODE") == "1" {
+		return "--enable-sleep-mode"
+	}
+	return ""
+}
+
+// modelSleep / modelResume (sleep tier, build item 13). An engine without
+// sleep mode answers 501 "unsupported" so the caller parks the pod instead —
+// never a fake "sleeping".
+func (s *Server) modelSleep(w http.ResponseWriter, r *http.Request) {
+	s.sleepCall(w, r, true)
+}
+
+func (s *Server) modelResume(w http.ResponseWriter, r *http.Request) {
+	s.sleepCall(w, r, false)
+}
+
+func (s *Server) sleepCall(w http.ResponseWriter, r *http.Request, sleep bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	sl, ok := s.Engine.(engines.Sleeper)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unsupported", "engine": s.Engine.Name(), "reason": "engine has no sleep mode; park the pod instead"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	var err error
+	if sleep {
+		err = sl.Sleep(ctx)
+	} else {
+		err = sl.Resume(ctx)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	status := "resumed"
+	if sleep {
+		status = "sleeping"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "engine": s.Engine.Name()})
 }

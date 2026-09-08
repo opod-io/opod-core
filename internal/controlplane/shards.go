@@ -1,14 +1,11 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/scheduler"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -51,45 +48,22 @@ func (s *Server) listShardProcesses(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	var req struct {
-		ModelID string   `json:"model_id"`
-		Shards  int      `json:"shards"`
-		Nodes   []string `json:"nodes"` // optional: pin shards to these exact workers
-		TP      int      `json:"tp"`    // optional: tensor-parallel size (vLLM only)
-		PP      int      `json:"pp"`    // optional: pipeline-parallel size (vLLM only)
-	}
+	var req CreateShardsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	entry := models.FindByID(s.cat, req.ModelID)
-	if entry == nil {
+	err := s.CreateShards(r.Context(), req)
+	switch {
+	case errors.Is(err, ErrNoCatalogEntry):
 		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ModelID)
-		return
-	}
-	if s.orch == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
-		return
-	}
-	if err := s.orch.CreateSharded(r.Context(), *entry, req.Shards, req.Nodes,
-		scheduler.Parallelism{TP: req.TP, PP: req.PP}); err != nil {
-		// Tear down whatever the failed create left behind, on a fresh context —
-		// r.Context() is already dead when the client hung up, and that exact
-		// abort used to strand "ready" rpc rows with no coordinator. A half-shard
-		// wedges the next create and answers routing queries for a model that
-		// cannot serve; better to converge to "not sharded" than "half sharded".
-		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		if rmErr := s.orch.RemoveSharded(cleanCtx, req.ModelID); rmErr != nil {
-			s.log.Error("shards/create cleanup failed", "model", req.ModelID, "err", rmErr)
-		}
-		cancel()
-		s.router.InvalidateModel(req.ModelID)
+	case errors.Is(err, ErrNoOrchestrator):
+		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case err != nil:
 		writeJSONError(w, http.StatusBadGateway, err.Error())
-		return
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "model_id": req.ModelID})
 	}
-	s.router.InvalidateModel(req.ModelID)
-	s.logEvent("shard.created", req.ModelID, map[string]any{"nodes": req.Nodes, "count": req.Shards})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "model_id": req.ModelID})
 }
 
 func (s *Server) deleteShards(w http.ResponseWriter, r *http.Request) {
@@ -98,16 +72,15 @@ func (s *Server) deleteShards(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "model_id required")
 		return
 	}
-	if s.orch == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
-		return
-	}
-	if err := s.orch.RemoveSharded(r.Context(), modelID); err != nil {
+	err := s.RemoveShards(r.Context(), modelID)
+	switch {
+	case errors.Is(err, ErrNoOrchestrator):
+		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "model_id": modelID})
 	}
-	s.router.InvalidateModel(modelID)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "model_id": modelID})
 }
 
 // extractBearer pulls the token out of the Authorization header (Bearer

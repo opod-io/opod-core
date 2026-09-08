@@ -19,7 +19,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-sdk/adminapi"
 	"os"
 	"strings"
 	"sync"
@@ -43,7 +43,7 @@ type authFileState struct {
 	keys        int
 }
 
-// AuthSnapshot / SnapshotKey are the shared wire types (pkg/adminapi).
+// AuthSnapshot / SnapshotKey are the shared wire types (opod-sdk/adminapi).
 type AuthSnapshot = adminapi.AuthSnapshot
 type SnapshotKey = adminapi.SnapshotKey
 

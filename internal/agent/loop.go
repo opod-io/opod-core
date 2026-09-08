@@ -60,10 +60,27 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 			loaded = m
 		}
 	}
-	body, _ := json.Marshal(map[string]any{
+	hb := map[string]any{
 		"id":            a.NodeID,
 		"loaded_models": loaded,
-	})
+	}
+	// Sleep tier (build item 13): the engine's own word on whether it sleeps.
+	if sl, ok := a.Engine.(engines.Sleeper); ok && a.Engine != nil {
+		sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if sleeping, err := sl.Sleeping(sctx); err == nil && sleeping {
+			hb["sleeping"] = true
+		}
+		cancel()
+	}
+	// Load signals (build item 14) ride the same heartbeat; best-effort too.
+	if lr, ok := a.Engine.(engines.LoadReporter); ok && a.Engine != nil {
+		lctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if ld, err := lr.Load(lctx); err == nil {
+			hb["load"] = ld
+		}
+		cancel()
+	}
+	body, _ := json.Marshal(hb)
 	return a.post(ctx, "/admin/v1/nodes/heartbeat", body)
 }
 

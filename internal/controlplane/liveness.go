@@ -155,3 +155,28 @@ func (s *Server) hasLivePlacement(ctx context.Context) bool {
 	}
 	return false
 }
+
+// hasSleepingPlacement: at least one ALIVE worker holds a placement in the
+// sleep tier (build item 13) — resident, not routable, wakes on demand.
+func (s *Server) hasSleepingPlacement(ctx context.Context) bool {
+	nodes, err := s.store.Nodes().List(ctx)
+	if err != nil {
+		return false
+	}
+	maxAge, now := s.heartbeatMaxAge(), time.Now()
+	for _, n := range nodes {
+		if n.ID == "local" || !nodeAlive(n, maxAge, now) {
+			continue
+		}
+		ps, err := s.store.Placements().GetByNode(ctx, n.ID)
+		if err != nil {
+			continue
+		}
+		for _, p := range ps {
+			if p.Status == PlacementSleeping {
+				return true
+			}
+		}
+	}
+	return false
+}

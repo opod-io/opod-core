@@ -12,7 +12,7 @@ package controlplane
 //	→ {"events":[{"id","type":"usage","ts","data":{…row…}}], "next":<last id>, "more":bool}
 
 import (
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-sdk/adminapi"
 	"net/http"
 	"strconv"
 )

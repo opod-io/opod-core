@@ -77,6 +77,15 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "sleeping"})
 		return
 	}
+	// Sleep tier: every live worker sleeps (engine working set dropped,
+	// process kept). The endpoint is healthy and wakes on demand — requests
+	// get the honest 503 waking meanwhile, like scale-to-zero.
+	if s.hasSleepingPlacement(r.Context()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "sleeping-workers"})
+		return
+	}
 	// A sharded model has no placement rows — its serving unit is the
 	// gang: a ready coordinator whose every part is on an alive node.
 	if s.hasServableShardGroup(r.Context()) {

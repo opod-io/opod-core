@@ -8,7 +8,9 @@
 # prebuilt ghcr.io/opod-io/llama-rpc-cuda:<LLAMA_RELEASE> image.
 #
 #   images/build.sh [--push] [--latest] [--dry-run] [--tag T] [image ...]
-#       images: leader llamacpp-nvidia llamacpp-amd vllm-nvidia   (default: all)
+#       images: leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia   (default: all)
+#       ARCH=arm64 builds linux/arm64 instead (a local kind on Apple silicon; leader + llamacpp-cpu only —
+#       the GPU bases are amd64). Tag gets a "-arm64" suffix so it never shadows the amd64 image.
 #       tag:    dev-<short sha>[-dirty] unless --tag; --latest ALSO tags :latest,
 #               which is what the CP pulls by default (ADR-017: a rollout re-pins the digest).
 #   images/build.sh prune
@@ -25,10 +27,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REG=${REG:-ghcr.io/opod-io}
-PLATFORM=linux/amd64
+ARCH=${ARCH:-amd64}
+PLATFORM=linux/$ARCH
 LLAMA_RELEASE=$(sed -nE 's/^ARG LLAMA_RELEASE=(.*)$/\1/p' images/worker-llamacpp/Dockerfile.rpc-cuda)
 RPC_IMAGE=${RPC_IMAGE:-$REG/llama-rpc-cuda:$LLAMA_RELEASE}
-DIST=dist/linux-amd64
+DIST=dist/linux-$ARCH
 
 log() { printf '\033[1;34m▶ %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31m✘ %s\033[0m\n' "$*" >&2; exit 1; }
@@ -39,8 +42,10 @@ spec() {
     leader)          echo "opod-leader images/leader/Dockerfile -" ;;
     llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda" ;;
     llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full-rocm" ;;
+    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full" ;;
+    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full-intel" ;;
     vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1" ;;
-    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|vllm-nvidia)" ;;
+    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia)" ;;
   esac
 }
 
@@ -57,7 +62,7 @@ while [ $# -gt 0 ]; do
     *) images+=("$1") ;;
   esac; shift
 done
-[ ${#images[@]} -eq 0 ] && images=(leader llamacpp-nvidia llamacpp-amd vllm-nvidia)
+[ ${#images[@]} -eq 0 ] && images=(leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia)
 
 run() { if [ $dry = 1 ]; then printf '  %q' "$@"; echo; else "$@"; fi; }
 
@@ -89,10 +94,11 @@ esac
 sha=$(git rev-parse --short HEAD)
 dirty=""; git diff --quiet HEAD -- 2>/dev/null || dirty="-dirty"
 [ -n "$tag" ] || tag="dev-$sha$dirty"
+[ "$ARCH" = amd64 ] || tag="$tag-$ARCH"
 version="$sha$dirty"
 
 log "cross-compiling opod ($version) → $DIST/opod"
-run env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$DIST/opod" ./cmd/opod
+run env GOOS=linux GOARCH=$ARCH CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$DIST/opod" ./cmd/opod
 
 for img in "${images[@]}"; do
   read -r name file base <<<"$(spec "$img")"
@@ -102,7 +108,7 @@ for img in "${images[@]}"; do
         -t "$REG/$name:$tag")
   [ "$base" != "-" ] && args+=(--build-arg "BASE=$base")
   [ "$img" = llamacpp-nvidia ] && args+=(--build-context "rpc-cuda=docker-image://$RPC_IMAGE")
-  [ $latest = 1 ] && args+=(-t "$REG/$name:latest")
+  [ $latest = 1 ] && [ "$ARCH" = amd64 ] && args+=(-t "$REG/$name:latest")
   [ $push = 1 ] && args+=(--push)
   log "$name:$tag$( [ $latest = 1 ] && echo ' (+latest)' )$( [ $push = 1 ] && echo ' → push' )"
   run "${args[@]}" .

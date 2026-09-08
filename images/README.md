@@ -23,6 +23,8 @@ Bootstrap it from the last CI-built worker without compiling: `images/build.sh r
 | `opod-leader` | `leader/` | debian:bookworm-slim |
 | `opod-worker-llamacpp-nvidia` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-cuda |
 | `opod-worker-llamacpp-amd` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-rocm |
+| `opod-worker-llamacpp-cpu` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full (CPU; dev clusters, kind CI, a GPU-less node the plan names — the control plane's vendor "none") |
+| `opod-worker-llamacpp-intel` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver — unproven until an Intel node has a driver) |
 | `opod-worker-vllm-nvidia` | `worker-vllm/` | vllm/vllm-openai:v0.27.1 |
 | `opod-worker-vllm-amd` | `worker-vllm/` | rocm/vllm:latest (not built by default) |
 
