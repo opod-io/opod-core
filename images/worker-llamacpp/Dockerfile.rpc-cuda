@@ -26,13 +26,18 @@ ARG LLAMA_RELEASE=b9934
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
 # `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
-FROM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
+# Cross-compile from the BUILD platform: a two-arch index must never compile Go
+# under emulation (the arm64 half of the leader image is what a kind cluster on
+# Apple silicon pulls).
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
 
 # --- 2) RPC pair: source build (GGML_CUDA=ON + GGML_RPC=ON) ------------------
 # ~60 min of nvcc on an amd64 runner and independent of the opod source, so it

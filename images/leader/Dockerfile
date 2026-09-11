@@ -2,13 +2,18 @@
 # Stage `opod` = the binary. CI compiles it here; the LOCAL lane (images/build.sh)
 # overrides this stage with a prebuilt cross-compiled binary via
 # `--build-context opod=dist/linux-amd64` so nothing compiles under emulation.
-FROM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
+# Cross-compile from the BUILD platform: a two-arch index must never compile Go
+# under emulation (the arm64 half of the leader image is what a kind cluster on
+# Apple silicon pulls).
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash && rm -rf /var/lib/apt/lists/*
