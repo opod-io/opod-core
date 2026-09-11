@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/opod-io/opod/internal/auth"
 )
@@ -86,12 +85,4 @@ func ResponseHeadersMiddleware(buckets *BucketStore) func(http.Handler) http.Han
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// formatResetAt formats a future time for the
-// `x-opod-budget-reset-at` header in RFC3339. Hoisted into its own
-// helper so the budget overflow path and the response middleware emit
-// the same string for the same time value.
-func formatResetAt(t time.Time) string {
-	return t.UTC().Format(time.RFC3339)
 }

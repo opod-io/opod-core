@@ -3,9 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"github.com/opod-io/opod/internal/router"
 	"net/http"
 	"time"
+
+	"github.com/opod-io/opod/internal/router"
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"

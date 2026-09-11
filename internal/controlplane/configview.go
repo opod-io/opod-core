@@ -63,17 +63,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, v)
 }
 
-// presence returns a one-line operator-facing summary for a vendor
-// passthrough — "disabled" when the key is missing, or "configured"
-// when it's set. The dashboard's egress card renders this directly
-// so an operator can see at-a-glance which vendors are reachable.
-func presence(key, envName string) string {
-	if key == "" {
-		return "disabled (set " + envName + ")"
-	}
-	return "configured"
-}
-
 // otlpStatus returns a one-line operator-facing summary of the tracing
 // state — "disabled" if no endpoint, "configured" otherwise. We don't
 // probe the collector here because that would either block the request
@@ -84,23 +73,6 @@ func otlpStatus(endpoint string) string {
 		return "disabled (set OPOD_OTLP_ENDPOINT to a collector URL)"
 	}
 	return "configured → " + endpoint
-}
-
-// bedrockStatus mirrors otlpStatus shape for the Bedrock egress route.
-// "configured" here means: the routing pipe is wired AND SigV4 signing
-// is active for anthropic.* models. amazon.*/meta.*/mistral.* still 501.
-func bedrockStatus(region string) string {
-	if region == "" {
-		return "disabled (set OPOD_BEDROCK_REGION to enable anthropic.* via SigV4)"
-	}
-	return "configured → region=" + region + ", SigV4 active for anthropic.* (other families v0.7)"
-}
-
-func vertexStatus(project string) string {
-	if project == "" {
-		return "disabled (set OPOD_VERTEX_PROJECT to enable ADC auth probe)"
-	}
-	return "configured → project=" + project + ", ADC probe active (body translation v0.7)"
 }
 
 func redact(s string) string {
