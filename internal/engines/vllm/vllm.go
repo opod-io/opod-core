@@ -158,3 +158,6 @@ func (v *Driver) Sleeping(ctx context.Context) (bool, error) {
 	}
 	return out.IsSleeping, nil
 }
+
+// Embeddings come from the shared OpenAI-compatible client this driver embeds.
+var _ engines.EmbedEngine = (*Driver)(nil)

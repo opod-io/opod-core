@@ -17,6 +17,7 @@ func TestConformance(t *testing.T) {
 			Chat:   "Hello",
 			Usage:  &usage,
 			Reason: "stop",
+			Embeds: true,
 		},
 		NativeNames: []enginetest.NativeNameCase{
 			{Source: engines.Source{ID: "llama-3-1-8b", Repo: "meta-llama/Llama-3.1-8B-Instruct", OllamaName: "llama3.1:8b"}, Want: "meta-llama/Llama-3.1-8B-Instruct"},

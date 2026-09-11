@@ -1,0 +1,28 @@
+# Nomic Embed Text v1.5 as GGUF — the embedding model a llama.cpp worker can
+# actually serve. The `nomic-embed-text` entry beside this one is the OLLAMA
+# form of the same weights: it names an Ollama model, not a Hugging Face repo,
+# so llama.cpp and vLLM cannot load it (a plan that tries is refused with that
+# reason rather than crash-looping the worker on `-hf <catalog id>`).
+#
+# llama-server exposes /v1/embeddings only when started with --embeddings, which
+# a plan pins through the documented `extra` engine flag.
+#
+# Install:  opod model add nomic-embed-text-v1.5-gguf
+# Use:      POST /v1/embeddings { "model": "nomic-embed-text-v1.5-gguf", "input": "..." }
+id: nomic-embed-text-v1.5-gguf
+display_name: Nomic Embed Text v1.5 (GGUF, 768-dim, 8K ctx)
+source:
+  type: huggingface
+  repo: nomic-ai/nomic-embed-text-v1.5-GGUF
+  file: nomic-embed-text-v1.5.Q4_K_M.gguf
+size_bytes: 84000000
+quant: q4_k_m
+context_window: 8192
+capabilities: [embedding]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 2
+tags: [embedding, retrieval, nomic, gguf, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/main/LICENSE
+released: 2024-02-13

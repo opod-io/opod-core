@@ -43,9 +43,11 @@ func fakeOllama(models []string, deltas []string, promptTokens, evalTokens int) 
 			Input []string `json:"input"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		// One distinguishable vector per input: the suite checks that a driver
+		// returns them in the caller's order, which identical vectors cannot show.
 		vecs := make([][]float32, len(req.Input))
 		for i := range vecs {
-			vecs[i] = []float32{0.1, 0.2}
+			vecs[i] = []float32{float32(i), 0.5}
 		}
 		writeJSON(w, map[string]any{"embeddings": vecs, "prompt_eval_count": 3})
 	})

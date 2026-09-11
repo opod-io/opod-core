@@ -18,6 +18,7 @@ func TestConformance(t *testing.T) {
 			Chat:   "abc",
 			Usage:  &usage,
 			Reason: "stop",
+			Embeds: true,
 		},
 		NativeNames: []enginetest.NativeNameCase{
 			{Source: engines.Source{ID: "qwen-15b", Repo: "Qwen/Qwen2.5-14B-Instruct-GGUF", Path: "/data/models/qwen.gguf"}, Want: "Qwen/Qwen2.5-14B-Instruct-GGUF"},

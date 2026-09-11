@@ -656,6 +656,10 @@ type Engine interface {
 3. One line in `internal/engines/all/all.go`.
 4. `conformance_test.go` calling `enginetest.Run` with a fake upstream — the suite checks identity,
    Health/List/Pull, Chat streaming, Embed/Unload/Resident/Loader contracts, error classes, native names.
+   Embeddings are implemented once, on the OpenAI-compatible client every wire-compatible driver embeds,
+   so llama.cpp, vLLM and MLX gained them together rather than one at a time; the suite checks that a
+   driver returns vectors in the caller's order, since a server may answer out of order and only the
+   index says where a vector belongs.
 5. Capability matching (when does the scheduler pick you?) — TARGET, lives with the vendor registry.
 
 ---
