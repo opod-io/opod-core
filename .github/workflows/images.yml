@@ -55,10 +55,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: opod-leader,                 file: images/leader/Dockerfile,          base: "", rpc: false }
+          - { name: opod-leader,                 file: images/leader/Dockerfile,          base: "", rpc: false, platforms: "linux/amd64,linux/arm64" }
           - { name: opod-worker-llamacpp-nvidia, file: images/worker-llamacpp/Dockerfile.rpc-cuda, base: ghcr.io/ggml-org/llama.cpp:full-cuda, rpc: true }  # base N=1 llama-server + prebuilt /opt/llama-rpc for N>=2
           - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile, base: ghcr.io/ggml-org/llama.cpp:full-rocm, rpc: false }
           - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1, rpc: false }
+          # The chart references these two as well; a release that does not publish
+          # them leaves values.yaml pointing at images that do not exist.
+          - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile, base: "ghcr.io/ggml-org/llama.cpp:full", rpc: false, platforms: "linux/amd64,linux/arm64" }
+          - { name: opod-worker-llamacpp-intel,  file: images/worker-llamacpp/Dockerfile, base: "ghcr.io/ggml-org/llama.cpp:full-intel", rpc: false }
     steps:
       - name: Free disk space (vLLM/ROCm bases are ~30GB)
         if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd')
@@ -72,15 +76,21 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          # No floating tag: a moving `latest` is exactly the rolling upstream
+          # tag ARCHITECTURE §7 forbids, and the CP re-pins a digest per
+          # rollout (ADR-017). Release tags and the commit sha only.
           tags: |
             type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
           push: true
+          # Only the leader's base exists for arm64; the GPU bases are amd64-only.
+          platforms: ${{ matrix.platforms || 'linux/amd64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
