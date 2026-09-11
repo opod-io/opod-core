@@ -6,6 +6,7 @@ package agent
 import (
 	"os"
 	"runtime"
+	"strings"
 )
 
 // Capabilities summarizes the host machine's resources.
@@ -22,6 +23,23 @@ type Capabilities struct {
 type GPU struct {
 	Name   string
 	VRAMGB int
+}
+
+// AcceleratorPresent reports whether this worker has a GPU to offload to.
+//
+// A control plane states the vendor it placed the worker on, which covers cards
+// whose tooling this binary cannot probe — the AMD and Intel builds carry no
+// nvidia-smi. A worker started by hand has no such hint and falls back to what
+// it detected itself.
+func AcceleratorPresent(c Capabilities) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPOD_ACCELERATOR"))) {
+	case "":
+		return len(c.GPUs) > 0 // no control plane, or one older than this field
+	case "none":
+		return false
+	default:
+		return true
+	}
 }
 
 // Detect returns the host's Capabilities. Platform-specific details are

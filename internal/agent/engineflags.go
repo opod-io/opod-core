@@ -46,19 +46,38 @@ func engineFlagsFromEnv() EngineFlags {
 	return out
 }
 
+// allGPULayers is llama.cpp's idiom for "put every layer you can on the GPU".
+// The engine places what fits and leaves the rest on the CPU.
+const allGPULayers = 999
+
+// llamaOffloadArgs decides how much of the model llama.cpp puts on the GPU.
+//
+// llama.cpp keeps every layer on the CPU unless it is told otherwise, so a
+// worker holding a card has to ask for the offload or the card it reserved does
+// nothing. A plan that pins `ngl` always wins: an operator asking for a partial
+// offload knows something we do not. Otherwise an accelerated worker offloads
+// everything and lets the engine place what fits, and a CPU worker says nothing
+// at all so it keeps running on the CPU.
+func (f EngineFlags) llamaOffloadArgs(accelerated bool) []string {
+	if _, pinned := f.get("ngl"); pinned || !accelerated {
+		return nil
+	}
+	return []string{"--n-gpu-layers", strconv.Itoa(allGPULayers)}
+}
+
 func (f EngineFlags) get(k string) (string, bool) {
 	v, ok := f[k]
 	v = strings.TrimSpace(v)
 	return v, ok && v != ""
 }
 
-func (f EngineFlags) posInt(k string, min, max int) (int, bool) {
+func (f EngineFlags) posInt(k string, lo, hi int) (int, bool) {
 	v, ok := f.get(k)
 	if !ok {
 		return 0, false
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n < min || n > max {
+	if err != nil || n < lo || n > hi {
 		return 0, false
 	}
 	return n, true

@@ -171,6 +171,19 @@ The Router is what makes "leverage multiple machines" mean something. It impleme
 
 The router's wrapping of the engine channel decrements the in-flight counter when the upstream stream closes, so counts stay accurate without explicit acknowledgement from the caller.
 
+### Engine placement on the accelerator
+
+llama.cpp keeps every layer on the CPU unless it is told otherwise. A worker that holds a GPU therefore
+has to ask for the offload, or the card it reserved does nothing while the model serves slowly from the
+CPU — which is easy to miss, because a small model answers fast enough either way. So an accelerated
+worker passes `--n-gpu-layers` for every layer and lets the engine place what fits, and a plan that pins
+`ngl` always wins, keeping a partial offload the operator's choice.
+
+Whether the worker is accelerated is stated by the control plane in `OPOD_ACCELERATOR`, not guessed by
+the worker: the AMD and Intel images carry no NVIDIA tooling, so a worker probing for itself would
+conclude it has no GPU on exactly the vendors that need the offload most. A worker started by hand, with
+no control plane to tell it, falls back to what it can detect.
+
 ### Worker HTTP server (`internal/agent/server.go`)
 
 Each worker runs a thin OpenAI-compatible HTTP server bound to the address it reported at registration time. The server has three routes:
