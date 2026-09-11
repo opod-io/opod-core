@@ -70,7 +70,7 @@ join command:  opod join http://<leader-ip>:8080?token=sk-orc-XXXXXXXX
 If `<leader-ip>` is `localhost` or `127.0.0.1`, override with `OPOD_EXTERNAL_URL`:
 
 ```bash
-OPOD_EXTERNAL_URL=http://192.168.1.42:8080 ./opod up
+OPOD_EXTERNAL_URL=http://192.0.2.42:8080 ./opod up
 ```
 
 ### Step 3 — join the worker
@@ -78,12 +78,12 @@ OPOD_EXTERNAL_URL=http://192.168.1.42:8080 ./opod up
 On the **second** machine, paste the join command from step 2:
 
 ```bash
-./opod join http://192.168.1.42:8080?token=sk-orc-XXXXXXXX
+./opod join http://192.0.2.42:8080?token=sk-orc-XXXXXXXX
 ```
 
 You should see:
 
-- "✔ Registered with leader at http://192.168.1.42:8080"
+- "✔ Registered with leader at http://192.0.2.42:8080"
 - "✔ Worker HTTP server listening on :8081"
 - Periodic "heartbeat OK" lines
 
