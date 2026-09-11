@@ -170,7 +170,10 @@ func cmdJoin(args []string) {
 		// distribution writes here under sha256-verified filenames so
 		// sharded models don't require manually scp'd weights.
 		ModelsDir: cfg.Storage.ModelsDir,
-		Aliases:   aliases,
+		// llama.cpp runs on the CPU unless told to offload; the worker has to
+		// know whether it is holding a card to make that call.
+		Accelerated: agent.AcceleratorPresent(caps),
+		Aliases:     aliases,
 	}
 	defer sup.StopAll()
 

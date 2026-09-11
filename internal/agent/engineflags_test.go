@@ -51,3 +51,46 @@ func TestLlamaModelSource(t *testing.T) {
 		t.Fatalf("repo only: %q", got)
 	}
 }
+
+func TestLlamaOffloadArgs(t *testing.T) {
+	// A worker holding a card must ask llama.cpp for the offload; without the
+	// argument every layer stays on the CPU and the reserved card does nothing.
+	if got := (EngineFlags{}).llamaOffloadArgs(true); len(got) != 2 || got[0] != "--n-gpu-layers" || got[1] != "999" {
+		t.Fatalf("an accelerated worker offloads every layer, got %v", got)
+	}
+	// A CPU worker says nothing at all.
+	if got := (EngineFlags{}).llamaOffloadArgs(false); got != nil {
+		t.Fatalf("a CPU worker must not ask for an offload, got %v", got)
+	}
+	// A plan that pins the layer count wins, on any hardware.
+	for _, accelerated := range []bool{true, false} {
+		if got := (EngineFlags{"ngl": "20"}).llamaOffloadArgs(accelerated); got != nil {
+			t.Fatalf("a pinned ngl must not be overridden (accelerated=%v), got %v", accelerated, got)
+		}
+	}
+	// An empty value is not a pin.
+	if got := (EngineFlags{"ngl": " "}).llamaOffloadArgs(true); len(got) != 2 {
+		t.Fatalf("a blank ngl is not a pin, got %v", got)
+	}
+}
+
+func TestAcceleratorPresent(t *testing.T) {
+	withGPU := Capabilities{GPUs: []GPU{{Name: "card", VRAMGB: 24}}}
+	for _, tc := range []struct {
+		env  string
+		caps Capabilities
+		want bool
+	}{
+		{"nvidia", Capabilities{}, true}, // the control plane's word beats a probe that cannot see AMD or Intel
+		{"amd", Capabilities{}, true},
+		{"none", withGPU, false}, // a CPU worker, whatever the host has
+		{"", withGPU, true},      // standalone: fall back to detection
+		{"", Capabilities{}, false},
+		{"  NVIDIA  ", Capabilities{}, true},
+	} {
+		t.Setenv("OPOD_ACCELERATOR", tc.env)
+		if got := AcceleratorPresent(tc.caps); got != tc.want {
+			t.Fatalf("OPOD_ACCELERATOR=%q gpus=%d: want %v, got %v", tc.env, len(tc.caps.GPUs), tc.want, got)
+		}
+	}
+}

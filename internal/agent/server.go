@@ -38,6 +38,9 @@ type Server struct {
 	// sharding orchestrator (see /v1/process/upload). If empty, upload is
 	// refused with 503. Set by `opod join` from cfg.Storage.ModelsDir.
 	ModelsDir string
+	// Accelerated is true when this worker holds a GPU. llama.cpp needs to be
+	// told to use it; see EngineFlags.llamaOffloadArgs.
+	Accelerated bool
 	// Aliases ties the engine's native model names to the ids this worker was
 	// asked to load them under; the heartbeat reports the ids. Shared with the
 	// Agent — see aliases.go for why the worker owns this and not the leader.
@@ -546,8 +549,10 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 		alias = nativeName
 	}
 	args := append(src, "--host", host, "--port", strconv.Itoa(port), "--alias", alias, "--metrics") // --metrics: /metrics for the load signals the heartbeat carries
-	args = append(args, engineFlagsFromEnv().llamaArgs()...)                                         // plan flags: ctx, ngl, parallel, kv cache type, extra
-	_ = s.Supervisor.Stop("llama-server")                                                            // exclusive: one model per worker
+	flags := engineFlagsFromEnv()
+	args = append(args, flags.llamaArgs()...)                     // plan flags: ctx, ngl, parallel, kv cache type, extra
+	args = append(args, flags.llamaOffloadArgs(s.Accelerated)...) // offload to the card this worker reserved, unless the plan pinned ngl
+	_ = s.Supervisor.Stop("llama-server")                         // exclusive: one model per worker
 	// Launch via a login shell + exec, NOT a bare exec.Command: the direct
 	// supervisor launch (new process group, null stdin) makes the Intel CPU
 	// llama-server SEGFAULT, but it runs fine from a shell (same fix as the vLLM
