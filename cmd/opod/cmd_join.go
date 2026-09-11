@@ -143,6 +143,8 @@ func cmdJoin(args []string) {
 
 	// Local engine — the worker proxies its inference requests to this.
 	eng := newEngineFromConfig(cfg)
+	// One alias table, written by the load handler and read by the heartbeat.
+	aliases := &agent.Aliases{}
 
 	a := &agent.Agent{
 		NodeID:            nodeID,
@@ -151,6 +153,7 @@ func cmdJoin(args []string) {
 		Address:           addr,
 		Capabilities:      caps,
 		Engine:            eng,
+		Aliases:           aliases,
 		HTTP:              &http.Client{Timeout: 10 * time.Second},
 		HeartbeatInterval: 5 * time.Second,
 		Log:               log,
@@ -167,6 +170,7 @@ func cmdJoin(args []string) {
 		// distribution writes here under sha256-verified filenames so
 		// sharded models don't require manually scp'd weights.
 		ModelsDir: cfg.Storage.ModelsDir,
+		Aliases:   aliases,
 	}
 	defer sup.StopAll()
 
