@@ -72,6 +72,19 @@ linters:
         linters:
           - errcheck
           - unused
+      # SA5011 "possible nil pointer dereference" on the standard test idiom
+      #   x := f(); if x == nil { t.Fatal(...) }; use(x)
+      # staticcheck models (*testing.T).Fatal as terminating and gets this
+      # right almost everywhere — 3 of the 24 occurrences of this idiom in the
+      # tree are reported and the other 21 are not, and a minimal copy of a
+      # reported one is sometimes reported and sometimes not. The code is
+      # correct: Fatal does not return, and a nil there would panic the test
+      # either way. Scoped to tests so the check stays fully armed in
+      # everything that ships.
+      - path: _test\.go$
+        text: "SA5011"
+        linters:
+          - staticcheck
 
 formatters:
   enable:

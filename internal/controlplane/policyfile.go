@@ -21,12 +21,13 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"github.com/opod-io/opod-sdk/adminapi"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/opod-io/opod-sdk/adminapi"
 
 	"github.com/opod-io/opod/internal/guardrails"
 )

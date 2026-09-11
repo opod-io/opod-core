@@ -3,12 +3,13 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"github.com/opod-io/opod/internal/auth"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/opod-io/opod/internal/auth"
 )
 
 // TestAdminCallsRideTheEventStream (P12-3): a state-changing /admin/v1 call

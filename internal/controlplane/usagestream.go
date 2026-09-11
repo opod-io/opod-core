@@ -12,9 +12,10 @@ package controlplane
 //	→ {"events":[{"id","type":"usage","ts","data":{…row…}}], "next":<last id>, "more":bool}
 
 import (
-	"github.com/opod-io/opod-sdk/adminapi"
 	"net/http"
 	"strconv"
+
+	"github.com/opod-io/opod-sdk/adminapi"
 )
 
 func (s *Server) usageStream(w http.ResponseWriter, r *http.Request) {

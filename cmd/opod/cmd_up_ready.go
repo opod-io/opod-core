@@ -114,13 +114,6 @@ func printNetworkPosture(cfg *config.Config) {
 	fmt.Println("    · Telemetry:     none. Opod never reports installs, usage, errors, or any data to opod.io.")
 }
 
-func orDefault(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
-}
-
 // isLlamaCppEngine matches every alias the engine registry accepts for
 // the llama.cpp driver. Mirrors the cases in newEngineFromConfig +
 // internal/engines/registry.go so the auto-spawn trigger stays in sync.

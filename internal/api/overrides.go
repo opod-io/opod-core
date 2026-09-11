@@ -39,13 +39,6 @@ func overridesContext(r *http.Request, body *opodExtras, st store.Store, request
 	return router.WithOverrides(r.Context(), o)
 }
 
-// overridesContextAnthropic mirrors overridesContext but for the
-// Anthropic handler, whose body shape carries the same fields under the
-// same `opod` key.
-func overridesContextAnthropic(r *http.Request, body *opodExtras, st store.Store, requestedModel, sortHint string) context.Context {
-	return overridesContext(r, body, st, requestedModel, sortHint)
-}
-
 func mergeBodyAndHeaders(body *opodExtras, h http.Header) router.Overrides {
 	o := router.Overrides{}
 	if body != nil {

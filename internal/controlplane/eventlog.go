@@ -12,9 +12,10 @@ package controlplane
 // plan.updated. Additive — consumers must ignore unknown types.
 
 import (
-	"github.com/opod-io/opod-sdk/adminapi"
 	"net/http"
 	"strconv"
+
+	"github.com/opod-io/opod-sdk/adminapi"
 )
 
 // logEvent appends one lifecycle event; best-effort (a full disk must not
