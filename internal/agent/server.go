@@ -419,6 +419,15 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// SGLang, like vLLM, has no persistent server and its driver never starts
+	// one: the model is chosen at launch. Same fire-and-forget shape, same
+	// reason — the port binds only after the weights are loaded.
+	if strings.HasPrefix(s.Engine.Name(), "sglang") {
+		if err := s.launchSGLang(name, req.ID); err != nil {
+			http.Error(w, "sglang launch_server: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+	}
 	// llama.cpp whole-model placement (for load-balancing replicas): launch a
 	// whole llama-server for this model. Like vLLM, the driver never starts one
 	// on its own for a non-sharded placement (only the shard orchestrator does),
@@ -519,6 +528,58 @@ func (s *Server) launchVLLM(model, servedName string) error {
 		Command:     "/bin/sh",
 		Args:        []string{"-lc", cmdline},
 		Env:         env,
+		Restart:     true,
+		MaxRestarts: 3,
+	})
+	return err
+}
+
+// launchSGLang (re)starts SGLang's server for one model, on the host:port the
+// driver probes. It mirrors launchVLLM because the two engines pose the same
+// problem — one model per process, a port that binds only after a long load —
+// and differ only in flag names:
+//
+//	--tp-size              how many cards (auto-detected, same power-of-two rule)
+//	--mem-fraction-static  how much of each (from the worker's VRAM budget)
+//	--served-model-name    serve under the catalog id, so routing needs no
+//	                       name translation anywhere in the fleet
+//
+// SGLang has no sleep mode, so there is no equivalent of vLLM's dev-mode flags.
+func (s *Server) launchSGLang(model, servedName string) error {
+	host, port := "127.0.0.1", 30000
+	if ep, ok := s.Engine.(interface{ Endpoint() string }); ok {
+		if u, err := url.Parse(ep.Endpoint()); err == nil {
+			if h := u.Hostname(); h != "" {
+				host = h
+			}
+			if p := u.Port(); p != "" {
+				if n, err := strconv.Atoi(p); err == nil {
+					port = n
+				}
+			}
+		}
+	}
+	_ = s.Supervisor.Stop("sglang-serve") // exclusive: one model per worker
+	if servedName == "" {
+		servedName = model
+	}
+	flagOverrides, flagArgs := engineFlagsFromEnv().sglangShellOverrides()
+	cmdline := fmt.Sprintf(
+		"N=$(nvidia-smi -L 2>/dev/null | grep -c GPU); "+
+			"[ \"$N\" -ge 1 ] || N=$(ls /dev/dri/renderD* 2>/dev/null | wc -l); "+
+			"[ \"$N\" -ge 1 ] || N=1; "+
+			"TP=1; while [ $((TP*2)) -le \"$N\" ]; do TP=$((TP*2)); done; "+
+			"U=0.85; B=\"${OPOD_VRAM_BUDGET_GB:-0}\"; "+
+			"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); "+
+			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
+			"%s "+
+			"exec python3 -m sglang.launch_server --model-path '%s' --served-model-name '%s' --host %s --port %d "+
+			"--trust-remote-code --mem-fraction-static \"$U\" --tp-size \"$TP\" %s",
+		flagOverrides, model, servedName, host, port, flagArgs)
+	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
+		ID:          "sglang-serve",
+		Command:     "/bin/sh",
+		Args:        []string{"-lc", cmdline},
 		Restart:     true,
 		MaxRestarts: 3,
 	})

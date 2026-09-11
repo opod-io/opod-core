@@ -180,3 +180,30 @@ func llamaModelSource(nativeName, repo, file, path string) []string {
 		return []string{"-hf", nativeName}
 	}
 }
+
+// sglangShellOverrides is vllmShellOverrides' counterpart for SGLang: the same
+// three questions — how many cards, how much of each, how long a context — in
+// SGLang's own spelling. TP and the memory fraction override the auto-detected
+// values inside the launch line; the rest are appended as arguments.
+func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string) {
+	var sh []string
+	if tp, ok := f.posInt("tp", 1, 64); ok {
+		sh = append(sh, fmt.Sprintf("TP=%d;", tp))
+	}
+	if v, ok := f.get("mem_fraction_static"); ok {
+		if u, err := strconv.ParseFloat(v, 64); err == nil && u >= 0.05 && u <= 0.95 {
+			sh = append(sh, fmt.Sprintf("U=%.2f;", u))
+		}
+	}
+	var args []string
+	if n, ok := f.posInt("max_model_len", 512, 1<<22); ok {
+		args = append(args, "--context-length", strconv.Itoa(n))
+	}
+	if n, ok := f.posInt("max_running_requests", 1, 4096); ok {
+		args = append(args, "--max-running-requests", strconv.Itoa(n))
+	}
+	if v, ok := f.get("extra"); ok {
+		args = append(args, splitExtra(v)...)
+	}
+	return strings.Join(sh, " "), shellQuoteAll(args)
+}
