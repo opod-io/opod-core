@@ -52,6 +52,7 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
+	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))    // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
 	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))     // leader-side placement: pull+load a model on this worker
 	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))   // sleep tier (build item 13): engine drops its GPU working set, process stays
 	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume)) // wake it (sub-second on vLLM)
@@ -167,6 +168,73 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 // chatCompletions accepts an OpenAI-format chat request and proxies it to the
 // local engine. Streaming and non-streaming both supported (the engine's Chat
 // returns a channel either way; we re-emit it as SSE for stream=true).
+// embeddings is the worker half of ADR-025. The driver implements embeddings
+// once for every OpenAI-compatible engine, but a worker only ever ANSWERS the
+// routes this server exposes — and it exposed chat alone, so an embeddings
+// endpoint served perfectly on a local engine and 404'd the moment a leader
+// routed to a worker (found on the design-partner cell: the leader's own error
+// was "vllm POST /v1/embeddings: 404 page not found", which points at the
+// wrong thing entirely).
+func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		Model string          `json:"model"`
+		Input json.RawMessage `json:"input"` // OpenAI: a string, or an array of strings
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	inputs, err := decodeEmbedInput(req.Input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ee, ok := s.Engine.(engines.EmbedEngine)
+	if !ok {
+		http.Error(w, "engine "+s.Engine.Name()+" does not produce embeddings", http.StatusNotImplemented)
+		return
+	}
+	res, err := ee.Embed(r.Context(), engines.EmbedRequest{Model: req.Model, Inputs: inputs})
+	if err != nil {
+		http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	// The OpenAI shape, in the caller's order (ADR-025).
+	data := make([]map[string]any, 0, len(res.Vectors))
+	for i, v := range res.Vectors {
+		data = append(data, map[string]any{"object": "embedding", "index": i, "embedding": v})
+	}
+	out := map[string]any{"object": "list", "model": req.Model, "data": data}
+	if res.Usage != nil {
+		out["usage"] = map[string]any{"prompt_tokens": res.Usage.PromptTokens, "total_tokens": res.Usage.PromptTokens}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// decodeEmbedInput accepts both spellings OpenAI allows.
+func decodeEmbedInput(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("input required")
+	}
+	var one string
+	if err := json.Unmarshal(raw, &one); err == nil {
+		if one == "" {
+			return nil, fmt.Errorf("input required")
+		}
+		return []string{one}, nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return nil, fmt.Errorf("input must be a string or an array of strings")
+	}
+	if len(many) == 0 {
+		return nil, fmt.Errorf("input required")
+	}
+	return many, nil
+}
+
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req struct {

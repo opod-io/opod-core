@@ -144,3 +144,6 @@ func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	}
 	return ld, nil
 }
+
+// Embeddings come from the shared OpenAI-compatible client this driver embeds.
+var _ engines.EmbedEngine = (*Driver)(nil)

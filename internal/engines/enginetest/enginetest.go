@@ -197,7 +197,11 @@ func Run(t *testing.T, f Fixture) {
 			t.Fatalf("Embed: %v", err)
 		}
 		if len(resp.Vectors) != 2 {
-			t.Errorf("Embed returned %d vectors for 2 inputs", len(resp.Vectors))
+			t.Fatalf("Embed returned %d vectors for 2 inputs", len(resp.Vectors))
+		}
+		// The backend answers out of order; the driver must restore the caller's.
+		if len(resp.Vectors[0]) == 0 || resp.Vectors[0][0] != 0 || len(resp.Vectors[1]) == 0 || resp.Vectors[1][0] != 1 {
+			t.Errorf("vectors are not in the caller's order: %v", resp.Vectors)
 		}
 		if _, err := ee.Embed(ctx, engines.EmbedRequest{Model: model}); err == nil {
 			t.Error("Embed with no inputs must error")
@@ -357,6 +361,25 @@ func OpenAIBackend(models, deltas []string, usage engines.Usage) http.Handler {
 			"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens, "total_tokens": usage.TotalTokens,
 		}})
 		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Input) == 0 {
+			http.Error(w, "input required", http.StatusBadRequest)
+			return
+		}
+		// Answer out of order on purpose: a driver must place vectors by index,
+		// not by the position the server happened to return them in.
+		data := make([]map[string]any, 0, len(body.Input))
+		for i := len(body.Input) - 1; i >= 0; i-- {
+			data = append(data, map[string]any{"index": i, "embedding": []float32{float32(i), 0.5}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list", "data": data,
+			"usage": map[string]int{"prompt_tokens": usage.PromptTokens, "total_tokens": usage.PromptTokens},
+		})
 	})
 	return mux
 }
