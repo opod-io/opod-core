@@ -11,7 +11,7 @@ import (
 func TestIsPrivate(t *testing.T) {
 	private := []string{
 		"127.0.0.1", "::1", // loopback
-		"10.1.2.3", "172.16.0.1", "192.168.1.1", // RFC-1918
+		"10.1.2.3", "172.16.0.1", "192.168.0.1", // RFC-1918
 		"169.254.169.254", // link-local (cloud metadata)
 		"100.64.0.1",      // RFC-6598 CGNAT
 		"0.0.0.0",         // unspecified

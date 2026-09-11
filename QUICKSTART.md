@@ -317,14 +317,14 @@ opod token create --node
 #   sk-orc-NodeJoin-ABcD1234…
 ```
 
-Note the leader's reachable address. On a LAN it's its LAN IP (e.g. `192.168.1.42`); on Tailscale, the tailnet hostname.
+Note the leader's reachable address. On a LAN it's its LAN IP (e.g. `192.0.2.42`); on Tailscale, the tailnet hostname.
 
 ### Step 2 — on the new machine
 
 Install Opod + Ollama **the same way as above**, then instead of `opod up`:
 
 ```bash
-opod join http://192.168.1.42:8080?token=sk-orc-NodeJoin-ABcD1234…
+opod join http://192.0.2.42:8080?token=sk-orc-NodeJoin-ABcD1234…
 ```
 
 (Substitute the leader's address and the token you copied.)
@@ -342,7 +342,7 @@ opod node ls
 # example output:
 # ID         HOSTNAME      OS/ARCH       ADDRESS              STATE   LAST HB
 # local      machine-a     darwin/arm64  127.0.0.1:8080       ready   2026-06-05T…
-# n_abc123   machine-b     darwin/arm64  192.168.1.50:8081    ready   2026-06-05T…
+# n_abc123   machine-b     darwin/arm64  192.0.2.50:8081    ready   2026-06-05T…
 ```
 
 Any request the gateway gets for `qwen-coder-7b` is now routed automatically to the worker. If you install the **same** model on two workers, the leader load-balances between them.
