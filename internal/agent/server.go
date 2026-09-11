@@ -38,6 +38,10 @@ type Server struct {
 	// sharding orchestrator (see /v1/process/upload). If empty, upload is
 	// refused with 503. Set by `opod join` from cfg.Storage.ModelsDir.
 	ModelsDir string
+	// Aliases ties the engine's native model names to the ids this worker was
+	// asked to load them under; the heartbeat reports the ids. Shared with the
+	// Agent — see aliases.go for why the worker owns this and not the leader.
+	Aliases *Aliases
 
 	http *http.Server
 }
@@ -390,6 +394,9 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	name := engines.NativeName(s.Engine.Name(), engines.Source{
 		ID: req.ID, OllamaName: req.OllamaName, Repo: req.Repo, Path: req.Path,
 	})
+	// Remember which id this native name is, before anything can fail: the
+	// heartbeat has to report the id even if the engine is still warming.
+	s.Aliases.Note(name, req.ID)
 
 	// Pull weights (may take minutes; for llama-server/vLLM the driver Pull is
 	// a no-op and the model is fetched at engine launch / load).

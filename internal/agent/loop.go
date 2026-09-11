@@ -24,6 +24,10 @@ type Agent struct {
 	Address      string
 	Capabilities Capabilities
 	Engine       engines.Engine // local engine; queried for loaded_models
+	// Aliases translates the engine's native model names into the ids this
+	// worker was asked to load, so the leader's placements are keyed by the
+	// identity the plan named. Shared with the Server; nil is safe.
+	Aliases *Aliases
 
 	HTTP              *http.Client
 	HeartbeatInterval time.Duration
@@ -57,7 +61,7 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 		listCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		if m, err := a.Engine.List(listCtx); err == nil {
-			loaded = m
+			loaded = a.Aliases.Resolve(m)
 		}
 	}
 	hb := map[string]any{
