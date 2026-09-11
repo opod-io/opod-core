@@ -3,7 +3,7 @@
 # plane's executor, or by hand):
 #   OPOD_ROLE=leader|worker
 #   leader:  OPOD_LISTEN, OPOD_JOIN_TOKEN, OPOD_REQUIRE_KEYS, OPOD_PULL_DEFAULT_MODEL, OPOD_ENGINE (all optional)
-#   worker:  OPOD_LEADER_URL (required), OPOD_JOIN_TOKEN (required), OPOD_ENGINE=llamacpp|vllm,
+#   worker:  OPOD_LEADER_URL (required), OPOD_JOIN_TOKEN (required), OPOD_ENGINE=llamacpp|vllm|sglang,
 #            OPOD_LOAD_MODEL=<catalog id> (+ OPOD_LOAD_REPO / OPOD_LOAD_FILE overrides), OPOD_MODELS_DIR,
 #            OPOD_ENGINE_FLAGS (json), POD_IP / POD_NAME (Kubernetes downward API)
 # Nothing here knows about Kubernetes or the control plane — it is plain opod.
@@ -42,6 +42,7 @@ ENGINE="${OPOD_ENGINE:-llamacpp}"
 case "$ENGINE" in
   llamacpp) export OPOD_ENGINE=llamacpp OPOD_LLAMACPP_ENDPOINT="${OPOD_LLAMACPP_ENDPOINT:-http://127.0.0.1:8089}";;
   vllm)     export OPOD_ENGINE=vllm     OPOD_VLLM_ENDPOINT="${OPOD_VLLM_ENDPOINT:-http://127.0.0.1:8000}";;
+  sglang)   export OPOD_ENGINE=sglang   OPOD_SGLANG_ENDPOINT="${OPOD_SGLANG_ENDPOINT:-http://127.0.0.1:30000}";;
   *) log "unknown engine $ENGINE"; exit 2;;
 esac
 [ -n "${POD_IP:-}" ]   && export OPOD_ADVERTISE_ADDR="${OPOD_ADVERTISE_ADDR:-$POD_IP:8081}"
