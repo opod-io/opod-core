@@ -1,39 +1,38 @@
 # Opod
 
-> Opod is a free, open-source (Apache-2.0) self-hosted LLM gateway and control plane. A single Go binary turns your Macs and Linux boxes into a private inference cluster behind one endpoint that speaks both the OpenAI and Anthropic APIs — run open-weight models on your own hardware, route across 20+ hosted providers with automatic failover, and keep the team controls (per-user keys, quotas, budgets, audit) that vendor APIs lack.
-
-Opod sits one layer above inference engines (Ollama, vLLM, MLX-LM, llama.cpp-RPC). Your tools speak OpenAI or Anthropic; your engines speak their native API; Opod is the one URL + one key in between. It is not open-core and has no telemetry, license fee, or paid tier.
+> Opod serves open-weight models on GPUs you already own. It has two parts. The open-source core (Apache-2.0) is a leader/worker inference runtime with an OpenAI-compatible gateway. The control plane (`opodcp`) installs into any Kubernetes cluster with one `helm install`. It runs each model endpoint as a leader plus GPU workers, packs models onto cards by measured VRAM, scales idle endpoints to zero, rolls out changes with proof, and is never on the request path. The control plane is proprietary, publicly pullable, and free with no key up to 16 GPUs in one cell (chart 0.1.0 still enforces the earlier limit of 8).
 
 ## What it does
 
-- One OpenAI- and Anthropic-compatible endpoint (`/v1/chat/completions`, `/v1/embeddings`, `/v1/messages`, plus rerank, vision, and audio) for every client — Cursor, Claude Code, Aider, Continue, Zed, and any OpenAI/Anthropic SDK.
-- Runs 40+ open-weight models (Qwen, Llama, DeepSeek, GLM, gpt-oss, Gemma, Mistral, Phi and more) on hardware you own, load-balanced across machines.
-- Shards a single model too large for one box across several machines via llama.cpp-RPC.
-- Intelligent router: cross-provider `model="auto"` chains, automatic fallback, request hedging, sticky sessions for KV-cache reuse, placement-cooldown circuit breaking, and latency-aware routing.
-- 20+ hosted providers behind one key (Anthropic, OpenAI, AWS Bedrock, GCP Vertex, OpenRouter, Groq, Together, Fireworks, Cohere, Mistral, Perplexity, DeepSeek, Cerebras, NVIDIA, Gemini, Hugging Face and more) with multi-key rotation and 429 failover.
-- Team controls: per-user API keys with scopes, model allowlists, RPM/TPM rate limits, token + dollar budgets, an audit log, and a built-in admin dashboard.
-- Observability: Prometheus metrics, OTLP tracing, Grafana dashboards, and webhook/Langfuse/S3 callback sinks. Optional embeddings response cache and a guardrails framework.
-- Engine-agnostic, single static Go binary (~23 MB). No Docker, no Python, no Kubernetes.
+- OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, streaming) for any OpenAI SDK or tool: Codex CLI, Aider, Continue, Open WebUI, curl.
+- Endpoint = one leader + its workers + one model identity. Engines: vLLM and llama.cpp in the control plane; core also drives Ollama and MLX-LM.
+- Per-GPU VRAM ledger and packing placer: several models share one card under explicit VRAM budgets (`colocation: shared`), refused with the measured number when they don't fit.
+- Autoscaling with scale to zero (`autoscale.floor: 0`); while it wakes, the leader answers 503 with Retry-After.
+- Verified rollouts (validate → apply → converge → probe → smoke chat); on failure the previous plan is restored; one-call rollback. Images pinned by digest.
+- API keys with RPM/TPM limits enforced by the leader even if the control plane is down; guardrail webhooks; fallback target; audit log; usage facts exported as CSV, Parquet, ClickHouse or S3; alert sinks (Slack, PagerDuty, Alertmanager, webhook); OIDC SSO; backup/restore.
+- No external service pods: SQLite, an in-process event bus and /metrics are built in; Postgres, NATS, ClickHouse, OIDC, Vault and KEDA connect on day two with `helm upgrade --set`.
+- Hardware: serving proven on NVIDIA; AMD measured and placeable; Intel Arc and Tenstorrent inventoried; llama.cpp CPU workers for laptops and CI.
 
-## Quick start
+## Quick start (Kubernetes ≥ 1.28)
 
-- Install: `curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh`
-- `opod doctor` — checks your machine and prints the one command to install an engine if you lack one.
-- `opod up` — starts the gateway and prints your admin API key.
-- Add a machine: run the same install on another box, then `opod join http://leader:8080?token=...`.
-- Point Claude Code at a local model: set `ANTHROPIC_BASE_URL=http://localhost:8080`, `ANTHROPIC_AUTH_TOKEN=<your-opod-key>`, `ANTHROPIC_MODEL=<local-catalog-id>`.
+- `helm install opod oci://ghcr.io/opod-io/charts/opod --version 0.1.0 -n opod --create-namespace --set admin.token=$(openssl rand -hex 16)`
+- `kubectl -n opod port-forward svc/opod-opodcp 8080:8080`, then open http://127.0.0.1:8080 and sign in with the admin token.
+- Create an endpoint: `POST /api/v1/endpoints` with `{"name":"chat","model":"qwen2.5-0.5b-gguf","plan":{"model":{"id":"qwen2.5-0.5b-gguf","engine":"llamacpp"},"workers":[{"replicas":1,"engine":"llamacpp"}]}}` (on a GPU-less kind cluster add `"node":"<node-name>"` to the worker).
+- Check `GET /api/v1/endpoints/{id}/status`: `serving` means a first token came back. Inside the cluster the endpoint is `http://opod-ep-chat.opod.svc:8080/v1`.
+- Bare Linux machines with SSH: `opodcp infra plan|up -f machines.yaml` builds k3s first (the CLI ships inside `ghcr.io/opod-io/opodcp:0.1.0` at `/opodcp`).
+- Core only, no Kubernetes: `git clone https://github.com/opod-io/opod-core && cd opod-core && go build -o opod ./cmd/opod && OPOD_DEFAULT_MODEL=llama-3.2-1b ./opod up` (with Ollama running).
 
 ## Links
 
-- [Website](https://opod.io/): overview, quick start, dashboard tour, and feature list.
-- [GitHub repository](https://github.com/opod-io/opod): source, issues, and README.
-- [Latest release](https://github.com/opod-io/opod/releases/latest): prebuilt binaries for macOS and Linux (arm64/amd64) plus `.deb`/`.rpm`.
-- [License](https://www.apache.org/licenses/LICENSE-2.0): Apache-2.0.
+- [Website](https://opod.io/): quickstart, use cases, measured numbers, FAQ.
+- [Core repository](https://github.com/opod-io/opod-core): Apache-2.0 source, README, QUICKSTART, ARCHITECTURE, CONTRIBUTING (DCO, no CLA).
+- [SDK repository](https://github.com/opod-io/opod-sdk): Apache-2.0 wire types and admin client for the leader's `/admin/v1` surface.
+- [Images and chart](https://github.com/orgs/opod-io/packages): `ghcr.io/opod-io/*`, anonymous pull, linux/amd64 + linux/arm64.
 
 ## Facts
 
-- License: Apache-2.0 (permissive, no open-core).
-- Cost: free; no telemetry, no paid tier.
-- Platforms: macOS (Apple Silicon), Linux (x86_64 / arm64).
-- Engines: Ollama, vLLM, MLX-LM, llama.cpp (single-node and RPC sharding).
-- APIs exposed: OpenAI-compatible and Anthropic-compatible.
+- Core licence: Apache-2.0, no usage limit. Control plane: proprietary, free tier 16 GPUs in one cell (8 in chart 0.1.0), offline licence keys, no phone-home.
+- Status: early access, chart and control plane 0.1.0. No signed release yet.
+- API shape: OpenAI-compatible only.
+- Not included: invoices/cost rating (usage facts only), hard multi-tenant isolation for shared packing, tensor parallelism across nodes (pipeline parallelism only).
+- Contact: hadi@opod.io
