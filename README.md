@@ -1336,7 +1336,7 @@ Related concepts: local LLM, on-prem AI, private GPT, GGUF, multi-tenant inferen
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are accepted under the
 [Developer Certificate of Origin](https://developercertificate.org/) (`git commit -s`); there is no CLA.
 
-You can use Opod commercially, modify it, fork it, embed it, redistribute it, and compete with it. The only requirements are (a) keep the license + notice, (b) state significant changes you made. No copyleft, no usage limit. The control plane (`opodcp`) is a separate proprietary product with a free tier of 8 GPUs per cell.
+You can use Opod commercially, modify it, fork it, embed it, redistribute it, and compete with it. The only requirements are (a) keep the license + notice, (b) state significant changes you made. No copyleft, no usage limit. The control plane (`opodcp`) is a separate proprietary product with a free tier of 16 GPUs per cell.
 
 ## Acknowledgments
 
