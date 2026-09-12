@@ -45,6 +45,19 @@ case "$ENGINE" in
   sglang)   export OPOD_ENGINE=sglang   OPOD_SGLANG_ENDPOINT="${OPOD_SGLANG_ENDPOINT:-http://127.0.0.1:30000}";;
   *) log "unknown engine $ENGINE"; exit 2;;
 esac
+# Some vendor images own their engine's launcher: Tenstorrent's vLLM build is
+# configured by env and a model spec and starts through its own entrypoint, so
+# `vllm serve <model>` — what the agent runs on model load — does not apply.
+# OPOD_ENGINE_START lets such an image say how to start its engine; opod then
+# just connects to it, which is exactly what the vLLM driver documents ("assumes
+# the user runs vLLM; it does not start/stop the process"). Left unset,
+# behaviour is unchanged and the agent launches the engine on model load.
+if [ -n "${OPOD_ENGINE_START:-}" ]; then
+  log "engine: starting vendor launcher: $OPOD_ENGINE_START"
+  sh -c "$OPOD_ENGINE_START" >&2 &
+  ENGINE_PID=$!
+fi
+
 [ -n "${POD_IP:-}" ]   && export OPOD_ADVERTISE_ADDR="${OPOD_ADVERTISE_ADDR:-$POD_IP:8081}"
 [ -n "${POD_NAME:-}" ] && export OPOD_NODE_ID="${OPOD_NODE_ID:-n_${POD_NAME}}"
 
@@ -80,5 +93,13 @@ if [ -n "${OPOD_LOAD_MODEL:-}" ]; then
     echo "$out" | grep -q '"status":"ready"' && break
     sleep 10
   done
+fi
+# The worker is the join process; a vendor engine started above dies with the
+# container. Reporting the engine's exit is what turns "pod running, nothing
+# served" into a restart the supervisor can act on.
+if [ -n "${ENGINE_PID:-}" ]; then
+  wait -n "$JOIN_PID" "$ENGINE_PID"
+  log "worker: join or engine exited — container will restart"
+  exit 1
 fi
 wait $JOIN_PID
