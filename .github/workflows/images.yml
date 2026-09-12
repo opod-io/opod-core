@@ -15,7 +15,9 @@ on:
         description: "also rebuild llama-rpc-cuda:<LLAMA_RELEASE> (~60 min, only after bumping LLAMA_RELEASE)"
         type: boolean
         default: false
-permissions: { contents: read, packages: write }
+# id-token: write is what makes cosign keyless work — the signature is bound
+# to this workflow's OIDC identity, so there is no key for us to lose (S3).
+permissions: { contents: read, packages: write, id-token: write }
 concurrency: { group: "images-${{ github.ref }}", cancel-in-progress: true }
 jobs:
   rel:
@@ -85,6 +87,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           file: ${{ matrix.file }}
@@ -101,3 +104,28 @@ jobs:
           # Registry cache: no 10 GB cap (the gha cache evicted every run → full rebuilds).
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:buildcache,mode=max
+      # ── supply chain (ARCHITECTURE §7, TASKS M19 S3) ───────────────────────
+      # Everything below addresses the index digest, never a tag: a tag can be
+      # moved, a digest cannot, and the digest is what the chart and ADR-017
+      # pin. A customer verifies exactly what they pulled.
+      - uses: sigstore/cosign-installer@v3
+      - name: sign (keyless, Sigstore) + verify
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+          cosign sign --yes "$ref"
+          cosign verify \
+            --certificate-identity-regexp 'https://github.com/${{ github.repository }}/' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$ref" >/dev/null
+          echo "signed + verified $ref"
+      - uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+      - name: attach the SBOM to the image
+        # The worker images are mostly someone else's base (vLLM, llama.cpp,
+        # ROCm), so the SBOM is the only place a customer can see what they are
+        # actually running and under which licences.
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
