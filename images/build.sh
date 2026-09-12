@@ -43,6 +43,10 @@ SOURCE_URL=${SOURCE_URL:-https://github.com/opod-io/opod-core}
 #   images/build.sh --push --tag <t> vllm-amd
 # and points chart engineImages.vllmAmd at it. ~25 GB base pull either way.
 VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0}
+# Tenstorrent's own tt-metal + vLLM release image. ~17 GB uncompressed, so the
+# build is a thin layer on a very fat base — bump the tag deliberately and check
+# it against the tt-kmd version on the fleet, which tt-metal is strict about.
+VLLM_TT_BASE=${VLLM_TT_BASE:-ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.1-555f240-22be241}
 ARCH=${ARCH:-amd64}
 PLATFORM=linux/$ARCH
 LLAMA_RELEASE=$(sed -nE 's/^ARG LLAMA_RELEASE=(.*)$/\1/p' images/worker-llamacpp/Dockerfile.rpc-cuda)
@@ -66,7 +70,8 @@ spec() {
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126 amd64" ;;
     sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-rocm630 amd64" ;;
-    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|sglang-nvidia|sglang-amd)" ;;
+    vllm-tt)         echo "opod-worker-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
+    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|sglang-nvidia|sglang-amd|vllm-tt)" ;;
   esac
 }
 
