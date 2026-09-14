@@ -70,3 +70,30 @@ func (a *Aliases) Resolve(native []string) []string {
 	}
 	return out
 }
+
+// Native is the reverse map: the engine's own name for an id this worker was
+// asked to serve (an adapter's "<base>:<name>" → "<name>"); an id with no
+// alias is its own native name.
+func (a *Aliases) Native(id string) string {
+	if a == nil {
+		return id
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for native, known := range a.m {
+		if known == id {
+			return native
+		}
+	}
+	return id
+}
+
+// Forget drops the alias for a native name (an unloaded adapter).
+func (a *Aliases) Forget(native string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	delete(a.m, native)
+	a.mu.Unlock()
+}

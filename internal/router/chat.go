@@ -34,6 +34,9 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	// inline below if every candidate fails synchronously.
 
 	ov := FromContext(ctx)
+	if r.prefixAffinity {
+		ctx = withPrefixKey(ctx, prefixKeyOf(req))
+	}
 	chain, source, chains := r.chainFor(req.Model, ov)
 	switch {
 	case ov.Sort != "":
@@ -139,6 +142,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 				// Pin (user, model)→node now that the call has succeeded, so
 				// the next turn reuses this node's KV cache.
 				r.rememberSticky(ctx, candidate, nodeID)
+				r.rememberPrefix(ctx, candidate, nodeID)
 				break // stream opened — stop retrying
 			}
 			thisCancel()

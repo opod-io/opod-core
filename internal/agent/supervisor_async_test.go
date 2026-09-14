@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
@@ -149,4 +150,27 @@ exit 1
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// A record left in a terminal state is a diagnosis, not a process: starting
+// the same id again is a retry and must not be refused as "already exists"
+// (a gang re-created after a failed Ray launch, 2026-09-14).
+func TestStart_RetriesAFailedID(t *testing.T) {
+	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	spec := ProcessSpec{ID: "ray-head-x", Command: "/nonexistent/ray", Args: []string{"start"}}
+	if _, err := sup.Start(context.Background(), spec); err == nil {
+		t.Fatal("a missing binary must fail the start")
+	}
+	if info, ok := sup.Get("ray-head-x"); ok && info.Status != "failed" && info.Status != "" {
+		t.Fatalf("record after the failure: %+v", info)
+	}
+	spec.Command = "/bin/sh"
+	spec.Args = []string{"-c", "sleep 30"}
+	if _, err := sup.Start(context.Background(), spec); err != nil {
+		t.Fatalf("a retry under the failed id must be accepted: %v", err)
+	}
+	if _, err := sup.Start(context.Background(), spec); err == nil {
+		t.Fatal("a live process under the id must still be refused")
+	}
+	_ = sup.Stop("ray-head-x")
 }

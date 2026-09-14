@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -29,8 +28,7 @@ func TestCatalogSourcesReachable(t *testing.T) {
 		t.Skip("set CATALOG_LIVE_CHECK=1 to run upstream HEAD probes")
 	}
 
-	repoRoot := findRepoRoot(t)
-	cat, err := models.LoadCatalog(filepath.Join(repoRoot, "catalog"))
+	cat, err := models.BundledCatalog()
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
 	}

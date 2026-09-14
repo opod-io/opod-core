@@ -17,6 +17,11 @@ type Capabilities struct {
 	CPUCores int
 	RAMGB    int
 	GPUs     []GPU
+	// Role (feature pd_roles, R9.7): "" = a complete server; "prefill" or
+	// "decode" = one half of a disaggregated pair, from OPOD_WORKER_ROLE. The
+	// leader routes generation to decode workers only. The KV handoff between
+	// the halves is TARGET; until then a pair lives on one node.
+	Role string `json:"Role,omitempty"`
 }
 
 // GPU describes a single GPU device.

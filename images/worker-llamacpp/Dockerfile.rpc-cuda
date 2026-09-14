@@ -73,7 +73,6 @@ FROM ${BASE}
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash curl ca-certificates procps && rm -rf /var/lib/apt/lists/*
 COPY --from=opod /opod /usr/local/bin/opod
-COPY catalog /usr/local/share/opod/catalog
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 # The sharding binaries (rpc-server + the --rpc coordinator), self-contained.
 COPY --from=rpc-cuda /opt/llama-rpc /opt/llama-rpc

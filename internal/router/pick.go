@@ -52,6 +52,15 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		metrics.ObserveRouterPick("fallback-to-local", "no-workers")
 		return r.local, r.localNode, nil
 	}
+	// Roles (roles.go): generation never lands on a prefill half while a
+	// decode half is alive.
+	roles := map[string]string{}
+	for _, w := range workers {
+		if n, err := r.store.Nodes().Get(ctx, w.NodeID); err == nil && n != nil {
+			roles[w.NodeID] = roleOf(n)
+		}
+	}
+	workers = decodeOnly(workers, func(id string) string { return roles[id] })
 
 	// 3. Pick least-loaded worker. The snapshot we sort against is
 	//    consistent under RLock, but the actual inflight increment
@@ -60,11 +69,34 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	//    over-route once before the counter catches up. This is a
 	//    load-balancing imperfection, not a correctness bug, and
 	//    self-corrects on the next request.
+	//    Load-aware (load.go): the engine's own KV use and queue join the
+	//    in-flight count, and a saturated worker goes to the back of the
+	//    line — it stops receiving new requests before it errors.
 	r.mu.RLock()
-	sort.Slice(workers, func(i, j int) bool {
-		return r.inflight[workers[i].NodeID] < r.inflight[workers[j].NodeID]
+	type ranked struct {
+		saturated bool
+		score     float64
+	}
+	rank := make(map[string]ranked, len(workers))
+	for _, w := range workers {
+		sat, sc := r.loadRank(w.NodeID)
+		rank[w.NodeID] = ranked{sat, sc}
+	}
+	sort.SliceStable(workers, func(i, j int) bool {
+		a, b := rank[workers[i].NodeID], rank[workers[j].NodeID]
+		if a.saturated != b.saturated {
+			return !a.saturated
+		}
+		return a.score < b.score
 	})
 	r.mu.RUnlock()
+
+	// 3b. Prefix affinity: the worker that last served this prompt prefix
+	// still holds it in its prefix cache — prefer it unless it is saturated
+	// (a cache hit is not worth a queue).
+	if pin := r.prefixPick(ctx, model); pin != "" && !rank[pin].saturated {
+		workers = preferNode(workers, pin)
+	}
 
 	// 3a. Sticky pin: if there's a fresh (user_id, model) entry whose
 	// node is still in the workers list AND not in cooldown, surface

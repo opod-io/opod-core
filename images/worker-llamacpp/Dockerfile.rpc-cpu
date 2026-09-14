@@ -54,7 +54,6 @@ FROM ${BASE}
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash curl ca-certificates procps && rm -rf /var/lib/apt/lists/*
 COPY --from=opod /opod /usr/local/bin/opod
-COPY catalog /usr/local/share/opod/catalog
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --from=rpc-cpu /opt/llama-rpc /opt/llama-rpc
 

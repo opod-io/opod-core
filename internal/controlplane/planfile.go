@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -114,6 +115,11 @@ func (s *Server) planAllowsModel(model string) (string, bool) {
 		return "", true // no plan file — unrestricted (standalone mode)
 	}
 	if model == planModel || s.catalogIDForNative(model) == planModel {
+		return planModel, true
+	}
+	// A LoRA adapter is a variant of the one identity (feature "lora"):
+	// "<model>:<adapter>" is served by the workers holding the base.
+	if strings.HasPrefix(model, planModel+":") && len(model) > len(planModel)+1 {
 		return planModel, true
 	}
 	return planModel, false

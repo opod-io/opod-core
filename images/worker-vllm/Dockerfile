@@ -19,8 +19,14 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 
 FROM ${BASE}
 RUN (apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash && rm -rf /var/lib/apt/lists/*) || true
+# Ray is what vLLM runs a MULTI-NODE gang over (--distributed-executor-backend
+# ray: pipeline stages on different machines, ADR-040 R4). The upstream image
+# stopped carrying it (v0.27.1: "No module named 'ray'", design-partner cell
+# 2026-09-14), so the worker adds the pinned wheel; a single-node worker never
+# imports it. The AMD base keeps its own.
+ARG RAY_VERSION=2.58.0
+RUN python3 -c "import ray" 2>/dev/null || pip install --no-cache-dir "ray[default]==${RAY_VERSION}"
 COPY --from=opod /opod /usr/local/bin/opod
-COPY catalog /usr/local/share/opod/catalog
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 ENV OPOD_ROLE=worker OPOD_ENGINE=vllm OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1 VLLM_WORKER_MULTIPROC_METHOD=spawn
 EXPOSE 8081

@@ -31,7 +31,6 @@ archives:
       - README.md
       - ARCHITECTURE.md
       - SECURITY.md
-      - catalog/*
 
 # .deb + .rpm packages for edge / NAS deployments. Raspberry Pi OS,
 # Debian, Ubuntu, and most Linux-based NAS (QNAP, Asustor) accept .deb;
@@ -64,8 +63,6 @@ nfpms:
     section: utils
     priority: optional
     contents:
-      - src: catalog/
-        dst: /usr/share/opod/catalog
       - src: LICENSE
         dst: /usr/share/doc/opod/LICENSE
       - src: README.md

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opod-io/opod-sdk/catalog"
 	"github.com/opod-io/opod/internal/models"
 )
 
@@ -144,8 +145,7 @@ func extractRawString(t *testing.T, src, marker string) string {
 // a contributor adding a new model without a license — `opod model info`
 // would otherwise render "License: —" which is worse than a build break.
 func TestCatalogLicensePresent(t *testing.T) {
-	repoRoot := findRepoRoot(t)
-	entries, err := models.LoadCatalog(filepath.Join(repoRoot, "catalog"))
+	entries, err := models.BundledCatalog()
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
 	}
@@ -165,8 +165,7 @@ func TestCatalogLicensePresent(t *testing.T) {
 // considered restrictive for tagging purposes (we don't try to encode the
 // full open-source-vs-non-OSS distinction here — operators read the URL).
 func TestCatalogRestrictiveLicenseTagged(t *testing.T) {
-	repoRoot := findRepoRoot(t)
-	entries, err := models.LoadCatalog(filepath.Join(repoRoot, "catalog"))
+	entries, err := models.BundledCatalog()
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
 	}
@@ -195,29 +194,21 @@ func TestCatalogRestrictiveLicenseTagged(t *testing.T) {
 	}
 }
 
-// TestCatalogParses verifies every YAML file in catalog/ loads cleanly through
+// TestCatalogParses verifies every embedded catalog file (opod-sdk/catalog) loads cleanly through
 // the same parser the binary uses at startup. Catches malformed entries
 // before they reach `opod up`.
 func TestCatalogParses(t *testing.T) {
-	repoRoot := findRepoRoot(t)
-	catalogDir := filepath.Join(repoRoot, "catalog")
-
-	entries, err := models.LoadCatalog(catalogDir)
+	entries, err := models.BundledCatalog()
 	if err != nil {
-		t.Fatalf("LoadCatalog(%s): %v", catalogDir, err)
+		t.Fatalf("BundledCatalog: %v", err)
 	}
 	if len(entries) == 0 {
 		t.Fatal("catalog parsed to zero entries — wrong directory?")
 	}
 
 	// Every entry must have an id, and the filename must match the id.
-	files, err := os.ReadDir(catalogDir)
-	if err != nil {
-		t.Fatalf("read catalog dir: %v", err)
-	}
 	fileIDs := map[string]bool{}
-	for _, f := range files {
-		name := f.Name()
+	for _, name := range catalog.Names() {
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
 		}

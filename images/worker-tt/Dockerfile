@@ -30,7 +30,6 @@ FROM ${BASE}
 USER root
 RUN (apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash && rm -rf /var/lib/apt/lists/*) || true
 COPY --from=opod /opod /usr/local/bin/opod
-COPY catalog /usr/local/share/opod/catalog
 COPY images/entrypoint.sh /usr/local/bin/opod-entrypoint.sh
 ENV OPOD_ROLE=worker \
     OPOD_ENGINE=vllm \

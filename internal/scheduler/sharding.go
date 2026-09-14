@@ -85,37 +85,47 @@ func New(st store.Store, sup *agent.Supervisor, log *slog.Logger, modelsDir stri
 // PP=<nodes>; TP>1 across machines is offered so its cost can be MEASURED rather
 // than assumed, not because it is a good idea on a relayed overlay.
 //
-// TP × PP must equal the number of ranks (one GPU per node in this fleet).
-// The zero value means "decide for me": TP=1, PP=<nodes>.
+// TP × PP must equal the number of GPUs in the gang: ranks (parts) ×
+// DevicesPerRank (GPUs each part holds — build item 5, "k parts per node and
+// k GPUs per part"). The zero value means "decide for me": TP = the devices
+// of one part (tensor parallel stays inside the machine), PP = <parts>.
 //
 // Parallelism is the tensor-parallel × pipeline-parallel split for a sharded model.
 type Parallelism struct {
 	TP int // tensor-parallel size
 	PP int // pipeline-parallel size
+	// DevicesPerRank is how many GPUs every part holds (0 = 1). TP must be a
+	// multiple of it: the devices inside a part are always in one tensor group.
+	DevicesPerRank int
 }
 
-// resolve fills in the defaults and checks the product against the rank count.
+// resolve fills in the defaults and checks the product against the GPU count.
 func (p Parallelism) resolve(ranks int) (Parallelism, error) {
+	k := max(1, p.DevicesPerRank)
+	total := ranks * k
 	tp, pp := p.TP, p.PP
 	switch {
 	case tp <= 0 && pp <= 0:
-		tp, pp = 1, ranks // the safe default: cross the network once per token
+		tp, pp = k, ranks // the safe default: TP inside each part, PP across parts
 	case tp > 0 && pp <= 0:
-		if ranks%tp != 0 {
-			return p, fmt.Errorf("tp=%d does not divide %d ranks", tp, ranks)
+		if total%tp != 0 {
+			return p, fmt.Errorf("tp=%d does not divide the gang's %d GPUs (%d parts × %d)", tp, total, ranks, k)
 		}
-		pp = ranks / tp
+		pp = total / tp
 	case pp > 0 && tp <= 0:
-		if ranks%pp != 0 {
-			return p, fmt.Errorf("pp=%d does not divide %d ranks", pp, ranks)
+		if total%pp != 0 {
+			return p, fmt.Errorf("pp=%d does not divide the gang's %d GPUs (%d parts × %d)", pp, total, ranks, k)
 		}
-		tp = ranks / pp
+		tp = total / pp
 	}
-	if tp*pp != ranks {
-		return p, fmt.Errorf("tp=%d × pp=%d = %d, but there are %d ranks (one GPU per node)",
-			tp, pp, tp*pp, ranks)
+	if tp%k != 0 {
+		return p, fmt.Errorf("tp=%d must be a multiple of the %d GPUs each part holds", tp, k)
 	}
-	return Parallelism{TP: tp, PP: pp}, nil
+	if tp*pp != total {
+		return p, fmt.Errorf("tp=%d × pp=%d = %d, but the gang has %d GPUs (%d parts × %d per part)",
+			tp, pp, tp*pp, total, ranks, k)
+	}
+	return Parallelism{TP: tp, PP: pp, DevicesPerRank: k}, nil
 }
 
 func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, shardCount int, nodeIDs []string, par Parallelism) error {
@@ -142,6 +152,14 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		if err := o.RemoveSharded(ctx, entry.ID); err != nil {
 			o.Log.Warn("prior shard teardown had errors (continuing with create)", "model", entry.ID, "err", err)
 		}
+	}
+	// Which placer chose the parts is worth a line: a control plane always
+	// names the nodes (its ledger decided); the leader's own picker is the
+	// standalone CLI's path, and two placers with two truths is what W8 warns of.
+	if len(nodeIDs) > 0 {
+		o.Log.Info("placer: caller-named nodes", "model", entry.ID, "nodes", nodeIDs)
+	} else {
+		o.Log.Info("placer: leader (ready workers by RAM)", "model", entry.ID, "shards", shardCount)
 	}
 	// Backend fork: vLLM multi-node uses a Ray cluster + pipeline/tensor
 	// parallelism, NOT llama.cpp's rpc-server + coordinator. It skips all the
@@ -485,7 +503,7 @@ func (o *Orchestrator) RemoveSharded(ctx context.Context, modelID string) error 
 					o.Log.Warn("remote coordinator stop failed", "id", s.ID, "err", err)
 				}
 			}
-		case "rpc":
+		case "rpc", "rank":
 			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
 			if err != nil || node == nil {
 				o.Log.Warn("rpc shard's node not found", "id", s.ID, "node", s.NodeID)
@@ -575,8 +593,59 @@ func distEnv(host string) map[string]string {
 // eventually ONE endpoint (the Ray head's vLLM server) is registered as the
 // placement and the router talks only to it; Ray owns the cross-node fan-out.
 //
-// PHASE 1 (this implementation): bring up the Ray cluster ONLY and leave it
-// running — `ray start --head` on workers[0], `ray start --address=<head>` on
-// the rest. Launching `vllm serve --distributed-executor-backend ray` on the
-// head and registering the placement is Phase 2. Ports are pinned (not Ray's
-// random range) so the fixed set has a chance of traversing the overlay.
+// The Ray cluster comes up first (`ray start --head` on workers[0],
+// `ray start --address=<head>` on the rest), then `vllm serve
+// --distributed-executor-backend ray` on the head is registered as the
+// coordinator the router dials. Every rank is a shard row so the gang lists and
+// tears down whole. Ports are pinned (not Ray's random range) so the fixed set
+// has a chance of traversing the overlay. k GPUs per rank per build item 5.
+
+// ReconcileNode compares the shard rows recorded on one worker with the
+// processes that worker reports running, and removes every shard group
+// whose part is gone. The case: a worker registers AGAIN under the same node
+// id — a recreated pod (LeaderWorkerSet group recreate, a StatefulSet
+// restart) or a restarted container — and whatever the leader recorded as
+// running there died with the old incarnation. A row that still read
+// "ready" routed a coordinator address that no longer answered (found on
+// the laptop cluster, 2026-09-14). Removing the group lets the manager (or
+// an operator) create it again on the parts that exist now. Best effort: a
+// worker that does not answer its process list is left alone until it does.
+func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (removed []string, err error) {
+	all, err := o.Store.Shards().List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var mine []store.Shard
+	for _, s := range all {
+		if s.NodeID == node.ID {
+			mine = append(mine, s)
+		}
+	}
+	if len(mine) == 0 {
+		return nil, nil
+	}
+	procs, err := o.callWorkerList(ctx, node)
+	if err != nil {
+		return nil, fmt.Errorf("process list on %s: %w", node.ID, err)
+	}
+	running := map[string]bool{}
+	for _, p := range procs {
+		if p.Status == "running" || p.Status == "starting" {
+			running[p.ID] = true
+		}
+	}
+	gone := map[string]bool{}
+	for _, s := range mine {
+		if !running[s.ProcessID] {
+			gone[s.ModelID] = true
+		}
+	}
+	for modelID := range gone {
+		if err := o.RemoveSharded(ctx, modelID); err != nil {
+			o.Log.Warn("stale shard removal failed", "model", modelID, "node", node.ID, "err", err)
+			continue
+		}
+		removed = append(removed, modelID)
+	}
+	return removed, nil
+}

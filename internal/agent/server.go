@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opod-io/opod/internal/auth"
@@ -47,6 +48,10 @@ type Server struct {
 	// Agent — see aliases.go for why the worker owns this and not the leader.
 	Aliases *Aliases
 
+	// adapterSet is what this worker holds as LoRA variants (adapters.go).
+	adaptersOnce sync.Once
+	adapterSet   *adapterState
+
 	http *http.Server
 }
 
@@ -60,10 +65,13 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
-	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))    // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
-	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))     // leader-side placement: pull+load a model on this worker
-	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))   // sleep tier (build item 13): engine drops its GPU working set, process stays
-	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume)) // wake it (sub-second on vLLM)
+	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))      // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
+	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))       // leader-side placement: pull+load a model on this worker
+	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))     // sleep tier (build item 13): engine drops its GPU working set, process stays
+	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume))   // wake it (sub-second on vLLM)
+	mux.HandleFunc("/v1/adapters", s.auth(s.adaptersList))      // LoRA variants held (adapters.go, feature lora)
+	mux.HandleFunc("/v1/adapters/load", s.auth(s.adaptersLoad)) // load one into the engine, served as <base>:<name>
+	mux.HandleFunc("/v1/adapters/unload", s.auth(s.adaptersUnload))
 	mux.HandleFunc("/v1/process/start", s.auth(s.processStart))
 	mux.HandleFunc("/v1/process/stop", s.auth(s.processStop))
 	mux.HandleFunc("/v1/process/list", s.auth(s.processList))
@@ -203,7 +211,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "engine "+s.Engine.Name()+" does not produce embeddings", http.StatusNotImplemented)
 		return
 	}
-	res, err := ee.Embed(r.Context(), engines.EmbedRequest{Model: req.Model, Inputs: inputs})
+	res, err := ee.Embed(r.Context(), engines.EmbedRequest{Model: s.Aliases.Native(req.Model), Inputs: inputs})
 	if err != nil {
 		http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
 		return
@@ -268,7 +276,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		msgs = append(msgs, engines.Message{Role: m["role"], Content: m["content"]})
 	}
 	engReq := engines.ChatRequest{
-		Model:       req.Model,
+		Model:       s.Aliases.Native(req.Model), // an adapter id "<base>:<name>" is vLLM's "<name>"
 		System:      req.System,
 		Messages:    msgs,
 		Temperature: req.Temperature,
@@ -419,6 +427,9 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "vllm serve: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		if adapters, err := adaptersFromEnv(); err == nil && len(adapters) > 0 {
+			go s.loadAdaptersWhenReady(req.ID, adapters)
+		}
 	}
 	// SGLang, like vLLM, has no persistent server and its driver never starts
 	// one: the model is chosen at launch. Same fire-and-forget shape, same
@@ -508,6 +519,15 @@ func (s *Server) launchVLLM(model, servedName string) error {
 	// Plan flags (OPOD_ENGINE_FLAGS) may pin TP / utilisation and add the
 	// capacity knobs the control plane exposes (max_model_len, kv dtype, …).
 	flagOverrides, flagArgs := engineFlagsFromEnv().vllmShellOverrides()
+	// LoRA slots (adapters.go): only when the plan configures adapters, so an
+	// endpoint without any runs the engine exactly as before.
+	adapters, adErr := adaptersFromEnv()
+	if adErr != nil {
+		s.logf("%v — adapters ignored", adErr)
+	}
+	if la := vllmLoRAArgs(len(adapters)); la != "" {
+		flagArgs = strings.TrimSpace(flagArgs + " " + la)
+	}
 	cmdline := fmt.Sprintf(
 		"N=$(nvidia-smi -L 2>/dev/null | grep -c GPU); "+
 			"[ \"$N\" -ge 1 ] || N=$(ls /dev/dri/renderD* 2>/dev/null | wc -l); "+
@@ -521,6 +541,9 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
 		flagOverrides, model, servedName, model, host, port, flagArgs, sleepModeArgs())
 	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
+	if len(adapters) > 0 {
+		env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True" // the /v1/load_lora_adapter route
+	}
 	if sleepModeArgs() != "" {
 		env["VLLM_SERVER_DEV_MODE"] = "1" // exposes /sleep, /wake_up, /is_sleeping
 	}

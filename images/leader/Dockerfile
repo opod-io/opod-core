@@ -18,7 +18,6 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash && rm -rf /var/lib/apt/lists/*
 COPY --from=opod /opod /usr/local/bin/opod
-COPY catalog /usr/local/share/opod/catalog
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 ENV OPOD_ROLE=leader OPOD_LISTEN=:8080 OPOD_DATA_DIR=/var/lib/opod OPOD_PULL_DEFAULT_MODEL=false OPOD_NO_UPDATE_CHECK=1
 EXPOSE 8080

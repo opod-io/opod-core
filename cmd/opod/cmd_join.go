@@ -101,6 +101,12 @@ func cmdJoin(args []string) {
 	log := newLogger(cfg)
 
 	caps := agent.Detect()
+	switch role := strings.TrimSpace(os.Getenv("OPOD_WORKER_ROLE")); role {
+	case "", "prefill", "decode":
+		caps.Role = role
+	default:
+		die("OPOD_WORKER_ROLE %q: use prefill or decode, or leave it unset", role)
+	}
 	addr, err := mesh.NewLAN().Address(8081) // workers default to :8081
 	if err != nil {
 		warn(os.Stdout, "could not determine local address: %v", err)

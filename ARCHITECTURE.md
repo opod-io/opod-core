@@ -681,7 +681,7 @@ type Engine interface {
 
 ### Catalog
 
-YAML files in `catalog/<id>.yaml`:
+YAML files in the SDK's `catalog/<id>.yaml` (`opod-io/opod-sdk/catalog`, embedded in the binary since R9.8 — `opod catalog ls|export`):
 
 ```yaml
 id: qwen3-coder
@@ -919,12 +919,12 @@ opod/
 │   ├── metrics/               # Prometheus declarations
 │   └── ui/                    # embed.go + index.html (single embedded page)
 │
-├── catalog/                   # YAML model catalog entries
+├── (catalog lives in opod-io/opod-sdk/catalog — embedded, one copy for the leader and the control plane)
 │   ├── llama-3.2-1b.yaml
 │   ├── llama-3.2-3b.yaml
 │   ├── llama-3.3-70b-sharded.yaml
 │   ├── qwen-coder-{7b,14b,32b}.yaml
-│   └── … (41 entries — see catalog/README.md)
+│   └── … (see opod-sdk/catalog/README.md)
 │
 └── installer/
     ├── install.sh             # the curl | sh script
@@ -1063,7 +1063,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 | Task | Touch these files |
 |---|---|
 | Add a new inference engine | `internal/engines/<name>/` (implement `Engine`, `engines.Register` in `init`), one line in `internal/engines/all`, `enginetest.Run` conformance test |
-| Add a new model to the catalog | `catalog/<id>.yaml` — see [catalog/README.md](catalog/README.md) for the schema |
+| Add a new model to the catalog | `opod-sdk/catalog/<id>.yaml` — see the SDK's catalog/README.md for the schema; bump the SDK and the go.mod require |
 | Add a new CLI subcommand | `cmd/opod/cmd_<name>.go` + add a case in `cmd/opod/main.go` + add the mutating function in `internal/control/` first (CLI is the source of truth) |
 | Add a new admin HTTP endpoint | `internal/controlplane/admin_<name>.go` — must delegate to `internal/control/` |
 | Add a UI page or tab | edit `internal/ui/index.html` directly; the JS is inline at the bottom |
@@ -1122,7 +1122,7 @@ E.g. swapping LAN for Tailscale tsnet:
 
 ### Add a new model to the catalog
 
-Add `catalog/<id>.yaml`. The catalog is loaded at startup; no code change needed. See [catalog/README.md](catalog/README.md) for the schema and required fields.
+Add `catalog/<id>.yaml` in `opod-io/opod-sdk` (embedded into the binary; an operator can also drop a file in `~/.opod/catalog` or `OPOD_CATALOG_DIR` to add or override one at runtime). See the SDK's catalog/README.md for the schema and required fields.
 
 ## Stable admin surface (v1)
 

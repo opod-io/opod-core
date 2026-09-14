@@ -13,6 +13,9 @@ DATA="${OPOD_DATA_DIR:-/var/lib/opod}"
 MODELS="${OPOD_MODELS_DIR:-/data/models}"
 CATALOG="${OPOD_CATALOG_DIR:-/usr/local/share/opod/catalog}"
 mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
+# The catalog is embedded in the binary (opod-sdk/catalog, R9.8); the file copy
+# this script reads repo/file from is exported once, so no image carries one.
+[ -d "$CATALOG" ] || opod catalog export "$CATALOG" >/dev/null 2>&1 || true
 export OPOD_DATA_DIR="$DATA" OPOD_CATALOG_DIR="$CATALOG" OPOD_NO_UPDATE_CHECK=1
 export HF_HOME="${HF_HOME:-$MODELS/hf}" LLAMA_CACHE="${LLAMA_CACHE:-$MODELS/llamacpp}"
 

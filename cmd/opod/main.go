@@ -41,6 +41,8 @@ func main() {
 		cmdModel(args)
 	case "shard":
 		cmdShard(args)
+	case "catalog":
+		cmdCatalog(args)
 	case "token":
 		cmdToken(args)
 	case "config":
@@ -71,7 +73,7 @@ func main() {
 // topLevelCommands is the set of verbs main() dispatches. Kept here so both
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
-	"version", "up", "down", "status", "join", "node", "model", "shard",
+	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog",
 	"token", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
@@ -181,6 +183,8 @@ Commands:
   model ls                 List installed models
   model ps                 Models resident in engine RAM + free memory
   model search [q]         Search the catalog
+  catalog ls               List the bundled catalog (embedded; opod-sdk/catalog)
+  catalog export <dir>     Write the bundled catalog out as files (overrides go beside them)
   model info <id>          Full details for one catalog model
   model load <id>          Bring a model into engine RAM (memory-aware)
   model unload <id>        Drop a model from engine RAM (weights stay)
