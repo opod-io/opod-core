@@ -18,6 +18,9 @@ export HF_HOME="${HF_HOME:-$MODELS/hf}" LLAMA_CACHE="${LLAMA_CACHE:-$MODELS/llam
 
 # models_dir has no env var in opod — write the config file.
 # `opod join` has no --config flag and reads ~/.opod/config.yaml; `opod up` takes --config.
+# A pod running non-root (uid 65532, restricted PSS) has no home: "~" is "/" and unwritable,
+# so the data dir stands in for it (the control plane also sets HOME for the leader).
+if [ -z "${HOME:-}" ] || [ "$HOME" = "/" ] || [ ! -w "$HOME" ]; then export HOME="$DATA"; fi
 mkdir -p "$HOME/.opod"
 for f in "$DATA/config.yaml" "$HOME/.opod/config.yaml"; do
 cat > "$f" <<YAML

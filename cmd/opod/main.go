@@ -194,7 +194,6 @@ Commands:
   token expire <id>        Expire a key now (or --in DURATION)
   token renew <id>         Extend a key's expiry (--ttl / --expires-at)
   token revoke <id>        Revoke an API key
-  audit [--limit N]        Show recent admin audit log entries
   config show              Show effective runtime config (secrets redacted)
   config path              Print config file path
   config edit              Print the editor command to edit config

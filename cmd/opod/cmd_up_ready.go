@@ -36,7 +36,6 @@ func printReady(cfg *config.Config, adminKey string) {
 	fmt.Println()
 	fmt.Println("  Opod is ready.")
 	fmt.Println()
-	fmt.Printf("  Dashboard:  %s\n", base)
 	fmt.Printf("  API:        %s/v1\n", base)
 	fmt.Printf("  Health:     %s/healthz\n", base)
 	if adminKey != "" {
