@@ -15,3 +15,9 @@ tags: [reasoning, thinking, large, openai]
 license: apache-2.0
 license_url: https://huggingface.co/openai/gpt-oss-120b/blob/main/LICENSE
 released: 2025-08-05
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 117000000000
+  layers: 36
+  heads: 64
+  kv_heads: 8
+  experts: 128

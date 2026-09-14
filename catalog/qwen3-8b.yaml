@@ -14,3 +14,8 @@ tags: [chat, general, balanced]
 license: apache-2.0
 license_url: https://huggingface.co/Qwen/Qwen3-8B/blob/main/LICENSE
 released: 2025-04-28
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 8190000000
+  layers: 36
+  heads: 32
+  kv_heads: 8

@@ -14,3 +14,8 @@ tags: [reasoning, small, microsoft]
 license: mit
 license_url: https://huggingface.co/microsoft/phi-4/blob/main/LICENSE
 released: 2024-12-12
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 14700000000
+  layers: 40
+  heads: 40
+  kv_heads: 10

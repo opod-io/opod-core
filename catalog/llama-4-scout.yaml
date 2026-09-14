@@ -18,3 +18,9 @@ tags: [moe, multimodal, long-context, meta, restricted-license]
 license: llama-4-community
 license_url: https://www.llama.com/llama4/license/
 released: 2025-04-05
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 109000000000
+  layers: 48
+  heads: 40
+  kv_heads: 8
+  experts: 16

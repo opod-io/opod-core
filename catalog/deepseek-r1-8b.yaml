@@ -14,3 +14,8 @@ tags: [reasoning, thinking]
 license: mit
 license_url: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/blob/main/LICENSE
 released: 2025-01-20
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 8030000000
+  layers: 32
+  heads: 32
+  kv_heads: 8

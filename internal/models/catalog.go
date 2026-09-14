@@ -26,6 +26,12 @@ type Entry struct {
 	Hardware           HardwareSpec `yaml:"hardware"                      json:"hardware"`
 	Tags               []string     `yaml:"tags"                          json:"tags"`
 	Sharding           ShardingSpec `yaml:"sharding,omitempty"            json:"sharding,omitempty"`
+	// Architecture is the model's shape: parameter count, layers, attention
+	// heads, KV heads, MoE experts. Carried for a control plane that validates
+	// a split before a pod exists (TP must divide the heads, PP cannot exceed
+	// the layers, expert parallel needs experts); core reads none of it.
+	// Missing = unknown — never refused for it.
+	Architecture ArchitectureSpec `yaml:"architecture,omitempty" json:"architecture,omitempty"`
 
 	// License is a short identifier (SPDX where possible) of the model's
 	// release license. Examples: "apache-2.0", "mit", "llama-3-community",
@@ -86,6 +92,15 @@ type ShardingSpec struct {
 	Engine          string `yaml:"engine"            json:"engine"`           // "llamacpp" (only supported in v0.4)
 	RPCPortBase     int    `yaml:"rpc_port_base"     json:"rpc_port_base"`    // workers bind rpc-server to this + shard index
 	CoordinatorPort int    `yaml:"coordinator_port"  json:"coordinator_port"` // coordinator binds llama-server to this
+}
+
+// ArchitectureSpec is a model's shape as the catalog records it.
+type ArchitectureSpec struct {
+	Params  int64 `yaml:"params,omitempty"   json:"params,omitempty"`
+	Layers  int   `yaml:"layers,omitempty"   json:"layers,omitempty"`
+	Heads   int   `yaml:"heads,omitempty"    json:"heads,omitempty"`
+	KVHeads int   `yaml:"kv_heads,omitempty" json:"kv_heads,omitempty"`
+	Experts int   `yaml:"experts,omitempty"  json:"experts,omitempty"`
 }
 
 // HardwareSpec describes the minimum hardware a model needs to run reasonably.

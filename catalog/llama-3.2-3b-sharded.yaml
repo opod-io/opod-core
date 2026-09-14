@@ -26,3 +26,8 @@ sharding:
   engine: llamacpp
   rpc_port_base: 50052
   coordinator_port: 9001
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 3210000000
+  layers: 28
+  heads: 24
+  kv_heads: 8

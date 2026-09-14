@@ -14,3 +14,9 @@ tags: [general, moe, fast]
 license: apache-2.0
 license_url: https://huggingface.co/Qwen/Qwen3-30B/blob/main/LICENSE
 released: 2025-04-28
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 30500000000
+  layers: 48
+  heads: 32
+  kv_heads: 4
+  experts: 128
