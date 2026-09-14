@@ -3,7 +3,7 @@ display_name: Xiaomi MiMo 7B (vLLM multi-node / Ray — TEST)
 source:
   type: huggingface
   repo: XiaomiMiMo/MiMo-7B-RL
-size_bytes: 4500000000
+size_bytes: 15660000000   # same MiMo-7B-RL checkpoint: 14.59 GiB measured 2026-09-13
 context_window: 32768
 capabilities: [chat, tools]
 recommended_engines: [vllm]

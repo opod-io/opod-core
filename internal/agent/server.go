@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -530,8 +531,55 @@ func (s *Server) launchVLLM(model, servedName string) error {
 		Env:         env,
 		Restart:     true,
 		MaxRestarts: 3,
+		Adapt:       vllmFitContext(engineFlagsFromEnv(), cmdline),
 	})
 	return err
+}
+
+// vllmMaxLenHint is vLLM's own refusal when the memory left after the weights
+// cannot hold the KV cache of the model's full context: "… the estimated
+// maximum model length is 66352. Try increasing gpu_memory_utilization …".
+var vllmMaxLenHint = regexp.MustCompile(`estimated maximum model length is (\d+)`)
+
+// vllmFitContext returns the Adapt hook for the vLLM launch: when the plan did
+// not pin max_model_len and vLLM refused to start because the budget cannot
+// hold the model's full context, relaunch with the length vLLM computed (a
+// little under it, on a 256 boundary). A budget that holds the weights but
+// not a 131k-token context is the common case under a VRAM ledger
+// (llama-3.1-8b at 24 GB: 16 GiB of KV wanted, 8 GiB left — 2026-09-13), and
+// the honest answer is a shorter context, logged, not a crash loop. A pinned
+// max_model_len is the operator's choice and is never overridden.
+func vllmFitContext(flags EngineFlags, cmdline string) func([]string) ([]string, bool) {
+	if _, pinned := flags.posInt("max_model_len", 512, 1<<22); pinned {
+		return nil
+	}
+	return func(tail []string) ([]string, bool) {
+		if n, ok := vllmFittedLen(tail); ok {
+			return []string{"-lc", cmdline + " --max-model-len " + strconv.Itoa(n)}, true
+		}
+		return nil, false
+	}
+}
+
+// vllmFittedLen reads vLLM's hint out of its last lines and returns the
+// context length to relaunch with: 90% of the estimate, rounded down to 256.
+func vllmFittedLen(tail []string) (int, bool) {
+	for i := len(tail) - 1; i >= 0; i-- {
+		m := vllmMaxLenHint.FindStringSubmatch(tail[i])
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0, false
+		}
+		n = (n * 9 / 10) / 256 * 256
+		if n < 512 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 // launchSGLang (re)starts SGLang's server for one model, on the host:port the

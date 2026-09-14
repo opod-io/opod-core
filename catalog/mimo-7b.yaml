@@ -3,7 +3,7 @@ display_name: Xiaomi MiMo 7B (reasoning-focused; small dense)
 source:
   type: huggingface
   repo: XiaomiMiMo/MiMo-7B-RL
-size_bytes: 4500000000
+size_bytes: 15660000000   # 14.59 GiB of bf16 safetensors measured on a worker 2026-09-13; the old 4.5 GB hint was wrong
 context_window: 32768
 capabilities: [chat, tools]
 recommended_engines: [vllm, mlx]

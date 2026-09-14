@@ -107,7 +107,7 @@ _opod() {
     local subsub=${words[2]:-}
 
     # Top-level subcommands
-    local cmds="up down status join node model shard token usage audit config doctor update upgrade connect disconnect invite completion version help"
+    local cmds="up down status join node model shard token config doctor update upgrade connect disconnect completion version help"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
@@ -156,7 +156,7 @@ _opod() {
             ;;
         token)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "create ls list edit expire renew budget revoke" -- "$cur") )
+                COMPREPLY=( $(compgen -W "create ls list edit expire renew revoke" -- "$cur") )
             fi
             return 0
             ;;
@@ -190,16 +190,13 @@ _opod() {
         'model:install, list, search, inspect, or uninstall LLM models'
         'shard:orchestrate sharded models'
         'token:manage API keys'
-        'usage:show recent inference usage'
-        'audit:show recent admin audit log'
-        'config:show / edit runtime config'
+                'config:show / edit runtime config'
         'doctor:diagnose common problems'
         'update:check / install the latest release'
         'upgrade:alias for update'
         'connect:print copy-paste config for a tool'
         'disconnect:print reversal steps for a previous connect'
-        'invite:create a user-scope token + share card'
-        'completion:print shell completion script'
+            'completion:print shell completion script'
         'version:print version'
         'help:show help'
     )
@@ -222,7 +219,7 @@ _opod() {
                     ;;
                 shard)   _values 'subcommand' create ls list remove rm ;;
                 node)    _values 'subcommand' ls list show drain remove rm ;;
-                token)   _values 'subcommand' create ls list edit expire renew budget revoke ;;
+                token)   _values 'subcommand' create ls list edit expire renew revoke ;;
                 config)  _values 'subcommand' show path edit ;;
                 completion) _values 'shell' bash zsh fish ;;
             esac
@@ -266,7 +263,7 @@ end
 complete -c opod -f
 
 # Top-level
-complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard token usage audit config doctor update upgrade connect disconnect invite completion version help" -a "up down status join node model shard token usage audit config doctor update upgrade connect disconnect invite completion version help"
+complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard token config doctor update upgrade connect disconnect completion version help"
 
 # model subcommands
 complete -c opod -n "__opod_using_command model" -a "add ls list ps search info load unload remove rm"
@@ -288,7 +285,7 @@ complete -c opod -n "__opod_using_subcommand 'shard remove'" -a "(opod completio
 
 # node / token / config
 complete -c opod -n "__opod_using_command node" -a "ls list show drain remove rm"
-complete -c opod -n "__opod_using_command token" -a "create ls list edit expire renew budget revoke"
+complete -c opod -n "__opod_using_command token" -a "create ls list edit expire renew revoke"
 complete -c opod -n "__opod_using_command config" -a "show path edit"
 complete -c opod -n "__opod_using_command completion" -a "bash zsh fish"
 `

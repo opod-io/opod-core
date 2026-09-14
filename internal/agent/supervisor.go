@@ -78,6 +78,13 @@ type ProcessSpec struct {
 	// RestartBackoff is the initial backoff between restarts; doubles on
 	// each consecutive failure up to a 30s cap. Default 1s.
 	RestartBackoff time.Duration
+	// Adapt, when set, is consulted before every automatic restart with the
+	// tail of the process's own output. Returning (args, true) relaunches with
+	// those Args instead of the original ones — for an engine that refuses to
+	// start until a knob is changed and says so (vLLM: "estimated maximum model
+	// length is N" when a VRAM budget cannot hold the model's full context).
+	// Returning false restarts unchanged.
+	Adapt func(tail []string) ([]string, bool)
 }
 
 // ProcessInfo is the observable state of a managed process.
@@ -595,6 +602,16 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 		return
 	}
 	p.Info.Restarts = restarts + 1
+	if p.spec.Adapt != nil {
+		// The whole ring, not its last lines: vLLM prints its hint and THEN
+		// ~80 lines of two tracebacks, so a 60-line tail never held it and
+		// the hook never fired on the cell (llama-3.1-8b, 2026-09-13).
+		if args, ok := p.spec.Adapt(p.logBuf.tail(p.logBuf.cap)); ok {
+			s.log.Warn("process adapted its arguments from its own output before restarting", "id", p.spec.ID, "attempt", restarts+1)
+			p.spec.Args = args
+			p.Info.Args = args
+		}
+	}
 	p.mu.Unlock()
 
 	// Re-launch. launchProc spawns a new reaper + superviseExit on success.
