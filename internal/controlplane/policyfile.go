@@ -123,6 +123,9 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	r.FallbackURL = strings.TrimRight(strings.TrimSpace(r.FallbackURL), "/")
 	r.FallbackURL = strings.TrimSuffix(r.FallbackURL, "/v1")
 	s.policy.fallback.Store(&r)
+	if s.router != nil {
+		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
+	}
 	if doc.Logging.AccessLog != nil {
 		s.policy.accessLog.Store(*doc.Logging.AccessLog)
 	} else {

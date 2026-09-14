@@ -18,6 +18,7 @@ import (
 
 	"github.com/opod-io/opod-sdk/adminapi"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/router"
 
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -139,4 +140,19 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	if out.Reporting > 0 {
 		out.PrefixHitPct = prefixSum / float64(out.Reporting)
 	}
+}
+
+// loadSignal is the router's LoadSource: a worker's last engine sample when
+// it is fresh (loadSampleMaxAge), else nothing — a stuck engine must not
+// keep a stale pressure number in the pick order any more than on /loadz.
+func (s *Server) loadSignal(nodeID string) (router.LoadSignal, bool) {
+	v, ok := s.nodeLoad.Load(nodeID)
+	if !ok {
+		return router.LoadSignal{}, false
+	}
+	ld := v.(nodeLoadSample)
+	if time.Since(ld.at) > loadSampleMaxAge {
+		return router.LoadSignal{}, false
+	}
+	return router.LoadSignal{KVUsedPct: ld.KVUsedPct, QueueDepth: ld.QueueDepth}, true
 }

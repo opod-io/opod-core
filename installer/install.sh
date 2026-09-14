@@ -331,15 +331,10 @@ install_binary() {
     chmod +x "$target" 2>/dev/null || sudo chmod +x "$target"
     ok "installed opod ${VERSION} to ${target}"
 
-    # Catalog: copy the bundled YAML files to ~/.opod/catalog so
-    # `opod up` and `opod model` work out of the box. resolveCatalogDir
-    # picks this path up automatically.
-    if [ -d "$tmp_dir/catalog" ]; then
-        catalog_dst="$HOME/.opod/catalog"
-        mkdir -p "$catalog_dst"
-        cp "$tmp_dir"/catalog/*.yaml "$catalog_dst/" 2>/dev/null || true
-        ok "catalog installed at $catalog_dst"
-    fi
+    # The model catalog is embedded in the binary (opod-sdk/catalog); this
+    # directory is for the user's own additions and overrides, which
+    # resolveCatalogDirs picks up automatically.
+    mkdir -p "$HOME/.opod/catalog" 2>/dev/null || true
 
     # PATH check
     case ":$PATH:" in

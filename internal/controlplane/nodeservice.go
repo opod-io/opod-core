@@ -72,8 +72,36 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 	if err := s.store.Nodes().Upsert(ctx, n); err != nil {
 		return store.Node{}, err
 	}
-	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address})
+	if existing != nil {
+		// A node the leader already holds is registering again: a new
+		// incarnation. What was recorded as running on it is checked against
+		// the worker's own process list on its next heartbeat (its agent is
+		// listening by then), and a shard group whose part is gone is removed
+		// so the manager re-creates it on the parts that exist now.
+		s.reconcileNodes.Store(n.ID, struct{}{})
+	}
+	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address, "again": existing != nil})
 	return n, nil
+}
+
+// reconcileShardsOn runs the orchestrator's stale-part check for a node
+// that registered again (see RegisterNode), off the heartbeat's path.
+func (s *Server) reconcileShardsOn(n store.Node) {
+	if s.orch == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	removed, err := s.orch.ReconcileNode(ctx, n)
+	if err != nil {
+		s.log.Warn("stale shard check failed — will retry on the next register", "node", n.ID, "err", err)
+		s.reconcileNodes.Store(n.ID, struct{}{})
+		return
+	}
+	for _, m := range removed {
+		s.log.Warn("shard group removed: its part died with the worker's previous incarnation", "model", m, "node", n.ID)
+		s.record("shard.stale", m, map[string]any{"node": n.ID, "reason": "worker registered again; the recorded process is not running"})
+	}
 }
 
 // HeartbeatNode refreshes liveness, keeps the engine's load sample, and
@@ -94,6 +122,9 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	}
 	if req.Load != nil {
 		s.nodeLoad.Store(req.ID, nodeLoadSample{EngineLoad: *req.Load, at: time.Now()})
+	}
+	if _, again := s.reconcileNodes.LoadAndDelete(req.ID); again {
+		go s.reconcileShardsOn(*n)
 	}
 	n.LastHeartbeat = time.Now()
 	if n.State == "joining" {

@@ -156,6 +156,15 @@ type Router struct {
 	// Stickiness otherwise only deletes lazily in stickyPick, which
 	// never fires for one-shot users — the map would grow unboundedly.
 	stickyInserts int
+
+	// Load-aware choice (load.go, R9.4): the workers' own engine samples,
+	// the policy's weights, and the prefix-affinity pins.
+	loadSource      LoadSource
+	kvWeight        float64
+	kvSaturationPct int
+	prefixAffinity  bool
+	prefixPins      map[string]stickyEntry // prefix hash|model → pinned node + expiry
+	prefixInserts   int
 }
 
 // stickySweepEvery and stickySweepThreshold tune the opportunistic

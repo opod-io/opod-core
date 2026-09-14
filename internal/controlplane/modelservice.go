@@ -195,9 +195,10 @@ var errEngineUnreachable = errors.New("engine not reachable")
 type CreateShardsRequest struct {
 	ModelID string   `json:"model_id"`
 	Shards  int      `json:"shards"`
-	Nodes   []string `json:"nodes"` // optional: pin shards to these exact workers
-	TP      int      `json:"tp"`    // optional: tensor-parallel size (vLLM only)
-	PP      int      `json:"pp"`    // optional: pipeline-parallel size (vLLM only)
+	Nodes   []string `json:"nodes"`   // optional: pin shards to these exact workers
+	TP      int      `json:"tp"`      // optional: tensor-parallel size (vLLM only)
+	PP      int      `json:"pp"`      // optional: pipeline-parallel size (vLLM only)
+	Devices int      `json:"devices"` // optional: GPUs each named part holds (0 = 1; build item 5)
 }
 
 // CreateShards builds the gang through the orchestrator. A failed create is
@@ -210,7 +211,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	if s.orch == nil {
 		return ErrNoOrchestrator
 	}
-	if err := s.orch.CreateSharded(ctx, *entry, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP}); err != nil {
+	if err := s.orch.CreateSharded(ctx, *entry, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices}); err != nil {
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		if rmErr := s.orch.RemoveSharded(cleanCtx, req.ModelID); rmErr != nil {
 			s.log.Error("shards/create cleanup failed", "model", req.ModelID, "err", rmErr)

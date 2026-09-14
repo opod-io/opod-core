@@ -53,3 +53,6 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
+
+// Until opod-sdk v0.2.0 is tagged (R9.4/R9.8 add fields): the sibling checkout.
+replace github.com/opod-io/opod-sdk => ../opod-sdk

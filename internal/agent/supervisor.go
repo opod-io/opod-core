@@ -224,9 +224,18 @@ func (s *Supervisor) register(spec ProcessSpec) (*Process, error) {
 	// overwrite each other's *Process (the loser's child would leak,
 	// untracked).
 	s.mu.Lock()
-	if _, ok := s.procs[spec.ID]; ok {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("process %q already exists", spec.ID)
+	if old, ok := s.procs[spec.ID]; ok {
+		// A record in a terminal state is a diagnosis, not a process: a Start
+		// under the same id is the caller's retry (a gang re-created after a
+		// failed launch, 2026-09-14) and replaces it. Anything alive is
+		// refused — two children under one id would leak the loser.
+		old.mu.Lock()
+		st := old.Info.Status
+		old.mu.Unlock()
+		if st != "failed" && st != "stopped" && st != "crashloop" {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("process %q already exists (%s)", spec.ID, st)
+		}
 	}
 	s.procs[spec.ID] = p
 	s.mu.Unlock()

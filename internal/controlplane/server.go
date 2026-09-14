@@ -37,16 +37,20 @@ type Server struct {
 	log    *slog.Logger
 	http   *http.Server
 
-	router      *router.Router
-	orch        *scheduler.Orchestrator
-	lifecycle   *lifecycle.Manager
-	openaiH     *api.Handler
-	load        loadStats
-	nodeLoad    sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
-	plan        planFileState
-	authf       authFileState
-	policy      policyFileState
-	rateBuckets *api.BucketStore
+	router    *router.Router
+	orch      *scheduler.Orchestrator
+	lifecycle *lifecycle.Manager
+	openaiH   *api.Handler
+	load      loadStats
+	nodeLoad  sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
+	// reconcileNodes marks nodes that registered again (a new incarnation of
+	// a known id); their shard rows are checked against the worker's process
+	// list on the next heartbeat (nodeservice.go).
+	reconcileNodes sync.Map
+	plan           planFileState
+	authf          authFileState
+	policy         policyFileState
+	rateBuckets    *api.BucketStore
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
@@ -134,7 +138,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// catalog (label bounding), rate-limit buckets, response cache; the
 	// guardrail registry is swapped in by the policy-file watcher.
 	openaiH.SetPolicy(&api.Policy{Catalog: cat, Buckets: buckets, Cache: buildResponseCache(cfg.Observability.ResponseCache, st, log)})
-	return &Server{
+	s := &Server{
 		cfg:         cfg,
 		store:       st,
 		engine:      eng,
@@ -146,6 +150,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		rateBuckets: buckets,
 		bus:         events.New(),
 	}
+	// The picker reads the workers' own engine samples (R9.4, load.go); the
+	// policy snapshot switches the weights on.
+	routed.SetLoadSource(s.loadSignal)
+	return s
 }
 
 // buildResponseCache instantiates the configured driver (memory or

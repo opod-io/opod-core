@@ -9,105 +9,22 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/opod-io/opod-sdk/catalog"
 	"github.com/opod-io/opod/internal/engines"
 	"gopkg.in/yaml.v3"
 )
 
 // Entry is a single catalog entry, loaded from catalog/<id>.yaml.
-type Entry struct {
-	ID                 string       `yaml:"id"                            json:"id"`
-	DisplayName        string       `yaml:"display_name"                  json:"display_name"`
-	Source             SourceSpec   `yaml:"source"                        json:"source"`
-	SizeBytes          int64        `yaml:"size_bytes"                    json:"size_bytes"`
-	Quant              string       `yaml:"quant"                         json:"quant"`
-	ContextWindow      int          `yaml:"context_window"                json:"context_window"`
-	Capabilities       []string     `yaml:"capabilities"                  json:"capabilities"`
-	RecommendedEngines []string     `yaml:"recommended_engines"           json:"recommended_engines"`
-	Hardware           HardwareSpec `yaml:"hardware"                      json:"hardware"`
-	Tags               []string     `yaml:"tags"                          json:"tags"`
-	Sharding           ShardingSpec `yaml:"sharding,omitempty"            json:"sharding,omitempty"`
-	// Architecture is the model's shape: parameter count, layers, attention
-	// heads, KV heads, MoE experts. Carried for a control plane that validates
-	// a split before a pod exists (TP must divide the heads, PP cannot exceed
-	// the layers, expert parallel needs experts); core reads none of it.
-	// Missing = unknown — never refused for it.
-	Architecture ArchitectureSpec `yaml:"architecture,omitempty" json:"architecture,omitempty"`
-
-	// License is a short identifier (SPDX where possible) of the model's
-	// release license. Examples: "apache-2.0", "mit", "llama-3-community",
-	// "llama-4-community", "gemma", "minisign-restricted". Surfaced in
-	// `opod model info` so commercial users see it before install.
-	License string `yaml:"license,omitempty" json:"license,omitempty"`
-	// LicenseURL points at the canonical license text — usually the
-	// model's HuggingFace LICENSE file.
-	LicenseURL string `yaml:"license_url,omitempty" json:"license_url,omitempty"`
-
-	// Released is the model's public release date in YYYY-MM-DD form.
-	// Lets users sort/filter the catalog by recency (`opod model search`
-	// shows it; `opod model info` renders the full date). Approximate
-	// is fine — use the month if a precise day isn't known, e.g.
-	// "2024-09-01" rather than guessing.
-	Released string `yaml:"released,omitempty" json:"released,omitempty"`
-
-	// Fallback is the GENERIC ordered fallback chain — tried when the
-	// router can't classify the primary's failure into a more specific
-	// category. Engine down, model not loaded, generic 5xx, timeout.
-	// Silent to clients — the response carries the requested model name.
-	// Operators see fallback hits in the audit log + stderr.
-	Fallback []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`
-
-	// FallbackOnContextLength replaces the generic chain when the primary
-	// rejects with a context-length-exceeded error. Typically points at
-	// long-context variants of the same family (e.g. an `n_ctx=128k`
-	// llama-server config or a Yi/Qwen long-context build). Empty falls
-	// back to `Fallback`.
-	FallbackOnContextLength []string `yaml:"fallback_on_context_length,omitempty" json:"fallback_on_context_length,omitempty"`
-
-	// FallbackOnContentPolicy replaces the generic chain when the
-	// upstream (usually a vendor — Anthropic, OpenAI) refuses on content
-	// policy grounds. Typically points at an open-weight or
-	// permissively-aligned model. Empty falls back to `Fallback`.
-	FallbackOnContentPolicy []string `yaml:"fallback_on_content_policy,omitempty" json:"fallback_on_content_policy,omitempty"`
-}
-
-// SourceSpec describes where to fetch model weights from.
-type SourceSpec struct {
-	Type       string `yaml:"type"                    json:"type"` // ollama | huggingface | file
-	Repo       string `yaml:"repo,omitempty"          json:"repo,omitempty"`
-	File       string `yaml:"file,omitempty"          json:"file,omitempty"` // specific file within an HF repo (for GGUF)
-	OllamaName string `yaml:"ollama_name,omitempty"   json:"ollama_name,omitempty"`
-	Path       string `yaml:"path,omitempty"          json:"path,omitempty"` // local filesystem path (for GGUF / safetensors)
-}
-
-// ShardingSpec is set when a model is too large for any single node and must
-// be split across several. When Required is true, the model can only be
-// served via the auto-orchestrator: rpc-server on each shard host + a
-// coordinator running `llama-server --rpc <list>`. A shard count of 1 is the
-// no-split degenerate case: no rpc-servers, one whole llama-server on the
-// single chosen host — so "required: true" entries can still be served on
-// one machine when it has the RAM.
-type ShardingSpec struct {
-	Required        bool   `yaml:"required"          json:"required"`
-	DefaultShards   int    `yaml:"default_shards"    json:"default_shards"`
-	Engine          string `yaml:"engine"            json:"engine"`           // "llamacpp" (only supported in v0.4)
-	RPCPortBase     int    `yaml:"rpc_port_base"     json:"rpc_port_base"`    // workers bind rpc-server to this + shard index
-	CoordinatorPort int    `yaml:"coordinator_port"  json:"coordinator_port"` // coordinator binds llama-server to this
-}
-
-// ArchitectureSpec is a model's shape as the catalog records it.
-type ArchitectureSpec struct {
-	Params  int64 `yaml:"params,omitempty"   json:"params,omitempty"`
-	Layers  int   `yaml:"layers,omitempty"   json:"layers,omitempty"`
-	Heads   int   `yaml:"heads,omitempty"    json:"heads,omitempty"`
-	KVHeads int   `yaml:"kv_heads,omitempty" json:"kv_heads,omitempty"`
-	Experts int   `yaml:"experts,omitempty"  json:"experts,omitempty"`
-}
-
-// HardwareSpec describes the minimum hardware a model needs to run reasonably.
-type HardwareSpec struct {
-	MinRAMGB  int `yaml:"min_ram_gb"             json:"min_ram_gb"`
-	MinVRAMGB int `yaml:"min_vram_gb,omitempty"  json:"min_vram_gb,omitempty"`
-}
+// The catalog schema lives in the SDK (opod-io/opod-sdk/catalog, R9.8): one
+// set of files and one set of types that the leader and the control plane
+// both read. The names below are the ones this package always used.
+type (
+	Entry            = catalog.Entry
+	SourceSpec       = catalog.Source
+	ShardingSpec     = catalog.Sharding
+	ArchitectureSpec = catalog.Architecture
+	HardwareSpec     = catalog.Hardware
+)
 
 // LoadCatalog reads every *.yaml file in dir (non-recursive) and returns parsed entries.
 // If dir is empty, the built-in resolution order is walked and **all**
@@ -148,17 +65,20 @@ func LoadCatalog(dir string) ([]Entry, error) {
 		}
 		out = got
 	} else {
-		dirs := resolveCatalogDirs()
-		if len(dirs) == 0 {
-			return nil, fmt.Errorf("no catalog directory found")
-		}
-		// Merge into a map keyed by ID; later directories overwrite earlier
-		// ones. We do not warn the user about a shadowed entry — there's no
-		// good way to surface it without spamming startup logs. The
-		// dashboard's Catalog browser shows the *effective* entry, which is
-		// what matters operationally.
+		// The bundled set is the SDK's embedded catalog (R9.8) — always
+		// present, never a directory the binary has to find. Directories
+		// override it: later ones overwrite earlier ones, keyed by id. We do
+		// not warn about a shadowed entry — the effective entry is what the
+		// listing shows, which is what matters operationally.
 		merged := map[string]Entry{}
-		for _, d := range dirs {
+		bundled, err := BundledCatalog()
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range bundled {
+			merged[e.ID] = e
+		}
+		for _, d := range resolveCatalogDirs() {
 			got, err := readCatalogDir(d)
 			if err != nil {
 				return nil, err
@@ -174,6 +94,46 @@ func LoadCatalog(dir string) ([]Entry, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SizeBytes < out[j].SizeBytes })
 	return out, nil
+}
+
+// BundledCatalog parses the SDK's embedded catalog — what `opod` knows with
+// no directory at all.
+func BundledCatalog() ([]Entry, error) {
+	names := catalog.Names()
+	out := make([]Entry, 0, len(names))
+	for _, name := range names {
+		data, err := catalog.Read(name)
+		if err != nil {
+			return nil, fmt.Errorf("bundled catalog %s: %w", name, err)
+		}
+		var e Entry
+		if err := yaml.Unmarshal(data, &e); err != nil {
+			return nil, fmt.Errorf("bundled catalog %s: %w", name, err)
+		}
+		if e.ID == "" {
+			return nil, fmt.Errorf("bundled catalog %s: missing id", name)
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// ExportBundled writes the embedded catalog as files into dir (one per
+// entry), the shape the worker entrypoint and an operator's overrides read.
+func ExportBundled(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, name := range catalog.Names() {
+		data, err := catalog.Read(name)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // readCatalogDir reads a single directory's worth of YAML files into
@@ -312,10 +272,9 @@ func resolveCatalogDirs() []string {
 			out = append(out, d)
 		}
 	}
-	add("catalog")
-	if exe, err := os.Executable(); err == nil {
-		add(filepath.Join(filepath.Dir(exe), "catalog"))
-	}
+	// Overrides only — the bundled set is embedded (BundledCatalog). The
+	// share directories stay for an operator's drop-in files and for the
+	// worker entrypoint's exported copy (identical content, harmless).
 	add("/usr/local/share/opod/catalog")
 	add("/usr/share/opod/catalog")
 	add(os.Getenv("OPOD_CATALOG_DIR")) // explicit: beats the bundled tree, yields to ~/.opod/catalog

@@ -113,7 +113,7 @@ sudo rpm -i https://github.com/opod-io/opod/releases/latest/download/opod_VERSIO
 
 (Replace `VERSION` with the latest from [Releases](https://github.com/opod-io/opod/releases). The package version stays current via your distro's normal upgrade path — `opod update` also works as an in-place binary swap for non-package installs.)
 
-**Option B — install.sh** (works everywhere; drops binary in `~/.local/bin/` and catalog in `~/.opod/catalog/`):
+**Option B — install.sh** (works everywhere; drops the binary in `~/.local/bin/`; the catalog is embedded):
 
 ```bash
 # 1. install Opod
@@ -411,7 +411,7 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
-Opod ships a curated catalog of **41 open-weight models** in `catalog/*.yaml`, spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `opod model add hf:<owner>/<repo>` (HuggingFace direct) or `opod model add ollama:<name>` (any Ollama-pullable tag). See [catalog/README.md](catalog/README.md) for the YAML schema if you want to PR an entry.
+Opod ships a curated catalog of **47 open-weight models**, embedded in the binary from [`opod-io/opod-sdk/catalog`](https://github.com/opod-io/opod-sdk) (`opod catalog ls`, `opod catalog export <dir>`), spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `opod model add hf:<owner>/<repo>` (HuggingFace direct) or `opod model add ollama:<name>` (any Ollama-pullable tag). See the SDK's `catalog/README.md` for the YAML schema if you want to PR an entry; a file dropped in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` adds or overrides one locally.
 
 > 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/audio/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
 
@@ -552,7 +552,7 @@ opod up
 5. Fetches the **latest release** binary from GitHub Releases
 6. Verifies SHA-256 against `checksums.txt`
 7. Installs to `~/.local/bin/opod` (or `/usr/local/bin/opod` with sudo)
-8. Drops the bundled model catalog (`*.yaml`) into `~/.opod/catalog/` so `opod up` works without further setup
+8. Creates `~/.opod/catalog/` for your own catalog overrides (the bundled catalog is embedded in the binary)
 9. Prints next steps + tells you if PATH needs updating
 
 ### Installer flags (after `| sh -s --`)

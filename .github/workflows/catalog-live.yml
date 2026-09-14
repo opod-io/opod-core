@@ -14,7 +14,8 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'catalog/**'
+      - 'internal/models/**'
+      - 'go.mod'
       - '.github/workflows/catalog-live.yml'
 
 permissions:
