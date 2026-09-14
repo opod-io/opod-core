@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -182,7 +183,9 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	}
 	for _, s := range shards {
 		if s.Role == "coordinator" && s.Status == "ready" {
-			eng := engines.MustNew("llamacpp", "http://"+s.Address, "")
+			// Engine-neutral gangs (R4): the coordinator row says which driver
+			// fronts it (a vLLM Ray gang, or the llama.cpp RPC default).
+			eng := engines.MustNew(coordinatorEngine(s), "http://"+s.Address, "")
 			r.mu.Lock()
 			r.remotes[cacheKey] = eng
 			r.mu.Unlock()
@@ -365,3 +368,17 @@ func startsWithScheme(s string) bool {
 
 // ensure interface satisfaction at compile time
 var _ engines.Engine = (*Router)(nil)
+
+// coordinatorEngine reads the driver name a shard coordinator row records in
+// its config ({"engine":"vllm"}); llama.cpp when it records none.
+func coordinatorEngine(s store.Shard) string {
+	if s.ConfigJSON != "" {
+		var cfg struct {
+			Engine string `json:"engine"`
+		}
+		if json.Unmarshal([]byte(s.ConfigJSON), &cfg) == nil && cfg.Engine != "" {
+			return cfg.Engine
+		}
+	}
+	return "llamacpp"
+}
