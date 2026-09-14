@@ -14,3 +14,8 @@ tags: [general, long-context, mistral]
 license: apache-2.0
 license_url: https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407/blob/main/LICENSE
 released: 2024-07-18
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 12200000000
+  layers: 40
+  heads: 32
+  kv_heads: 8

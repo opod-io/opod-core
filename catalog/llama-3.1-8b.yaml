@@ -17,3 +17,8 @@ tags: [chat, general, meta, restricted-license]
 license: llama-3.1-community
 license_url: https://www.llama.com/llama3_1/license/
 released: 2024-07-23
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 8030000000
+  layers: 32
+  heads: 32
+  kv_heads: 8

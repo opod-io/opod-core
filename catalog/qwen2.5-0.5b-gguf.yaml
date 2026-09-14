@@ -17,3 +17,8 @@ tags: [tiny, gguf, demo]
 license: apache-2.0
 license_url: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/blob/main/LICENSE
 released: 2024-09-19
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 494000000
+  layers: 24
+  heads: 14
+  kv_heads: 2
