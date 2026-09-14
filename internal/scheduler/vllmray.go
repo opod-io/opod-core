@@ -166,10 +166,14 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 			"model", entry.ID, "tp", split.TP)
 	}
 	vllmCmd := fmt.Sprintf(
-		"exec vllm serve '%s' --served-model-name '%s' --distributed-executor-backend ray "+
+		// Served under the catalog id AND the repo name, like agent.launchVLLM:
+		// the leader resolves a catalog id to the engine's native name at
+		// dispatch, so a coordinator that served the id alone answered 404
+		// "model does not exist" (design-partner cell, 2026-09-14).
+		"exec vllm serve '%s' --served-model-name '%s' '%s' --distributed-executor-backend ray "+
 			"--tensor-parallel-size %d --pipeline-parallel-size %d --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization 0.85"+eager,
-		model, entry.ID, gpusPerNode, pp, headHost, vllmPort)
+		model, entry.ID, model, gpusPerNode, pp, headHost, vllmPort)
 	vllmSpec := agent.ProcessSpec{
 		ID:      "vllm-ray-" + safeID(entry.ID),
 		Command: "/bin/sh",
@@ -196,7 +200,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	coordRec := store.Shard{
 		ID: "s-" + safeID(entry.ID) + "-vllm-ray-coord", ModelID: entry.ID, Role: "coordinator",
 		NodeID: head.ID, Address: fmt.Sprintf("%s:%d", headHost, vllmPort),
-		ProcessID: vllmSpec.ID, Status: "ready",
+		ProcessID: vllmSpec.ID, Status: "ready", ConfigJSON: `{"engine":"vllm"}`, // the router picks the driver by it
 		CreatedAt: time.Now(), LastSeen: time.Now(),
 	}
 	if err := o.Store.Shards().Create(ctx, coordRec); err != nil {
