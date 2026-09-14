@@ -17,7 +17,13 @@ import (
 )
 
 func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spec agent.ProcessSpec) (*agent.ProcessInfo, error) {
-	body, _ := json.Marshal(spec)
+	body, err := json.Marshal(spec)
+	if err != nil {
+		// A spec that cannot be encoded must fail here, named — not reach the
+		// worker as an empty body (2026-09-14: a func-typed hook on ProcessSpec
+		// did exactly that, and every gang part failed with "invalid body: EOF").
+		return nil, fmt.Errorf("encode process spec %s: %w", spec.ID, err)
+	}
 	url := workerURL(node.Address) + "/v1/process/start"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

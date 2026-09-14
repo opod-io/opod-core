@@ -32,18 +32,18 @@ func TestMergeBodyAndHeaders_Sort(t *testing.T) {
 }
 
 // TestOverridesContext_SuffixPrecedence: explicit opod.sort beats the
-// :floor/:nitro suffix hint; the suffix applies when nothing explicit
-// is present.
+// :nitro suffix hint; the suffix applies when nothing explicit is
+// present.
 func TestOverridesContext_SuffixPrecedence(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	ctx := overridesContext(req, &opodExtras{Sort: "latency"}, nil, "m", "price")
+	ctx := overridesContext(req, &opodExtras{Sort: "latency"}, nil, "m", "throughput")
 	if got := router.FromContext(ctx).Sort; got != "latency" {
 		t.Errorf("explicit sort should beat suffix, got %q", got)
 	}
 
-	ctx = overridesContext(req, nil, nil, "m", "price")
-	if got := router.FromContext(ctx).Sort; got != "price" {
+	ctx = overridesContext(req, nil, nil, "m", "throughput")
+	if got := router.FromContext(ctx).Sort; got != "throughput" {
 		t.Errorf("suffix hint should apply when nothing explicit, got %q", got)
 	}
 
@@ -55,8 +55,9 @@ func TestOverridesContext_SuffixPrecedence(t *testing.T) {
 }
 
 // TestModelAllowMiddleware_SortSuffix: an allowlist of ["x"] must
-// authorize "x:floor" — the suffix is a routing hint, not a different
-// model.
+// authorize "x:nitro" — the suffix is a routing hint, not a different
+// model. ":floor" is no longer a suffix (pricing left core), so it is
+// a different model name and the allowlist refuses it.
 func TestModelAllowMiddleware_SortSuffix(t *testing.T) {
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
@@ -84,13 +85,13 @@ func TestModelAllowMiddleware_SortSuffix(t *testing.T) {
 		mw.ServeHTTP(w, req)
 		return w.Code
 	}
-	if code := send("qwen3-14b:floor"); code != http.StatusOK {
-		t.Errorf("allowed model + :floor suffix → %d, want 200", code)
+	if code := send("qwen3-14b:floor"); code != http.StatusForbidden {
+		t.Errorf("':floor' is not a routing suffix any more → %d, want 403", code)
 	}
 	if code := send("qwen3-14b:nitro"); code != http.StatusOK {
 		t.Errorf("allowed model + :nitro suffix → %d, want 200", code)
 	}
-	if code := send("gpt-4o:floor"); code != http.StatusForbidden {
+	if code := send("gpt-4o:nitro"); code != http.StatusForbidden {
 		t.Errorf("disallowed model + suffix → %d, want 403", code)
 	}
 }

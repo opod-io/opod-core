@@ -23,7 +23,7 @@ import (
 // audit row when the request actually carried overrides (so admins can
 // see who's bypassing the catalog policy).
 //
-// sortHint is the sort mode parsed from a `:floor`/`:nitro` model-name
+// sortHint is the sort mode parsed from a `:nitro` model-name
 // suffix — lowest precedence (body field, then header, then suffix).
 // st may be nil — the audit step is best-effort.
 func overridesContext(r *http.Request, body *opodExtras, st store.Store, requestedModel, sortHint string) context.Context {

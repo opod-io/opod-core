@@ -152,3 +152,36 @@ func TestParseSchemeID(t *testing.T) {
 		}
 	}
 }
+
+// The directory an operator names in OPOD_CATALOG_DIR must beat the bundled
+// tree on an id collision: a control plane hands a leader a sharded entry
+// under a catalog model's own id, and the leader must serve that entry, not
+// the bundled one (which says nothing about sharding).
+func TestLoadCatalog_ExplicitEnvDirOverridesBundled(t *testing.T) {
+	root := t.TempDir()
+	bundled := filepath.Join(root, "catalog") // ./catalog relative to cwd = the bundled stand-in
+	explicit := filepath.Join(root, "explicit")
+	for _, d := range []string{bundled, explicit} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(dir, body string) {
+		if err := os.WriteFile(filepath.Join(dir, "m.yaml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(bundled, "id: m\ndisplay_name: bundled\nsource: {type: huggingface, repo: x/y}\n")
+	write(explicit, "id: m\ndisplay_name: explicit\nsource: {type: huggingface, repo: x/y}\nsharding: {required: true, default_shards: 2}\n")
+	t.Chdir(root)
+	t.Setenv("OPOD_CATALOG_DIR", explicit)
+	t.Setenv("HOME", filepath.Join(root, "nohome")) // no ~/.opod/catalog in the way
+	cat, err := LoadCatalog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := FindByID(cat, "m")
+	if e == nil || e.DisplayName != "explicit" || !e.Sharding.Required {
+		t.Fatalf("the OPOD_CATALOG_DIR entry must win over ./catalog: %+v", e)
+	}
+}

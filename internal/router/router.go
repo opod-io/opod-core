@@ -114,11 +114,6 @@ type Router struct {
 	// metrics, but no reordering). Also feeds `sort: latency|throughput`.
 	latency *latencyStats
 
-	// priceFn resolves a model id to its combined $/1K-token rate for
-	// `sort: price` / `:floor`. nil disables price sorting (chain is
-	// left in catalog order). Set via SetPriceResolver.
-	priceFn func(modelID string) float64
-
 	// Placement cooldown ("penalty box"): a worker node that errors
 	// `placementAllowedFails` times in a row is parked for
 	// `placementCooldownDur` so pick() skips it instead of routing

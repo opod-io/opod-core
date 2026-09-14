@@ -226,18 +226,6 @@ func modelInfo(id string, asJSON bool) {
 			bold, reset, strings.Join(entry.FallbackOnContentPolicy, " → "))
 	}
 
-	// Pricing — vendor lookup first, then the catalog override if set.
-	pp, pc := models.PriceFor(entry.ID, []models.Entry{*entry})
-	if pp > 0 || pc > 0 {
-		// Render as $/M tokens so the line reads like the vendor's
-		// posted rate ("$3.00 / 1M prompt").
-		fmt.Printf("  %sPricing%s        $%.2f / 1M prompt · $%.2f / 1M completion\n",
-			bold, reset, pp*1000, pc*1000)
-	} else {
-		fmt.Printf("  %sPricing%s        %sfree (no cost tracking — open weights on your hardware)%s\n",
-			bold, reset, dim, reset)
-	}
-
 	// Install + usage snippets — shape depends on what this model does.
 	hasCap := func(c string) bool {
 		for _, x := range entry.Capabilities {

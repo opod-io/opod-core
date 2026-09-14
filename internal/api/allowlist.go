@@ -61,8 +61,8 @@ func ModelAllowMiddleware(st store.Store) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			// A `:floor`/`:nitro` routing suffix is not part of the model
-			// identity — an allowlist of ["x"] authorizes "x:floor".
+			// A `:nitro` routing suffix is not part of the model
+			// identity — an allowlist of ["x"] authorizes "x:nitro".
 			model, _ = models.SplitSortSuffix(model)
 			if !ModelAllowed(key.AllowedModels, model) {
 				auditRefusal(r.Context(), st, key, model)
@@ -78,7 +78,7 @@ func ModelAllowMiddleware(st store.Store) func(http.Handler) http.Handler {
 // using the API key on ctx. Handlers call this after default/auto
 // substitution — ModelAllowMiddleware only sees the model the client
 // actually sent, so an omitted model would otherwise bypass the
-// allowlist via the configured default. A `:floor`/`:nitro` routing
+// allowlist via the configured default. A `:nitro` routing
 // suffix is stripped first, consistent with the middleware. Returns
 // true when no key (or no restriction) is attached.
 func modelAllowedForKey(ctx context.Context, model string) bool {

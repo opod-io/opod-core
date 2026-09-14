@@ -114,10 +114,10 @@ type opodExtras struct {
 	NumRetries     int      `json:"num_retries,omitempty"`
 	RetryBackoffMS int      `json:"retry_backoff_ms,omitempty"`
 	Hedge          bool     `json:"hedge,omitempty"`
-	// Sort reorders the candidate chain by a metric: price | latency |
-	// throughput. The `:floor` / `:nitro` model-name suffixes are
-	// shortcuts for price / throughput; this explicit field wins over
-	// a suffix when both are present.
+	// Sort reorders the candidate chain by a metric: latency |
+	// throughput. The `:nitro` model-name suffix is a shortcut for
+	// throughput; this explicit field wins over the suffix when both
+	// are present.
 	Sort  string `json:"sort,omitempty"`
 	Cache *struct {
 		Namespace string `json:"namespace,omitempty"`
@@ -210,7 +210,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip an OpenRouter-style `:floor` / `:nitro` routing suffix before
+	// Strip an OpenRouter-style `:nitro` routing suffix before
 	// model resolution — it's a routing hint, not part of the model id.
 	// Usage records and the response `model` field carry the base id.
 	requested, sortHint := models.SplitSortSuffix(req.Model)
@@ -249,7 +249,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Per-request routing overrides (opod.fallbacks / opod.num_retries /
 	// opod.retry_backoff_ms / opod.sort in the body or X-Opod-*
-	// headers, plus any :floor/:nitro suffix) attach to the context the
+	// headers, plus any :nitro suffix) attach to the context the
 	// router reads.
 	ctx := overridesContext(r, req.Opod, h.Store, requested, sortHint)
 

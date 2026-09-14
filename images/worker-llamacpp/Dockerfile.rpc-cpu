@@ -1,0 +1,79 @@
+# opod worker — llama.cpp on the CPU, WITH RPC sharding support.
+#
+# The upstream ggml image (ghcr.io/ggml-org/llama.cpp:full) is compiled WITHOUT
+# the RPC backend: no rpc-server, no --rpc on llama-server, so a CPU worker could
+# serve a whole model but never be a part of a gang. That made every gang drill
+# a GPU drill — including the one that protects endpoint lifecycle isolation
+# for gangs (ARCHITECTURE D10, scenario A12), which needs no GPU at all.
+#
+# Same shape as Dockerfile.rpc-cuda, minus CUDA: keep the base's llama-server
+# for whole-model serving, ADD a source-built RPC pair in /opt/llama-rpc for
+# N>=2 (each part's rpc-server + the coordinator `llama-server --rpc`). The
+# hard-won bits from the CUDA recipe apply unchanged: current llama.cpp names
+# the binary ggml-rpc-server (opod execs `rpc-server`, so a wrapper exposes that
+# name); llama-server's web UI is fetched at build time keyed off the git build
+# number, so HF_UI_VERSION is pinned to the release tag; ggml discovers backends
+# from the process CWD, so the RPC binaries run from /opt/llama-rpc.
+#
+# The compile is a few minutes of C++ on the BUILD platform — never emulated:
+# the local lane builds the arm64 image on Apple silicon and CI builds amd64 on
+# an amd64 runner, each natively (images/build.sh, --multi composes the index).
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full
+ARG LLAMA_RELEASE=b9934
+
+# --- 1) opod binary ---------------------------------------------------------
+FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
+
+# --- 2) RPC pair: source build (CPU backend + GGML_RPC=ON) -------------------
+FROM debian:bookworm AS rpc-cpu
+ARG LLAMA_RELEASE
+ENV HF_UI_VERSION=${LLAMA_RELEASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git cmake build-essential libcurl4-openssl-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch ${LLAMA_RELEASE} https://github.com/ggml-org/llama.cpp /src
+# GGML_NATIVE=OFF: the image runs on any CPU of its architecture, not only the
+# builder's; the CPU backend picks the best kernel variant at run time.
+RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
+      -DGGML_RPC=ON -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF && \
+    (cmake --build /build -j"$(nproc)" --target llama-server ggml-rpc-server || \
+     cmake --build /build -j"$(nproc)")
+RUN set -eux; mkdir -p /opt/llama-rpc; cp /build/bin/* /opt/llama-rpc/; \
+    test -f /opt/llama-rpc/ggml-rpc-server; test -f /opt/llama-rpc/llama-server
+
+# --- 3) the worker image ----------------------------------------------------
+FROM ${BASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash curl ca-certificates procps && rm -rf /var/lib/apt/lists/*
+COPY --from=opod /opod /usr/local/bin/opod
+COPY catalog /usr/local/share/opod/catalog
+COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --from=rpc-cpu /opt/llama-rpc /opt/llama-rpc
+
+# rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends load.
+RUN set -eux; \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport GGML_BACKEND_PATH=/opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+      > /usr/local/bin/rpc-server; \
+    chmod +x /usr/local/bin/rpc-server
+
+# llama-server: --rpc → the RPC build (the base's /app has no --rpc), otherwise
+# the base's llama-server, exactly as the CUDA image routes it.
+RUN set -eux; \
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export GGML_BACKEND_PATH=/opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
+      > /usr/local/bin/llama-server; \
+    chmod +x /usr/local/bin/llama-server
+
+# /usr/local/bin BEFORE /app so the wrappers win.
+ENV PATH=/usr/local/bin:/app:$PATH \
+    OPOD_ROLE=worker OPOD_ENGINE=llamacpp \
+    OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

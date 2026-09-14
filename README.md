@@ -729,7 +729,7 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |
 | `<NAME>_BASE_URL` | overrides a registry provider's base URL (e.g. `DEEPSEEK_BASE_URL`, `CLOUDFLARE_BASE_URL`) |
-| `OPOD_CATALOG_DIR` | `catalog_dir` — overrides catalog lookup. Default search order: `$OPOD_CATALOG_DIR` → `./catalog` → `<exe-dir>/catalog` → `~/.opod/catalog` (curl installer) → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) |
+| `OPOD_CATALOG_DIR` | `catalog_dir` — a catalog directory merged over the bundled one: every directory that exists is merged and a later one wins on an id collision, in the order `./catalog` → `<exe-dir>/catalog` → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) → `$OPOD_CATALOG_DIR` → `~/.opod/catalog` (user overrides, most authoritative) |
 | `OPOD_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `OPOD_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
 | `OPOD_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader supports HMAC node auth (any current release). |

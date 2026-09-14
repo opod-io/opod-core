@@ -84,7 +84,7 @@ type ProcessSpec struct {
 	// start until a knob is changed and says so (vLLM: "estimated maximum model
 	// length is N" when a VRAM budget cannot hold the model's full context).
 	// Returning false restarts unchanged.
-	Adapt func(tail []string) ([]string, bool)
+	Adapt func(tail []string) ([]string, bool) `json:"-"` // never on the wire: a leader ships a ProcessSpec to a worker as JSON
 }
 
 // ProcessInfo is the observable state of a managed process.
