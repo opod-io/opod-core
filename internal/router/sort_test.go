@@ -5,47 +5,7 @@ import (
 	"time"
 )
 
-func newSortTestRouter() *Router {
-	r := New(nil, nil)
-	r.SetPriceResolver(func(m string) float64 {
-		switch m {
-		case "free-local":
-			return 0
-		case "cheap-vendor":
-			return 0.5
-		case "pricey-vendor":
-			return 18.0
-		}
-		return 0
-	})
-	return r
-}
-
-func TestSortChainPrice(t *testing.T) {
-	r := newSortTestRouter()
-	got := r.sortChain([]string{"pricey-vendor", "free-local", "cheap-vendor"}, SortPrice)
-	want := []string{"free-local", "cheap-vendor", "pricey-vendor"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("price sort = %v, want %v", got, want)
-		}
-	}
-	// Without a resolver the chain is untouched.
-	r2 := New(nil, nil)
-	got2 := r2.sortChain([]string{"b", "a"}, SortPrice)
-	if got2[0] != "b" {
-		t.Errorf("price sort without resolver must preserve order, got %v", got2)
-	}
-}
-
-func TestSortChainPriceStableOnTies(t *testing.T) {
-	r := newSortTestRouter()
-	// Both free → catalog preference order must survive.
-	got := r.sortChain([]string{"free-local", "also-free", "cheap-vendor"}, SortPrice)
-	if got[0] != "free-local" || got[1] != "also-free" {
-		t.Errorf("tie order not stable: %v", got)
-	}
-}
+func newSortTestRouter() *Router { return New(nil, nil) }
 
 func TestSortChainLatency(t *testing.T) {
 	r := newSortTestRouter()
@@ -89,7 +49,7 @@ func TestOverridesSortClamp(t *testing.T) {
 	if got := (Overrides{Sort: "cheapest"}).Clamp().Sort; got != "" {
 		t.Errorf("unknown sort must clamp to empty, got %q", got)
 	}
-	if got := (Overrides{Sort: SortPrice}).Clamp().Sort; got != SortPrice {
+	if got := (Overrides{Sort: SortLatency}).Clamp().Sort; got != SortLatency {
 		t.Errorf("valid sort must survive Clamp, got %q", got)
 	}
 	if !(Overrides{Sort: SortLatency}).IsSet() {

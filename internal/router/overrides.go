@@ -39,11 +39,11 @@ type Overrides struct {
 	Hedge bool
 
 	// Sort reorders the candidate chain by a metric instead of walking
-	// it in catalog-preference order: "price" (cheapest first — free
-	// local models beat vendor egress), "latency" (lowest rolling p95
-	// first), or "throughput" (highest tokens/sec first). Set from
-	// `opod.sort` / X-Opod-Sort, or via the `:floor` (price) and
-	// `:nitro` (throughput) model-name suffixes. Empty = unset.
+	// it in catalog-preference order: "latency" (lowest rolling p95
+	// first) or "throughput" (highest tokens/sec first). Set from
+	// `opod.sort` / X-Opod-Sort, or via the `:nitro` (throughput)
+	// model-name suffix. Empty = unset. (A price sort left with vendor
+	// egress and dollar budgets — ADR-003/022; core prices nothing.)
 	Sort string
 }
 
@@ -96,7 +96,7 @@ func (o Overrides) Clamp() Overrides {
 		o.RetryBackoffMS = RetryBackoffCapMS
 	}
 	switch o.Sort {
-	case "", SortPrice, SortLatency, SortThroughput:
+	case "", SortLatency, SortThroughput:
 	default:
 		o.Sort = "" // unknown mode — ignore rather than 400 (forward compat)
 	}

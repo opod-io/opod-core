@@ -6,7 +6,8 @@ func TestSplitSortSuffix(t *testing.T) {
 	cases := []struct {
 		in, base, sort string
 	}{
-		{"qwen3.6-27b:floor", "qwen3.6-27b", SortPrice},
+		// `:floor` (price) is gone with pricing (ADR-003/022): not a suffix any more.
+		{"qwen3.6-27b:floor", "qwen3.6-27b:floor", ""},
 		{"qwen3.6-27b:nitro", "qwen3.6-27b", SortThroughput},
 		// Ordinary Ollama tags with colons must pass through untouched.
 		{"qwen3:8b", "qwen3:8b", ""},
@@ -27,12 +28,12 @@ func TestSplitSortSuffix(t *testing.T) {
 }
 
 func TestValidSort(t *testing.T) {
-	for _, ok := range []string{"", SortPrice, SortLatency, SortThroughput} {
+	for _, ok := range []string{"", SortLatency, SortThroughput} {
 		if !ValidSort(ok) {
 			t.Errorf("ValidSort(%q) = false, want true", ok)
 		}
 	}
-	for _, bad := range []string{"cheap", "fastest", "PRICE"} {
+	for _, bad := range []string{"cheap", "fastest", "PRICE", "price"} {
 		if ValidSort(bad) {
 			t.Errorf("ValidSort(%q) = true, want false", bad)
 		}

@@ -37,7 +37,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	chain, source, chains := r.chainFor(req.Model, ov)
 	switch {
 	case ov.Sort != "":
-		// Explicit per-request sort (`opod.sort` / `:floor` / `:nitro`)
+		// Explicit per-request sort (`opod.sort` / `:nitro`)
 		// wins over the latency-pressure reorder. Applies to per-request
 		// chains too — sorting an explicit fallback list is still the
 		// client's stated intent.

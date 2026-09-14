@@ -81,13 +81,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 			ContentPolicy: entry.FallbackOnContentPolicy,
 		}
 	})
-	// Price resolver for `sort: price` / `:floor` — combined prompt +
-	// completion $/1K from the catalog + vendor pricing table. Free
-	// local models return 0 and sort first.
-	routed.SetPriceResolver(func(modelID string) float64 {
-		pp, pc := models.PriceFor(modelID, cat)
-		return pp + pc
-	})
 	// Latency-aware fallback (Bet #1): opt-in via router.latency_fallback_p95_seconds.
 	// Zero (default) leaves behavior unchanged.
 	if cfg.Router.LatencyFallbackP95Seconds > 0 {

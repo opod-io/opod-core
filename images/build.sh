@@ -64,7 +64,7 @@ spec() {
     leader)          echo "opod-leader images/leader/Dockerfile - amd64,arm64" ;;
     llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda amd64" ;;
     llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full-rocm amd64" ;;
-    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full amd64,arm64" ;;
+    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full amd64,arm64" ;;
     llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full-intel amd64" ;;
     vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1 amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;

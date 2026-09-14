@@ -62,16 +62,6 @@ type Entry struct {
 	// policy grounds. Typically points at an open-weight or
 	// permissively-aligned model. Empty falls back to `Fallback`.
 	FallbackOnContentPolicy []string `yaml:"fallback_on_content_policy,omitempty" json:"fallback_on_content_policy,omitempty"`
-
-	// PricePromptUSDPer1K and PriceCompletionUSDPer1K are the pricing
-	// rates per 1k tokens. 0 (default) means "free / no cost tracking" —
-	// the right answer for open-weight models running on the operator's
-	// hardware. Non-zero values are typically used by vendor proxies
-	// (Claude, GPT, etc., but the vendor table in `vendor_pricing.go`
-	// covers those automatically) or by operators who want to internally
-	// charge departments for compute time.
-	PricePromptUSDPer1K     float64 `yaml:"price_prompt_usd_per_1k,omitempty" json:"price_prompt_usd_per_1k,omitempty"`
-	PriceCompletionUSDPer1K float64 `yaml:"price_completion_usd_per_1k,omitempty" json:"price_completion_usd_per_1k,omitempty"`
 }
 
 // SourceSpec describes where to fetch model weights from.
@@ -115,12 +105,17 @@ type HardwareSpec struct {
 //
 // Merge precedence (last writer wins):
 //
-//  1. $OPOD_CATALOG_DIR        (least authoritative)
-//  2. ./catalog (relative to cwd)
-//  3. <exe-dir>/catalog
-//  4. /usr/local/share/opod/catalog
-//  5. /usr/share/opod/catalog
+//  1. ./catalog (relative to cwd)              (bundled — least authoritative)
+//  2. <exe-dir>/catalog
+//  3. /usr/local/share/opod/catalog
+//  4. /usr/share/opod/catalog
+//  5. $OPOD_CATALOG_DIR        (the catalog the operator points at — wins over the bundled tree)
 //  6. ~/.opod/catalog          (most authoritative — user overrides)
+//
+// $OPOD_CATALOG_DIR sat first (least authoritative) until 2026-09-14: an
+// entry there that reused a bundled id was silently shadowed by the bundled
+// one, so a leader given a sharded entry for a catalog model answered "not
+// configured for sharding". Whoever names the directory means it.
 //
 // An explicit non-empty dir argument skips the merge and reads only
 // that directory (used by tests and callers that know exactly what they
@@ -302,13 +297,13 @@ func resolveCatalogDirs() []string {
 			out = append(out, d)
 		}
 	}
-	add(os.Getenv("OPOD_CATALOG_DIR"))
 	add("catalog")
 	if exe, err := os.Executable(); err == nil {
 		add(filepath.Join(filepath.Dir(exe), "catalog"))
 	}
 	add("/usr/local/share/opod/catalog")
 	add("/usr/share/opod/catalog")
+	add(os.Getenv("OPOD_CATALOG_DIR")) // explicit: beats the bundled tree, yields to ~/.opod/catalog
 	if home, err := os.UserHomeDir(); err == nil {
 		add(filepath.Join(home, ".opod", "catalog"))
 	}

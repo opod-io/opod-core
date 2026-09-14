@@ -122,7 +122,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Routing suffixes work here too (`nomic-embed-text:floor`), though
+	// The routing suffix works here too (`nomic-embed-text:nitro`), though
 	// embedding chains are short — strip so the engine sees the base id.
 	requested, sortHint := models.SplitSortSuffix(req.Model)
 	if requested == "" {

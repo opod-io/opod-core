@@ -34,7 +34,7 @@ Bootstrap it from the last CI-built worker without compiling: `images/build.sh r
 | `opod-leader` | `leader/` | debian:bookworm-slim |
 | `opod-worker-llamacpp-nvidia` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-cuda |
 | `opod-worker-llamacpp-amd` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-rocm |
-| `opod-worker-llamacpp-cpu` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full (CPU; dev clusters, kind CI, a GPU-less node the plan names — the control plane's vendor "none") |
+| `opod-worker-llamacpp-cpu` | `worker-llamacpp/` (`Dockerfile.rpc-cpu`) | ghcr.io/ggml-org/llama.cpp:full (CPU; dev clusters, kind CI, a GPU-less node the plan names — the control plane's vendor "none") **plus a source-built RPC pair** in `/opt/llama-rpc` since 2026-09-14 (the upstream image has no rpc-server and no `--rpc`), so a CPU worker can be a part of a gang — the laptop gang drills (A12, D10) need no GPU. A few minutes of C++ on the build platform, never emulated: the local lane builds arm64 natively on Apple silicon, CI builds amd64 |
 | `opod-worker-llamacpp-intel` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver — unproven until an Intel node has a driver) |
 | `opod-worker-vllm-nvidia` | `worker-vllm/` | vllm/vllm-openai:v0.27.1 |
 | `opod-worker-vllm-amd` | `worker-vllm/` | rocm/vllm — **one build per GPU family, not one image**: `…_rdna_…` for Radeon / Radeon Pro (gfx11xx, the default) and `…_cdna_…` for Instinct MI2xx/MI3xx (gfx9xx). Neither runs the other's kernels. Override with `VLLM_AMD_BASE=`. ~25 GB base; not built by default. |
