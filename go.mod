@@ -30,7 +30,7 @@ require (
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
-	github.com/opod-io/opod-sdk v0.1.0
+	github.com/opod-io/opod-sdk v0.2.0
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
@@ -53,6 +53,3 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
-
-// Until opod-sdk v0.2.0 is tagged (R9.4/R9.8 add fields): the sibling checkout.
-replace github.com/opod-io/opod-sdk => ../opod-sdk
