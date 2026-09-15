@@ -13,6 +13,7 @@ import (
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/metrics"
 	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod/internal/router"
 )
 
 // ---- /v1/embeddings ----
@@ -129,16 +130,21 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "model is required")
 		return
 	}
-	resolved, err := h.ResolveModel(requested)
-	if err != nil {
+	// Validate the model exists, but do NOT substitute the engine-native
+	// name: the router routes by CATALOG id (placements are catalog-keyed)
+	// and resolves to the native name at dispatch, exactly as ChatCompletions
+	// does. Passing the native name here made the placement lookup miss
+	// every worker and fall through to the local engine.
+	if _, err := h.ResolveModel(requested); err != nil {
 		writeJSONError(w, http.StatusNotFound, "model_not_found", err.Error())
 		return
 	}
 
+	r = r.WithContext(router.WithTrace(r.Context())) // which worker served it → usage row
 	ctx := overridesContext(r, nil, h.Store, requested, sortHint)
 	start := time.Now()
 	res, err := ee.Embed(ctx, engines.EmbedRequest{
-		Model:  resolved,
+		Model:  requested,
 		Inputs: inputs,
 	})
 	if err != nil {

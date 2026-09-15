@@ -7,7 +7,7 @@ import (
 
 // routeTrace is a per-request slot the router fills with the node it
 // dispatched to, so the usage record can attribute the request to a worker.
-// The API handler installs it with WithTrace; pick()'s callers note the node
+// The API handler installs it with WithTrace; pick()'s callers NoteNode
 // on every dispatch (a fallback to another worker overwrites), and
 // recordUsage reads it back with NodeFrom. Absent slot = no-op everywhere.
 type routeTrace struct {
@@ -22,7 +22,9 @@ func WithTrace(ctx context.Context) context.Context {
 	return context.WithValue(ctx, traceKey{}, &routeTrace{})
 }
 
-func noteNode(ctx context.Context, nodeID string) {
+// NoteNode records the worker a dispatch went to, for the usage row. Called
+// on every attempt (a fallback overwrites); a no-op when no trace is installed.
+func NoteNode(ctx context.Context, nodeID string) {
 	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
 		t.mu.Lock()
 		t.node = nodeID

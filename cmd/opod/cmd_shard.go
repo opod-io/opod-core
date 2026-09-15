@@ -19,7 +19,7 @@ func cmdShard(args []string) {
 		examples: []string{
 			"opod shard create llama-3.3-70b-sharded 2          # split across 2 auto-picked workers",
 			"opod shard create llama-3.3-70b-sharded --nodes gpu-a,gpu-b  # pin to specific machines",
-			"opod shard create llama-3.3-70b-sharded --nodes Titan  # N=1: whole model on one machine, no split",
+			"opod shard create llama-3.3-70b-sharded --nodes node-a  # N=1: whole model on one machine, no split",
 			"opod shard create mimo-7b-ray --nodes gpu-a,gpu-b --tp 2  # vLLM TENSOR-parallel across 2 machines",
 			"opod shard create mimo-7b-ray --nodes gpu-a,gpu-b --pp 2  # vLLM PIPELINE-parallel (the default)",
 			"opod shard ls",

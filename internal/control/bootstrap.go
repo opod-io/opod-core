@@ -74,7 +74,7 @@ func SeedJoinToken(ctx context.Context, st store.Store, cfg *config.Config) (See
 	rec := store.APIKey{
 		ID:        "k_seed_" + hash[:12],
 		Hash:      hash,
-		Name:      "fleet-join (seeded)",
+		Name:      "node-join (seeded)",
 		Scope:     "node",
 		CreatedAt: time.Now(),
 	}

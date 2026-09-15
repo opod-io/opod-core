@@ -2,13 +2,13 @@
 
 > **Self-hosted AI for your team. One endpoint. Your hardware.**
 
-[![License](https://img.shields.io/github/license/opod-io/opod?color=blue)](LICENSE)
-[![Go](https://img.shields.io/github/go-mod/go-version/opod-io/opod)](go.mod)
-[![Release](https://img.shields.io/github/v/release/opod-io/opod?sort=semver)](https://github.com/opod-io/opod/releases/latest)
-[![CI](https://github.com/opod-io/opod/actions/workflows/ci.yml/badge.svg)](https://github.com/opod-io/opod/actions/workflows/ci.yml)
-[![Auto-release](https://github.com/opod-io/opod/actions/workflows/auto-release.yml/badge.svg)](https://github.com/opod-io/opod/actions/workflows/auto-release.yml)
+[![License](https://img.shields.io/github/license/opod-io/opod-core?color=blue)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/opod-io/opod-core)](go.mod)
+[![Release](https://img.shields.io/github/v/release/opod-io/opod-core?sort=semver)](https://github.com/opod-io/opod-core/releases/latest)
+[![CI](https://github.com/opod-io/opod-core/actions/workflows/ci.yml/badge.svg)](https://github.com/opod-io/opod-core/actions/workflows/ci.yml)
+[![Auto-release](https://github.com/opod-io/opod-core/actions/workflows/auto-release.yml/badge.svg)](https://github.com/opod-io/opod-core/actions/workflows/auto-release.yml)
 
-[**opod.io**](https://opod.io) · [GitHub](https://github.com/opod-io/opod) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
+[**opod.io**](https://opod.io) · [GitHub](https://github.com/opod-io/opod-core) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
 
 >
 > Engine-agnostic: bring **Ollama**, **vLLM**, **MLX-LM**, or **llama.cpp-RPC**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware, shard a giant model across several machines via llama.cpp-RPC, and transparently fall back to paid Claude / GPT only when you choose.
@@ -102,16 +102,16 @@ OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
 
 ```bash
 # Debian / Ubuntu / Raspbian (arm64 example — also amd64)
-curl -LO https://github.com/opod-io/opod/releases/latest/download/opod_VERSION_linux_arm64.deb
+curl -LO https://github.com/opod-io/opod-core/releases/latest/download/opod_VERSION_linux_arm64.deb
 sudo dpkg -i opod_VERSION_linux_arm64.deb
 # Binary at /usr/bin/opod, catalog at /usr/share/opod/catalog
 # Recommends llama.cpp for sharding — install via apt if you want it.
 
 # Fedora / RHEL / CentOS
-sudo rpm -i https://github.com/opod-io/opod/releases/latest/download/opod_VERSION_linux_amd64.rpm
+sudo rpm -i https://github.com/opod-io/opod-core/releases/latest/download/opod_VERSION_linux_amd64.rpm
 ```
 
-(Replace `VERSION` with the latest from [Releases](https://github.com/opod-io/opod/releases). The package version stays current via your distro's normal upgrade path — `opod update` also works as an in-place binary swap for non-package installs.)
+(Replace `VERSION` with the latest from [Releases](https://github.com/opod-io/opod-core/releases). The package version stays current via your distro's normal upgrade path — `opod update` also works as an in-place binary swap for non-package installs.)
 
 **Option B — install.sh** (works everywhere; drops the binary in `~/.local/bin/`; the catalog is embedded):
 
@@ -176,7 +176,7 @@ codex
 
 ## What's shipped
 
-See [CHANGELOG.md](CHANGELOG.md) for the full feature inventory, grouped by area (core, CLI ergonomics, multi-node + sharding, routing intelligence, multi-tenancy, observability, web UI, connect snippets, release + ops). For the per-release diff see [Releases](https://github.com/opod-io/opod/releases) — every `feat:` / `fix:` commit on `main` cuts a new tag automatically.
+See [CHANGELOG.md](CHANGELOG.md) for the full feature inventory, grouped by area (core, CLI ergonomics, multi-node + sharding, routing intelligence, multi-tenancy, observability, web UI, connect snippets, release + ops). For the per-release diff see [Releases](https://github.com/opod-io/opod-core/releases) — every `feat:` / `fix:` commit on `main` cuts a new tag automatically.
 
 **For new users**: see [QUICKSTART.md](QUICKSTART.md) — 3-minute install + first chat completion.
 **For full usage docs**: keep reading this file.
@@ -603,8 +603,8 @@ rm -rf ~/.opod                 # catalog + data + config (destructive)
 ### Build from source
 
 ```bash
-git clone https://github.com/opod-io/opod
-cd opod
+git clone https://github.com/opod-io/opod-core
+cd opod-core
 go build -o opod ./cmd/opod
 ./opod version
 ```
@@ -624,7 +624,7 @@ Requires Go 1.25+. See [ARCHITECTURE.md → Build from source](ARCHITECTURE.md#b
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `curl: (22) … 404` from installer | No release yet for your platform | Check https://github.com/opod-io/opod/releases ; specify `--version` if needed |
+| `curl: (22) … 404` from installer | No release yet for your platform | Check https://github.com/opod-io/opod-core/releases ; specify `--version` if needed |
 | `command not found: opod` after install | Install dir not on PATH | `export PATH="$HOME/.local/bin:$PATH"` in your shell rc |
 | `opod up` works, but chat returns 502 `llama-server binary not found` | Homebrew `ollama` formula on Apple Silicon | `brew uninstall ollama && brew install --cask ollama` |
 | `opod up` says "engine not reachable" | Ollama daemon not running | `ollama serve &` (Linux: `sudo systemctl start ollama`) |
