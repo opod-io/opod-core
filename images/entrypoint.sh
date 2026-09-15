@@ -69,7 +69,8 @@ fi
 
 # Wait for the leader (its Service may exist before the pod is ready).
 for i in $(seq 1 120); do
-  curl -sf -m 3 "$OPOD_LEADER_URL/healthz" >/dev/null 2>&1 && break
+  # A TLS leader (R9.5) is trusted through the certificate the control plane mounted (OPOD_LEADER_CA).
+  curl -sf -m 3 ${OPOD_LEADER_CA:+--cacert "$OPOD_LEADER_CA"} "$OPOD_LEADER_URL/healthz" >/dev/null 2>&1 && break
   [ $i -eq 120 ] && { log "leader $OPOD_LEADER_URL unreachable"; exit 1; }
   sleep 5
 done
