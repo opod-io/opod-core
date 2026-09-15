@@ -22,11 +22,11 @@ type Config struct {
 	// file the leader's listener speaks TLS — the north side of an endpoint
 	// (ADR-005: TLS on the north side; a control plane mints one per
 	// endpoint). Empty = plain http, as before.
-	TLSCert string `yaml:"tls_cert"`
-	TLSKey  string `yaml:"tls_key"`
-	DataDir     string `yaml:"data_dir"`
-	LogLevel    string `yaml:"log_level"`
-	CatalogDir  string `yaml:"catalog_dir"`
+	TLSCert    string `yaml:"tls_cert"`
+	TLSKey     string `yaml:"tls_key"`
+	DataDir    string `yaml:"data_dir"`
+	LogLevel   string `yaml:"log_level"`
+	CatalogDir string `yaml:"catalog_dir"`
 	// MaxBodyBytes caps the request body size on the /v1/* API surface.
 	// 0 (default) uses the server's built-in 32 MiB ceiling. Env
 	// override: OPOD_MAX_BODY_BYTES.
