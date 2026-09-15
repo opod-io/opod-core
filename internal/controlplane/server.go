@@ -38,12 +38,12 @@ type Server struct {
 	log    *slog.Logger
 	http   *http.Server
 
-	router    *router.Router
-	orch      *scheduler.Orchestrator
+	router *router.Router
+	orch   *scheduler.Orchestrator
 	// listener is the bound socket (Start); Addr reads it for tests and for
 	// a Listen of ":0".
-	listenMu sync.Mutex
-	listener net.Listener
+	listenMu  sync.Mutex
+	listener  net.Listener
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
 	load      loadStats
