@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -599,6 +600,32 @@ func distEnv(host string) map[string]string {
 // coordinator the router dials. Every rank is a shard row so the gang lists and
 // tears down whole. Ports are pinned (not Ray's random range) so the fixed set
 // has a chance of traversing the overlay. k GPUs per rank per build item 5.
+
+// RemoveShardsOn removes every shard group with a part recorded on the node
+// — the R10.1 answer to a worker whose process changed (boot id): nothing
+// recorded on the previous process is running, so no process list is
+// consulted. Returns the models whose groups went.
+func (o *Orchestrator) RemoveShardsOn(ctx context.Context, nodeID string) (removed []string, err error) {
+	all, err := o.Store.Shards().List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	gone := map[string]bool{}
+	for _, s := range all {
+		if s.NodeID == nodeID {
+			gone[s.ModelID] = true
+		}
+	}
+	for modelID := range gone {
+		if err := o.RemoveSharded(ctx, modelID); err != nil {
+			o.Log.Warn("stale shard removal failed", "model", modelID, "node", nodeID, "err", err)
+			continue
+		}
+		removed = append(removed, modelID)
+	}
+	sort.Strings(removed)
+	return removed, nil
+}
 
 // ReconcileNode compares the shard rows recorded on one worker with the
 // processes that worker reports running, and removes every shard group

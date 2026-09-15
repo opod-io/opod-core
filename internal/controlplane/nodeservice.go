@@ -31,6 +31,7 @@ type RegisterRequest struct {
 	RAMGB        int    `json:"ram_gb"`
 	Address      string `json:"address"`
 	HardwareJSON string `json:"hardware_json"`
+	BootID       string `json:"boot_id"` // the worker process (R10.1); "" = a worker that predates the field
 }
 
 // HeartbeatRequest is the worker's periodic ping.
@@ -39,6 +40,7 @@ type HeartbeatRequest struct {
 	LoadedModels []string            `json:"loaded_models"`
 	Load         *engines.EngineLoad `json:"load"`     // optional engine load sample (build item 14)
 	Sleeping     bool                `json:"sleeping"` // sleep tier (build item 13): the engine sleeps, its placements are not routable
+	BootID       string              `json:"boot_id"`  // the worker process (R10.1)
 }
 
 // Caller is who is calling: admin keys pass every binding; a node key owns
@@ -68,20 +70,77 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 	n := store.Node{
 		ID: req.ID, Hostname: req.Hostname, OS: req.OS, Arch: req.Arch, RAMGB: req.RAMGB, Address: req.Address,
 		WorkerToken: bearer, BoundKeyID: boundKeyID, HardwareJSON: req.HardwareJSON, LastHeartbeat: time.Now(), State: "ready",
+		BootID: req.BootID,
 	}
 	if err := s.store.Nodes().Upsert(ctx, n); err != nil {
 		return store.Node{}, err
 	}
 	if existing != nil {
-		// A node the leader already holds is registering again: a new
-		// incarnation. What was recorded as running on it is checked against
-		// the worker's own process list on its next heartbeat (its agent is
-		// listening by then), and a shard group whose part is gone is removed
-		// so the manager re-creates it on the parts that exist now.
-		s.reconcileNodes.Store(n.ID, struct{}{})
+		switch incarnation(existing.BootID, req.BootID) {
+		case incarnationNew:
+			// A different process behind the same node id (R10.1): every row
+			// keyed to the old one is gone with it — no process-list answer
+			// needed.
+			s.reincarnated(ctx, n, existing.BootID)
+		case incarnationUnknown:
+			// A worker that predates boot ids: what was recorded as running
+			// on it is checked against its own process list on the next
+			// heartbeat (its agent is listening by then).
+			s.reconcileNodes.Store(n.ID, struct{}{})
+		}
 	}
-	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address, "again": existing != nil})
+	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address, "again": existing != nil, "boot_id": n.BootID})
 	return n, nil
+}
+
+// incarnation compares the boot id a row holds with the one a request
+// carries.
+type incarnationKind int
+
+const (
+	incarnationSame    incarnationKind = iota // the same process
+	incarnationNew                            // both known, different: a new process
+	incarnationUnknown                        // a side has no boot id (a worker from before the field): only a process-list check can tell
+)
+
+func incarnation(recorded, presented string) incarnationKind {
+	switch {
+	case recorded != "" && presented != "" && recorded != presented:
+		return incarnationNew
+	case recorded == "" || presented == "":
+		return incarnationUnknown
+	}
+	return incarnationSame
+}
+
+// reincarnated drops what the leader recorded on a node's previous process:
+// its placements now (the new process reports its own on the next
+// heartbeat) and every shard group with a part on it — the part's process
+// died with the old incarnation, and a row that still read "ready" would
+// route a coordinator that no longer answers. The stop calls of the shard
+// teardown go to the workers off the request path.
+func (s *Server) reincarnated(ctx context.Context, n store.Node, previous string) {
+	if err := s.store.Placements().ReplaceForNode(ctx, n.ID, nil); err != nil {
+		s.log.Warn("placements of the previous incarnation not cleared", "node", n.ID, "err", err)
+	}
+	s.record("node.reincarnated", n.ID, map[string]any{"boot_id": n.BootID, "previous": previous})
+	if s.orch == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		removed, err := s.orch.RemoveShardsOn(ctx, n.ID)
+		if err != nil {
+			s.log.Warn("shard rows of the previous incarnation not removed — the process-list check retries on the next heartbeat", "node", n.ID, "err", err)
+			s.reconcileNodes.Store(n.ID, struct{}{})
+			return
+		}
+		for _, m := range removed {
+			s.log.Warn("shard group removed: its part died with the worker's previous incarnation", "model", m, "node", n.ID)
+			s.record("shard.stale", m, map[string]any{"node": n.ID, "reason": "worker process changed (boot id); the recorded part is gone"})
+		}
+	}()
 }
 
 // reconcileShardsOn runs the orchestrator's stale-part check for a node
@@ -122,6 +181,16 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	}
 	if req.Load != nil {
 		s.nodeLoad.Store(req.ID, nodeLoadSample{EngineLoad: *req.Load, at: time.Now()})
+	}
+	if incarnation(n.BootID, req.BootID) == incarnationNew {
+		// The process behind the id changed between heartbeats (a container
+		// restarted in place: same pod, same address — the case no address
+		// heuristic catches). R10.1.
+		previous := n.BootID
+		n.BootID = req.BootID
+		s.reincarnated(ctx, *n, previous)
+	} else if n.BootID == "" && req.BootID != "" {
+		n.BootID = req.BootID // a row from before the field: adopt the process it now names
 	}
 	if _, again := s.reconcileNodes.LoadAndDelete(req.ID); again {
 		go s.reconcileShardsOn(*n)

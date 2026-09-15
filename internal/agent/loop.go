@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,10 +20,15 @@ import (
 // startup, then sends a heartbeat at HeartbeatInterval carrying the list of
 // models currently loaded on the local engine.
 type Agent struct {
-	NodeID       string
-	LeaderURL    string
-	Token        string
-	Address      string
+	NodeID    string
+	LeaderURL string
+	Token     string
+	Address   string
+	// BootID names THIS process (R10.1): minted once per agent start and sent
+	// on register and every heartbeat, so the leader tells a recreated pod
+	// or a restarted container from the incarnation it recorded work on —
+	// the node id alone is stable across both. Empty = minted by Loop.
+	BootID       string
 	Capabilities Capabilities
 	Engine       engines.Engine // local engine; queried for loaded_models
 	// Aliases translates the engine's native model names into the ids this
@@ -34,8 +41,32 @@ type Agent struct {
 	Log               *slog.Logger
 }
 
+// MaxRefusedRegisters is how many consecutive re-registers the leader may
+// refuse (401/403) before the worker exits (R10.2). A heartbeat 401 is
+// answered by a re-register with the token this process started with — the
+// path that survives a stateless leader restart and must stay cheap. When
+// the re-register ITSELF is refused this many times (≈30 s at the default
+// interval) the token is dead: rotated, or minted by an endpoint that no
+// longer exists. Only a restart re-reads the mounted Secret, so one exit
+// replaces a 401 storm that would never end.
+const MaxRefusedRegisters = 6
+
+// NewBootID mints the identity of one agent process.
+func NewBootID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("t%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 // Register POSTs node info to /admin/v1/nodes/register on the leader.
 func (a *Agent) Register(ctx context.Context) error {
+	_, err := a.register(ctx)
+	return err
+}
+
+func (a *Agent) register(ctx context.Context) (int, error) {
 	body, _ := json.Marshal(map[string]any{
 		"id":            a.NodeID,
 		"hostname":      a.Capabilities.Hostname,
@@ -44,9 +75,9 @@ func (a *Agent) Register(ctx context.Context) error {
 		"ram_gb":        a.Capabilities.RAMGB,
 		"address":       a.Address,
 		"hardware_json": mustJSON(a.Capabilities),
+		"boot_id":       a.BootID,
 	})
-	_, err := a.post(ctx, "/admin/v1/nodes/register", body)
-	return err
+	return a.post(ctx, "/admin/v1/nodes/register", body)
 }
 
 // Heartbeat sends a lightweight ping to keep the leader informed we're alive,
@@ -67,6 +98,7 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 	hb := map[string]any{
 		"id":            a.NodeID,
 		"loaded_models": loaded,
+		"boot_id":       a.BootID,
 	}
 	// Sleep tier (build item 13): the engine's own word on whether it sleeps.
 	if sl, ok := a.Engine.(engines.Sleeper); ok && a.Engine != nil {
@@ -91,11 +123,13 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 // Loop blocks running register + periodic heartbeat until ctx is done.
 //
 // Status-code handling:
-//   - 401 / 403: token revoked → exit with error so the supervisor (systemd /
-//     launchd / the user) can intervene. Burning CPU heartbeating an
-//     unauthorized leader is worse than failing fast.
+//   - 401 / 403 on a heartbeat: re-register with the token this process
+//     holds (a leader restart answers 401 until its auth warms up). When the
+//     re-register is refused MaxRefusedRegisters times in a row the token is
+//     dead → return an error so the supervisor restarts the process and it
+//     re-reads its Secret (R10.2). Never exit over one 401.
 //   - 404: node was forgotten by the leader → try to re-register.
-//   - other (network errors, 5xx): exponential backoff up to 1 minute.
+//   - other (network errors, 5xx): exponential backoff up to 15 s.
 func (a *Agent) Loop(ctx context.Context) error {
 	if a.HTTP == nil {
 		a.HTTP = &http.Client{Timeout: 10 * time.Second}
@@ -103,6 +137,10 @@ func (a *Agent) Loop(ctx context.Context) error {
 	if a.HeartbeatInterval == 0 {
 		a.HeartbeatInterval = 5 * time.Second
 	}
+	if a.BootID == "" {
+		a.BootID = NewBootID()
+	}
+	refused := 0 // consecutive refused re-registers
 	if err := a.Register(ctx); err != nil {
 		a.Log.Warn("register failed", "err", err)
 	} else {
@@ -118,6 +156,7 @@ func (a *Agent) Loop(ctx context.Context) error {
 		case <-t.C:
 			code, err := a.Heartbeat(ctx)
 			if err == nil {
+				refused = 0
 				backoff = a.HeartbeatInterval
 				t.Reset(backoff)
 				continue
@@ -126,12 +165,21 @@ func (a *Agent) Loop(ctx context.Context) error {
 			case http.StatusUnauthorized, http.StatusForbidden:
 				// 401/403 can be TRANSIENT during a leader restart (auth still
 				// warming up, or the node row not reloaded yet). Re-register and
-				// keep trying instead of exiting — a real revoked token just keeps
-				// retrying harmlessly (visible in logs) until it's re-issued, and a
-				// transient blip self-heals. Never kill a worker over one 401.
-				a.Log.Warn("heartbeat unauthorized; re-registering (was fatal, now retried)",
-					"code", code, "err", err)
-				if rerr := a.Register(ctx); rerr != nil {
+				// keep trying — a transient blip self-heals. Only a re-register
+				// that is itself refused, MaxRefusedRegisters times running,
+				// proves the token dead (R10.2).
+				a.Log.Warn("heartbeat unauthorized; re-registering", "code", code, "err", err)
+				rcode, rerr := a.register(ctx)
+				switch {
+				case rerr == nil:
+					refused = 0
+				case rcode == http.StatusUnauthorized || rcode == http.StatusForbidden:
+					refused++
+					a.Log.Warn("re-register refused", "code", rcode, "err", rerr, "refused", refused, "max", MaxRefusedRegisters)
+					if refused >= MaxRefusedRegisters {
+						return fmt.Errorf("join token refused %d times in a row: the token this worker started with is dead (rotated, or minted by an endpoint that is gone) — exiting so a restart reads the current one", refused)
+					}
+				default:
 					a.Log.Warn("re-register failed", "err", rerr)
 				}
 				backoff = a.HeartbeatInterval
