@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/fetch"
 )
 
 // Server is the worker's HTTP surface.
@@ -675,6 +677,18 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 				}
 			}
 		}
+	}
+	// Pull the file ourselves (exclusive, atomic — models.FetchGGUF) and hand
+	// llama-server a path: its own downloader wrote into the shared node cache
+	// beside other workers' and corrupted the file (cell, 2026-09-14).
+	if path == "" && repo != "" && file != "" && s.ModelsDir != "" {
+		fctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour) // not the request's: a client that gives up must not abort a 40 GB pull
+		p, err := fetch.GGUF(fctx, repo, file, s.ModelsDir, fetch.Options{Log: slog.Default(), Token: os.Getenv("HF_TOKEN")})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("fetch %s/%s: %w", repo, file, err)
+		}
+		path = p
 	}
 	src := llamaModelSource(nativeName, repo, file, path)
 	if alias == "" {
