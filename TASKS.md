@@ -58,6 +58,7 @@ These are the gaps between marketing copy and what the binary actually does toda
 - **LoRA, live model migration** — both v0.5. (M4-T02, M4-T07)
 - **Postgres backend** for HA control plane — v1.0.
 - **AMD ROCm engine path** — v1.0.
+- **RPC pair in the AMD and Intel worker images** — `images/worker-llamacpp/Dockerfile` builds `llamacpp-amd` / `llamacpp-intel` straight on the upstream `full-rocm` / `full-intel` bases, and upstream compiles both without `GGML_RPC` (no `rpc-server`, no `--rpc`), so a ROCm or SYCL worker can never be a part of a llama.cpp RPC gang. Add `Dockerfile.rpc-rocm` (lift `ggml-rpc-server` + `llama-server` from the upstream ROCm release tarball into `/opt/llama-rpc`, the `rpc-bootstrap` pattern — no compile) and `Dockerfile.rpc-sycl` (source build on the oneAPI base, amd64 box or CI dispatch), same wrapper convention as `Dockerfile.rpc-cuda`; switch the two `build.sh` targets and the images README rows. No Go change: the worker already execs `rpc-server` by name. Brief and proof plan: control-plane `docs/ROADMAP.md` R11.
 
 ---
 
