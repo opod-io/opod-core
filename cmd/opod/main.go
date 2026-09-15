@@ -43,6 +43,8 @@ func main() {
 		cmdShard(args)
 	case "catalog":
 		cmdCatalog(args)
+	case "fetch":
+		cmdFetch(args)
 	case "token":
 		cmdToken(args)
 	case "config":
@@ -73,7 +75,7 @@ func main() {
 // topLevelCommands is the set of verbs main() dispatches. Kept here so both
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
-	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog",
+	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog", "fetch",
 	"token", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
