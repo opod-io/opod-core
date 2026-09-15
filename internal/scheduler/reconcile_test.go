@@ -24,8 +24,8 @@ func fakeWorker(t *testing.T, running ...string) (*httptest.Server, *int) {
 	t.Helper()
 	stops := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/process/list":
+		switch r.URL.Path {
+		case "/v1/process/list":
 			var procs []agent.ProcessInfo
 			for _, id := range running {
 				procs = append(procs, agent.ProcessInfo{ID: id, Status: "running"})
@@ -34,7 +34,7 @@ func fakeWorker(t *testing.T, running ...string) (*httptest.Server, *int) {
 				procs = []agent.ProcessInfo{}
 			}
 			_ = json.NewEncoder(w).Encode(procs)
-		case r.URL.Path == "/v1/process/stop":
+		case "/v1/process/stop":
 			stops++
 			w.WriteHeader(http.StatusOK)
 		default:
