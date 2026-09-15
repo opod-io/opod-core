@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -39,6 +40,10 @@ type Server struct {
 
 	router    *router.Router
 	orch      *scheduler.Orchestrator
+	// listener is the bound socket (Start); Addr reads it for tests and for
+	// a Listen of ":0".
+	listenMu sync.Mutex
+	listener net.Listener
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
 	load      loadStats
@@ -204,9 +209,29 @@ func (s *Server) Start(ctx context.Context) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
-	s.log.Info("listening", "addr", s.cfg.Listen)
+	// Bind first so a test (or an operator on :0) can read the address, then
+	// serve plain or TLS on the one listener: with OPOD_TLS_CERT/KEY the
+	// gateway, /admin/v1, /readyz and the join path are all https.
+	ln, err := net.Listen("tcp", s.cfg.Listen)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", s.cfg.Listen, err)
+	}
+	s.listenMu.Lock()
+	s.listener = ln
+	s.listenMu.Unlock()
+	scheme := "http"
+	if s.cfg.TLSCert != "" && s.cfg.TLSKey != "" {
+		scheme = "https"
+	}
+	s.log.Info("listening", "addr", ln.Addr().String(), "scheme", scheme)
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.http.ListenAndServe() }()
+	go func() {
+		if scheme == "https" {
+			errCh <- s.http.ServeTLS(ln, s.cfg.TLSCert, s.cfg.TLSKey)
+			return
+		}
+		errCh <- s.http.Serve(ln)
+	}()
 	select {
 	case <-ctx.Done():
 		return s.Shutdown(context.Background())
@@ -430,3 +455,16 @@ func (s *Server) limitRequestBody(next http.Handler) http.Handler {
 // dispatchOpenAIChat inspects the request body's "model" field. If it names
 // a vendor model (claude-*, gpt-*) AND fallback is configured, the request is
 // proxied to the vendor; otherwise it goes to the local engine.
+
+// Addr is the address the server is bound to ("" before Start).
+func (s *Server) Addr() string {
+	s.listenMu.Lock()
+	defer s.listenMu.Unlock()
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
+}
+
+// TLS reports whether the listener speaks TLS.
+func (s *Server) TLS() bool { return s.cfg.TLSCert != "" && s.cfg.TLSKey != "" }
