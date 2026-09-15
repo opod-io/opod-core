@@ -6,8 +6,7 @@ import (
 )
 
 func TestEngineFlags(t *testing.T) {
-	t.Setenv("OPOD_ENGINE_FLAGS", `{"tp":2,"gpu_memory_utilization":"0.6","max_model_len":8192,"kv_cache_dtype":"fp8","extra":"--enable-prefix-caching; rm -rf /"}`)
-	f := engineFlagsFromEnv()
+	f := ParseEngineFlags(`{"tp":2,"gpu_memory_utilization":"0.6","max_model_len":8192,"kv_cache_dtype":"fp8","extra":"--enable-prefix-caching; rm -rf /"}`)
 	sh, extra := f.vllmShellOverrides()
 	if sh != "TP=2; U=0.60;" {
 		t.Fatalf("vllm overrides: %q", sh)
@@ -25,8 +24,7 @@ func TestEngineFlags(t *testing.T) {
 			t.Fatalf("every extra token must be quoted: %q in %q", tok, extra)
 		}
 	}
-	t.Setenv("OPOD_ENGINE_FLAGS", `{"ctx":"16384","ngl":99,"parallel":4,"kv_cache_type":"q8_0","tp":"nope"}`)
-	f = engineFlagsFromEnv()
+	f = ParseEngineFlags(`{"ctx":"16384","ngl":99,"parallel":4,"kv_cache_type":"q8_0","tp":"nope"}`)
 	got := strings.Join(f.llamaArgs(), " ")
 	if got != "-c 16384 --n-gpu-layers 99 -np 4 -ctk q8_0 -ctv q8_0" {
 		t.Fatalf("llama args: %q", got)
@@ -34,8 +32,7 @@ func TestEngineFlags(t *testing.T) {
 	if sh, _ := f.vllmShellOverrides(); sh != "" {
 		t.Fatalf("invalid tp must be ignored: %q", sh)
 	}
-	t.Setenv("OPOD_ENGINE_FLAGS", "")
-	if len(engineFlagsFromEnv()) != 0 {
+	if len(ParseEngineFlags("")) != 0 {
 		t.Fatal("unset → empty")
 	}
 }
@@ -88,8 +85,7 @@ func TestAcceleratorPresent(t *testing.T) {
 		{"", Capabilities{}, false},
 		{"  NVIDIA  ", Capabilities{}, true},
 	} {
-		t.Setenv("OPOD_ACCELERATOR", tc.env)
-		if got := AcceleratorPresent(tc.caps); got != tc.want {
+		if got := AcceleratorPresent(tc.caps, tc.env); got != tc.want {
 			t.Fatalf("OPOD_ACCELERATOR=%q gpus=%d: want %v, got %v", tc.env, len(tc.caps.GPUs), tc.want, got)
 		}
 	}

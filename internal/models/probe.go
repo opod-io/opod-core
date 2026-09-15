@@ -43,16 +43,23 @@ var (
 	huggingFaceBase    = "https://huggingface.co"
 )
 
+// ProbeOptions steers ProbeSource.
+type ProbeOptions struct {
+	Client *http.Client // nil = a default with ProbeTimeout
+	Skip   bool         // never probe; answer ProbeSkipped
+}
+
 // ProbeSource HEAD-checks the entry's upstream. client may be nil (a
 // default with ProbeTimeout is used). The string is a human-readable
 // reason for any verdict other than ProbeOK.
 //
-// Set OPOD_SKIP_SOURCE_CHECK=1 to bypass entirely (air-gapped mirrors,
-// custom registries) — returns ProbeSkipped.
-func ProbeSource(ctx context.Context, client *http.Client, e *Entry) (ProbeVerdict, string) {
-	if os.Getenv("OPOD_SKIP_SOURCE_CHECK") == "1" {
+// opt.Skip (OPOD_SKIP_SOURCE_CHECK=1 through the config contract) bypasses
+// the check entirely (air-gapped mirrors, custom registries) — ProbeSkipped.
+func ProbeSource(ctx context.Context, e *Entry, opt ProbeOptions) (ProbeVerdict, string) {
+	if opt.Skip {
 		return ProbeSkipped, "OPOD_SKIP_SOURCE_CHECK=1"
 	}
+	client := opt.Client
 	if client == nil {
 		client = &http.Client{Timeout: ProbeTimeout}
 	}

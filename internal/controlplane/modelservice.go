@@ -55,7 +55,7 @@ func (s *Server) AddModel(ctx context.Context, req AddModelRequest) (ModelOutcom
 		return ModelOutcome{}, ErrNoCatalogEntry
 	}
 	probeCtx, probeCancel := context.WithTimeout(ctx, models.ProbeTimeout)
-	verdict, reason := models.ProbeSource(probeCtx, nil, entry)
+	verdict, reason := models.ProbeSource(probeCtx, entry, models.ProbeOptions{Skip: s.cfg.Env.SkipSourceCheck})
 	probeCancel()
 	switch verdict {
 	case models.ProbeNotFound:

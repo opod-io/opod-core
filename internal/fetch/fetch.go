@@ -27,19 +27,17 @@ import (
 	"time"
 )
 
-// HFEndpoint is the Hub base URL; HF_ENDPOINT overrides it (the same variable
-// the Hugging Face tooling reads), which is also how tests point it at a
-// local server.
-func HFEndpoint() string {
-	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("HF_ENDPOINT")), "/"); v != "" {
-		return v
-	}
-	return "https://huggingface.co"
-}
+// DefaultHFEndpoint is the Hub; Options.Endpoint (HF_ENDPOINT through the
+// config contract) names a mirror or, in tests, a local server.
+const DefaultHFEndpoint = "https://huggingface.co"
 
-// HFFileURL is the resolve URL of one file in a repo (main revision).
-func HFFileURL(repo, file string) string {
-	return fmt.Sprintf("%s/%s/resolve/main/%s", HFEndpoint(), repo, url.PathEscape(file))
+// HFFileURL is the resolve URL of one file in a repo (main revision) at the
+// given Hub endpoint ("" = the public Hub).
+func HFFileURL(endpoint, repo, file string) string {
+	if endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/"); endpoint == "" {
+		endpoint = DefaultHFEndpoint
+	}
+	return fmt.Sprintf("%s/%s/resolve/main/%s", endpoint, repo, url.PathEscape(file))
 }
 
 // ValidGGUFName refuses anything that could leave the models directory or
@@ -57,6 +55,7 @@ type Options struct {
 	Log      *slog.Logger  // default: slog.Default()
 	LockWait time.Duration // how long to wait for another caller's pull (default 6 h)
 	Token    string        // Hugging Face token for gated repos ("" = anonymous)
+	Endpoint string        // Hub base URL ("" = DefaultHFEndpoint); HF_ENDPOINT through the config contract
 }
 
 // GGUF makes <dir>/<file> present and returns its path. Present with the
@@ -85,7 +84,7 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 		return "", fmt.Errorf("fetch: mkdir %s: %w", dir, err)
 	}
 	target := filepath.Join(dir, file)
-	fileURL := HFFileURL(repo, file)
+	fileURL := HFFileURL(opt.Endpoint, repo, file)
 	want, known := expectedSize(ctx, opt, fileURL)
 	if complete(target, want, known) {
 		return target, nil

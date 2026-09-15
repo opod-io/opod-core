@@ -27,12 +27,30 @@ import (
 //
 //	opod join http://leader:8080?token=sk-orc-...
 //
-// mustSetenv sets a process env var or dies: a failed Setenv here would
-// silently hand the engine the wrong GPU, which is worse than exiting.
-func mustSetenv(k, v string) {
-	if err := os.Setenv(k, v); err != nil {
-		die("setenv %s: %v", k, err)
+// workerBaseEnv is what every engine process this worker launches sees in
+// addition to its own environment: the device it may use and the VRAM budget
+// (from the flags, else from the environment contract). Set on the
+// supervisor, never os.Setenv on the worker process itself — the worker's
+// own code reads config.Env; only the engines read these.
+func workerBaseEnv(gpuIndex, vramBudget string) map[string]string {
+	env := map[string]string{}
+	if gpuIndex != "" {
+		env["OPOD_GPU_INDEX"] = gpuIndex
+		for _, k := range []string{"CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ONEAPI_DEVICE_SELECTOR"} {
+			if os.Getenv(k) != "" {
+				continue // an operator's own pin wins
+			}
+			if k == "ONEAPI_DEVICE_SELECTOR" {
+				env[k] = "level_zero:" + gpuIndex
+			} else {
+				env[k] = gpuIndex
+			}
+		}
 	}
+	if vramBudget != "" {
+		env["OPOD_VRAM_BUDGET_GB"] = vramBudget
+	}
+	return env
 }
 
 func cmdJoin(args []string) {
@@ -62,9 +80,11 @@ func cmdJoin(args []string) {
 	if err != nil {
 		die("%v", err)
 	}
-	// Placement hints for the engine this worker will supervise. They are
-	// exported as env so every engine launcher (vLLM, llama.cpp, …) reads one
-	// contract; a control plane sets the same env on the pod instead.
+	// Placement hints for the engines this worker will supervise. They reach
+	// every engine launcher (vLLM, llama.cpp, …) through the supervisor's base
+	// environment — one contract; a manager sets the same variables on the
+	// pod instead, and the flags win over them.
+	var gpuIndex, vramBudget string
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--gpu":
@@ -72,16 +92,7 @@ func cmdJoin(args []string) {
 				die("--gpu needs a device index")
 			}
 			i++
-			mustSetenv("OPOD_GPU_INDEX", args[i])
-			for _, k := range []string{"CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ONEAPI_DEVICE_SELECTOR"} {
-				if os.Getenv(k) == "" {
-					if k == "ONEAPI_DEVICE_SELECTOR" {
-						mustSetenv(k, "level_zero:"+args[i])
-					} else {
-						mustSetenv(k, args[i])
-					}
-				}
-			}
+			gpuIndex = args[i]
 		case "--vram-budget":
 			if i+1 >= len(args) {
 				die("--vram-budget needs a size in GB")
@@ -90,7 +101,7 @@ func cmdJoin(args []string) {
 			if _, err := strconv.Atoi(args[i]); err != nil {
 				die("--vram-budget must be an integer number of GB, got %q", args[i])
 			}
-			mustSetenv("OPOD_VRAM_BUDGET_GB", args[i])
+			vramBudget = args[i]
 		default:
 			die("unknown join argument %q (see `opod join --help`)", args[i])
 		}
@@ -98,9 +109,16 @@ func cmdJoin(args []string) {
 
 	cfg := loadConfigOrExit()
 	log := newLogger(cfg)
+	env := cfg.Env // the environment contract, parsed once (config.Env)
+	if gpuIndex == "" {
+		gpuIndex = env.GPUIndex
+	}
+	if vramBudget == "" {
+		vramBudget = env.VRAMBudgetGB
+	}
 
 	caps := agent.Detect()
-	switch role := strings.TrimSpace(os.Getenv("OPOD_WORKER_ROLE")); role {
+	switch role := strings.TrimSpace(env.WorkerRole); role {
 	case "", "prefill", "decode":
 		caps.Role = role
 	default:
@@ -116,7 +134,7 @@ func cmdJoin(args []string) {
 	// leader can't reach for NAT'd/overlay workers. When the worker is on an
 	// overlay or has multiple NICs, OPOD_ADVERTISE_ADDR pins the address the
 	// leader should dial (e.g. the tailnet IP:8081).
-	if adv := strings.TrimSpace(os.Getenv("OPOD_ADVERTISE_ADDR")); adv != "" {
+	if adv := strings.TrimSpace(env.AdvertiseAddr); adv != "" {
 		addr = adv
 		log.Info("using advertised address from OPOD_ADVERTISE_ADDR", "addr", addr)
 	}
@@ -125,7 +143,7 @@ func cmdJoin(args []string) {
 	// Precedence: OPOD_NODE_ID env (deterministic — Fleet sets one per machine) >
 	// a persisted node.yaml from a prior run > a fresh random id.
 	nodeID := generateNodeID()
-	if v := strings.TrimSpace(os.Getenv("OPOD_NODE_ID")); v != "" {
+	if v := strings.TrimSpace(env.NodeID); v != "" {
 		nodeID = v
 	} else if b, err := os.ReadFile(filepath.Join(cfg.DataDir, "node.yaml")); err == nil {
 		var prev NodeConfig
@@ -153,7 +171,7 @@ func cmdJoin(args []string) {
 
 	// The leader may speak TLS with a certificate the control plane minted
 	// (OPOD_LEADER_CA names it); the client trusts exactly that.
-	leaderClient, err := agent.NewLeaderClient(os.Getenv("OPOD_LEADER_CA"), 10*time.Second)
+	leaderClient, err := agent.NewLeaderClient(env.LeaderCA, 10*time.Second)
 	if err != nil {
 		die("%v", err)
 	}
@@ -173,6 +191,8 @@ func cmdJoin(args []string) {
 	// Worker HTTP server — leader will call into here for inference AND
 	// for launching/stopping shard processes (rpc-server etc).
 	sup := agent.NewSupervisor(log)
+	sup.BaseEnv = workerBaseEnv(gpuIndex, vramBudget)
+	adapters, adaptersErr := agent.ParseAdapters(env.Adapters)
 	srv := &agent.Server{
 		Engine:     eng,
 		Token:      token,
@@ -183,8 +203,15 @@ func cmdJoin(args []string) {
 		ModelsDir: cfg.Storage.ModelsDir,
 		// llama.cpp runs on the CPU unless told to offload; the worker has to
 		// know whether it is holding a card to make that call.
-		Accelerated: agent.AcceleratorPresent(caps),
-		Aliases:     aliases,
+		Accelerated:  agent.AcceleratorPresent(caps, env.Accelerator),
+		Aliases:      aliases,
+		EngineFlags:  agent.ParseEngineFlags(env.EngineFlags),
+		Adapters:     adapters,
+		AdaptersErr:  adaptersErr,
+		RejectBearer: env.RejectBearer,
+		SleepMode:    env.SleepMode,
+		HFToken:      env.HFToken,
+		HFEndpoint:   env.HFEndpoint,
 	}
 	defer sup.StopAll()
 

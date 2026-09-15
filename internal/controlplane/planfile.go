@@ -48,7 +48,7 @@ func (p *planFileState) sleepsByDesign() bool {
 // StartPlanWatcher polls the plan file for changes. No file → no-op
 // (standalone `opod up` has no plan and no restrictions).
 func (s *Server) StartPlanWatcher(ctx context.Context) {
-	path := os.Getenv("OPOD_PLAN_FILE")
+	path := s.cfg.Env.PlanFile
 	if path == "" {
 		path = defaultPlanPath
 	}

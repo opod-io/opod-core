@@ -63,7 +63,7 @@ func openStoreOrExit(cfg *config.Config) store.Store {
 }
 
 func loadCatalogOrExit(cfg *config.Config) []models.Entry {
-	entries, err := models.LoadCatalog(cfg.CatalogDir)
+	entries, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
 	if err != nil {
 		die("catalog: %v", err)
 	}

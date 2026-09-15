@@ -131,6 +131,12 @@ type Process struct {
 
 // Supervisor manages a set of child processes by id.
 type Supervisor struct {
+	// BaseEnv is appended to every launched process's environment before the
+	// spec's own: the worker-wide facts `opod join` was given (the device the
+	// engines may see, the VRAM budget) — set once, never os.Setenv on the
+	// worker process itself.
+	BaseEnv map[string]string
+
 	mu    sync.RWMutex
 	procs map[string]*Process
 	log   *slog.Logger
@@ -274,7 +280,12 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	if spec.WorkDir != "" {
 		cmd.Dir = spec.WorkDir
 	}
+	// The process environment, then the worker-wide BaseEnv (GPU selection,
+	// the VRAM budget — what `opod join` was told), then the spec's own.
 	env := os.Environ()
+	for k, v := range s.BaseEnv {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
 	for k, v := range spec.Env {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}

@@ -16,6 +16,10 @@ import (
 
 // Config is the full runtime configuration for a Opod node.
 type Config struct {
+	// Env is the process-environment contract (env.go), parsed once by Load;
+	// never from the file.
+	Env Env `yaml:"-"`
+
 	Listen      string `yaml:"listen"`
 	ExternalURL string `yaml:"external_url"`
 	// TLSCert / TLSKey (OPOD_TLS_CERT / OPOD_TLS_KEY): when both name a PEM
@@ -290,6 +294,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnv(cfg)
+	cfg.Env = FromEnv()
 	// Default() derives storage paths from the default data dir eagerly,
 	// so a data_dir override (YAML or OPOD_DATA_DIR) would otherwise
 	// leave them pointing at the old location. Re-derive any storage

@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +41,10 @@ type Orchestrator struct {
 	// means HF auto-download is disabled — operators have to pre-place
 	// the file at source.path the old-fashioned way.
 	ModelsDir string
+	// From the environment contract (config.Env), set by `opod up`:
+	CoordinatorNode string // OPOD_COORDINATOR_NODE: pin the llama.cpp coordinator ("local" = the leader)
+	HFToken         string // HF_TOKEN for the leader's own GGUF pulls
+	HFEndpoint      string // HF_ENDPOINT ("" = the public Hub)
 }
 
 // New returns a configured orchestrator.
@@ -312,7 +315,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	if shardCount == 1 {
 		w := workers[0]
 		coordHost = coordinatorChoice{nodeID: w.ID, node: &w}
-		if ov := os.Getenv("OPOD_COORDINATOR_NODE"); ov != "" && ov != w.ID {
+		if ov := o.CoordinatorNode; ov != "" && ov != w.ID {
 			o.Log.Warn("OPOD_COORDINATOR_NODE ignored for single-shard placement — coordinator runs on the selected node",
 				"override", ov, "node", w.ID)
 		}

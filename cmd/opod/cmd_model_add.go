@@ -130,7 +130,7 @@ func modelAddDryRunEntry(cfg *config.Config, entry *models.Entry) {
 		}
 		// Upstream reachability — same probe the real install runs.
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), models.ProbeTimeout)
-		verdict, reason := models.ProbeSource(probeCtx, nil, entry)
+		verdict, reason := models.ProbeSource(probeCtx, entry, models.ProbeOptions{Skip: cfg.Env.SkipSourceCheck})
 		probeCancel()
 		switch verdict {
 		case models.ProbeOK:
@@ -218,7 +218,7 @@ func modelAddEntry(entry *models.Entry, force bool) {
 	// not → warn and proceed. OPOD_SKIP_SOURCE_CHECK=1 bypasses.
 	{
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), models.ProbeTimeout)
-		verdict, reason := models.ProbeSource(probeCtx, nil, entry)
+		verdict, reason := models.ProbeSource(probeCtx, entry, models.ProbeOptions{Skip: cfg.Env.SkipSourceCheck})
 		probeCancel()
 		switch verdict {
 		case models.ProbeNotFound:

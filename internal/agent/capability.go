@@ -32,12 +32,13 @@ type GPU struct {
 
 // AcceleratorPresent reports whether this worker has a GPU to offload to.
 //
-// A control plane states the vendor it placed the worker on, which covers cards
-// whose tooling this binary cannot probe — the AMD and Intel builds carry no
+// A manager states the vendor it placed the worker on (accelerator =
+// OPOD_ACCELERATOR through the config contract), which covers cards whose
+// tooling this binary cannot probe — the AMD and Intel builds carry no
 // nvidia-smi. A worker started by hand has no such hint and falls back to what
 // it detected itself.
-func AcceleratorPresent(c Capabilities) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPOD_ACCELERATOR"))) {
+func AcceleratorPresent(c Capabilities, accelerator string) bool {
+	switch strings.ToLower(strings.TrimSpace(accelerator)) {
 	case "":
 		return len(c.GPUs) > 0 // no control plane, or one older than this field
 	case "none":

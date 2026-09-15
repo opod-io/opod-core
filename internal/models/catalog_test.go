@@ -52,10 +52,9 @@ license: apache-2.0
 
 	// Steer resolveCatalogDirs at our temp paths. OPOD_CATALOG_DIR
 	// covers the bundled dir; HOME covers the user dir.
-	t.Setenv("OPOD_CATALOG_DIR", bundled)
 	t.Setenv("HOME", filepath.Join(tmp, "home"))
 
-	entries, err := LoadCatalog("")
+	entries, err := LoadCatalog("", bundled)
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
 	}
@@ -87,7 +86,6 @@ license: apache-2.0
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", "/nonexistent-home-for-this-test")
-	t.Setenv("OPOD_CATALOG_DIR", "/nonexistent-dir-for-this-test")
 	entries, err := LoadCatalog(tmp)
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
@@ -174,9 +172,8 @@ func TestLoadCatalog_ExplicitEnvDirOverridesBundled(t *testing.T) {
 	write(bundled, "id: m\ndisplay_name: bundled\nsource: {type: huggingface, repo: x/y}\n")
 	write(explicit, "id: m\ndisplay_name: explicit\nsource: {type: huggingface, repo: x/y}\nsharding: {required: true, default_shards: 2}\n")
 	t.Chdir(root)
-	t.Setenv("OPOD_CATALOG_DIR", explicit)
 	t.Setenv("HOME", filepath.Join(root, "nohome")) // no ~/.opod/catalog in the way
-	cat, err := LoadCatalog("")
+	cat, err := LoadCatalog("", explicit)
 	if err != nil {
 		t.Fatal(err)
 	}

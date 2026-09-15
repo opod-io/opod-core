@@ -41,10 +41,11 @@ var adapterNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // AdapterID is the model id an adapter is served under.
 func AdapterID(base, name string) string { return base + ":" + name }
 
-// adaptersFromEnv reads OPOD_ADAPTERS; a malformed value is logged by the
-// caller and ignored — never a crash-looping worker.
-func adaptersFromEnv() ([]Adapter, error) {
-	raw := strings.TrimSpace(os.Getenv("OPOD_ADAPTERS"))
+// ParseAdapters parses the OPOD_ADAPTERS value (config.Env.Adapters); a
+// malformed value is logged by the caller and ignored — never a
+// crash-looping worker.
+func ParseAdapters(raw string) ([]Adapter, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "null" || raw == "[]" {
 		return nil, nil
 	}

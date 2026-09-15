@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/fetch"
 )
 
@@ -40,7 +41,8 @@ func cmdFetch(args []string) {
 		os.Exit(2)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	path, err := fetch.GGUF(context.Background(), pos[0], pos[1], *dir, fetch.Options{Log: log, Token: os.Getenv("HF_TOKEN")})
+	env := config.FromEnv()
+	path, err := fetch.GGUF(context.Background(), pos[0], pos[1], *dir, fetch.Options{Log: log, Token: env.HFToken, Endpoint: env.HFEndpoint})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

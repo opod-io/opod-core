@@ -56,14 +56,14 @@ func (s *Server) requireKeys() bool {
 
 // StartAuthWatcher polls the auth file and syncs it into the key store.
 func (s *Server) StartAuthWatcher(ctx context.Context) {
-	path := os.Getenv("OPOD_AUTH_FILE")
+	path := s.cfg.Env.AuthFile
 	if path == "" {
 		path = defaultAuthPath
 	}
 	// Unlike the plan file, the auth file may appear AFTER boot (the first key
 	// is minted later), so an absent file is not a reason to stop watching —
 	// a stat every 10 s is free. OPOD_AUTH_FILE=off disables the watcher.
-	if os.Getenv("OPOD_AUTH_FILE") == "off" {
+	if s.cfg.Env.AuthFile == "off" {
 		return
 	}
 	var lastMod time.Time

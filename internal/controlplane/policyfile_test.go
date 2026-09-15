@@ -91,7 +91,7 @@ func TestPolicyFileWatcher(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("OPOD_POLICY_FILE", path)
+	srv.cfg.Env.PolicyFile = path
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv.StartPolicyWatcher(ctx)

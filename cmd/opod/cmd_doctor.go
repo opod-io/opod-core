@@ -96,7 +96,7 @@ func cmdDoctor(args []string) {
 
 	// Catalog — `opod up` hard-fails without it, so escalate to a warning
 	// with an actionable hint pointing at the user-writable install location.
-	if entries, err := models.LoadCatalog(cfg.CatalogDir); err == nil {
+	if entries, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir); err == nil {
 		ok(os.Stdout, "catalog: %d entries", len(entries))
 	} else {
 		warn(os.Stdout, "catalog: %v", err)

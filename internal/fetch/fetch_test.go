@@ -36,7 +36,6 @@ func fakeHub(t *testing.T, body string, slow time.Duration, truncate bool) (*htt
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("HF_ENDPOINT", srv.URL)
 	return srv, &gets
 }
 
@@ -44,7 +43,7 @@ func itoa(n int) string { return strings.TrimSpace(strings.Repeat(" ", 0) + stri
 
 func TestFetchGGUF_ConcurrentCallersPullOnce(t *testing.T) {
 	body := "GGUFbody" // 8 bytes: Content-Length "8"
-	_, gets := fakeHub(t, body, 300*time.Millisecond, false)
+	hub, gets := fakeHub(t, body, 300*time.Millisecond, false)
 	dir := t.TempDir()
 	var wg sync.WaitGroup
 	errs := make([]error, 3)
@@ -52,7 +51,7 @@ func TestFetchGGUF_ConcurrentCallersPullOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{LockWait: 10 * time.Second})
+			_, errs[i] = GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{LockWait: 10 * time.Second, Endpoint: hub.URL})
 		}(i)
 	}
 	wg.Wait()
@@ -74,15 +73,15 @@ func TestFetchGGUF_ConcurrentCallersPullOnce(t *testing.T) {
 		t.Fatalf("no temp or lock files left: %v %v", left, locks)
 	}
 	// Present with the declared size: no second pull.
-	if _, err := GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{}); err != nil || atomic.LoadInt32(gets) != 1 {
+	if _, err := GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{Endpoint: hub.URL}); err != nil || atomic.LoadInt32(gets) != 1 {
 		t.Fatalf("a complete file is not pulled again: %v gets=%d", err, atomic.LoadInt32(gets))
 	}
 }
 
 func TestFetchGGUF_TruncatedBodyLeavesNoFile(t *testing.T) {
-	fakeHub(t, "GGUFbody", 0, true)
+	hub, _ := fakeHub(t, "GGUFbody", 0, true)
 	dir := t.TempDir()
-	_, err := GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{})
+	_, err := GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{Endpoint: hub.URL})
 	if err == nil || !(strings.Contains(err.Error(), "truncated") || strings.Contains(err.Error(), "unexpected EOF")) {
 		t.Fatalf("a short body is refused: %v", err)
 	}
@@ -96,10 +95,10 @@ func TestFetchGGUF_TruncatedBodyLeavesNoFile(t *testing.T) {
 }
 
 func TestFetchGGUF_WrongSizedFileIsPulledAgain(t *testing.T) {
-	_, gets := fakeHub(t, "GGUFbody", 0, false)
+	hub, gets := fakeHub(t, "GGUFbody", 0, false)
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "m.gguf"), []byte("stale"), 0o644)
-	if _, err := GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{}); err != nil {
+	if _, err := GGUF(context.Background(), "org/repo", "m.gguf", dir, Options{Endpoint: hub.URL}); err != nil {
 		t.Fatal(err)
 	}
 	if atomic.LoadInt32(gets) != 1 {

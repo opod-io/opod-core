@@ -65,7 +65,7 @@ func TestCatalogSourcesReachable(t *testing.T) {
 				results <- r
 				return
 			}
-			verdict, reason := models.ProbeSource(ctx, client, &e)
+			verdict, reason := models.ProbeSource(ctx, &e, models.ProbeOptions{Client: client})
 			switch verdict {
 			case models.ProbeOK:
 				r.ok = true
