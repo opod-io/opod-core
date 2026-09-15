@@ -58,7 +58,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			// presence of the API key (the URL has a sensible
 			// default per vendor and is rarely overridden).
 		},
-		EditHint: "Edit " + s.cfg.DataDir + "/config.yaml or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPOD_* env vars, then restart opod.",
+		EditHint: "Edit " + s.cfg.DataDir + "/config.yaml or set OPOD_* env vars, then restart opod.",
 	}
 	writeJSON(w, http.StatusOK, v)
 }

@@ -556,20 +556,6 @@ func hostOf(addr string) string {
 	return addr
 }
 
-// distEnv pins torch's collective backends (Gloo for the CPU control plane, NCCL
-// for GPU transfers) to the interface that carries `host`.
-//
-// Without this, vLLM's cross-node workers bind their rendezvous sockets to the
-// container's DEFAULT interface — which inside Docker is the bridge (eth0,
-// 172.17.0.x). That address is meaningless on any other machine, so the remote
-// worker advertises 172.17.0.2 and the mesh dies with
-// "Gloo connectFullMesh failed ... Connection refused, remote=[172.17.0.2]".
-// Ray itself is unaffected (it uses the address we pass explicitly), which is why
-// the cluster forms and only the vLLM engine init fails.
-//
-// On an overlay-joined node the routable address is the tailnet IP (CGNAT
-// 100.64.0.0/10) on tailscale0, so pin to that; otherwise leave the vars unset
-// and let torch autodetect on a flat LAN.
 func mergeEnv(base, extra map[string]string) map[string]string {
 	for k, v := range extra {
 		base[k] = v
@@ -577,15 +563,15 @@ func mergeEnv(base, extra map[string]string) map[string]string {
 	return base
 }
 
+// distEnv pins vLLM's rendezvous to the address the coordinator dialled.
+// Without it a cross-node worker binds to the container's default interface
+// (Docker's bridge, 172.17.0.x), which means nothing on another machine, and
+// the mesh dies with "Gloo connectFullMesh failed ... Connection refused,
+// remote=[172.17.0.2]". Ray is unaffected (it takes the address explicitly);
+// only the engine init needs the hint. The socket interface for Gloo/NCCL is
+// left to torch's autodetection on whatever network the nodes share.
 func distEnv(host string) map[string]string {
-	env := map[string]string{"VLLM_HOST_IP": host}
-	if ip := net.ParseIP(host); ip != nil {
-		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
-			env["GLOO_SOCKET_IFNAME"] = "tailscale0"
-			env["NCCL_SOCKET_IFNAME"] = "tailscale0"
-		}
-	}
-	return env
+	return map[string]string{"VLLM_HOST_IP": host}
 }
 
 // createShardedVLLMRay stands up a Ray cluster across the chosen workers so a
