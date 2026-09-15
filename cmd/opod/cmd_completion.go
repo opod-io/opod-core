@@ -50,7 +50,7 @@ func cmdCompletion(args []string) {
 	case "__models":
 		// Internal hook used by completion scripts. Prints one catalog ID per line.
 		cfg := loadConfigOrExit()
-		cat, err := models.LoadCatalog(cfg.CatalogDir)
+		cat, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
 		if err != nil {
 			os.Exit(0)
 		}

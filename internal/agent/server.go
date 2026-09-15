@@ -50,6 +50,17 @@ type Server struct {
 	// Agent — see aliases.go for why the worker owns this and not the leader.
 	Aliases *Aliases
 
+	// What `opod join` was told through the environment contract
+	// (config.Env), parsed once there and handed here — the server never
+	// reads the process environment itself.
+	EngineFlags  EngineFlags // OPOD_ENGINE_FLAGS, parsed (ParseEngineFlags)
+	Adapters     []Adapter   // OPOD_ADAPTERS, parsed (ParseAdapters); AdaptersErr says why a value was ignored
+	AdaptersErr  error
+	RejectBearer bool   // OPOD_REJECT_BEARER: HMAC only on this API
+	SleepMode    bool   // OPOD_SLEEP_MODE: vLLM starts with sleep mode on
+	HFToken      string // HF_TOKEN for the worker's own pulls
+	HFEndpoint   string // HF_ENDPOINT ("" = the public Hub)
+
 	// adapterSet is what this worker holds as LoRA variants (adapters.go).
 	adaptersOnce sync.Once
 	adapterSet   *adapterState
@@ -130,7 +141,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		if os.Getenv("OPOD_REJECT_BEARER") == "1" {
+		if s.RejectBearer {
 			http.Error(w, "unauthorized (HMAC required; bearer disabled)", http.StatusUnauthorized)
 			return
 		}
@@ -429,8 +440,8 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "vllm serve: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		if adapters, err := adaptersFromEnv(); err == nil && len(adapters) > 0 {
-			go s.loadAdaptersWhenReady(req.ID, adapters)
+		if s.AdaptersErr == nil && len(s.Adapters) > 0 {
+			go s.loadAdaptersWhenReady(req.ID, s.Adapters)
 		}
 	}
 	// SGLang, like vLLM, has no persistent server and its driver never starts
@@ -520,10 +531,10 @@ func (s *Server) launchVLLM(model, servedName string) error {
 	// nvidia-smi can report the device size; otherwise the default stands.
 	// Plan flags (OPOD_ENGINE_FLAGS) may pin TP / utilisation and add the
 	// capacity knobs the control plane exposes (max_model_len, kv dtype, …).
-	flagOverrides, flagArgs := engineFlagsFromEnv().vllmShellOverrides()
+	flagOverrides, flagArgs := s.EngineFlags.vllmShellOverrides()
 	// LoRA slots (adapters.go): only when the plan configures adapters, so an
 	// endpoint without any runs the engine exactly as before.
-	adapters, adErr := adaptersFromEnv()
+	adapters, adErr := s.Adapters, s.AdaptersErr
 	if adErr != nil {
 		s.logf("%v — adapters ignored", adErr)
 	}
@@ -541,12 +552,12 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			"%s "+
 			"exec vllm serve '%s' --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
-		flagOverrides, model, servedName, model, host, port, flagArgs, sleepModeArgs())
+		flagOverrides, model, servedName, model, host, port, flagArgs, s.sleepModeArgs())
 	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
 	if len(adapters) > 0 {
 		env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True" // the /v1/load_lora_adapter route
 	}
-	if sleepModeArgs() != "" {
+	if s.sleepModeArgs() != "" {
 		env["VLLM_SERVER_DEV_MODE"] = "1" // exposes /sleep, /wake_up, /is_sleeping
 	}
 	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
@@ -556,7 +567,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 		Env:         env,
 		Restart:     true,
 		MaxRestarts: 3,
-		Adapt:       vllmFitContext(engineFlagsFromEnv(), cmdline),
+		Adapt:       vllmFitContext(s.EngineFlags, cmdline),
 	})
 	return err
 }
@@ -636,7 +647,7 @@ func (s *Server) launchSGLang(model, servedName string) error {
 	if servedName == "" {
 		servedName = model
 	}
-	flagOverrides, flagArgs := engineFlagsFromEnv().sglangShellOverrides()
+	flagOverrides, flagArgs := s.EngineFlags.sglangShellOverrides()
 	cmdline := fmt.Sprintf(
 		"N=$(nvidia-smi -L 2>/dev/null | grep -c GPU); "+
 			"[ \"$N\" -ge 1 ] || N=$(ls /dev/dri/renderD* 2>/dev/null | wc -l); "+
@@ -683,7 +694,7 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 	// beside other workers' and corrupted the file (cell, 2026-09-14).
 	if path == "" && repo != "" && file != "" && s.ModelsDir != "" {
 		fctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour) // not the request's: a client that gives up must not abort a 40 GB pull
-		p, err := fetch.GGUF(fctx, repo, file, s.ModelsDir, fetch.Options{Log: slog.Default(), Token: os.Getenv("HF_TOKEN")})
+		p, err := fetch.GGUF(fctx, repo, file, s.ModelsDir, fetch.Options{Log: slog.Default(), Token: s.HFToken, Endpoint: s.HFEndpoint})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("fetch %s/%s: %w", repo, file, err)
@@ -695,7 +706,7 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 		alias = nativeName
 	}
 	args := append(src, "--host", host, "--port", strconv.Itoa(port), "--alias", alias, "--metrics") // --metrics: /metrics for the load signals the heartbeat carries
-	flags := engineFlagsFromEnv()
+	flags := s.EngineFlags
 	args = append(args, flags.llamaArgs()...)                     // plan flags: ctx, ngl, parallel, kv cache type, extra
 	args = append(args, flags.llamaOffloadArgs(s.Accelerated)...) // offload to the card this worker reserved, unless the plan pinned ngl
 	_ = s.Supervisor.Stop("llama-server")                         // exclusive: one model per worker
@@ -995,11 +1006,11 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// sleepModeArgs: the control plane sets OPOD_SLEEP_MODE=1 on a worker whose
-// plan uses the sleep tier; vLLM then starts with sleep mode on (CUDA only —
-// the planner keeps the tier off other vendors).
-func sleepModeArgs() string {
-	if os.Getenv("OPOD_SLEEP_MODE") == "1" {
+// sleepModeArgs: a manager sets OPOD_SLEEP_MODE=1 on a worker whose plan uses
+// the sleep tier; vLLM then starts with sleep mode on (CUDA only — the
+// planner keeps the tier off other vendors).
+func (s *Server) sleepModeArgs() string {
+	if s.SleepMode {
 		return "--enable-sleep-mode"
 	}
 	return ""

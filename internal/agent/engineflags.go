@@ -14,7 +14,6 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -22,9 +21,10 @@ import (
 // EngineFlags is the parsed OPOD_ENGINE_FLAGS map; values are strings as the plan writes them.
 type EngineFlags map[string]string
 
-// engineFlagsFromEnv parses OPOD_ENGINE_FLAGS; unset or invalid → empty.
-func engineFlagsFromEnv() EngineFlags {
-	raw := strings.TrimSpace(os.Getenv("OPOD_ENGINE_FLAGS"))
+// ParseEngineFlags parses the OPOD_ENGINE_FLAGS value (config.Env.EngineFlags);
+// unset or invalid → empty.
+func ParseEngineFlags(raw string) EngineFlags {
+	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "null" {
 		return EngineFlags{}
 	}

@@ -202,7 +202,7 @@ func catalogHasID(id string) bool {
 		return false
 	}
 	cfg := loadConfigOrExit()
-	cat, err := models.LoadCatalog(cfg.CatalogDir)
+	cat, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
 	if err != nil {
 		return false
 	}

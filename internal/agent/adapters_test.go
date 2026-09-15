@@ -132,16 +132,14 @@ func TestAdapters_RoutesAndEnv(t *testing.T) {
 		t.Fatalf("missing base: %d", code)
 	}
 
-	t.Setenv("OPOD_ADAPTERS", `[{"name":"sql","source":"org/lora"},{"name":"chat","source":"/data/models/chat-lora"}]`)
-	got, err := adaptersFromEnv()
+	got, err := ParseAdapters(`[{"name":"sql","source":"org/lora"},{"name":"chat","source":"/data/models/chat-lora"}]`)
 	if err != nil || len(got) != 2 || got[1].Source != "/data/models/chat-lora" {
 		t.Fatalf("env: %v %v", got, err)
 	}
 	if vllmLoRAArgs(len(got)) != "--enable-lora --max-loras 4" || vllmLoRAArgs(0) != "" {
 		t.Fatalf("lora args: %q %q", vllmLoRAArgs(len(got)), vllmLoRAArgs(0))
 	}
-	t.Setenv("OPOD_ADAPTERS", `[{"name":"Bad","source":"x"}]`)
-	if _, err := adaptersFromEnv(); err == nil {
+	if _, err := ParseAdapters(`[{"name":"Bad","source":"x"}]`); err == nil {
 		t.Fatal("a bad name in the env is an error, not a loaded adapter")
 	}
 }

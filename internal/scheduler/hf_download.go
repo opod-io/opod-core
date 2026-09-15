@@ -57,7 +57,7 @@ func (o *Orchestrator) ensureLocalGGUF(ctx context.Context, entry models.Entry) 
 		// declared size = skipped, another size = pulled again, another
 		// process pulling = waited for; temp + rename, never a partial file
 		// under the final name.
-		return fetch.GGUF(ctx, entry.Source.Repo, entry.Source.File, o.ModelsDir, fetch.Options{Log: o.Log, Token: os.Getenv("HF_TOKEN")})
+		return fetch.GGUF(ctx, entry.Source.Repo, entry.Source.File, o.ModelsDir, fetch.Options{Log: o.Log, Token: o.HFToken, Endpoint: o.HFEndpoint})
 
 	default:
 		return "", fmt.Errorf("catalog %s: source.type=%q can't be auto-resolved for sharding (need file or huggingface)", entry.ID, entry.Source.Type)

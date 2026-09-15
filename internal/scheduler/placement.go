@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 
@@ -113,14 +112,15 @@ type coordinatorChoice struct {
 }
 
 // pickCoordinatorHost picks the strongest host (by RAM) among workers + the
-// leader to run the llama-server coordinator. Operators can override via
-// env OPOD_COORDINATOR_NODE=<node_id> ("local" forces leader).
+// leader to run the llama-server coordinator. Operators can override with
+// OPOD_COORDINATOR_NODE=<node_id> ("local" forces the leader), carried in
+// o.CoordinatorNode through the config contract.
 //
 // Why this exists: the coordinator does the actual layer aggregation across
 // rpc-servers. Pinning it to the leader was the v0.4 default and wasted
 // capacity when a worker had more RAM than the leader.
 func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.Node) coordinatorChoice {
-	if override := os.Getenv("OPOD_COORDINATOR_NODE"); override != "" {
+	if override := o.CoordinatorNode; override != "" {
 		if override == "local" {
 			return coordinatorChoice{nodeID: "local", local: true}
 		}

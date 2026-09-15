@@ -46,7 +46,7 @@ func modelUnload(id string) {
 		die("unload %s: %v: %s", id, adminErr, strings.TrimSpace(string(resp)))
 	}
 	// Leader not reachable — drive the engine directly.
-	cat, err := models.LoadCatalog(cfg.CatalogDir)
+	cat, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
 	if err != nil {
 		die("load catalog: %v", err)
 	}

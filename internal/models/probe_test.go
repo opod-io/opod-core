@@ -55,7 +55,7 @@ func TestProbeSourceVerdicts(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, reason := ProbeSource(ctx, client, &c.entry)
+			got, reason := ProbeSource(ctx, &c.entry, ProbeOptions{Client: client})
 			if got != c.want {
 				t.Errorf("verdict = %v (reason %q), want %v", got, reason, c.want)
 			}
@@ -72,20 +72,19 @@ func TestProbeSourceFileType(t *testing.T) {
 	if err := os.WriteFile(existing, []byte("gguf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := ProbeSource(ctx, nil, &Entry{Source: SourceSpec{Type: "file", Path: existing}}); v != ProbeOK {
+	if v, _ := ProbeSource(ctx, &Entry{Source: SourceSpec{Type: "file", Path: existing}}, ProbeOptions{}); v != ProbeOK {
 		t.Errorf("existing file: verdict %v, want ProbeOK", v)
 	}
-	if v, _ := ProbeSource(ctx, nil, &Entry{Source: SourceSpec{Type: "file", Path: "/no/such/file.gguf"}}); v != ProbeNotFound {
+	if v, _ := ProbeSource(ctx, &Entry{Source: SourceSpec{Type: "file", Path: "/no/such/file.gguf"}}, ProbeOptions{}); v != ProbeNotFound {
 		t.Errorf("missing file: verdict %v, want ProbeNotFound", v)
 	}
-	if v, _ := ProbeSource(ctx, nil, &Entry{Source: SourceSpec{Type: "file"}}); v != ProbeNotFound {
+	if v, _ := ProbeSource(ctx, &Entry{Source: SourceSpec{Type: "file"}}, ProbeOptions{}); v != ProbeNotFound {
 		t.Errorf("empty path: verdict %v, want ProbeNotFound", v)
 	}
 }
 
 func TestProbeSourceSkipEnv(t *testing.T) {
-	t.Setenv("OPOD_SKIP_SOURCE_CHECK", "1")
-	v, _ := ProbeSource(context.Background(), nil, &Entry{Source: SourceSpec{Type: "huggingface", Repo: "anything/at-all"}})
+	v, _ := ProbeSource(context.Background(), &Entry{Source: SourceSpec{Type: "huggingface", Repo: "anything/at-all"}}, ProbeOptions{Skip: true})
 	if v != ProbeSkipped {
 		t.Errorf("OPOD_SKIP_SOURCE_CHECK=1: verdict %v, want ProbeSkipped (no network)", v)
 	}
@@ -98,7 +97,7 @@ func TestProbeSourceNetworkErrorIsIndeterminate(t *testing.T) {
 	srv.Close() // closed immediately → connection refused
 	pointAt(t, srv.URL)
 	client := &http.Client{Timeout: 2 * time.Second}
-	v, _ := ProbeSource(context.Background(), client, &Entry{Source: SourceSpec{Type: "ollama", OllamaName: "real:7b"}})
+	v, _ := ProbeSource(context.Background(), &Entry{Source: SourceSpec{Type: "ollama", OllamaName: "real:7b"}}, ProbeOptions{Client: client})
 	if v != ProbeIndeterminate {
 		t.Errorf("connection failure: verdict %v, want ProbeIndeterminate", v)
 	}

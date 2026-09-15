@@ -71,7 +71,7 @@ func (p *policyFileState) accessLogEnabled() bool {
 // file it may appear after boot, so an absent file keeps the watcher
 // running; OPOD_POLICY_FILE=off disables it.
 func (s *Server) StartPolicyWatcher(ctx context.Context) {
-	path := os.Getenv("OPOD_POLICY_FILE")
+	path := s.cfg.Env.PolicyFile
 	if path == "" {
 		path = defaultPolicyPath
 	}

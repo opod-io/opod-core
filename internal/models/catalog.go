@@ -56,7 +56,10 @@ type (
 // Entries are returned sorted by SizeBytes ascending on every path —
 // AutoPick (and anything else scanning for "largest that fits") relies
 // on that invariant.
-func LoadCatalog(dir string) ([]Entry, error) {
+// overrides are extra directories (OPOD_CATALOG_DIR through the config
+// contract) read after the share directories and before ~/.opod/catalog;
+// ignored when dir names one directory to read alone.
+func LoadCatalog(dir string, overrides ...string) ([]Entry, error) {
 	var out []Entry
 	if dir != "" {
 		got, err := readCatalogDir(dir)
@@ -78,7 +81,7 @@ func LoadCatalog(dir string) ([]Entry, error) {
 		for _, e := range bundled {
 			merged[e.ID] = e
 		}
-		for _, d := range resolveCatalogDirs() {
+		for _, d := range resolveCatalogDirs(overrides) {
 			got, err := readCatalogDir(d)
 			if err != nil {
 				return nil, err
@@ -255,7 +258,7 @@ func ParseSchemeID(id string) (*Entry, bool) {
 // Earlier this returned a single directory and stopped at the first
 // match, which silently shadowed a user's drop-in YAML when the same
 // id existed in `./catalog/`. The merge fixes that.
-func resolveCatalogDirs() []string {
+func resolveCatalogDirs(overrides []string) []string {
 	var out []string
 	add := func(d string) {
 		if d == "" {
@@ -277,7 +280,9 @@ func resolveCatalogDirs() []string {
 	// worker entrypoint's exported copy (identical content, harmless).
 	add("/usr/local/share/opod/catalog")
 	add("/usr/share/opod/catalog")
-	add(os.Getenv("OPOD_CATALOG_DIR")) // explicit: beats the bundled tree, yields to ~/.opod/catalog
+	for _, d := range overrides { // explicit: beats the bundled tree, yields to ~/.opod/catalog
+		add(d)
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		add(filepath.Join(home, ".opod", "catalog"))
 	}

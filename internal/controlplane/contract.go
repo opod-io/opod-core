@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/opod-io/opod-sdk/adminapi"
+
+	"github.com/opod-io/opod/internal/config"
 )
 
 // The leader's stable admin surface, v1.
@@ -55,6 +57,13 @@ var LeaderContract = []ContractRoute{
 	{Method: http.MethodPost, Path: "/admin/v1/shards/create"},
 	{Method: http.MethodDelete, Path: "/admin/v1/shards/{model_id}"},
 }
+
+// EnvContract is the process-environment half of the contract: every
+// variable a manager may set on a leader or worker process (config.Env), as
+// a table with the side that reads it. Library code reads nothing else from
+// the environment (config's envsurface test), so a manager that renders
+// exactly these names, and only these, cannot drift from the binary.
+var EnvContract = config.Vars()
 
 // contractFeatures names the mechanisms a manager may probe for instead of
 // sniffing behaviour. Only ever add keys; a key present means the mechanism

@@ -6,8 +6,7 @@ package config
 // list: every environment read outside this package and outside cmd/opod
 // (which parses flags and is the one place allowed to touch the environment
 // on its way to config) must be here. A new read is a failing test, and the
-// fix is to route it through Config — R12.2 shrinks this list to zero, at
-// which point the list itself goes.
+// fix is to add the variable to Env (env.go) and read the struct.
 //
 // Entries are "<path from internal/>: <variable>"; a read whose argument is
 // not a string literal is recorded as "<path>: <dynamic>".
@@ -24,23 +23,9 @@ import (
 	"testing"
 )
 
-var allowedEnvReads = []string{
-	"agent/adapters.go: OPOD_ADAPTERS",
-	"agent/capability.go: OPOD_ACCELERATOR",
-	"agent/engineflags.go: OPOD_ENGINE_FLAGS",
-	"agent/server.go: HF_TOKEN",
-	"agent/server.go: OPOD_REJECT_BEARER",
-	"agent/server.go: OPOD_SLEEP_MODE",
-	"controlplane/authfile.go: OPOD_AUTH_FILE",
-	"controlplane/planfile.go: OPOD_PLAN_FILE",
-	"controlplane/policyfile.go: OPOD_POLICY_FILE",
-	"fetch/fetch.go: HF_ENDPOINT",
-	"models/catalog.go: OPOD_CATALOG_DIR",
-	"models/probe.go: OPOD_SKIP_SOURCE_CHECK",
-	"scheduler/hf_download.go: HF_TOKEN",
-	"scheduler/placement.go: OPOD_COORDINATOR_NODE",
-	"scheduler/sharding.go: OPOD_COORDINATOR_NODE",
-}
+// allowedEnvReads is empty since R12.2: every variable goes through Env. The
+// test stays so the list only ever grows back on purpose, with a reason here.
+var allowedEnvReads = []string{}
 
 func TestEnvSurfaceOutsideConfigIsTheAllowlist(t *testing.T) {
 	root := filepath.Join("..") // internal/
