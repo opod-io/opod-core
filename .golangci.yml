@@ -8,12 +8,26 @@ linters:
   default: none
   enable:
     - errcheck
+    - funlen
+    - gocyclo
     - govet
     - ineffassign
     - revive
     - staticcheck
     - unused
   settings:
+    # Size ratchets (ROADMAP R12.1, from the 2026-09-07 audit): the ceilings
+    # are the maxima measured on 2026-09-15 with the linter's own count
+    # (funlen: code lines, comments ignored; gocyclo: cyclomatic complexity).
+    # Longest function: scheduler/sharding.go CreateSharded (248); most complex: engines/enginetest Run (63).
+    # A row that touches one of those functions must leave it smaller and
+    # lower the number here; nothing may grow past it. Never add a nolint.
+    funlen:
+      lines: 248
+      statements: -1
+      ignore-comments: true
+    gocyclo:
+      min-complexity: 63
     errcheck:
       # Common Close + best-effort cleanup patterns where we knowingly drop
       # the error. Matches what v1.61 implicitly ignored before the v2 bump.

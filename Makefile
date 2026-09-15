@@ -10,8 +10,12 @@ build:
 test:
 	go test ./...
 
+# lint: go vet, then golangci-lint (the same .golangci.yml CI gates on — size
+# ratchets included) when the binary is on PATH or in GOPATH/bin.
+GOLANGCI ?= $(shell command -v golangci-lint 2>/dev/null || echo "$$(go env GOPATH)/bin/golangci-lint")
 lint:
 	go vet ./...
+	@if [ -x "$(GOLANGCI)" ]; then "$(GOLANGCI)" run ./...; else echo "golangci-lint not installed — CI runs it"; fi
 
 # fmt-check fails if any .go file is not gofmt-s-clean. Same enforcement
 # CI runs via golangci-lint, but local + fast (no v2-binary needed).

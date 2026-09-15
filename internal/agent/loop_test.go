@@ -72,7 +72,8 @@ func TestLoopCarriesOneBootIDPerProcess(t *testing.T) {
 	if a.BootID == "" || len(f.bootIDs) != 1 || !f.bootIDs[a.BootID] {
 		t.Fatalf("register and every heartbeat carry the one boot id %q: %v", a.BootID, f.bootIDs)
 	}
-	if NewBootID() == NewBootID() {
+	first, second := NewBootID(), NewBootID()
+	if first == second {
 		t.Fatal("boot ids are unique per process")
 	}
 }
