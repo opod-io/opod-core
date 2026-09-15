@@ -187,6 +187,7 @@ Commands:
   model search [q]         Search the catalog
   catalog ls               List the bundled catalog (embedded; opod-sdk/catalog)
   catalog export <dir>     Write the bundled catalog out as files (overrides go beside them)
+  fetch <repo> <file>      Make one GGUF present in --dir / $OPOD_MODELS_DIR (exclusive, atomic; a control plane's prefetch)
   model info <id>          Full details for one catalog model
   model load <id>          Bring a model into engine RAM (memory-aware)
   model unload <id>        Drop a model from engine RAM (weights stay)
