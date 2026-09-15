@@ -107,7 +107,7 @@ After step 3, Opod prints:
   Health:     http://localhost:8080/healthz
 
   Admin API key (shown once — store it now):
-    sk-orc-xK9pQANw-nmzUbVdvL3S-aJKKvPeNa-eedqt
+    sk-orc-<admin key — printed once, keep it>
 
   Next steps:
     →  Test in the browser:  http://localhost:8080
@@ -143,7 +143,7 @@ Core has no web dashboard (ADR-022). The console — Connect cards, Playground, 
 ### C) curl from your terminal
 
 ```bash
-KEY="sk-orc-xK9p…"   # paste your key
+KEY="sk-orc-<admin key — printed once, keep it>…"   # paste your key
 
 curl http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer $KEY" \
@@ -161,7 +161,7 @@ You'll see JSON like:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-xK9p…
+export ANTHROPIC_AUTH_TOKEN=sk-orc-<admin key — printed once, keep it>…
 export ANTHROPIC_MODEL=llama-3.2-1b      # tell Claude Code which local model to use
 claude
 ```

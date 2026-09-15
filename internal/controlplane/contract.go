@@ -72,6 +72,7 @@ func contractFeatures() map[string]bool {
 		"stream_boot":       true,
 		"load_signals":      true,
 		"lora":              true,
+		"boot_id":           true, // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
 		"pd_roles":          true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware":    true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
