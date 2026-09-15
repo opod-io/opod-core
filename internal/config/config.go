@@ -18,6 +18,12 @@ import (
 type Config struct {
 	Listen      string `yaml:"listen"`
 	ExternalURL string `yaml:"external_url"`
+	// TLSCert / TLSKey (OPOD_TLS_CERT / OPOD_TLS_KEY): when both name a PEM
+	// file the leader's listener speaks TLS — the north side of an endpoint
+	// (ADR-005: TLS on the north side; a control plane mints one per
+	// endpoint). Empty = plain http, as before.
+	TLSCert string `yaml:"tls_cert"`
+	TLSKey  string `yaml:"tls_key"`
 	DataDir     string `yaml:"data_dir"`
 	LogLevel    string `yaml:"log_level"`
 	CatalogDir  string `yaml:"catalog_dir"`
@@ -334,6 +340,12 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPOD_LISTEN"); v != "" {
 		c.Listen = v
+	}
+	if v := os.Getenv("OPOD_TLS_CERT"); v != "" {
+		c.TLSCert = v
+	}
+	if v := os.Getenv("OPOD_TLS_KEY"); v != "" {
+		c.TLSKey = v
 	}
 	if v := os.Getenv("OPOD_DATA_DIR"); v != "" {
 		c.DataDir = v

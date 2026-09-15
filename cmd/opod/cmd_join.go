@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -152,6 +151,12 @@ func cmdJoin(args []string) {
 	// One alias table, written by the load handler and read by the heartbeat.
 	aliases := &agent.Aliases{}
 
+	// The leader may speak TLS with a certificate the control plane minted
+	// (OPOD_LEADER_CA names it); the client trusts exactly that.
+	leaderClient, err := agent.NewLeaderClient(os.Getenv("OPOD_LEADER_CA"), 10*time.Second)
+	if err != nil {
+		die("%v", err)
+	}
 	a := &agent.Agent{
 		NodeID:            nodeID,
 		LeaderURL:         leader,
@@ -160,7 +165,7 @@ func cmdJoin(args []string) {
 		Capabilities:      caps,
 		Engine:            eng,
 		Aliases:           aliases,
-		HTTP:              &http.Client{Timeout: 10 * time.Second},
+		HTTP:              leaderClient,
 		HeartbeatInterval: 5 * time.Second,
 		Log:               log,
 	}
