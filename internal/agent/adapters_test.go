@@ -136,10 +136,40 @@ func TestAdapters_RoutesAndEnv(t *testing.T) {
 	if err != nil || len(got) != 2 || got[1].Source != "/data/models/chat-lora" {
 		t.Fatalf("env: %v %v", got, err)
 	}
-	if vllmLoRAArgs(len(got)) != "--enable-lora --max-loras 4" || vllmLoRAArgs(0) != "" {
-		t.Fatalf("lora args: %q %q", vllmLoRAArgs(len(got)), vllmLoRAArgs(0))
+	if vllmLoRAArgs(len(got), 0) != "--enable-lora --max-loras 4" || vllmLoRAArgs(0, 0) != "" {
+		t.Fatalf("lora args: %q %q", vllmLoRAArgs(len(got), 0), vllmLoRAArgs(0, 0))
 	}
 	if _, err := ParseAdapters(`[{"name":"Bad","source":"x"}]`); err == nil {
 		t.Fatal("a bad name in the env is an error, not a loaded adapter")
+	}
+}
+
+// TestLoRARankSizesTheEngine: vLLM's --max-lora-rank defaults to 16 and refuses
+// a bigger adapter when it is loaded, so the engine must be started for the
+// largest rank the set declares. A rank at or under the default changes nothing.
+func TestLoRARankSizesTheEngine(t *testing.T) {
+	as, err := ParseAdapters(`[{"name":"a","source":"org/a","rank":8},{"name":"b","source":"org/b","rank":64}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := MaxAdapterRank(as); got != 64 {
+		t.Fatalf("largest rank in the set: %d", got)
+	}
+	if got := vllmLoRAArgs(len(as), MaxAdapterRank(as)); got != "--enable-lora --max-loras 4 --max-lora-rank 64" {
+		t.Fatalf("args for a rank-64 adapter: %q", got)
+	}
+	// At or below vLLM's own default the flag is not passed at all.
+	if got := vllmLoRAArgs(2, 16); got != "--enable-lora --max-loras 4" {
+		t.Fatalf("rank 16 is the engine's default: %q", got)
+	}
+	// A rank between two accepted sizes rounds up; an absurd one lands on the largest.
+	for rank, want := range map[int]int{17: 32, 33: 64, 200: 256, 999: 256} {
+		if got := loRARankFor(rank); got != want {
+			t.Errorf("loRARankFor(%d) = %d, want %d", rank, got, want)
+		}
+	}
+	// A rank that travelled with the adapter survives parsing.
+	if as[1].Rank != 64 {
+		t.Errorf("rank lost in ParseAdapters: %+v", as[1])
 	}
 }

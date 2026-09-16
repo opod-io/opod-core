@@ -538,7 +538,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 	if adErr != nil {
 		s.logf("%v — adapters ignored", adErr)
 	}
-	if la := vllmLoRAArgs(len(adapters)); la != "" {
+	if la := vllmLoRAArgs(len(adapters), MaxAdapterRank(adapters)); la != "" {
 		flagArgs = strings.TrimSpace(flagArgs + " " + la)
 	}
 	cmdline := fmt.Sprintf(
