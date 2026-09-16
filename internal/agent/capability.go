@@ -22,6 +22,12 @@ type Capabilities struct {
 	// leader routes generation to decode workers only. The KV handoff between
 	// the halves is TARGET; until then a pair lives on one node.
 	Role string `json:"Role,omitempty"`
+	// PlanRevision is the plan revision this worker process was STARTED for
+	// (feature routing_weights, R15.17), from OPOD_PLAN_REVISION. It is what
+	// makes weighted routing between revisions possible: the leader groups
+	// workers by it and gives each group its share. Zero = not stated, which
+	// is every worker a manager has not told, and those form one group.
+	PlanRevision int `json:"PlanRevision,omitempty"`
 }
 
 // GPU describes a single GPU device.

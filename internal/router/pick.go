@@ -63,6 +63,18 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	}
 	workers = decodeOnly(workers, func(id string) string { return roles[id] })
 
+	// Revision weights (R15.17): when the policy splits traffic between plan
+	// revisions and more than one is serving, the group is chosen first and the
+	// load-aware ordering below then runs INSIDE it. A revision with no live
+	// worker is skipped, so a restarting canary pod never black-holes its share.
+	revisions := map[string]int{}
+	for _, w := range workers {
+		if n, err := r.store.Nodes().Get(ctx, w.NodeID); err == nil && n != nil {
+			revisions[w.NodeID] = revisionOf(n)
+		}
+	}
+	workers = r.pickRevisionGroup(workers, func(id string) int { return revisions[id] })
+
 	// 3. Pick least-loaded worker. The snapshot we sort against is
 	//    consistent under RLock, but the actual inflight increment
 	//    happens in the caller AFTER we return — so two concurrent

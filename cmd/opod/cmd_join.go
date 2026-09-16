@@ -124,6 +124,17 @@ func cmdJoin(args []string) {
 	default:
 		die("OPOD_WORKER_ROLE %q: use prefill or decode, or leave it unset", role)
 	}
+	// R15.17: the plan revision this process serves. A manager that splits
+	// traffic between revisions sets it; a bad value is ignored rather than
+	// fatal, because a worker that will not start is worse than one the leader
+	// simply cannot weight.
+	if rev := strings.TrimSpace(env.PlanRevision); rev != "" {
+		if n, err := strconv.Atoi(rev); err == nil && n > 0 {
+			caps.PlanRevision = n
+		} else {
+			warn(os.Stdout, "OPOD_PLAN_REVISION %q is not a positive number — this worker joins the unversioned group", rev)
+		}
+	}
 	addr, err := mesh.NewLAN().Address(8081) // workers default to :8081
 	if err != nil {
 		warn(os.Stdout, "could not determine local address: %v", err)

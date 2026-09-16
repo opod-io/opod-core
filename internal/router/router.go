@@ -91,6 +91,9 @@ type Router struct {
 	// Set via SetHeartbeatMaxAge.
 	heartbeatMaxAge time.Duration
 
+	// rev splits traffic between plan revisions (R15.17). Zero value = off.
+	rev revisionRouting
+
 	// FallbackResolver is optional. When set, Chat / Embed will retry the
 	// request against each fallback model in order on retriable errors
 	// (anything Engine.Chat returns synchronously). Set via

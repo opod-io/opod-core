@@ -21,6 +21,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"github.com/opod-io/opod/internal/router"
 	"os"
 	"strings"
 	"sync"
@@ -95,6 +96,12 @@ func (s *Server) StartPolicyWatcher(ctx context.Context) {
 		}
 		lastMod = st.ModTime()
 		s.applyPolicySnapshot(&doc)
+		// R15.17: the revision split is read from the raw document rather than
+		// from the shared type, because the field is additive and the published
+		// SDK module has not been tagged with it yet. Reading the JSON directly
+		// means the mechanism works the day a manager writes the field, and the
+		// line below collapses to doc.Routing.Revisions when the tag lands.
+		s.applyRevisionWeights(raw)
 	}
 	load()
 	go func() {
@@ -177,4 +184,27 @@ func buildGuardrailRegistry(rules []GuardrailRule) (*guardrails.Registry, int) {
 		return nil, skipped
 	}
 	return &guardrails.Registry{Pre: guardrails.NewChain(pre...), Post: guardrails.NewChain(post...), LoggingOnly: guardrails.NewChain(logOnly...)}, skipped
+}
+
+// applyRevisionWeights reads policy.routing.revisions and hands it to the
+// router (R15.17, feature routing_weights). Empty or absent turns the split
+// off, which is every endpoint that is not mid-canary.
+//
+// This parses the raw snapshot instead of the shared adminapi type on purpose:
+// the field is additive and the published SDK module is not yet tagged with it.
+// A manager that writes it gets the behaviour today; when the tag lands this
+// becomes one line off doc.Routing.
+func (s *Server) applyRevisionWeights(raw []byte) {
+	if s.router == nil {
+		return
+	}
+	var doc struct {
+		Routing struct {
+			Revisions []router.RevisionWeight `json:"revisions"`
+		} `json:"routing"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return // the snapshot already parsed above; a shape we cannot read here just means no split
+	}
+	s.router.SetRevisionWeights(doc.Routing.Revisions)
 }
