@@ -10,8 +10,8 @@
 #
 #   images/build.sh [--push] [--multi] [--dry-run] [--tag T] [image ...]
 #       images: leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia
-#               vllm-amd sglang-nvidia sglang-amd   (default: everything but vllm-amd and the
-#               sglang pair, whose bases are ~25 GB and whose hardware proof is still owed)
+#               vllm-amd vllm-intel vllm-tt sglang-nvidia sglang-amd   (default: everything but
+#               those five, whose bases are 7-25 GB and whose hardware proof is still owed)
 #       ARCH=arm64 builds linux/arm64 instead (a local kind on Apple silicon; leader + llamacpp-cpu only —
 #       the GPU bases are amd64). Tag gets a "-arm64" suffix so it never shadows the amd64 image.
 #       --multi builds BOTH arches and publishes the two-arch index under the plain tag
@@ -46,6 +46,12 @@ SOURCE_URL=${SOURCE_URL:-https://github.com/opod-io/opod-core}
 #   images/build.sh --push --tag <t> vllm-amd
 # and points chart engineImages.vllmAmd at it. ~25 GB base pull either way.
 VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0}
+# Intel's own vLLM build for XPU (Arc / Flex / Max). Upstream vllm/vllm-openai is
+# CUDA-only, so Intel is a different publisher rather than a different tag. ~7 GB.
+# Single-card serving only until an Intel node proves more: vLLM's XPU backend has
+# no Ray gang path we have run, so a plan that asks for one is refused upstream of
+# this image, not by it.
+VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-intel/vllm:0.21.0-xpu}
 # Tenstorrent's own tt-metal + vLLM release image. ~17 GB uncompressed, so the
 # build is a thin layer on a very fat base — bump the tag deliberately and check
 # it against the tt-kmd version on the fleet, which tt-metal is strict about.
@@ -84,10 +90,11 @@ spec() {
     llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel amd64" ;;
     vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1 amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
+    vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126 amd64" ;;
     sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-rocm630 amd64" ;;
     vllm-tt)         echo "opod-worker-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
-    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|sglang-nvidia|sglang-amd|vllm-tt)" ;;
+    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|vllm-tt)" ;;
   esac
 }
 
