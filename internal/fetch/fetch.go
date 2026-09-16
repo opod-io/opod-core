@@ -15,6 +15,8 @@ package fetch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -31,13 +33,57 @@ import (
 // config contract) names a mirror or, in tests, a local server.
 const DefaultHFEndpoint = "https://huggingface.co"
 
-// HFFileURL is the resolve URL of one file in a repo (main revision) at the
-// given Hub endpoint ("" = the public Hub).
-func HFFileURL(endpoint, repo, file string) string {
+// HFFileURL is the resolve URL of one file in a repo at the given Hub endpoint
+// ("" = the public Hub). An empty revision means "main", which is a MOVING
+// target: the same URL serves different bytes after the repo owner pushes. A
+// pinned revision (a commit sha, a tag or a branch) is what makes a model
+// version reproducible — R15.16 asks for one on every managed fetch.
+func HFFileURL(endpoint, repo, revision, file string) string {
 	if endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/"); endpoint == "" {
 		endpoint = DefaultHFEndpoint
 	}
-	return fmt.Sprintf("%s/%s/resolve/main/%s", endpoint, repo, url.PathEscape(file))
+	if revision = strings.TrimSpace(revision); revision == "" {
+		revision = "main"
+	}
+	return fmt.Sprintf("%s/%s/resolve/%s/%s", endpoint, repo, url.PathEscape(revision), url.PathEscape(file))
+}
+
+// ValidRevision refuses anything that could leave the cache directory or alter
+// the URL path. A Hub revision is a commit sha, a tag or a branch name.
+func ValidRevision(rev string) error {
+	if rev == "" {
+		return nil // "main"
+	}
+	if strings.Contains(rev, "..") || strings.ContainsAny(rev, "/\\ \t") || len(rev) > 128 {
+		return fmt.Errorf("revision %q must be a commit sha, tag or branch with no path separators", rev)
+	}
+	return nil
+}
+
+// RevisionDir is where a pinned revision's files live: <dir>/<repo-slug>@<rev>.
+// Two revisions of one repo therefore never collide, and neither collides with
+// the unpinned file at the top of the cache — which is the whole point: a plan
+// that pins v1 and one that pins v2 must be able to run on the same node at
+// the same time (ADR-045 §5).
+func RevisionDir(dir, repo, revision string) string {
+	if strings.TrimSpace(revision) == "" {
+		return dir
+	}
+	return filepath.Join(dir, repoSlug(repo)+"@"+revision)
+}
+
+// repoSlug flattens "org/name" into one path segment.
+func repoSlug(repo string) string {
+	out := make([]rune, 0, len(repo))
+	for _, r := range repo {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.', r == '_':
+			out = append(out, r)
+		default:
+			out = append(out, '-')
+		}
+	}
+	return strings.Trim(string(out), "-")
 }
 
 // ValidGGUFName refuses anything that could leave the models directory or
@@ -56,6 +102,15 @@ type Options struct {
 	LockWait time.Duration // how long to wait for another caller's pull (default 6 h)
 	Token    string        // Hugging Face token for gated repos ("" = anonymous)
 	Endpoint string        // Hub base URL ("" = DefaultHFEndpoint); HF_ENDPOINT through the config contract
+	// Revision pins the Hub revision (commit sha, tag or branch). Empty means
+	// "main", which moves. A pinned revision is cached under its own directory
+	// so two versions of one repo coexist on a node (R15.16).
+	Revision string
+	// SHA256 is the file's expected digest, when the caller knows it. A
+	// mismatch is an error and the bad file is removed: a model version that
+	// does not hash to what the record says is not that version, and serving it
+	// would make the whole version story a lie.
+	SHA256 string
 }
 
 // GGUF makes <dir>/<file> present and returns its path. Present with the
@@ -83,8 +138,17 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("fetch: mkdir %s: %w", dir, err)
 	}
+	if err := ValidRevision(opt.Revision); err != nil {
+		return "", fmt.Errorf("fetch: %w", err)
+	}
+	if d := RevisionDir(dir, repo, opt.Revision); d != dir {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return "", fmt.Errorf("fetch: mkdir %s: %w", d, err)
+		}
+		dir = d
+	}
 	target := filepath.Join(dir, file)
-	fileURL := HFFileURL(opt.Endpoint, repo, file)
+	fileURL := HFFileURL(opt.Endpoint, repo, opt.Revision, file)
 	want, known := expectedSize(ctx, opt, fileURL)
 	if complete(target, want, known) {
 		Touch(target) // least-recently-used pruning needs to know it was wanted (ADR-046)
@@ -108,6 +172,13 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 	}
 	if err := download(ctx, opt, fileURL, target, want); err != nil {
 		return target, err
+	}
+	if err := verifyDigest(target, opt.SHA256); err != nil {
+		// The file is wrong, so it must not survive to be "found complete" by
+		// the next call. Removing it costs a re-download; keeping it would
+		// serve the wrong weights forever.
+		_ = os.Remove(target)
+		return "", fmt.Errorf("fetch: %w", err)
 	}
 	// The marker is what makes this file prunable later: a file without one is
 	// never deleted by cache management, whatever the disk pressure (ADR-046).
@@ -249,5 +320,27 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 		return fmt.Errorf("rename %s → %s: %w", tmp, target, err)
 	}
 	opt.Log.Info("gguf fetched", "path", target, "bytes", n, "duration_s", time.Since(t0).Seconds())
+	return nil
+}
+
+// verifyDigest checks a downloaded file against the digest the caller
+// declared. No digest = nothing to check (the Hub's size check still applies).
+func verifyDigest(target, want string) error {
+	want = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(want, "sha256:")))
+	if want == "" {
+		return nil
+	}
+	f, err := os.Open(target)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != want {
+		return fmt.Errorf("%s hashes to sha256:%s, not the sha256:%s this version records", filepath.Base(target), got, want)
+	}
 	return nil
 }

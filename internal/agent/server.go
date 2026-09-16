@@ -60,6 +60,12 @@ type Server struct {
 	SleepMode    bool   // OPOD_SLEEP_MODE: vLLM starts with sleep mode on
 	HFToken      string // HF_TOKEN for the worker's own pulls
 	HFEndpoint   string // HF_ENDPOINT ("" = the public Hub)
+	// ModelRevision / ModelSHA256 pin the model VERSION this worker serves
+	// (R15.16): the Hub revision to fetch and the digest the file must hash to.
+	// Empty revision = "main", which moves between pulls; a manager that cares
+	// which bytes are served sets both.
+	ModelRevision string
+	ModelSHA256   string
 
 	// adapterSet is what this worker holds as LoRA variants (adapters.go).
 	adaptersOnce sync.Once
@@ -694,7 +700,8 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 	// beside other workers' and corrupted the file (cell, 2026-09-14).
 	if path == "" && repo != "" && file != "" && s.ModelsDir != "" {
 		fctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour) // not the request's: a client that gives up must not abort a 40 GB pull
-		p, err := fetch.GGUF(fctx, repo, file, s.ModelsDir, fetch.Options{Log: slog.Default(), Token: s.HFToken, Endpoint: s.HFEndpoint})
+		p, err := fetch.GGUF(fctx, repo, file, s.ModelsDir, fetch.Options{Log: slog.Default(), Token: s.HFToken, Endpoint: s.HFEndpoint,
+			Revision: s.ModelRevision, SHA256: s.ModelSHA256})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("fetch %s/%s: %w", repo, file, err)

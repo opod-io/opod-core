@@ -212,6 +212,9 @@ func cmdJoin(args []string) {
 		SleepMode:    env.SleepMode,
 		HFToken:      env.HFToken,
 		HFEndpoint:   env.HFEndpoint,
+		// R15.16: the version this worker serves, pinned by the manager.
+		ModelRevision: env.ModelRevision,
+		ModelSHA256:   env.ModelSHA256,
 	}
 	defer sup.StopAll()
 
