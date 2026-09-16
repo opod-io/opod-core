@@ -10,9 +10,18 @@
 # no Tenstorrent-specific code anywhere in core.
 #
 # Verified on a Blackhole p150b Quietbox 2026-09-11: tt-metal opened all four
-# chips through tt-kmd 2.11.0. The image also wants 1 GB hugepages; without them
-# it warns and continues, so they are a performance knob rather than a gate.
-ARG BASE=ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.1-555f240-22be241
+# chips through tt-kmd 2.11.0. Serving additionally needs the host's 1 GB
+# hugepages mounted at /dev/hugepages-1G inside the container: without them the
+# chips open but firmware init asserts (channel < get_num_host_channels()), so
+# the pod spec must mount them — see README.md.
+# The base is not "the latest tt image": each tt-inference-server model spec
+# names the tt-metal and vLLM commits it was validated on for one (model,
+# device) pair, and the image must carry exactly those. In release 0.10.1 the
+# Blackhole P150 / P150X4 LLM specs (Llama-3.1-8B, Llama-3.1/3.3-70B) name
+# 55fd115 + aa4ae1e, so that is the default; the 555f240-22be241 build carries
+# LLM specs only for P150X8 and P300. Choose by the spec, per endpoint:
+#   images/build.sh --tag <t> vllm-tt  with  VLLM_TT_BASE=<image for that spec>
+ARG BASE=ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e
 
 FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
 WORKDIR /src
