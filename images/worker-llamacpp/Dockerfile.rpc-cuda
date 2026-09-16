@@ -19,7 +19,9 @@
 #   * ggml auto-discovers backend .so from the process CWD; the base image's
 #     WORKDIR=/app holds FOREIGN ggml backends, so the RPC binaries must run
 #     from /opt/llama-rpc (wrappers cd there) or they load /app's backends and
-#     crash.
+#     crash. GGML_BACKEND_PATH is NOT set: in ggml it names one extra backend
+#     FILE, so a directory only logs "cannot read file data: Is a directory" on
+#     every start (seen again on a 3060 Ti, 2026-09-16).
 ARG BASE=ghcr.io/ggml-org/llama.cpp:full-cuda
 ARG LLAMA_RELEASE=b9934
 
@@ -84,7 +86,7 @@ COPY --from=rpc-cuda /opt/llama-rpc /opt/llama-rpc
 # rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends are
 # discoverable; PREPEND our cudart/cublas, then fall through to the base's CUDA.
 RUN set -eux; \
-    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport GGML_BACKEND_PATH=/opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
       > /usr/local/bin/rpc-server; \
     chmod +x /usr/local/bin/rpc-server
 
@@ -92,7 +94,7 @@ RUN set -eux; \
 # shard coordinator (N>=2, which passes --rpc). Route by args: --rpc → the RPC
 # build (the base's /app has no --rpc), otherwise → the base's GPU llama-server.
 RUN set -eux; \
-    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export GGML_BACKEND_PATH=/opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
       > /usr/local/bin/llama-server; \
     chmod +x /usr/local/bin/llama-server
 
