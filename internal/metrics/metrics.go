@@ -27,6 +27,16 @@ var (
 		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300},
 	}, []string{"model", "protocol", "outcome"})
 
+	// Time to the first token a client can use, on streamed answers only
+	// (R15.13). A non-streamed answer has no first token to wait for and is
+	// never observed here, so the histogram is not diluted by whole-response
+	// latencies that would make the wait look longer than it is.
+	ttftSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "opod_time_to_first_token_seconds",
+		Help:    "Time to the first usable token of a streamed answer, by model.",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60},
+	}, []string{"model"})
+
 	tokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_request_tokens_total",
 		Help: "Total tokens served by model and direction (prompt|completion).",
@@ -183,6 +193,15 @@ func ObserveRequest(model, protocol, outcome string, dur time.Duration, promptTo
 	if completionTokens > 0 {
 		tokensTotal.WithLabelValues(model, "completion").Add(float64(completionTokens))
 	}
+}
+
+// ObserveTTFT records one streamed answer's time to its first usable token.
+// Zero is never recorded: it means "not streamed", not "instant".
+func ObserveTTFT(model string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	ttftSeconds.WithLabelValues(model).Observe(d.Seconds())
 }
 
 // SetModelLoaded marks a model as loaded (1) or not (0) on a node.

@@ -53,6 +53,14 @@ func rateLimitEstimateFrom(ctx context.Context) rateLimitEstimate {
 // rows but everything stays observable.
 func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 	u *engines.Usage, latency time.Duration, outcome string) {
+	h.recordUsageTTFT(ctx, protocol, model, u, latency, 0, outcome)
+}
+
+// recordUsageTTFT is recordUsage with the time to the first usable byte, which
+// only the streaming path can know (R15.13). 0 = not streamed, and the control
+// plane must not read it as "instant".
+func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
+	u *engines.Usage, latency, ttft time.Duration, outcome string) {
 	st, pol := h.Store, h.Policy()
 
 	var keyID, userID string
@@ -77,6 +85,7 @@ func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 		metricsModel = "unknown"
 	}
 	metrics.ObserveRequest(metricsModel, protocol, outcome, latency, prompt, completion)
+	metrics.ObserveTTFT(metricsModel, ttft)
 
 	rec := store.Usage{
 		TS:               time.Now(),
@@ -90,6 +99,7 @@ func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 		Outcome:          outcome,
 		CostUSD:          0,                    // dollar cost left core with budgets (ADR-022); rating happens downstream
 		NodeID:           router.NodeFrom(ctx), // "" when answered locally / never dispatched
+		TTFTMS:           int(ttft.Milliseconds()),
 	}
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior
