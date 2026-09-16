@@ -41,6 +41,8 @@ type Env struct {
 	SkipSourceCheck bool   `env:"OPOD_SKIP_SOURCE_CHECK" side:"both" doc:"1 = never HEAD-check a model's upstream (air-gapped mirrors)"`
 	HFToken         string `env:"HF_TOKEN" side:"both" doc:"Hugging Face token for gated repositories"`
 	HFEndpoint      string `env:"HF_ENDPOINT" side:"both" doc:"Hugging Face Hub base URL (a mirror); default https://huggingface.co"`
+	ModelRevision   string `env:"OPOD_MODEL_REVISION" side:"both" doc:"pin the model's Hub revision (commit sha, tag or branch); cached under <repo>@<rev> so two revisions coexist. Empty = main, which moves"`
+	ModelSHA256     string `env:"OPOD_MODEL_SHA256" side:"both" doc:"the expected sha256 of the model file; a mismatch removes the file and fails the load"`
 }
 
 // Var is one row of the environment contract.

@@ -2,10 +2,13 @@ package fetch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -106,5 +109,98 @@ func TestFetchGGUF_WrongSizedFileIsPulledAgain(t *testing.T) {
 	}
 	if err := ValidGGUFName("../x.gguf"); err == nil {
 		t.Fatal("path-y names are refused")
+	}
+}
+
+// R15.16 · a model VERSION is a pinned Hub revision plus the digest its record
+// carries. The properties that make that worth anything:
+//   - two revisions of one repo never collide on disk, so an endpoint on v1 and
+//     one on v2 can run on the same node;
+//   - a file that does not hash to what the record says is not that version,
+//     and must not survive to be found "complete" by the next pull.
+func TestTwoRevisionsNeverCollide(t *testing.T) {
+	dir := t.TempDir()
+	a := RevisionDir(dir, "org/model", "abc123")
+	b := RevisionDir(dir, "org/model", "def456")
+	if a == b {
+		t.Fatalf("two revisions share a directory: %s", a)
+	}
+	if RevisionDir(dir, "org/model", "") != dir {
+		t.Fatal("an unpinned fetch must stay at the top of the cache, where every existing file already is")
+	}
+	if strings.ContainsAny(filepath.Base(a), `/\`) {
+		t.Fatalf("the repo slug is not one path segment: %s", a)
+	}
+}
+
+func TestRevisionIsInTheURL(t *testing.T) {
+	got := HFFileURL("", "org/model", "v2.0", "w.gguf")
+	if !strings.Contains(got, "/resolve/v2.0/") {
+		t.Fatalf("the pinned revision is not in the resolve path: %s", got)
+	}
+	if !strings.Contains(HFFileURL("", "org/model", "", "w.gguf"), "/resolve/main/") {
+		t.Fatal("an empty revision must still resolve main")
+	}
+}
+
+func TestARevisionCannotEscapeTheCache(t *testing.T) {
+	for _, bad := range []string{"../etc", "a/b", `a\b`, "with space"} {
+		if err := ValidRevision(bad); err == nil {
+			t.Fatalf("revision %q was accepted", bad)
+		}
+	}
+	if err := ValidRevision("a1b2c3d4"); err != nil {
+		t.Fatalf("a commit sha was refused: %v", err)
+	}
+}
+
+func TestAWrongDigestRemovesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("not the weights you were promised")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err := GGUF(context.Background(), "org/model", "w.gguf", dir, Options{
+		Endpoint: srv.URL,
+		SHA256:   "0000000000000000000000000000000000000000000000000000000000000000",
+	})
+	if err == nil {
+		t.Fatal("a file that hashed to something else was accepted as the version")
+	}
+	if !strings.Contains(err.Error(), "hashes to") {
+		t.Fatalf("the error does not say what went wrong: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "w.gguf")); statErr == nil {
+		t.Fatal("the wrong file survived: the next pull would find it complete and serve it")
+	}
+}
+
+func TestTheRightDigestPasses(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("the weights")
+	sum := sha256.Sum256(body)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	p, err := GGUF(context.Background(), "org/model", "w.gguf", dir, Options{
+		Endpoint: srv.URL, Revision: "v1", SHA256: "sha256:" + hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		t.Fatalf("a matching digest was refused: %v", err)
+	}
+	if !strings.Contains(p, "@v1") {
+		t.Fatalf("a pinned revision was not cached under its own directory: %s", p)
 	}
 }

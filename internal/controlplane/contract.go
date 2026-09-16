@@ -79,6 +79,7 @@ func contractFeatures() map[string]bool {
 		"plan_file":         true, // /etc/opod/plan.json watched (managed mode)
 		"auth_file":         true, // /etc/opod-auth/auth.json watched: keys + requireKeys at runtime
 		"router_only_ready": true, // /readyz answers ready with no local engine
+		"model_revision":    true, // fetch pins a Hub revision + sha256; two revisions cache side by side (OPOD_MODEL_REVISION)
 		"adapters_runtime":  true, // /admin/v1/adapters: load or drop a LoRA on every worker holding the base, no restart
 		"vram_budget":       true, // `opod join --gpu --vram-budget`
 		"stream_boot":       true,
