@@ -296,6 +296,10 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	flusher, _ := w.(http.Flusher)
+	// Time to the first token the client can use (R15.13): the role chunk is
+	// protocol, not content, so the clock stops at the first delta. A stream
+	// that never produces one leaves it zero rather than claiming a number.
+	var ttft time.Duration
 
 	// first chunk announces the assistant role
 	sendChunk(w, flusher, chatChunk{
@@ -342,8 +346,11 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			if flusher != nil {
 				flusher.Flush()
 			}
-			h.recordUsage(r.Context(), "openai", modelOut, ev.Usage, time.Since(start), "ok")
+			h.recordUsageTTFT(r.Context(), "openai", modelOut, ev.Usage, time.Since(start), ttft, "ok")
 			return
+		}
+		if ev.Delta != "" && ttft == 0 {
+			ttft = time.Since(start)
 		}
 		if ev.Delta != "" {
 			sendChunk(w, flusher, chatChunk{

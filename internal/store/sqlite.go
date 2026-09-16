@@ -256,8 +256,17 @@ type Usage struct {
 	CompletionTokens int
 	LatencyMS        int
 	Outcome          string
-	CostUSD          float64
-	NodeID           string // worker node that served the request ("" = local / not dispatched)
+	// CostUSD is DEPRECATED and always 0: rating and showback are out of the
+	// product (ADR-003 — the control plane exports usage facts and downstream
+	// apps price them). The column and the JSON field stay for one more
+	// additive SDK tag so a client that reads them does not break; the
+	// deprecation note belongs in that tag (opod-sdk adminapi UsageData).
+	CostUSD float64
+	NodeID  string // worker node that served the request ("" = local / not dispatched)
+	// TTFTMS is the time to the FIRST byte the client could use — the token a
+	// person waits for. 0 on a non-streamed answer, where the whole response
+	// arrives at once and LatencyMS is the only honest number.
+	TTFTMS int
 }
 
 type UsageStore interface {
@@ -301,15 +310,20 @@ type BreakdownOpts struct {
 
 // BreakdownRow is one aggregated row.
 type BreakdownRow struct {
-	Bucket           string  `json:"bucket"`
-	User             string  `json:"user,omitempty"`
-	Model            string  `json:"model,omitempty"`
-	Protocol         string  `json:"protocol,omitempty"`
-	Outcome          string  `json:"outcome,omitempty"`
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	Requests         int64   `json:"requests"`
-	CostUSD          float64 `json:"cost_usd"`
+	Bucket           string `json:"bucket"`
+	User             string `json:"user,omitempty"`
+	Model            string `json:"model,omitempty"`
+	Protocol         string `json:"protocol,omitempty"`
+	Outcome          string `json:"outcome,omitempty"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	Requests         int64  `json:"requests"`
+	// CostUSD is DEPRECATED and always 0: rating and showback are out of the
+	// product (ADR-003 — the control plane exports usage facts and downstream
+	// apps price them). The column and the JSON field stay for one more
+	// additive SDK tag so a client that reads them does not break; the
+	// deprecation note belongs in that tag (opod-sdk adminapi UsageData).
+	CostUSD float64 `json:"cost_usd"`
 }
 
 // BreakdownTotals sums everything in the bucket range — useful for the
@@ -461,7 +475,8 @@ CREATE TABLE IF NOT EXISTS usage (
     latency_ms        INTEGER NOT NULL,
     outcome           TEXT NOT NULL,
     cost_usd          REAL NOT NULL DEFAULT 0,
-    node_id           TEXT NOT NULL DEFAULT ''
+    node_id           TEXT NOT NULL DEFAULT '',
+    ttft_ms           INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
@@ -532,6 +547,7 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		{table: "nodes", column: "boot_id", ddl: `ALTER TABLE nodes ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''`},
 		// v0.10 — the worker that served each request (per-worker attribution
 		// downstream). '' = answered locally / never dispatched (legacy rows).
+		{table: "usage", column: "ttft_ms", ddl: `ALTER TABLE usage ADD COLUMN ttft_ms INTEGER NOT NULL DEFAULT 0`},
 		{table: "usage", column: "node_id", ddl: `ALTER TABLE usage ADD COLUMN node_id TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, m := range migrations {
