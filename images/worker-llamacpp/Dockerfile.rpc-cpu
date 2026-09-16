@@ -49,6 +49,17 @@ RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
 RUN set -eux; mkdir -p /opt/llama-rpc; cp /build/bin/* /opt/llama-rpc/; \
     test -f /opt/llama-rpc/ggml-rpc-server; test -f /opt/llama-rpc/llama-server
 
+# --- 2b) export-only image of the RPC pair: `--target rpc-export` ------------
+# Same shape as the CUDA and SYCL recipes: the pair is published once per
+# LLAMA_RELEASE as ghcr.io/opod-io/llama-rpc-cpu:<rel> and substituted for the
+# rpc-cpu stage, so every llama.cpp worker image is a base plus a prebuilt pair
+# and none of them compiles C++ while an image builds. This one is a few minutes
+# rather than an hour, but the shape matters more than the minutes: the CPU row
+# was the one that drifted (CI built the no-RPC Dockerfile for months).
+# It is built natively per architecture — never under emulation.
+FROM scratch AS rpc-export
+COPY --from=rpc-cpu /opt/llama-rpc /opt/llama-rpc
+
 # --- 3) the worker image ----------------------------------------------------
 FROM ${BASE}
 RUN apt-get update && apt-get install -y --no-install-recommends \
