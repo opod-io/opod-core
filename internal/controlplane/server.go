@@ -352,6 +352,12 @@ func (s *Server) routes() http.Handler {
 			r.Post("/models/{id}/unload", s.unloadModel)
 			r.Post("/models/{id}/load", s.loadModel)
 
+			// Adapters (R15.15): LoRA variants of THIS leader's model, added
+			// and removed at runtime. No pod rolls — the engine's LoRA slots
+			// take them on the workers that already hold the base.
+			r.Post("/adapters", s.adaptersLoad)
+			r.Delete("/adapters/{name}", s.adaptersUnload)
+
 			// Memory: live engine residency + the desired-placement set.
 			r.Get("/memory", s.memoryStatus)
 

@@ -34,6 +34,11 @@ import (
 type Adapter struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
+	// Rank is the adapter's own r, when whoever wrote OPOD_ADAPTERS knows it.
+	// vLLM sizes its LoRA slots at start (--max-lora-rank, default 16) and
+	// refuses a bigger adapter at load time, so the engine must be started for
+	// the largest rank in the set. Zero means "not stated": the default stands.
+	Rank int `json:"rank,omitempty"`
 }
 
 var adapterNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -63,15 +68,47 @@ func ParseAdapters(raw string) ([]Adapter, error) {
 
 // vllmLoRAArgs is what `vllm serve` needs so adapters can be loaded at
 // runtime; empty when no adapter is configured (the engine is then exactly
-// what it was).
-func vllmLoRAArgs(n int) string {
+// what it was). maxRank is the largest rank in the set: vLLM's own default is
+// 16 and a rank above it fails at load time, so the engine is started for the
+// next size it accepts.
+func vllmLoRAArgs(n, maxRank int) string {
 	if n <= 0 {
 		return ""
 	}
 	if n < 4 {
 		n = 4
 	}
-	return fmt.Sprintf("--enable-lora --max-loras %d", n)
+	args := fmt.Sprintf("--enable-lora --max-loras %d", n)
+	if r := loRARankFor(maxRank); r > 0 {
+		args += fmt.Sprintf(" --max-lora-rank %d", r)
+	}
+	return args
+}
+
+// loRARankFor rounds a rank up to a value vLLM accepts for --max-lora-rank
+// (1, 8, 16, 32, 64, 128, 256); 0 when the default (16) already covers it, so
+// the flag is passed only when it changes something.
+func loRARankFor(maxRank int) int {
+	if maxRank <= 16 {
+		return 0
+	}
+	for _, r := range []int{32, 64, 128, 256} {
+		if maxRank <= r {
+			return r
+		}
+	}
+	return 256 // vLLM's largest; a bigger adapter is refused by the engine, and says so
+}
+
+// MaxAdapterRank is the largest rank in a set (0 = none stated).
+func MaxAdapterRank(as []Adapter) int {
+	largest := 0
+	for _, a := range as {
+		if a.Rank > largest {
+			largest = a.Rank
+		}
+	}
+	return largest
 }
 
 // adapterState is the worker's record of what it holds.

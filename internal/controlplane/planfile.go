@@ -8,7 +8,11 @@ package controlplane
 //   - its ONE model identity (§13 item 8 / D5): gateway requests for any
 //     other model are refused with a pointer to what this endpoint serves;
 //   - the plan revision, surfaced on /loadz so operators and rollouts can
-//     see which revision a leader actually observes.
+//     see which revision a leader actually observes;
+//   - the ADAPTER NAMES the plan declares (R15.15). "<model>:<name>" used to
+//     pass on its shape alone, so a typo reached the router, found no
+//     placement and came back as a routing failure. The plan knows the set, so
+//     an unknown suffix is refused here by name, listing what does exist.
 //
 // SQLite stays the rebuildable cache; auth.yaml is the next file (TARGET).
 
@@ -27,6 +31,7 @@ type planFileState struct {
 	mu        sync.RWMutex
 	revision  int
 	modelID   string
+	adapters  []string // names the plan declares; empty = the plan states none
 	present   bool
 	zeroFloor bool // autoscale floor 0: all workers parked is a HEALTHY state
 }
@@ -35,6 +40,13 @@ func (p *planFileState) get() (int, string) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.revision, p.modelID
+}
+
+// adapterNames is the LoRA set the plan declares, copied out under the lock.
+func (p *planFileState) adapterNames() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return append([]string(nil), p.adapters...)
 }
 
 // sleepsByDesign reports a mounted plan with autoscale floor 0 — zero
@@ -74,6 +86,9 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 				Floor int `json:"floor"`
 				Max   int `json:"max"`
 			} `json:"autoscale"`
+			Adapters []struct {
+				Name string `json:"name"`
+			} `json:"adapters"`
 		}
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			s.log.Warn("plan file unreadable — keeping last good plan", "path", path, "err", err)
@@ -82,7 +97,13 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 		lastMod = st.ModTime()
 		s.plan.mu.Lock()
 		changed := s.plan.revision != doc.Revision || s.plan.modelID != doc.Model.ID
-		s.plan.revision, s.plan.modelID = doc.Revision, doc.Model.ID
+		names := make([]string, 0, len(doc.Adapters))
+		for _, a := range doc.Adapters {
+			if a.Name != "" {
+				names = append(names, a.Name)
+			}
+		}
+		s.plan.revision, s.plan.modelID, s.plan.adapters = doc.Revision, doc.Model.ID, names
 		s.plan.present = true
 		s.plan.zeroFloor = doc.Autoscale.Max > 0 && doc.Autoscale.Floor == 0
 		s.plan.mu.Unlock()
@@ -118,9 +139,25 @@ func (s *Server) planAllowsModel(model string) (string, bool) {
 		return planModel, true
 	}
 	// A LoRA adapter is a variant of the one identity (feature "lora"):
-	// "<model>:<adapter>" is served by the workers holding the base.
+	// "<model>:<adapter>" is served by the workers holding the base. The plan
+	// names the set, so a suffix it does not name is refused HERE — before the
+	// router turns a typo into "no placement for this model".
 	if strings.HasPrefix(model, planModel+":") && len(model) > len(planModel)+1 {
-		return planModel, true
+		want := model[len(planModel)+1:]
+		names := s.plan.adapterNames()
+		if len(names) == 0 {
+			// The plan declares no adapters. It may still be an older plan
+			// document that never carried the field, so this is not the place
+			// to refuse: the worker that holds the adapter answers, or the
+			// router says it has no placement.
+			return planModel, true
+		}
+		for _, n := range names {
+			if n == want {
+				return planModel, true
+			}
+		}
+		return planModel + " with adapters " + strings.Join(names, ", "), false
 	}
 	return planModel, false
 }
