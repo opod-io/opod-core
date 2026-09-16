@@ -1,4 +1,4 @@
-# opod-worker-tt
+# opod-worker-vllm-tt
 
 vLLM on Tenstorrent, on Tenstorrent's own `tt-inference-server` tt-metal image.
 
