@@ -78,6 +78,7 @@ rpc_vendor_of() {
     llamacpp-nvidia) echo cuda ;;
     llamacpp-intel)  echo sycl ;;
     llamacpp-cpu)    echo cpu ;;
+    llamacpp-amd)    echo rocm ;;
   esac
 }
 
@@ -135,7 +136,7 @@ case "${mode:-}" in
     exit 0 ;;
   rpc-bootstrap|rpc-build)
     vendor=${named[0]:-cuda}
-    case "$vendor" in cuda|sycl|cpu) ;; *) die "$mode takes cuda, sycl or cpu, not '$vendor' (the ROCm pair is lifted from upstream's tarball, nothing to publish)" ;; esac
+    case "$vendor" in cuda|sycl|cpu|rocm) ;; *) die "$mode takes cuda, sycl, rocm or cpu, not '$vendor'" ;; esac
     out=$(rpc_image "$vendor")
     if [ "$mode" = rpc-bootstrap ]; then
       src=${RPC_SOURCE:?set RPC_SOURCE to the published worker image to lift /opt/llama-rpc from — there is no floating :latest to guess}

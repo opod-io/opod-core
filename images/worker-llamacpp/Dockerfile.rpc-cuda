@@ -51,11 +51,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git cmake build-essential libcurl4-openssl-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${LLAMA_RELEASE} https://github.com/ggml-org/llama.cpp /src
-# sm_86 covers every NVIDIA box the fleet shards on (A6000, 3060 Ti). Bump
-# CMAKE_CUDA_ARCHITECTURES if a Blackwell (sm_120) node ever joins a shard.
+# Every generation a customer may have, not just the cell's A6000s: Turing (75),
+# Ampere (80 A100, 86 A6000/3060 Ti), Ada (89 L40S/4090), Hopper (90 H100/H200)
+# and Blackwell (120 5090/B200 — the design-partner cell already has a 5090).
+# A pair built for one architecture cannot run on another, and the failure is a
+# kernel launch error at first token, far from the build that caused it. Cost:
+# a longer one-off build and a bigger /opt/llama-rpc, paid once per LLAMA_RELEASE.
 RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
       -DGGML_CUDA=ON -DGGML_RPC=ON -DGGML_NATIVE=OFF -DGGML_CUDA_NO_VMM=ON \
-      -DCMAKE_CUDA_ARCHITECTURES="86" && \
+      -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120" && \
     (cmake --build /build -j"$(nproc)" --target llama-server ggml-rpc-server || \
      cmake --build /build -j"$(nproc)")
 RUN set -eux; mkdir -p /opt/llama-rpc; cp /build/bin/* /opt/llama-rpc/; \
