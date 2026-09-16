@@ -7,6 +7,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -195,21 +196,35 @@ var errEngineUnreachable = errors.New("engine not reachable")
 type CreateShardsRequest struct {
 	ModelID string   `json:"model_id"`
 	Shards  int      `json:"shards"`
-	Nodes   []string `json:"nodes"`   // optional: pin shards to these exact workers
-	TP      int      `json:"tp"`      // optional: tensor-parallel size (vLLM only)
-	PP      int      `json:"pp"`      // optional: pipeline-parallel size (vLLM only)
-	Devices int      `json:"devices"` // optional: GPUs each named part holds (0 = 1; build item 5)
+	Nodes   []string `json:"nodes"` // optional: pin shards to these exact workers
+	TP      int      `json:"tp"`    // optional: tensor-parallel size (vLLM only)
+	PP      int      `json:"pp"`    // optional: pipeline-parallel size (vLLM only)
+	// Head pins the rank that runs the coordinator (R15.14, ARCH §13 item 5).
+	// The control plane knows which pod is the gang's leader rank; core used to
+	// guess by host RAM, which put the coordinator on a different pod than the
+	// one the executor had named. "" keeps the old default. "local" is refused
+	// for a managed gang: D4 says the head is a WORKER rank, never the leader.
+	Head    string `json:"head,omitempty"`
+	Devices int    `json:"devices"` // optional: GPUs each named part holds (0 = 1; build item 5)
 }
 
 // CreateShards builds the gang through the orchestrator. A failed create is
 // torn down on a fresh context so no half-shard lingers.
 func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) error {
+	// The request's own shape first: a managed gang's coordinator is a worker
+	// rank, never the leader (D4), whatever model is being asked for.
+	if req.Head == "local" {
+		return fmt.Errorf("head \"local\" is refused for a managed gang: the coordinator is a worker rank, never the leader (D4)")
+	}
 	entry := models.FindByID(s.cat, req.ModelID)
 	if entry == nil {
 		return ErrNoCatalogEntry
 	}
 	if s.orch == nil {
 		return ErrNoOrchestrator
+	}
+	if req.Head != "" {
+		s.orch.CoordinatorNode = req.Head
 	}
 	if err := s.orch.CreateSharded(ctx, *entry, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices}); err != nil {
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
