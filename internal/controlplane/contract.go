@@ -88,6 +88,9 @@ func contractFeatures() map[string]bool {
 		"routing_load_aware":    true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"worker_sleep":          true, // POST /admin/v1/nodes/{id}/sleep|resume → worker engine sleep mode; placements read "sleeping"; /readyz mode sleeping-workers // /loadz carries kv_used_pct / queue_depth / tokens_per_s / prefix_hit_pct from the workers' heartbeats
 		"policy_file":           true,
+		"shard_head":            true, // POST /admin/v1/shards/create accepts head: the coordinator is the named worker rank, never the leader (R15.14, D4)
+		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
+		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)
 		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
 	}
 }
