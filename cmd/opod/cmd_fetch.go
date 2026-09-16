@@ -19,8 +19,13 @@ import (
 func cmdFetch(args []string) {
 	fs := flag.NewFlagSet("fetch", flag.ExitOnError)
 	dir := fs.String("dir", os.Getenv("OPOD_MODELS_DIR"), "models directory (default $OPOD_MODELS_DIR)")
+	// R15.16: a version is a pinned revision plus the digest its record carries.
+	// Without --revision the Hub serves "main", which is different bytes after
+	// the repo owner pushes.
+	rev := fs.String("revision", os.Getenv("OPOD_MODEL_REVISION"), "Hub revision to pin: a commit sha, tag or branch (default $OPOD_MODEL_REVISION; empty = main, which moves)")
+	sum := fs.String("sha256", os.Getenv("OPOD_MODEL_SHA256"), "the digest the file must hash to; a mismatch removes it and fails (default $OPOD_MODEL_SHA256)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: opod fetch <hf-repo> <file> [--dir <models dir>]")
+		fmt.Fprintln(os.Stderr, "usage: opod fetch <hf-repo> <file> [--dir <models dir>] [--revision <sha|tag>] [--sha256 <digest>]")
 		fs.PrintDefaults()
 	}
 	// flags may follow the positionals
@@ -42,7 +47,8 @@ func cmdFetch(args []string) {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	env := config.FromEnv()
-	path, err := fetch.GGUF(context.Background(), pos[0], pos[1], *dir, fetch.Options{Log: log, Token: env.HFToken, Endpoint: env.HFEndpoint})
+	path, err := fetch.GGUF(context.Background(), pos[0], pos[1], *dir, fetch.Options{Log: log, Token: env.HFToken, Endpoint: env.HFEndpoint,
+		Revision: *rev, SHA256: *sum})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
