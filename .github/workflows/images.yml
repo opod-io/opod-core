@@ -25,6 +25,10 @@ on:
         description: "also rebuild llama-rpc-cpu:<LLAMA_RELEASE> (amd64 + arm64, native runners; first publish, or after bumping LLAMA_RELEASE)"
         type: boolean
         default: false
+      rpc_rocm:
+        description: "also rebuild llama-rpc-rocm:<LLAMA_RELEASE> (HIP build covering Radeon + Instinct; first publish, or after bumping LLAMA_RELEASE)"
+        type: boolean
+        default: false
 # id-token: write is what makes cosign keyless work — the signature is bound
 # to this workflow's OIDC identity, so there is no key for us to lose (S3).
 permissions: { contents: read, packages: write, id-token: write }
@@ -81,6 +85,29 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/llama-rpc-sycl:${{ needs.rel.outputs.llama }}
           build-args: LLAMA_RELEASE=${{ needs.rel.outputs.llama }}
 
+  rpc-rocm:
+    # The AMD pair, compiled for every target AMD ships — Instinct (gfx908/90a/942)
+    # and Radeon (gfx1030/11xx/12xx) — because compiled GPU code has no fallback and
+    # upstream's release tarball carries RDNA only.
+    if: github.event_name == 'workflow_dispatch' && inputs.rpc_rocm
+    needs: rel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: jlumbroso/free-disk-space@main
+        with: { tool-cache: true, large-packages: true, docker-images: true, swap-storage: true }
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/worker-llamacpp/Dockerfile.rpc-rocm
+          target: rpc-export
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/llama-rpc-rocm:${{ needs.rel.outputs.llama }}
+          build-args: LLAMA_RELEASE=${{ needs.rel.outputs.llama }}
+
   rpc-cpu:
     # The CPU pair, built NATIVELY on each architecture — the arm64 half is what a
     # kind cluster on Apple silicon pulls, and compiling it under emulation is the
@@ -124,12 +151,13 @@ jobs:
           [ "$got" = 2 ] || { echo "::error::$ref is not a two-arch index (found $got)"; exit 1; }
 
   build:
-    needs: [rel, rpc, rpc-sycl, rpc-cpu-index]
+    needs: [rel, rpc, rpc-sycl, rpc-cpu-index, rpc-rocm]
     if: >-
       always() && needs.rel.result == 'success'
       && (needs.rpc.result == 'success' || needs.rpc.result == 'skipped')
       && (needs.rpc-sycl.result == 'success' || needs.rpc-sycl.result == 'skipped')
       && (needs.rpc-cpu-index.result == 'success' || needs.rpc-cpu-index.result == 'skipped')
+      && (needs.rpc-rocm.result == 'success' || needs.rpc-rocm.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -138,7 +166,7 @@ jobs:
           # rpc: the compiled pair substituted for the rpc-<vendor> stage, or "" for none.
           - { name: opod-leader,                 file: images/leader/Dockerfile,          base: "", rpc: "", platforms: "linux/amd64,linux/arm64" }
           - { name: opod-worker-llamacpp-nvidia, file: images/worker-llamacpp/Dockerfile.rpc-cuda, base: ghcr.io/ggml-org/llama.cpp:full-cuda, rpc: cuda }  # base N=1 llama-server + prebuilt /opt/llama-rpc for N>=2
-          - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile.rpc-rocm, base: ghcr.io/ggml-org/llama.cpp:full-rocm, rpc: "" }  # pair lifted from upstream's ROCm tarball at build time
+          - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile.rpc-rocm, base: ghcr.io/ggml-org/llama.cpp:full-rocm, rpc: rocm }  # prebuilt pair: Radeon + Instinct
           - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1, rpc: "" }
           # The chart references these two as well; a release that does not publish
           # them leaves values.yaml pointing at images that do not exist.
@@ -163,7 +191,9 @@ jobs:
       - name: Free disk space (the vLLM, ROCm and tt-metal bases are 7-30GB)
         if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt') || contains(matrix.name, 'sglang')
         uses: jlumbroso/free-disk-space@main
-        with: { tool-cache: true, large-packages: true, docker-images: false, swap-storage: false }
+        # docker-images + swap too: the ROCm vLLM and SGLang-Instinct bases are
+        # 25-30 GB and ran the runner out of disk with the lighter cleanup (2026-09-15).
+        with: { tool-cache: true, large-packages: true, docker-images: true, swap-storage: true }
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -205,6 +235,11 @@ jobs:
       # pin. A customer verifies exactly what they pulled.
       - uses: sigstore/cosign-installer@v3
       - name: sign (keyless, Sigstore) + verify
+        # A tag build MUST be signed — that is the release artifact (S3). A manual
+        # dispatch must not be reported as failed because Sigstore's public log is
+        # down: the image is already pushed, and on 2026-09-15 that outage marked
+        # nine published images as failures across four runs.
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"

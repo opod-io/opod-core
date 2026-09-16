@@ -143,7 +143,7 @@ func TestOneLlamaRelease(t *testing.T) {
 // compile silently happens inside every image build — under emulation, for an hour.
 func TestPrebuiltPairsAreSubstituted(t *testing.T) {
 	sh := repoFile(t, "images/build.sh")
-	for _, vendor := range []string{"cuda", "sycl", "cpu"} {
+	for _, vendor := range []string{"cuda", "sycl", "cpu", "rocm"} {
 		f := filepath.Join("..", "..", "images", "worker-llamacpp", "Dockerfile.rpc-"+vendor)
 		b, err := os.ReadFile(f)
 		if err != nil {
