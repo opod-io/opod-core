@@ -29,7 +29,8 @@
 #       a published worker image named by RPC_SOURCE (no compile). Re-run only after bumping LLAMA_RELEASE,
 #       and then it must be a real build:  images/build.sh rpc-build [cuda|sycl]
 #       (cuda ~60 min of nvcc, sycl a oneAPI icpx build; both amd64-only → an amd64 box or CI dispatch
-#       `images.yml` with rpc=true / rpc_sycl=true). Default vendor: cuda.
+#       `images.yml` with rpc=true / rpc_sycl=true. cpu builds natively per arch, here or in CI,
+#       and its two halves are joined into one index.) Default vendor: cuda.
 #
 # One-time login (token stays in the Docker credential store, never in the repo):
 #   gh auth refresh -s write:packages && gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
@@ -76,6 +77,7 @@ rpc_vendor_of() {
   case "$1" in
     llamacpp-nvidia) echo cuda ;;
     llamacpp-intel)  echo sycl ;;
+    llamacpp-cpu)    echo cpu ;;
   esac
 }
 
@@ -133,7 +135,7 @@ case "${mode:-}" in
     exit 0 ;;
   rpc-bootstrap|rpc-build)
     vendor=${named[0]:-cuda}
-    case "$vendor" in cuda|sycl) ;; *) die "$mode takes cuda or sycl, not '$vendor' (the ROCm pair is lifted from upstream's tarball, nothing to publish)" ;; esac
+    case "$vendor" in cuda|sycl|cpu) ;; *) die "$mode takes cuda, sycl or cpu, not '$vendor' (the ROCm pair is lifted from upstream's tarball, nothing to publish)" ;; esac
     out=$(rpc_image "$vendor")
     if [ "$mode" = rpc-bootstrap ]; then
       src=${RPC_SOURCE:?set RPC_SOURCE to the published worker image to lift /opt/llama-rpc from — there is no floating :latest to guess}
@@ -143,10 +145,22 @@ FROM scratch
 COPY --from=$src /opt/llama-rpc /opt/llama-rpc
 DF
     else
-      [ "$(uname -m)" = x86_64 ] || [ $dry = 1 ] || die "rpc-build compiles for amd64 — run it on an amd64 box or dispatch images.yml; never emulated on this $(uname -m) machine"
-      log "REAL rpc build for $LLAMA_RELEASE → $out ($vendor compiler, amd64 only)"
-      run docker buildx build --platform linux/amd64 -f "images/worker-llamacpp/Dockerfile.rpc-$vendor" --target rpc-export \
-        --build-arg LLAMA_RELEASE="$LLAMA_RELEASE" -t "$out" --push .
+      # The CPU pair is plain C++ and builds natively on whatever this machine is
+      # (arm64 here, amd64 in CI), so it is published per architecture and the two
+      # halves are joined into one index. The CUDA and SYCL pairs need amd64 GPU
+      # toolchains and are refused anywhere else rather than run under emulation.
+      if [ "$vendor" = cpu ]; then
+        a=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        log "rpc build for $LLAMA_RELEASE → $out-$a (native $a)"
+        run docker buildx build --platform "linux/$a" -f images/worker-llamacpp/Dockerfile.rpc-cpu --target rpc-export \
+          --build-arg LLAMA_RELEASE="$LLAMA_RELEASE" -t "$out-$a" --push .
+        log "join the index once both halves exist:  docker buildx imagetools create -t $out $out-amd64 $out-arm64"
+      else
+        [ "$(uname -m)" = x86_64 ] || [ $dry = 1 ] || die "rpc-build compiles for amd64 — run it on an amd64 box or dispatch images.yml; never emulated on this $(uname -m) machine"
+        log "REAL rpc build for $LLAMA_RELEASE → $out ($vendor compiler, amd64 only)"
+        run docker buildx build --platform linux/amd64 -f "images/worker-llamacpp/Dockerfile.rpc-$vendor" --target rpc-export \
+          --build-arg LLAMA_RELEASE="$LLAMA_RELEASE" -t "$out" --push .
+      fi
     fi
     exit 0 ;;
 esac

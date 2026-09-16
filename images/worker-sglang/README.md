@@ -11,7 +11,7 @@ a fleet where the hit rate collapses has lost the reason it is running SGLang.
 
 ```bash
 # NVIDIA
-images/build.sh --push --latest sglang-nvidia
+images/build.sh --push sglang-nvidia
 # AMD (ROCm base; the image is not published yet — build it where the cards are)
 BASE=lmsysorg/sglang:v0.5.2-rocm630 images/build.sh --push sglang-amd
 ```

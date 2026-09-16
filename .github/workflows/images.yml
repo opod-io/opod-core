@@ -21,6 +21,10 @@ on:
         description: "also rebuild llama-rpc-sycl:<LLAMA_RELEASE> (oneAPI icpx build; first publish, or after bumping LLAMA_RELEASE)"
         type: boolean
         default: false
+      rpc_cpu:
+        description: "also rebuild llama-rpc-cpu:<LLAMA_RELEASE> (amd64 + arm64, native runners; first publish, or after bumping LLAMA_RELEASE)"
+        type: boolean
+        default: false
 # id-token: write is what makes cosign keyless work — the signature is bound
 # to this workflow's OIDC identity, so there is no key for us to lose (S3).
 permissions: { contents: read, packages: write, id-token: write }
@@ -77,12 +81,55 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/llama-rpc-sycl:${{ needs.rel.outputs.llama }}
           build-args: LLAMA_RELEASE=${{ needs.rel.outputs.llama }}
 
+  rpc-cpu:
+    # The CPU pair, built NATIVELY on each architecture — the arm64 half is what a
+    # kind cluster on Apple silicon pulls, and compiling it under emulation is the
+    # thing images/build.sh exists to avoid. Public repo, so the arm64 runner is free.
+    if: github.event_name == 'workflow_dispatch' && inputs.rpc_cpu
+    needs: rel
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runs_on: ubuntu-latest }
+          - { arch: arm64, runs_on: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/worker-llamacpp/Dockerfile.rpc-cpu
+          target: rpc-export
+          push: true
+          platforms: linux/${{ matrix.arch }}
+          tags: ghcr.io/${{ github.repository_owner }}/llama-rpc-cpu:${{ needs.rel.outputs.llama }}-${{ matrix.arch }}
+          build-args: LLAMA_RELEASE=${{ needs.rel.outputs.llama }}
+
+  rpc-cpu-index:
+    # One tag the worker build can substitute, whatever platform it is building.
+    if: github.event_name == 'workflow_dispatch' && inputs.rpc_cpu
+    needs: [rel, rpc-cpu]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: |
+          set -euo pipefail
+          ref=ghcr.io/${{ github.repository_owner }}/llama-rpc-cpu:${{ needs.rel.outputs.llama }}
+          docker buildx imagetools create -t "$ref" "$ref-amd64" "$ref-arm64"
+          got=$(docker buildx imagetools inspect "$ref" | awk '/^ *Platform: */{print $2}' | grep -c '^linux/')
+          [ "$got" = 2 ] || { echo "::error::$ref is not a two-arch index (found $got)"; exit 1; }
+
   build:
-    needs: [rel, rpc, rpc-sycl]
+    needs: [rel, rpc, rpc-sycl, rpc-cpu-index]
     if: >-
       always() && needs.rel.result == 'success'
       && (needs.rpc.result == 'success' || needs.rpc.result == 'skipped')
       && (needs.rpc-sycl.result == 'success' || needs.rpc-sycl.result == 'skipped')
+      && (needs.rpc-cpu-index.result == 'success' || needs.rpc-cpu-index.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -95,7 +142,7 @@ jobs:
           - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1, rpc: "" }
           # The chart references these two as well; a release that does not publish
           # them leaves values.yaml pointing at images that do not exist.
-          - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile, base: "ghcr.io/ggml-org/llama.cpp:full", rpc: "", platforms: "linux/amd64,linux/arm64" }
+          - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile.rpc-cpu, base: "ghcr.io/ggml-org/llama.cpp:full", rpc: cpu, platforms: "linux/amd64,linux/arm64" }  # the pair, or a CPU worker cannot be a gang part
           - { name: opod-worker-llamacpp-intel,  file: images/worker-llamacpp/Dockerfile.rpc-sycl, base: "ghcr.io/ggml-org/llama.cpp:full-intel", rpc: sycl }  # base N=1 llama-server + prebuilt SYCL /opt/llama-rpc
           # The other engines the chart can reference. Each is a thin layer on a
           # vendor's own build, so the cost here is the base pull, not a compile.
@@ -161,7 +208,17 @@ jobs:
         run: |
           set -euo pipefail
           ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
-          cosign sign --yes "$ref"
+          # Sigstore's transparency log (rekor.sigstore.dev) refused every signature
+          # on 2026-09-15, three runs in a row, AFTER the images were safely pushed —
+          # so a public-good service being down reported nine published images as
+          # failures. Retry rather than trust one attempt; still fail the job if the
+          # signature never lands, because an unsigned image is not a release (S3).
+          for i in 1 2 3 4 5; do
+            cosign sign --yes "$ref" && break
+            [ $i = 5 ] && { echo "::error::cosign could not sign $ref after 5 attempts — the image IS pushed; re-run this job when Sigstore recovers"; exit 1; }
+            echo "sign attempt $i failed (Sigstore); retrying in $((i * 30))s"
+            sleep $((i * 30))
+          done
           cosign verify \
             --certificate-identity-regexp 'https://github.com/${{ github.repository }}/' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$ref" >/dev/null

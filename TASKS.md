@@ -58,7 +58,40 @@ These are the gaps between marketing copy and what the binary actually does toda
 - **LoRA, live model migration** — both v0.5. (M4-T02, M4-T07)
 - **Postgres backend** for HA control plane — v1.0.
 - **AMD ROCm engine path** — v1.0.
-- **RPC pairs in the AMD and Intel worker images** — both written 2026-09-15, uncommitted. **AMD proven:** `images/worker-llamacpp/Dockerfile.rpc-rocm` lifts `ggml-rpc-server` + `llama-server` + the `libggml-{hip,rpc,cpu-*}.so` backends out of upstream's `llama-<rel>-bin-ubuntu-rocm-<ver>-x64.tar.gz` (no compile; tarball ROCm 7.2, `full-rocm` base ROCm 7.2.1). On the design-partner cell's 3× RX 7900 XTX host, with the image's own wrapper scripts: two rpc-server parts on two cards, the coordinator serves a chat completion through both, the base's N=1 `llama-server` untouched. The tarball's HIP backend targets RDNA only (gfx1030, gfx1100–1102, gfx1150–1151); an Instinct (CDNA) fleet needs a source build. **Intel written, not built:** `Dockerfile.rpc-sycl` is upstream's own `.devops/intel.Dockerfile` recipe at `LLAMA_RELEASE` (oneAPI `2025.3.3-0-devel-ubuntu24.04`, level-zero 1.28.2, `GGML_SYCL_F16`, `GGML_BACKEND_DL`) plus `GGML_RPC=ON`, published once as `llama-rpc-sycl:<rel>` and substituted like the CUDA pair; the sycl release tarball has no RPC backend (checked b9934). Owed, in order: commit → dispatch `images.yml` with `rpc_sycl=true` (icpx on amd64; cannot run on the Mac) → `images/build.sh --push llamacpp-intel` → prove on an Arc A770 host like the AMD run. `build.sh` now reads one `LLAMA_RELEASE` for every llama.cpp image, `rpc-build`/`rpc-bootstrap` take `cuda|sycl`, and a worker build refuses when its pair is unreadable instead of compiling under emulation; the release workflow's AMD and Intel rows point at the new files. Follow-ups: drop the no-op `GGML_BACKEND_PATH` export from `Dockerfile.rpc-cuda` / `.rpc-cpu` at their next rebuild (in ggml it names one backend FILE, a directory only logs an error); the release workflow still builds `llamacpp-cpu` from the plain Dockerfile (no RPC pair), unlike the local lane. Brief: control-plane `docs/ROADMAP.md` R11.
+- **Worker images — one shape, one source of truth** (2026-09-15; core commits `5b7b0b2`, `b3c4d67`, `e8fe3ec` + this one).
+  *Problem.* Eleven images were described in four places that had silently drifted: `images/build.sh`, the release
+  matrix in `.github/workflows/images.yml`, the `images/README.md` table and the chart's `engineImages` keys. The
+  release lane built the AMD and CPU llama.cpp workers from a Dockerfile with **no RPC pair**, so a CI-published
+  AMD or CPU worker could never be a gang part; an SGLang row named `lmsysorg/sglang:v0.5.2-rocm630`, a tag Docker
+  Hub has never had; the Tenstorrent image was the only one whose name did not say its engine; and three images the
+  chart references were never built at all. Each cost a full release run to discover.
+  *Solution, shipped.* Every llama.cpp image is now `base + a prebuilt RPC pair` substituted through a build
+  context: `llama-rpc-cuda` (nvcc), `llama-rpc-sycl` (oneAPI icpx), `llama-rpc-cpu` (plain C++, built **natively**
+  on amd64 and arm64 runners and joined into one index) and, for ROCm, the pair lifted from upstream's release
+  tarball. The no-RPC Dockerfile is deleted, so the wrong file cannot be chosen again. The release matrix covers all
+  eleven images the chart can reference (llama.cpp ×4, vLLM ×4 incl. Tenstorrent, SGLang ×2, leader). Naming is
+  `opod-worker-<engine>-<vendor>` without exception (`opod-worker-tt` → `opod-worker-vllm-tt`). `cmd/opod/images_drift_test.go`
+  ties the lists together: same Dockerfile and base in both lanes, every image in the README, every referenced file
+  present, one `LLAMA_RELEASE` across the recipes, and every compiled pair exported *and* wired into `build.sh`.
+  Signing retries five times: Sigstore's log refused every signature on 2026-09-15 **after** the images were pushed,
+  reporting nine published images as failures.
+  *Owed.* Publish `llama-rpc-cpu` (dispatch `rpc_cpu=true`) and re-run the matrix · `opod-worker-llamacpp-amd` is the
+  one name ghcr still refuses (`read_package`, and the package does not exist) · bases are still moving tags
+  (`full-cuda`, `full-rocm`, …) which ARCHITECTURE §7 forbids — pin by digest with a deliberate refresh step ·
+  per-vendor hardware verification (see the proof table in the control plane's V-rows).
+- **AMD Instinct and SGLang-on-Radeon: image choice needs the GPU's architecture family** — proposal written
+  2026-09-15 (`artifacts/adr-draft-gpu-arch-family-2026-09-15.md`, awaiting Hadi).
+  *Problem.* Compiled GPU code runs only on the targets it was built for, and `(engine, vendor)` cannot express
+  that: our CUDA pair is `sm_86` only (no A100/H100/5090 — and the design-partner cell has a 5090), our ROCm pair
+  covers RDNA only (no Instinct), `rocm/vllm` ships separate RDNA and CDNA images, and SGLang's ROCm build is
+  Instinct-only with no RDNA tag at all. Today the failure surfaces as `ImagePullBackOff` or a kernel fault at
+  first token, far from the decision that caused it.
+  *Solution.* Widen what we compile (one CUDA arch list; the ROCm pair source-built with every target) — that alone
+  removes the family question for llama.cpp. For vLLM/SGLang, add one fact (`GPUDevice.Arch` from the probes that
+  already run), one vendor-registry method (`Family(arch)`), one lookup (`ImageFor(role, engine, vendor, family)`
+  = variant → default → refusal) and a coded refusal `E-IMAGE-FAMILY` before anything is applied.
+  *Decision needed from Hadi:* family naming, whether to build the 25 GB Instinct vLLM image before a customer has
+  that hardware, and whether SGLang-on-Radeon is worth a source build (recommended: no).
 
 ---
 
