@@ -93,7 +93,7 @@ spec() {
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126 amd64" ;;
     sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-rocm630 amd64" ;;
-    vllm-tt)         echo "opod-worker-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
+    vllm-tt)         echo "opod-worker-vllm-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
     *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|vllm-tt)" ;;
   esac
 }

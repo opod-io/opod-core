@@ -105,10 +105,16 @@ jobs:
           # server — whose tag must match the model spec's commits (images/worker-tt).
           - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0", rpc: "" }
           - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu", rpc: "" }
-          - { name: opod-worker-tt,              file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e", rpc: "" }
+          - { name: opod-worker-vllm-tt,         file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e", rpc: "" }
+          # SGLang is an engine core drives like any other (internal/engines/sglang,
+          # launchSGLang, the sglang:cache_hit_rate the driver reads), so its images
+          # ship with the rest. One node per endpoint until a multi-node path exists:
+          # the planner refuses a gang on it, so the image promises nothing more.
+          - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.2-cu126", rpc: "" }
+          - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.2-rocm630", rpc: "" }
     steps:
       - name: Free disk space (the vLLM, ROCm and tt-metal bases are 7-30GB)
-        if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt')
+        if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt') || contains(matrix.name, 'sglang')
         uses: jlumbroso/free-disk-space@main
         with: { tool-cache: true, large-packages: true, docker-images: false, swap-storage: false }
       - uses: actions/checkout@v4
