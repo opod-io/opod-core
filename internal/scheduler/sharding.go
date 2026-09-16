@@ -6,7 +6,9 @@
 // Current scope:
 //   - manual shard-count override (`--shards=N`) or catalog default
 //   - simple bin-pack on free RAM (highest free first)
-//   - coordinator always runs on the leader
+//   - the coordinator runs on whichever node has the most RAM (leader or worker),
+//     overridable with OPOD_COORDINATOR_NODE; with one shard it runs on that
+//     shard's worker, which is the placement itself
 //   - no automatic restart on shard crash (admin re-runs the create)
 //   - no replacement-node logic if a worker disappears mid-stream
 //
