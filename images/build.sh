@@ -52,6 +52,11 @@ VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pyto
 # no Ray gang path we have run, so a plan that asks for one is refused upstream of
 # this image, not by it.
 VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-intel/vllm:0.21.0-xpu}
+# SGLang on AMD is published per Instinct generation and for Instinct ONLY: the
+# tags are …-mi30x (MI200/MI300) and …-mi35x (MI350), with no RDNA build at all,
+# so a Radeon card cannot run this image — llama.cpp or vLLM serve those. The
+# v0.5.2-rocm630 tag this used to name never existed on Docker Hub.
+SGLANG_AMD_BASE=${SGLANG_AMD_BASE:-lmsysorg/sglang:v0.5.19-rocm700-mi30x}
 # Tenstorrent's own tt-metal + vLLM release image. ~17 GB uncompressed, so the
 # build is a thin layer on a very fat base — bump the tag deliberately and check
 # it against the tt-kmd version on the fleet, which tt-metal is strict about.
@@ -92,7 +97,7 @@ spec() {
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126 amd64" ;;
-    sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-rocm630 amd64" ;;
+    sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile $SGLANG_AMD_BASE amd64" ;;
     vllm-tt)         echo "opod-worker-vllm-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
     *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|vllm-tt)" ;;
   esac
