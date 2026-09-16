@@ -783,6 +783,19 @@ opod node drain <node-id>   # gracefully migrate models off
 opod node remove <node-id>  # forget it
 ```
 
+**The node's weight cache.** Models are pulled once per node into `$OPOD_MODELS_DIR` and shared by every worker on it.
+`opod cache` is how that space is reclaimed safely: it only ever considers files this binary fetched (each carries a
+marker written at download time), it takes the same per-file lock a download takes, and it defaults to a dry run.
+
+```bash
+opod cache ls                                   # what is cached, what is ours, when it was last used
+opod cache prune --keep qwen3-14b-q4.gguf       # what would go if nothing else referenced it
+opod cache prune --keep … --min-age 24h --apply # actually delete, oldest unused first
+```
+
+A file nothing references still survives until it has gone unused for `--min-age`, so a rollback inside that window
+finds its weights warm. A file without that marker is never deleted, whatever the disk pressure.
+
 ### End-to-end multi-node walkthrough
 
 For a leader + one worker on the same LAN:

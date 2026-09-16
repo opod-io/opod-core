@@ -87,6 +87,7 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 	fileURL := HFFileURL(opt.Endpoint, repo, file)
 	want, known := expectedSize(ctx, opt, fileURL)
 	if complete(target, want, known) {
+		Touch(target) // least-recently-used pruning needs to know it was wanted (ADR-046)
 		return target, nil
 	}
 	// Exclusive per target. The lock names the holder so a stale one (a
@@ -102,9 +103,18 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 	}
 	defer release()
 	if complete(target, want, known) {
+		Touch(target)
 		return target, nil
 	}
-	return target, download(ctx, opt, fileURL, target, want)
+	if err := download(ctx, opt, fileURL, target, want); err != nil {
+		return target, err
+	}
+	// The marker is what makes this file prunable later: a file without one is
+	// never deleted by cache management, whatever the disk pressure (ADR-046).
+	if err := WriteMarker(target, repo, file, want); err != nil {
+		opt.Log.Warn("cache marker not written: this file will never be pruned", "file", file, "err", err)
+	}
+	return target, nil
 }
 
 // complete: the file exists and, when the server declared a size, matches it.
