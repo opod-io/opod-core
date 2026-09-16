@@ -97,9 +97,18 @@ jobs:
           # them leaves values.yaml pointing at images that do not exist.
           - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile, base: "ghcr.io/ggml-org/llama.cpp:full", rpc: "", platforms: "linux/amd64,linux/arm64" }
           - { name: opod-worker-llamacpp-intel,  file: images/worker-llamacpp/Dockerfile.rpc-sycl, base: "ghcr.io/ggml-org/llama.cpp:full-intel", rpc: sycl }  # base N=1 llama-server + prebuilt SYCL /opt/llama-rpc
+          # The other engines the chart can reference. Each is a thin layer on a
+          # vendor's own build, so the cost here is the base pull, not a compile.
+          # vLLM is published per silicon by different people: upstream is CUDA-only,
+          # AMD ships rocm/vllm per GPU family (RDNA here; a CDNA fleet overrides the
+          # base), Intel ships intel/vllm for XPU, and Tenstorrent ships tt-metal's own
+          # server — whose tag must match the model spec's commits (images/worker-tt).
+          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0", rpc: "" }
+          - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu", rpc: "" }
+          - { name: opod-worker-tt,              file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e", rpc: "" }
     steps:
-      - name: Free disk space (vLLM/ROCm bases are ~30GB)
-        if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd')
+      - name: Free disk space (the vLLM, ROCm and tt-metal bases are 7-30GB)
+        if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt')
         uses: jlumbroso/free-disk-space@main
         with: { tool-cache: true, large-packages: true, docker-images: false, swap-storage: false }
       - uses: actions/checkout@v4

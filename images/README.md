@@ -11,7 +11,11 @@ digest-pinned by consumers. Never build on cluster nodes.
   Login once with `gh auth refresh -s write:packages && gh auth token | docker login ghcr.io -u
   "$(gh api user -q .login)" --password-stdin`.
 - **CI release lane** (`.github/workflows/images.yml`, tags `v*` + manual dispatch): same Dockerfiles,
-  `sha` + `X.Y.Z` + `X.Y` + tag, registry cache.
+  `sha` + `X.Y.Z` + `X.Y` + tag, registry cache. It builds every image the chart can reference —
+  including the AMD and Intel vLLM workers and the Tenstorrent one, whose bases are 7–30 GB, so those
+  jobs free the runner's disk first. A first push of a package the workflow has not created itself is
+  refused (`permission_denied`) until that package grants `opod-core` write under *Manage Actions access*:
+  linking a package to a repo is not access, and no API sets it.
 
 **No floating `latest`, in either lane** (ARCHITECTURE §7): a moving tag is the rolling upstream tag we
 forbid everywhere else, and consumers pin a digest anyway (the chart's `engineImages`, re-pinned per
@@ -42,6 +46,8 @@ so `Dockerfile.rpc-rocm` lifts it during the worker build.
 | `opod-worker-llamacpp-intel` | `worker-llamacpp/` (`Dockerfile.rpc-sycl`) | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver) **plus a source-built RPC pair** from `llama-rpc-sycl:<rel>`: upstream's own Intel recipe (same oneAPI image and level-zero) with `GGML_RPC=ON`, because neither the base nor the sycl release tarball carries an RPC backend. Unproven on hardware until the pair is published and an Intel node runs it |
 | `opod-worker-vllm-nvidia` | `worker-vllm/` | vllm/vllm-openai:v0.27.1 |
 | `opod-worker-vllm-amd` | `worker-vllm/` | rocm/vllm — **one build per GPU family, not one image**: `…_rdna_…` for Radeon / Radeon Pro (gfx11xx, the default) and `…_cdna_…` for Instinct MI2xx/MI3xx (gfx9xx). Neither runs the other's kernels. Override with `VLLM_AMD_BASE=`. ~25 GB base; not built by default. |
+| `opod-worker-vllm-intel` | `worker-vllm/` | intel/vllm (XPU: Arc / Flex / Max) — vLLM per silicon is published by different people, and upstream `vllm/vllm-openai` is CUDA-only. Single-card serving until an Intel node proves more: we have run no Ray gang on the XPU backend. Override with `VLLM_INTEL_BASE=` |
+| `opod-worker-tt` | `worker-tt/` | Tenstorrent's `tt-inference-server` vLLM build — **the tag must match the tt-metal and vLLM commits of the model spec being served**, see `worker-tt/README.md`. Serving proven on a Blackhole p150b 2026-09-15; needs `/dev/hugepages-1G` and a mounted model spec, which the control plane's Tenstorrent render supplies. Override with `VLLM_TT_BASE=` |
 
 **ghcr visibility.** Worker and leader packages must be **public** — nodes pull them anonymously and no
 cluster of ours holds a registry token (the design-partner cell has none by design). A package first
