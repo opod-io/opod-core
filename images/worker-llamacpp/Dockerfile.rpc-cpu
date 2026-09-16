@@ -70,14 +70,14 @@ COPY --from=rpc-cpu /opt/llama-rpc /opt/llama-rpc
 
 # rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends load.
 RUN set -eux; \
-    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport GGML_BACKEND_PATH=/opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
       > /usr/local/bin/rpc-server; \
     chmod +x /usr/local/bin/rpc-server
 
 # llama-server: --rpc → the RPC build (the base's /app has no --rpc), otherwise
 # the base's llama-server, exactly as the CUDA image routes it.
 RUN set -eux; \
-    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export GGML_BACKEND_PATH=/opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
       > /usr/local/bin/llama-server; \
     chmod +x /usr/local/bin/llama-server
 
