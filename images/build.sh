@@ -4,8 +4,9 @@
 # Cross-compiles `opod` for linux/amd64 on this machine, then builds every image
 # with buildx on top of the official upstream base and pushes ONLY the thin opod
 # layers to ghcr.io (base layers are already there). Nothing compiles under
-# emulation: the Go build is native, the llama.cpp CUDA RPC pair comes from the
-# prebuilt ghcr.io/opod-io/llama-rpc-cuda:<LLAMA_RELEASE> image.
+# emulation: the Go build is native, and the llama.cpp RPC pairs that need a
+# compiler (CUDA, SYCL) come from the prebuilt ghcr.io/opod-io/llama-rpc-<vendor>:<LLAMA_RELEASE>
+# images. The ROCm pair is lifted from upstream's release tarball at build time.
 #
 #   images/build.sh [--push] [--multi] [--dry-run] [--tag T] [image ...]
 #       images: leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia
@@ -23,10 +24,12 @@
 #   images/build.sh prune
 #       keep the Mac lean: drop local opod-*:dev-* tags (they live in ghcr once pushed) and trim the
 #       buildx cache to BUILD_KEEP (default 60GB: enough to hold every upstream base so nothing re-pulls).
-#   images/build.sh rpc-bootstrap
-#       one-time: publish llama-rpc-cuda:<LLAMA_RELEASE> by lifting /opt/llama-rpc out of
+#   images/build.sh rpc-bootstrap [cuda|sycl]
+#       one-time: publish llama-rpc-<vendor>:<LLAMA_RELEASE> by lifting /opt/llama-rpc out of
 #       a published worker image named by RPC_SOURCE (no compile). Re-run only after bumping LLAMA_RELEASE,
-#       and then it must be a real build:  images/build.sh rpc-build   (~60 min, needs amd64+nvcc → CI dispatch)
+#       and then it must be a real build:  images/build.sh rpc-build [cuda|sycl]
+#       (cuda ~60 min of nvcc, sycl a oneAPI icpx build; both amd64-only → an amd64 box or CI dispatch
+#       `images.yml` with rpc=true / rpc_sycl=true). Default vendor: cuda.
 #
 # One-time login (token stays in the Docker credential store, never in the repo):
 #   gh auth refresh -s write:packages && gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
@@ -46,11 +49,24 @@ VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pyto
 # Tenstorrent's own tt-metal + vLLM release image. ~17 GB uncompressed, so the
 # build is a thin layer on a very fat base — bump the tag deliberately and check
 # it against the tt-kmd version on the fleet, which tt-metal is strict about.
-VLLM_TT_BASE=${VLLM_TT_BASE:-ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.1-555f240-22be241}
+# The tag must match the tt-metal/vLLM commits of the model spec being served
+# (see images/worker-tt/Dockerfile): the default is the one tt-inference-server
+# 0.10.1 names for Blackhole P150 / P150X4 LLMs.
+VLLM_TT_BASE=${VLLM_TT_BASE:-ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e}
 ARCH=${ARCH:-amd64}
 PLATFORM=linux/$ARCH
 LLAMA_RELEASE=$(sed -nE 's/^ARG LLAMA_RELEASE=(.*)$/\1/p' images/worker-llamacpp/Dockerfile.rpc-cuda)
-RPC_IMAGE=${RPC_IMAGE:-$REG/llama-rpc-cuda:$LLAMA_RELEASE}
+# The prebuilt RPC pair per compiled vendor, substituted for the Dockerfile's
+# rpc-<vendor> stage. One LLAMA_RELEASE for every llama.cpp image: it is read
+# from the CUDA recipe and passed to each build, so the files cannot drift.
+rpc_image() { echo "$REG/llama-rpc-$1:$LLAMA_RELEASE"; }
+# which compiled RPC pair a worker image substitutes, or nothing
+rpc_vendor_of() {
+  case "$1" in
+    llamacpp-nvidia) echo cuda ;;
+    llamacpp-intel)  echo sycl ;;
+  esac
+}
 
 log() { printf '\033[1;34m▶ %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31m✘ %s\033[0m\n' "$*" >&2; exit 1; }
@@ -63,9 +79,9 @@ spec() {
   case "$1" in
     leader)          echo "opod-leader images/leader/Dockerfile - amd64,arm64" ;;
     llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda amd64" ;;
-    llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full-rocm amd64" ;;
+    llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile.rpc-rocm ghcr.io/ggml-org/llama.cpp:full-rocm amd64" ;;
     llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full amd64,arm64" ;;
-    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile ghcr.io/ggml-org/llama.cpp:full-intel amd64" ;;
+    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel amd64" ;;
     vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1 amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126 amd64" ;;
@@ -88,6 +104,7 @@ while [ $# -gt 0 ]; do
     *) images+=("$1") ;;
   esac; shift
 done
+named=(${images[@]+"${images[@]}"})   # what was typed (bash 3.2-safe when empty); the rpc-* modes read their vendor from it
 [ ${#images[@]} -eq 0 ] && images=(leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia)
 
 run() { if [ $dry = 1 ]; then printf '  %q' "$@"; echo; else "$@"; fi; }
@@ -102,18 +119,23 @@ case "${mode:-}" in
     run docker builder prune -f --keep-storage "${BUILD_KEEP:-60GB}" | tail -1
     docker system df
     exit 0 ;;
-  rpc-bootstrap)
-    src=${RPC_SOURCE:?set RPC_SOURCE to the published worker image to lift /opt/llama-rpc from — there is no floating :latest to guess}
-    log "publishing $RPC_IMAGE from $src (/opt/llama-rpc lifted, no compile)"
-    run docker buildx build --platform $PLATFORM -t "$RPC_IMAGE" --push - <<DF
+  rpc-bootstrap|rpc-build)
+    vendor=${named[0]:-cuda}
+    case "$vendor" in cuda|sycl) ;; *) die "$mode takes cuda or sycl, not '$vendor' (the ROCm pair is lifted from upstream's tarball, nothing to publish)" ;; esac
+    out=$(rpc_image "$vendor")
+    if [ "$mode" = rpc-bootstrap ]; then
+      src=${RPC_SOURCE:?set RPC_SOURCE to the published worker image to lift /opt/llama-rpc from — there is no floating :latest to guess}
+      log "publishing $out from $src (/opt/llama-rpc lifted, no compile)"
+      run docker buildx build --platform $PLATFORM -t "$out" --push - <<DF
 FROM scratch
 COPY --from=$src /opt/llama-rpc /opt/llama-rpc
 DF
-    exit 0 ;;
-  rpc-build)
-    log "REAL rpc build for $LLAMA_RELEASE → $RPC_IMAGE (nvcc; ~60 min on amd64, do NOT run emulated on a Mac)"
-    run docker buildx build --platform $PLATFORM -f images/worker-llamacpp/Dockerfile.rpc-cuda --target rpc-export \
-      --build-arg LLAMA_RELEASE="$LLAMA_RELEASE" -t "$RPC_IMAGE" --push .
+    else
+      [ "$(uname -m)" = x86_64 ] || [ $dry = 1 ] || die "rpc-build compiles for amd64 — run it on an amd64 box or dispatch images.yml; never emulated on this $(uname -m) machine"
+      log "REAL rpc build for $LLAMA_RELEASE → $out ($vendor compiler, amd64 only)"
+      run docker buildx build --platform linux/amd64 -f "images/worker-llamacpp/Dockerfile.rpc-$vendor" --target rpc-export \
+        --build-arg LLAMA_RELEASE="$LLAMA_RELEASE" -t "$out" --push .
+    fi
     exit 0 ;;
 esac
 
@@ -142,7 +164,16 @@ build_one() {
         --label "org.opencontainers.image.licenses=Apache-2.0"
         -t "$REG/$name:$t")
   [ "$base" != "-" ] && args+=(--build-arg "BASE=$base")
-  [ "$img" = llamacpp-nvidia ] && args+=(--build-context "rpc-cuda=docker-image://$RPC_IMAGE")
+  case "$img" in llamacpp-*) args+=(--build-arg "LLAMA_RELEASE=$LLAMA_RELEASE") ;; esac
+  local rv; rv=$(rpc_vendor_of "$img")
+  if [ -n "$rv" ]; then
+    local pair; pair=$(rpc_image "$rv")
+    # The substituted pair must exist, or buildx would fall back to compiling
+    # the rpc-<vendor> stage locally — under emulation, for an hour.
+    [ $dry = 1 ] || docker buildx imagetools inspect "$pair" >/dev/null 2>&1 \
+      || die "$pair is not readable — log in to ghcr (see the header), or if it was never published build it once: images.yml dispatch (rpc=true / rpc_sycl=true) or 'images/build.sh rpc-build $rv' on amd64"
+    args+=(--build-context "rpc-$rv=docker-image://$pair")
+  fi
   [ $push = 1 ] && args+=(--push)
   log "$name:$t (linux/$arch)$( [ $push = 1 ] && echo ' → push' )"
   run "${args[@]}" .

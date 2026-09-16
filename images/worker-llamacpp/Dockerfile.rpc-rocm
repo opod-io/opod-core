@@ -1,0 +1,90 @@
+# opod worker — llama.cpp on AMD (ROCm), WITH RPC sharding support.
+#
+# The upstream ggml image (ghcr.io/ggml-org/llama.cpp:full-rocm) has a HIP
+# llama-server (great for whole-model N=1) but is compiled WITHOUT the RPC
+# backend (.devops/rocm.Dockerfile sets no GGML_RPC): no rpc-server, no --rpc
+# flag. So an AMD part could never join a llama.cpp RPC gang on it. Same shape
+# as Dockerfile.rpc-cuda: keep the base's GPU llama-server for N=1 and ADD an
+# RPC pair in /opt/llama-rpc for N>=2 (each part's rpc-server + the coordinator
+# `llama-server --rpc`).
+#
+# Unlike CUDA there is NOTHING to compile: upstream's release tarball
+# llama-<rel>-bin-ubuntu-rocm-<ver>-x64.tar.gz ships ggml-rpc-server,
+# llama-server and the libggml-{hip,rpc,cpu-*}.so backends (checked on b9934),
+# so the pair is lifted straight out of the tarball at build time — the same
+# no-compile idea as `build.sh rpc-bootstrap`, without a second image. The
+# tarball's HIP backend links the ROCm runtime the base already carries.
+# The hard-won bits from the CUDA recipe still apply:
+#   * opod execs `rpc-server`; the tarball's binary is ggml-rpc-server, so a
+#     wrapper exposes that name.
+#   * ggml discovers backend .so files next to the executable, then in the
+#     CWD; the base's WORKDIR=/app holds FOREIGN ggml backends built against
+#     its own libs, so the wrappers cd to /opt/llama-rpc before exec. (The CUDA
+#     and CPU recipes also export GGML_BACKEND_PATH=/opt/llama-rpc; in ggml
+#     that variable names ONE extra out-of-tree backend file, so a directory
+#     only logs "cannot read file data: Is a directory" — it is left out here.)
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-rocm
+ARG LLAMA_RELEASE=b9934
+# The ROCm version in the tarball's file name is upstream's CI target, not a
+# choice of ours. It moves with LLAMA_RELEASE; check the release assets when
+# bumping either.
+ARG ROCM_TARBALL=7.2
+
+# --- 1) opod binary ---------------------------------------------------------
+# Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
+# `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
+FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
+
+# --- 2) RPC pair: lifted from the upstream ROCm release tarball -------------
+# Runs on the BUILD platform: it is curl + tar, so it never needs emulation.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS rpc-rocm
+ARG LLAMA_RELEASE
+ARG ROCM_TARBALL
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN set -eux; mkdir -p /opt/llama-rpc; \
+    curl -fsSL "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/llama-${LLAMA_RELEASE}-bin-ubuntu-rocm-${ROCM_TARBALL}-x64.tar.gz" \
+      | tar xz -C /opt/llama-rpc --strip-components=1; \
+    # keep the pair and every shared library it may load; drop the other tools
+    find /opt/llama-rpc -maxdepth 1 -type f ! -name 'lib*.so*' ! -name ggml-rpc-server ! -name llama-server -delete; \
+    test -f /opt/llama-rpc/ggml-rpc-server; test -f /opt/llama-rpc/llama-server; \
+    test -f /opt/llama-rpc/libggml-hip.so; test -f /opt/llama-rpc/libggml-rpc.so
+
+# --- 3) the worker image ----------------------------------------------------
+FROM ${BASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash curl ca-certificates procps && rm -rf /var/lib/apt/lists/*
+COPY --from=opod /opod /usr/local/bin/opod
+COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
+# The sharding binaries (rpc-server + the --rpc coordinator), self-contained
+# apart from the base's ROCm runtime.
+COPY --from=rpc-rocm /opt/llama-rpc /opt/llama-rpc
+
+# rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends are
+# discoverable; PREPEND our libs, then fall through to the base's ROCm.
+RUN set -eux; \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+      > /usr/local/bin/rpc-server; \
+    chmod +x /usr/local/bin/rpc-server
+
+# llama-server: opod execs one "llama-server" for both whole-model (N=1) and the
+# shard coordinator (N>=2, which passes --rpc). Route by args: --rpc → the RPC
+# build (the base's /app has no --rpc), otherwise → the base's GPU llama-server.
+RUN set -eux; \
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
+      > /usr/local/bin/llama-server; \
+    chmod +x /usr/local/bin/llama-server
+
+# /usr/local/bin BEFORE /app so the wrappers win.
+ENV PATH=/usr/local/bin:/app:$PATH \
+    OPOD_ROLE=worker OPOD_ENGINE=llamacpp \
+    OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

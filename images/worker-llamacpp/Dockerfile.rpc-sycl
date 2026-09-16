@@ -1,0 +1,113 @@
+# opod worker — llama.cpp on Intel GPUs (SYCL / oneAPI), WITH RPC sharding support.
+#
+# The upstream ggml image (ghcr.io/ggml-org/llama.cpp:full-intel) has a SYCL
+# llama-server (great for whole-model N=1) but is compiled WITHOUT the RPC
+# backend (.devops/intel.Dockerfile sets no GGML_RPC): no rpc-server, and
+# llama-server only registers --rpc when an RPC backend loads. Upstream's
+# ubuntu-sycl release tarball has no RPC backend either (checked on b9934), so
+# unlike ROCm there is nothing to lift: the pair is a SOURCE build here, with
+# exactly upstream's own Intel recipe (same oneAPI image, same level-zero, same
+# cmake flags) plus GGML_RPC=ON.
+#
+# The build is icx/icpx on amd64 and far too heavy for emulation, so — like the
+# CUDA pair — it is built ONCE per LLAMA_RELEASE and published as
+# ghcr.io/opod-io/llama-rpc-sycl:<rel> (target `rpc-export`: CI dispatch
+# `images.yml` with rpc_sycl=true, or `images/build.sh rpc-build sycl` on an
+# amd64 box). Both lanes then substitute this stage with
+# `--build-context rpc-sycl=docker-image://ghcr.io/opod-io/llama-rpc-sycl:<rel>`.
+#
+# The hard-won bits from the CUDA / ROCm recipes still apply:
+#   * opod execs `rpc-server`; upstream's binary is ggml-rpc-server, so a
+#     wrapper exposes that name.
+#   * llama-server's web UI is fetched at BUILD time keyed off the git build
+#     number; a shallow clone derives a nonexistent one and the build dies —
+#     pin HF_UI_VERSION to the release tag.
+#   * ggml discovers backend .so files next to the executable, then in the
+#     CWD; the base's WORKDIR=/app holds FOREIGN ggml backends, so the wrappers
+#     cd to /opt/llama-rpc before exec. GGML_BACKEND_PATH is not set: in ggml
+#     it names ONE extra backend file, and a directory only logs an error.
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-intel
+ARG LLAMA_RELEASE=b9934
+# Upstream's pins for this release (.devops/intel.Dockerfile @ LLAMA_RELEASE).
+# The base image is built from the same oneAPI image, so the runtime the
+# SYCL backend links against is the one it was compiled with. Re-read both
+# when bumping LLAMA_RELEASE.
+ARG ONEAPI_VERSION=2025.3.3-0-devel-ubuntu24.04
+ARG LEVEL_ZERO_VERSION=1.28.2
+
+# --- 1) opod binary ---------------------------------------------------------
+# Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
+# `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
+FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
+
+# --- 2) RPC pair: source build (GGML_SYCL=ON + GGML_RPC=ON) ------------------
+FROM docker.io/intel/deep-learning-essentials:${ONEAPI_VERSION} AS rpc-sycl
+ARG LLAMA_RELEASE
+ARG LEVEL_ZERO_VERSION
+ENV HF_UI_VERSION=${LLAMA_RELEASE}
+RUN set -eux; apt-get update; \
+    apt-get install -y --no-install-recommends git cmake libssl-dev wget ca-certificates; \
+    cd /tmp; \
+    wget -q "https://github.com/oneapi-src/level-zero/releases/download/v${LEVEL_ZERO_VERSION}/level-zero_${LEVEL_ZERO_VERSION}%2Bu24.04_amd64.deb" -O level-zero.deb; \
+    wget -q "https://github.com/oneapi-src/level-zero/releases/download/v${LEVEL_ZERO_VERSION}/level-zero-devel_${LEVEL_ZERO_VERSION}%2Bu24.04_amd64.deb" -O level-zero-devel.deb; \
+    apt-get -o Dpkg::Options::="--force-overwrite" install -y ./level-zero.deb ./level-zero-devel.deb; \
+    rm -rf /tmp/*.deb /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch ${LLAMA_RELEASE} https://github.com/ggml-org/llama.cpp /src
+# GGML_BACKEND_DL: the SYCL, RPC and CPU backends are loadable modules, as in
+# upstream's image, so rpc-server and the coordinator find them next to the
+# binary. GGML_SYCL_F16 matches upstream's default Intel build.
+RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx \
+      -DGGML_NATIVE=OFF -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DGGML_RPC=ON \
+      -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF && \
+    cmake --build /build --config Release -j"$(nproc)"
+RUN set -eux; mkdir -p /opt/llama-rpc; \
+    cp /build/bin/ggml-rpc-server /build/bin/llama-server /opt/llama-rpc/; \
+    find /build -name '*.so*' ! -path '*/CMakeFiles/*' -exec cp -P {} /opt/llama-rpc/ \; ; \
+    test -f /opt/llama-rpc/ggml-rpc-server; test -f /opt/llama-rpc/llama-server; \
+    test -f /opt/llama-rpc/libggml-sycl.so; test -f /opt/llama-rpc/libggml-rpc.so
+
+# --- 2b) export-only image of the RPC pair: `--target rpc-export` ------------
+FROM scratch AS rpc-export
+COPY --from=rpc-sycl /opt/llama-rpc /opt/llama-rpc
+
+# --- 3) the worker image ----------------------------------------------------
+FROM ${BASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash curl ca-certificates procps && rm -rf /var/lib/apt/lists/*
+COPY --from=opod /opod /usr/local/bin/opod
+COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
+# The sharding binaries (rpc-server + the --rpc coordinator), self-contained
+# apart from the base's oneAPI runtime.
+COPY --from=rpc-sycl /opt/llama-rpc /opt/llama-rpc
+
+# rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends are
+# discoverable; PREPEND our libs, then fall through to the base's oneAPI.
+RUN set -eux; \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+      > /usr/local/bin/rpc-server; \
+    chmod +x /usr/local/bin/rpc-server
+
+# llama-server: opod execs one "llama-server" for both whole-model (N=1) and the
+# shard coordinator (N>=2, which passes --rpc). Route by args: --rpc → the RPC
+# build (the base's /app has no RPC backend), otherwise → the base's llama-server.
+RUN set -eux; \
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --rpc|--rpc=*) cd /opt/llama-rpc; export LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}; exec /opt/llama-rpc/llama-server "$@";; esac; done\nexec /app/llama-server "$@"\n' \
+      > /usr/local/bin/llama-server; \
+    chmod +x /usr/local/bin/llama-server
+
+# /usr/local/bin BEFORE /app so the wrappers win.
+ENV PATH=/usr/local/bin:/app:$PATH \
+    OPOD_ROLE=worker OPOD_ENGINE=llamacpp \
+    OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

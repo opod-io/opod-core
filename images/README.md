@@ -24,18 +24,22 @@ composes the index under `<tag>` from a name computed once, and **reads it back*
 platforms are there — a mistyped target once published two-arch indexes to ghcr packages called
 `opod-leaderatest` / `opod-worker-llamacpp-cpuatest` while the real tags stayed single-arch for two days.
 
-The llama.cpp CUDA **RPC pair** (`/opt/llama-rpc`, ~60 min of nvcc) is built **once per `LLAMA_RELEASE`**
-as `ghcr.io/opod-io/llama-rpc-cuda:<rel>` (`--target rpc-export`; CI dispatch with `rpc=true`, or
-`images/build.sh rpc-build` on an amd64 box) and substituted for the `rpc-cuda` stage in both lanes.
-Bootstrap it from the last CI-built worker without compiling: `images/build.sh rpc-bootstrap`.
+The llama.cpp **RPC pairs** (`/opt/llama-rpc`: `rpc-server` + the `llama-server --rpc` coordinator) that need a
+compiler are built **once per `LLAMA_RELEASE`** and substituted for the Dockerfile's `rpc-<vendor>` stage in both
+lanes: `ghcr.io/opod-io/llama-rpc-cuda:<rel>` (~60 min of nvcc) and `ghcr.io/opod-io/llama-rpc-sycl:<rel>` (oneAPI
+icpx). Each is `--target rpc-export` of its Dockerfile, built by CI dispatch (`rpc=true` / `rpc_sycl=true`) or
+`images/build.sh rpc-build cuda|sycl` on an amd64 box; `build.sh` refuses to build a worker whose pair it cannot read
+rather than compile it under emulation. Bootstrap the CUDA one from the last CI-built worker without compiling:
+`images/build.sh rpc-bootstrap`. The ROCm pair needs none of this: upstream's ROCm release tarball already ships it,
+so `Dockerfile.rpc-rocm` lifts it during the worker build.
 
 | Image | Dockerfile | BASE |
 |---|---|---|
 | `opod-leader` | `leader/` | debian:bookworm-slim |
 | `opod-worker-llamacpp-nvidia` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-cuda |
-| `opod-worker-llamacpp-amd` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-rocm |
+| `opod-worker-llamacpp-amd` | `worker-llamacpp/` (`Dockerfile.rpc-rocm`) | ghcr.io/ggml-org/llama.cpp:full-rocm (ROCm 7.2.1) **plus the RPC pair** in `/opt/llama-rpc`, lifted at build time from upstream's `llama-<rel>-bin-ubuntu-rocm-<ver>-x64.tar.gz` (it ships `ggml-rpc-server` + `libggml-{hip,rpc}.so`; the base is built without `GGML_RPC`) — no compile, unlike the CUDA pair. Proven 2026-09-15 on a 3× RX 7900 XTX (gfx1100) host: rpc-server sees the three devices, `llama-server --rpc` serves a completion over the part, the base's N=1 `llama-server` untouched. Targets in the tarball's HIP backend: gfx1030, gfx1100–1102, gfx1150–1151 — no CDNA (Instinct); an MI-class fleet needs a source build. |
 | `opod-worker-llamacpp-cpu` | `worker-llamacpp/` (`Dockerfile.rpc-cpu`) | ghcr.io/ggml-org/llama.cpp:full (CPU; dev clusters, kind CI, a GPU-less node the plan names — the control plane's vendor "none") **plus a source-built RPC pair** in `/opt/llama-rpc` since 2026-09-14 (the upstream image has no rpc-server and no `--rpc`), so a CPU worker can be a part of a gang — the laptop gang drills (A12, D10) need no GPU. A few minutes of C++ on the build platform, never emulated: the local lane builds arm64 natively on Apple silicon, CI builds amd64 |
-| `opod-worker-llamacpp-intel` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver — unproven until an Intel node has a driver) |
+| `opod-worker-llamacpp-intel` | `worker-llamacpp/` (`Dockerfile.rpc-sycl`) | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver) **plus a source-built RPC pair** from `llama-rpc-sycl:<rel>`: upstream's own Intel recipe (same oneAPI image and level-zero) with `GGML_RPC=ON`, because neither the base nor the sycl release tarball carries an RPC backend. Unproven on hardware until the pair is published and an Intel node runs it |
 | `opod-worker-vllm-nvidia` | `worker-vllm/` | vllm/vllm-openai:v0.27.1 |
 | `opod-worker-vllm-amd` | `worker-vllm/` | rocm/vllm — **one build per GPU family, not one image**: `…_rdna_…` for Radeon / Radeon Pro (gfx11xx, the default) and `…_cdna_…` for Instinct MI2xx/MI3xx (gfx9xx). Neither runs the other's kernels. Override with `VLLM_AMD_BASE=`. ~25 GB base; not built by default. |
 
