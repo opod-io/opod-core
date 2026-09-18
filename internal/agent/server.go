@@ -502,41 +502,78 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			}
 		}
 	}
+	cmdline, err := s.vllmCmdline(model, servedName, host, port)
+	if err != nil {
+		return err
+	}
 	_ = s.Supervisor.Stop("vllm-serve") // exclusive: one model per worker
-	// Launch via a login shell with `exec`, NOT a bare exec.Command: vLLM's
-	// multiprocessing worker-spawn hangs before loading when launched directly by
-	// the (multithreaded, new-process-group, null-stdin) supervisor, but starts
-	// fine from a shell — so mirror the shell invocation and let exec replace sh
-	// with vllm so the supervisor still monitors the real PID. Flags:
-	//   --trust-remote-code       many HF repos (MiMo, some Qwen) ship custom code
-	//   --gpu-memory-utilization  0.90 default OOMs on KV-cache right after loading
-	//                             weights (grabs ~full VRAM then exits); 0.85 leaves headroom
-	// VLLM_WORKER_MULTIPROC_METHOD=spawn avoids fork-in-multithreaded-parent deadlocks.
-	// --served-model-name <catalog id>: vLLM otherwise serves under the HF repo
-	// name; serving under the catalog id means the model routes end-to-end by id
-	// (heartbeat placement, router, and this worker's proxy all agree) with no
-	// name translation. Falls back to the repo name when the id is empty.
+	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
+	if len(s.Adapters) > 0 {
+		env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True" // the /v1/load_lora_adapter route
+	}
+	if s.sleepModeArgs() != "" {
+		env["VLLM_SERVER_DEV_MODE"] = "1" // exposes /sleep, /wake_up, /is_sleeping
+	}
+	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{
+		ID:          "vllm-serve",
+		Command:     "/bin/sh",
+		Args:        []string{"-lc", cmdline},
+		Env:         env,
+		Restart:     true,
+		MaxRestarts: 3,
+		Adapt:       vllmFitContext(s.EngineFlags, cmdline),
+	})
+	return err
+}
+
+// vllmCmdline is the shell line launchVLLM runs.
+//
+// Launch via a login shell with `exec`, NOT a bare exec.Command: vLLM's
+// multiprocessing worker-spawn hangs before loading when launched directly by
+// the (multithreaded, new-process-group, null-stdin) supervisor, but starts
+// fine from a shell — so mirror the shell invocation and let exec replace sh
+// with vllm so the supervisor still monitors the real PID. Flags:
+//
+//	--trust-remote-code       many HF repos (MiMo, some Qwen) ship custom code
+//	--gpu-memory-utilization  0.90 default OOMs on KV-cache right after loading
+//	                          weights (grabs ~full VRAM then exits); 0.85 leaves headroom
+//
+// VLLM_WORKER_MULTIPROC_METHOD=spawn avoids fork-in-multithreaded-parent deadlocks.
+// --served-model-name <catalog id>: vLLM otherwise serves under the HF repo
+// name; serving under the catalog id means the model routes end-to-end by id
+// (heartbeat placement, router, and this worker's proxy all agree) with no
+// name translation. Falls back to the repo name when the id is empty.
+//
+// --tensor-parallel-size: split the model across ALL GPUs on this box (TP
+// belongs inside one machine — a fat NVLink/PCIe link). Auto-detect the count
+// (NVIDIA via nvidia-smi, else /dev/dri render nodes for AMD/Intel) so a
+// multi-GPU worker uses every GPU instead of vLLM's default of 1. Needs the
+// container launched with a large --shm-size for the per-GPU
+// worker processes' shared memory.
+// vLLM requires tensor-parallel-size to DIVIDE the model's attention-head
+// count (almost always a power of 2), and to be <= the GPU count. So pick the
+// largest power of 2 <= detected GPUs (5 GPUs -> TP=4, not 5 which would fail
+// "heads (32) must be divisible by 5"). Detect via nvidia-smi, else /dev/dri.
+// --gpu-memory-utilization: 0.85 by default. When the worker was given a
+// per-worker VRAM budget (OPOD_VRAM_BUDGET_GB, set by a control plane or by
+// hand — `opod join --vram-budget`), the fraction is budget / device VRAM
+// (clamped 0.05–0.95) so several workers can share one device under a
+// ledger instead of each grabbing 85% of it. Budget is only honoured when
+// nvidia-smi can report the device size; otherwise the default stands.
+// Plan flags (OPOD_ENGINE_FLAGS) may pin TP / utilisation and add the
+// capacity knobs the control plane exposes (max_model_len, kv dtype, …).
+//
+// --revision: a worker that pins a model version and has no prefetched
+// snapshot of it lets vLLM pull — at that revision, not at the branch head
+// (pinnedSource).
+func (s *Server) vllmCmdline(model, servedName, host string, port int) (string, error) {
+	source, revArgs, err := s.pinnedSource(model)
+	if err != nil {
+		return "", err
+	}
 	if servedName == "" {
 		servedName = model
 	}
-	// --tensor-parallel-size: split the model across ALL GPUs on this box (TP
-	// belongs inside one machine — a fat NVLink/PCIe link). Auto-detect the count
-	// (NVIDIA via nvidia-smi, else /dev/dri render nodes for AMD/Intel) so a
-	// multi-GPU worker uses every GPU instead of vLLM's default of 1. Needs the
-	// container launched with a large --shm-size for the per-GPU
-	// worker processes' shared memory.
-	// vLLM requires tensor-parallel-size to DIVIDE the model's attention-head
-	// count (almost always a power of 2), and to be <= the GPU count. So pick the
-	// largest power of 2 <= detected GPUs (5 GPUs -> TP=4, not 5 which would fail
-	// "heads (32) must be divisible by 5"). Detect via nvidia-smi, else /dev/dri.
-	// --gpu-memory-utilization: 0.85 by default. When the worker was given a
-	// per-worker VRAM budget (OPOD_VRAM_BUDGET_GB, set by a control plane or by
-	// hand — `opod join --vram-budget`), the fraction is budget / device VRAM
-	// (clamped 0.05–0.95) so several workers can share one device under a
-	// ledger instead of each grabbing 85% of it. Budget is only honoured when
-	// nvidia-smi can report the device size; otherwise the default stands.
-	// Plan flags (OPOD_ENGINE_FLAGS) may pin TP / utilisation and add the
-	// capacity knobs the control plane exposes (max_model_len, kv dtype, …).
 	flagOverrides, flagArgs := s.EngineFlags.vllmShellOverrides()
 	// LoRA slots (adapters.go): only when the plan configures adapters, so an
 	// endpoint without any runs the engine exactly as before.
@@ -556,26 +593,10 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); "+
 			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
 			"%s "+
-			"exec vllm serve '%s' --served-model-name '%s' '%s' --host %s --port %d "+
+			"exec vllm serve '%s' %s --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
-		flagOverrides, s.modelSource(model), servedName, model, host, port, flagArgs, s.sleepModeArgs())
-	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
-	if len(adapters) > 0 {
-		env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True" // the /v1/load_lora_adapter route
-	}
-	if s.sleepModeArgs() != "" {
-		env["VLLM_SERVER_DEV_MODE"] = "1" // exposes /sleep, /wake_up, /is_sleeping
-	}
-	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
-		ID:          "vllm-serve",
-		Command:     "/bin/sh",
-		Args:        []string{"-lc", cmdline},
-		Env:         env,
-		Restart:     true,
-		MaxRestarts: 3,
-		Adapt:       vllmFitContext(s.EngineFlags, cmdline),
-	})
-	return err
+		flagOverrides, source, revArgs, servedName, model, host, port, flagArgs, s.sleepModeArgs())
+	return cmdline, nil
 }
 
 // vllmMaxLenHint is vLLM's own refusal when the memory left after the weights
@@ -638,6 +659,25 @@ func (s *Server) modelSource(model string) string {
 	return model
 }
 
+// pinnedSource is modelSource plus the engine arguments that keep a pinned
+// revision pinned. A snapshot directory IS the revision, so it needs none.
+// A repo name the engine pulls for itself does: without `--revision` the
+// engine resolves the branch head, and a worker told to serve one version
+// would quietly serve whatever the repo holds today. vLLM and SGLang spell
+// the flag the same way. A revision that cannot be passed safely refuses the
+// launch — serving the wrong bytes is worse than not serving.
+func (s *Server) pinnedSource(model string) (source, revArgs string, err error) {
+	source = s.modelSource(model)
+	rev := strings.TrimSpace(s.ModelRevision)
+	if source != model || rev == "" {
+		return source, "", nil
+	}
+	if err := fetch.ValidRevision(rev); err != nil {
+		return "", "", fmt.Errorf("model %s: %w", model, err)
+	}
+	return source, "--revision " + shellQuoteAll([]string{rev}), nil
+}
+
 // launchSGLang (re)starts SGLang's server for one model, on the host:port the
 // driver probes. It mirrors launchVLLM because the two engines pose the same
 // problem — one model per process, a port that binds only after a long load —
@@ -663,7 +703,28 @@ func (s *Server) launchSGLang(model, servedName string) error {
 			}
 		}
 	}
+	cmdline, err := s.sglangCmdline(model, servedName, host, port)
+	if err != nil {
+		return err
+	}
 	_ = s.Supervisor.Stop("sglang-serve") // exclusive: one model per worker
+	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{
+		ID:          "sglang-serve",
+		Command:     "/bin/sh",
+		Args:        []string{"-lc", cmdline},
+		Restart:     true,
+		MaxRestarts: 3,
+	})
+	return err
+}
+
+// sglangCmdline is the shell line launchSGLang runs; `--revision` follows the
+// same rule as vLLM's (pinnedSource).
+func (s *Server) sglangCmdline(model, servedName, host string, port int) (string, error) {
+	source, revArgs, err := s.pinnedSource(model)
+	if err != nil {
+		return "", err
+	}
 	if servedName == "" {
 		servedName = model
 	}
@@ -677,17 +738,10 @@ func (s *Server) launchSGLang(model, servedName string) error {
 			"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); "+
 			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
 			"%s "+
-			"exec python3 -m sglang.launch_server --model-path '%s' --served-model-name '%s' --host %s --port %d "+
+			"exec python3 -m sglang.launch_server --model-path '%s' %s --served-model-name '%s' --host %s --port %d "+
 			"--trust-remote-code --mem-fraction-static \"$U\" --tp-size \"$TP\" %s",
-		flagOverrides, s.modelSource(model), servedName, host, port, flagArgs)
-	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
-		ID:          "sglang-serve",
-		Command:     "/bin/sh",
-		Args:        []string{"-lc", cmdline},
-		Restart:     true,
-		MaxRestarts: 3,
-	})
-	return err
+		flagOverrides, source, revArgs, servedName, host, port, flagArgs)
+	return cmdline, nil
 }
 
 // launchLlamaServer (re)starts a whole `llama-server` for a non-sharded llama.cpp
