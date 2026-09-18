@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -43,9 +44,19 @@ func rateLimitEstimateFrom(ctx context.Context) rateLimitEstimate {
 	return v
 }
 
-// recordUsage writes a usage row for a completed request and updates metrics.
+// usageWriteTimeout bounds the usage insert once it is detached from the
+// request: long enough for a busy SQLite writer, short enough that a wedged
+// store cannot pile up handler goroutines.
+const usageWriteTimeout = 5 * time.Second
+
+// recordUsage writes a usage row for a finished request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already
-// completed successfully from the user's perspective).
+// ended from the user's perspective).
+//
+// The row never rides the request's own context: on the cancellation path
+// (client gone mid-stream) that context is already done and the driver would
+// refuse the insert, so exactly the requests that were cut short would go
+// unrecorded. The write keeps the context's values and gets its own deadline.
 //
 // Metrics always fire (even when no API key is in context — e.g., dev mode
 // with require_keys=false). The DB row is written with empty key/user
@@ -101,9 +112,12 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		NodeID:           router.NodeFrom(ctx), // "" when answered locally / never dispatched
 		TTFTMS:           int(ttft.Milliseconds()),
 	}
-	if err := st.Usage().Record(ctx, rec); err != nil {
-		// swallow — store outage should not affect user-visible behavior
-		_ = err
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageWriteTimeout)
+	defer cancel()
+	if err := st.Usage().Record(writeCtx, rec); err != nil {
+		// A store outage must not affect user-visible behaviour, but a lost
+		// usage row is never silent.
+		slog.Warn("usage: row not recorded", "model", model, "outcome", outcome, "err", err)
 	}
 
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
