@@ -2,7 +2,7 @@
 
 > Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs and guardrail implementations moved to the control plane; this document describes what remains. The stable manager surface is listed at the end.
 
-Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For the active implementation plan, see [TASKS.md](TASKS.md).
+Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For what is next, see [ROADMAP.md](ROADMAP.md).
 
 > **Doc-vs-code currency:** this document covers the shipped feature set — cross-node routing, sharding auto-orchestration, CLI/UI parity, HMAC mutual auth, GGUF distribution, OTLP traces, 19 connect clients, interactive picker, shell completion, `--json` on every read command, `--summary` aggregates for usage/audit, first-run wizard, real progress bar, colored output, engine health watchdog, typed `engine_unreachable` errors. The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
 
@@ -881,7 +881,7 @@ opod/
 ├── README.md                  # user docs
 ├── QUICKSTART.md              # 3-min new user landing page
 ├── ARCHITECTURE.md            # this file
-├── TASKS.md                   # implementation plan
+├── ROADMAP.md                 # what ships, what is next, what is out of scope
 ├── ROADMAP.md                 # scope decisions (incl. explicitly-killed features)
 ├── LICENSE                    # Apache 2.0
 ├── SECURITY.md

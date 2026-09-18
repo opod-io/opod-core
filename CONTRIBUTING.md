@@ -96,7 +96,8 @@ Use **GitHub Discussions** for design questions, RFCs, and "is this a bug?". Use
 ## Further reading
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — design rationale, subsystem boundaries, the CLI / Admin API / Web UI contract
-- [TASKS.md](TASKS.md) — open and shipped work items, milestone tracker
+- [ROADMAP.md](ROADMAP.md) — what ships, what is next, and what is deliberately out of scope
+- [docs/archive/TASKS-milestones-M0-M5.md](docs/archive/TASKS-milestones-M0-M5.md) — the M0–M5 milestone history, kept for context
 - [ROADMAP.md](ROADMAP.md) — strategic plan through v1.0
 - [catalog/README.md](catalog/README.md) — catalog YAML schema
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)

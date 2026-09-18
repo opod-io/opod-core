@@ -1,138 +1,71 @@
-# Roadmap — multimodal + accessibility
+# Roadmap
 
-Last updated: 2026-06-12 · Auto-released on every `feat:` / `fix:` commit; see [Releases](https://github.com/opod-io/opod/releases) for the current version · See [TASKS.md](TASKS.md) for the per-task tracker.
+Last updated: 2026-09-18 · Apache-2.0, no usage limit · [Releases](https://github.com/opod-io/opod-core/releases) · milestone history: [docs/archive/TASKS-milestones-M0-M5.md](docs/archive/TASKS-milestones-M0-M5.md)
 
-This file is the strategic plan. It groups everything into three buckets — **modalities that fit Opod's architecture**, **modalities that stretch it**, and the **eight accessibility bets** that turn open-source AI from "I can run a model" into "my team uses this in production."
+**What `opod` is.** A CLI-only inference runtime for open-weight models on machines you already have.
+One leader and any number of workers: `opod up` starts the leader (OpenAI-compatible gateway, router,
+auth, join tokens), `opod join <leader>` turns another machine into a worker. It serves models, splits
+one model across machines with llama.cpp RPC, and gets out of the way. No daemon phones home, no
+account, no usage ceiling.
 
-Video and real-time voice agents are intentionally out of scope. They belong in sibling projects (`Reel` and `Murmur`) that depend on Opod for the LLM piece — see [§ Out of scope](#out-of-scope).
-
----
-
-## Buckets
-
-### A. Fits naturally — extend the gateway in place (v0.4)
-
-These reuse the existing Engine interface, router, and store. They add endpoints or capability flags; the operational model stays the same.
-
-| Item | Endpoint | Engines that support it | Compat notes | Status |
-| --- | --- | --- | --- | --- |
-| **Vision (image input)** | `POST /v1/chat/completions` with `image_url` content blocks | Ollama (`images: []`), vLLM, MLX-LM | `engines.Message.Content` → needs `Images []string`. OpenAI content-array parsing in `internal/api/openai.go`. Anthropic `image` blocks in `internal/api/anthropic.go`. Catalog already has `vision` capability. | **Shipped in v0.4** (Ollama path) |
-| **Embeddings** | `POST /v1/embeddings` | Ollama (`/api/embeddings`), vLLM (`/v1/embeddings`), MLX-LM | New `Engine.Embed(ctx, model, input) []float32` method. Catalog entries get `embedding` capability + `embedding_dim`. Router picks by capability. | **Shipped in v0.4** (Ollama path) |
-| **Rerank** | `POST /v1/rerank` (Cohere shape) | BGE / Jina / mxbai cross-encoders via llama-server `/v1/rerank` (b3580+) | Cohere-format handler passes through to llama-server's native `/v1/rerank`; the llama.cpp single-node driver is the transport. | **Shipped** |
-
-### B. Stretches the gateway — works but requires new code paths (v0.5–v0.6)
-
-These add endpoints that don't fit the chat-streaming pattern. Worth doing but each is a noticeable code-shape change.
-
-| Item | Endpoint | Engines | Stretch | Verdict |
-| --- | --- | --- | --- | --- |
-| **ASR (speech → text)** | `POST /v1/audio/transcriptions` | faster-whisper, NVIDIA NeMo (Nemotron 3.5 ASR), vLLM-whisper | Synchronous request, non-streaming response. Audio bytes in, text out. | **Shipped** — proxies to a Whisper-compatible endpoint (`engine.whisper_endpoint` / `OPOD_WHISPER_ENDPOINT`); HTTP 501 with setup hint when unconfigured |
-| **TTS (text → speech)** | `POST /v1/audio/speech` | Piper, Coqui XTTS, Bark | Output is binary audio (mp3/opus/pcm). Different result shape than chat. | **Shipped** — proxies to a Piper-compatible endpoint (`engine.piper_endpoint` / `OPOD_PIPER_ENDPOINT`); HTTP 501 with setup hint when unconfigured |
-| **Image generation** | `POST /v1/images/generations` | Stable Diffusion via diffusers, ComfyUI, Flux | 5–30 s synchronous. Different VRAM profile (squeezes out chat). Router needs to know about "GPU-locked" jobs vs token-streamed jobs. | v0.6 — only if there's demand |
-
-### C. Out of scope — separate apps that depend on Opod
-
-| Workload | Why separate | Sibling project (proposed) |
-| --- | --- | --- |
-| Video generation (HunyuanVideo, Wan2.1, LTX, Mochi) | Minutes per inference, multi-GB output, needs real job queue + webhook callbacks. Operational model is render farm, not API gateway. | **`Reel`** |
-| Real-time voice agents (full-duplex, < 300 ms loop) | Bidirectional streaming, VAD, interruption handling. Tight ASR + LLM + TTS loop in one socket. | **`Murmur`** — uses Opod as the LLM backend |
+**What `opod` is not, and will not become.** Not a dashboard, not a fleet manager, not a billing
+system. Everything in that direction lives in a separate product and is not part of this repo — see
+[§ Deliberately out of scope](#deliberately-out-of-scope). This roadmap only describes the runtime.
 
 ---
 
-## Orchestration bets (the actual gateway value)
+## Shipped
 
-Scope filter: Opod is an **orchestration / router / gateway** for open-weight LLMs running on a trusted network. RBAC, SSO, billing-per-user analytics, and content policies are explicitly **out of scope** — they're enterprise-SaaS feature creep and other projects do them better. We assume:
-
-- The network is trusted (LAN, Tailscale, internal VPN)
-- Existing per-user API keys + daily token quotas + full audit log are sufficient for accountability
-- Operators want better routing decisions, not more user management
-
-With that filter, here's what genuinely moves the needle:
-
-| # | Bet | Why it's gateway value | Where it lives | Effort | Target |
-| --- | --- | --- | --- | --- | --- |
-| 1 | **Latency-aware fallback** | Router silently prefers a faster fallback when the primary's recent p95 latency exceeds a threshold. Same code path as failure-fallback, new trigger condition. | ✅ Shipped v0.6. Per-model rolling window (default 50 samples). When p95 > `router.latency_fallback_p95_seconds` (0 = disabled), the catalog fallback chain is walked for the fastest candidate, which gets tried FIRST. Original primary stays in the chain so a temporarily-slow primary isn't permanently demoted. | **M** | v0.6 |
-| 2 | **Hardware abstraction** | Treat M3 Studio + RTX 4090 + Snapdragon X laptop as one compute pool. Scheduler routes by VRAM/load/network. Pure orchestration. | Replace router's `pick()` with a planner over `nodes.capabilities` (already in store) | **M** | v0.8 |
-| 3 | **Edge runtime (NAS / Pi)** | Gateway runs on smaller hardware = more deployments. Already cross-compiled to `linux/arm64`. | ✅ **.deb + .rpm shipped v0.6** via GoReleaser `nfpms` (binary at `/usr/bin/opod`, catalog at `/usr/share/opod/catalog`, recommends `llama.cpp` for sharding). Synology `.spk` (DSM SDK toolchain) is the remaining piece for v0.7. | **S** | v0.6 (.deb/.rpm) · v0.7 (.spk) |
-| 4 | **Signed model catalogs** | Supply-chain trust for catalog entries. "apt for AI." | `minisign` signatures alongside catalog YAML; `opod model add` verifies before install | **S** | v0.8 |
-| 5 | **Embeddable Go library** | Let desktop apps / IDE plugins import `opod/runtime` directly. Biggest distribution channel for OSS AI in 2026 isn't a CLI, it's *embedded in tools developers already use*. | Move CLI glue out of `internal/`; expose `pkg/runtime`, `pkg/router`, `pkg/store` | **L** | v1.0 |
-
-### Explicitly killed (or sibling-projected) scope
-
-| Item | Why not Opod |
-| --- | --- |
-| RBAC roles / OIDC / SSO | Enterprise auth is feature creep for a gateway on a trusted network. Per-user keys + quotas + audit already cover the accountability story. |
-| Cost / billing tracking | Not Opod's job. LLM API charges go to the operator's account; how they slice cost by team / project / user is a manager-side reporting concern, not a gateway concern. The `audit_log` + `usage` tables expose enough data for anyone to roll their own. |
-| Billing-per-user analytics dashboards | Same reasoning — manager-side concern. |
-| Unified billing across local + vendor calls | Same family as cost / billing tracking — out. Operators reconcile vendor invoices themselves; the `usage` table records what each call cost in tokens, not dollars. |
-| Policy-based routing by user / request shape | "By user" routing is tenant-isolation = enterprise creep, same family as RBAC. "By request shape" is already handled — the router picks engines by capability (vision vs embedding vs chat) and falls back via the catalog `fallback:` chain. Anything beyond that is a content-policy concern (see below). |
-| Content policies / output filtering | Different operational concern; happens at the client (Claude Code, Cursor) layer, not the gateway. |
-| Privacy-by-default RAG | RAG is a separate workload (vector store, retrieval, ranking pipelines). If needed, build it as a sibling project that depends on Opod's embeddings + chat endpoints. |
-| Video / real-time voice | Already out of scope — see [§ Out of scope](#out-of-scope). |
+| | |
+|---|---|
+| **Serving** | OpenAI-compatible `/v1/chat/completions` (streaming and not), `/v1/models`, `/v1/embeddings`. Vision (image content blocks). |
+| **Engines** | Ollama · llama.cpp (incl. the RPC pair for sharding) · vLLM · SGLang · MLX · any OpenAI-compatible backend. Typed engine errors, a health watchdog, and an `Adapt` hook that reads the engine's own refusal and corrects once (vLLM's context-length refit). |
+| **Cluster** | `opod join` with HMAC-SHA256 mutual auth over a 5-minute replay window · heartbeats carrying loaded models · placement reconciliation · a router that picks per request (local-preferred, then least-loaded) and, since v0.6, prefers a faster fallback when the primary's rolling p95 exceeds a threshold · load-aware scoring (in-flight, queue depth, KV-cache use, prefix affinity). |
+| **Sharding** | `opod shard create <model> [N]` launches `rpc-server` on the chosen workers and the coordinator on the rank you name, with automatic GGUF distribution (sha256-verified), crash recovery with backoff, and rollback on failure. |
+| **Weights** | `opod fetch` — one exclusive, atomic, digest-checked pull per file, with a pinned Hub revision cached as `<repo>@<rev>` so two revisions coexist on a node. `opod cache ls|prune` deletes only files this binary fetched, never anything it did not. |
+| **Auth & limits** | per-key scopes, rpm / tpm / daily-token quotas, expiry, an audit log, and a usage stream with cursors. Plan and auth are watched files, so limits change at runtime without a restart. |
+| **Operations** | `opod doctor`, `opod node ls/show/drain/remove`, `opod model ls/ps/load/unload`, `--json` on every read command, shell completion, an interactive picker, a first-run wizard. Prometheus metrics, OTLP traces across all four drivers, reference Grafana dashboards. |
+| **Packaging** | Homebrew, `.deb`, `.rpm`, `install.sh`, `linux/arm64` and `darwin/arm64` builds, and container images per engine × vendor. |
 
 ---
 
-## Gateway plumbing improvements
+## Next
 
-Not strategic bets — small, scoped extensions of subsystems that already exist. Listed here so they don't get lost between "modalities" and "bets."
+| Item | What it adds | Size |
+|---|---|---|
+| **Image bases pinned by digest** | the worker Dockerfiles still follow moving upstream tags; a release built on a moving base is not reproducible | S |
+| **Auto-rebalancing sharding** | `N` is the operator's today; pick it from worker count, model size and free VRAM | M |
+| **Mesh backends** | the interface is defined and the LAN backend ships; a `tsnet` (and later NetBird) backend lets workers join across networks | M |
+| **Live model migration** | move a loaded model between workers without a cold start | M |
 
-| # | Item | What it adds | Where it lives | Effort | Target |
-| --- | --- | --- | --- | --- | --- |
-| P1 | **Bedrock + Vertex egress adapters** | Two more vendor routes alongside the existing Anthropic + OpenAI fallback. Lets orgs with AWS / GCP spend keep using their existing billing path. | ✅ **Bedrock shipped** v0.6 (SigV4 via aws-sdk-go-v2; `anthropic.*` model family, non-streaming). ADC auth probe wired for Vertex. **Remaining for v0.7**: Bedrock streaming + non-Anthropic body shapes (amazon.*, meta.*, mistral.*); Vertex body translation (OpenAI/Anthropic → generateContent Contents). | **S** | v0.6 (Bedrock) / v0.7 (Vertex) |
-| P2 | **OpenTelemetry / OTLP traces** | End-to-end span coverage: HTTP handler → router → engine driver. Pairs with the existing Prometheus metrics so latency anomalies in Grafana have a corresponding trace to drill into. | ✅ **Shipped end-to-end** in v0.6 across all four drivers. HTTP-layer spans (`otelhttp` on chi, OTLP/HTTP exporter, W3C propagation) + router child spans (`router.Chat`, `router.Embed`, per-attempt span for fallback) + per-driver engine spans (`ollama.Chat`, `vllm.Chat`, `mlx.Chat`, `llamacpp.Chat`) with prompt/completion token counts. Default no-op when `OPOD_OTLP_ENDPOINT` unset (zero overhead). | **S** | v0.6 |
-| P3 | **Reference Grafana dashboards** | Importable JSON for cluster overview, per-model, per-user / per-key — covers the same Prometheus metrics already exposed. | ✅ **Shipped** — `dashboards/` with `cluster-overview.json`, `per-model.json`, `per-node.json`; documented in README. No code change. | **XS** | Shipped |
+## Later
 
----
+| Item | Why it waits |
+|---|---|
+| **Signed model catalogs** | supply-chain trust for catalog entries — `minisign` signatures verified by `opod model add`. Wanted, not urgent. |
+| **Embeddable Go library** | `pkg/runtime`, `pkg/router`, `pkg/store` so a desktop app or IDE plugin can import the runtime instead of shelling out. A package-layout break, so it waits for an API-stability commitment. |
+| **Image generation** | `/v1/images/generations` needs a job-aware scheduler: 5–30 s synchronous calls with a different VRAM profile would squeeze out chat. Only if there is demand. |
 
-## Compatibility review (per item)
-
-Already-shipped subsystems that each item touches. Bold = breaking change, italic = additive only.
-
-| Item | engines.Engine | internal/api/* | internal/store/* | internal/router | catalog YAML schema |
-| --- | --- | --- | --- | --- | --- |
-| Vision | *add Images []string* | *parse content array* | none | none | none (already has `vision`) |
-| Embeddings | *new method `Embed()`* | *new `/v1/embeddings`* | *new `embedding_calls` table* | *route by capability* | *add `embedding_dim`* |
-| Rerank | *new method `Rerank()`* | *new `/v1/rerank`* | piggyback embeddings table | route by capability | *add `rerank` capability* |
-| ASR | *new sibling interface `ASREngine`* | *new `/v1/audio/transcriptions`* | *audio_calls table* | extend pick() | *add `asr` capability* |
-| TTS | *new `TTSEngine`* | *new `/v1/audio/speech`* | reuse audio_calls | extend pick() | *add `tts` capability* |
-| Image gen | *new `ImageEngine`* | *new `/v1/images/generations`* | *image_calls + storage* | needs job-aware scheduler | *add `image_gen` capability* |
-| (1) Latency fallback | none | none | *add `route_telemetry` table* | extend pick() | *add fallback chain to catalog* |
-| (2) HW abstraction | none | none | extend `nodes.capabilities` JSON | **rewrite `pick()`** | none |
-| (3) Edge runtime | none | none | none | none | none |
-| (4) Signed catalogs | none | none | none | none | *add `signature` field* |
-| (5) Go library | **reorganize package layout** | none | none | none | none |
-
-The only **breaking changes** are (2) router rewrite and (5) package layout — both planned for after v0.7 so users have time to adopt.
+Every release is cut from conventional commits — see `.github/workflows/auto-release.yml`.
 
 ---
 
-## Sequence
+## Deliberately out of scope
 
-```
-Shipped       → Vision (Ollama path) · Embeddings · catalog fallback chain · HMAC mutual auth
-                 · GGUF distribution · coordinator-on-worker · OTLP traces end-to-end (all 4 engines)
-                 · Grafana dashboards · Bedrock SigV4 signing · Vertex ADC probe · 19-client
-                 `opod connect` roster · Latency-aware fallback (bet 1) · .deb + .rpm Edge runtime (bet 3)
-                 · Interactive picker · Shell completion · --json on every read command
-                 · --summary aggregates for usage/audit · First-run wizard · Real progress bar
-                 · Colored output · Did-you-mean for typos · Engine health watchdog · Typed engine errors
-                 · Rerank (`/v1/rerank`) · ASR + TTS (`/v1/audio/transcriptions` + `/v1/audio/speech`
-                 via Whisper / Piper endpoint proxying)
+Not "later" — **not this project**. Each was considered and declined for a reason.
 
-Next          → Vertex body translation (generateContent) · Bedrock streaming + non-Anthropic families
-                 · Anthropic extended thinking + computer use · Synology .spk
+| | Why not |
+|---|---|
+| **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes, quotas and the audit log are the accountability story on a trusted network. |
+| **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
+| **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
+| **Non-chat protocol surfaces** (Anthropic Messages, `/v1/rerank`, audio transcription and speech) | one protocol, done properly. These were removed in the 2026-09 contraction. |
+| **Content policies, output filtering, guardrail implementations** | the interface and the event stream stay; the policies belong where the request originates. |
+| **Kubernetes, Helm, operators, CRDs** | `opod` runs as a process. Anything that schedules processes across a fleet is the orchestrator's job, not the runtime's. |
+| **Training and fine-tuning** | use `axolotl`, `unsloth`, or `torchtune`. |
+| **A vector store** | an adapter for SQLite-VSS / pgvector may ship with signed catalogs; running one will not. |
+| **Video generation, real-time voice agents** | minutes-per-inference render farms and full-duplex sub-300 ms loops are different operational models. They belong in separate projects that use `opod` for the LLM leg. |
+| **Phoning home** | no automatic update check, no telemetry. `opod update` is something you type. |
 
-Later         → Hardware abstraction (bet 2) · Signed catalogs (bet 4) · Image generation
-                 · LoRA hot-loading · Embeddable Go library (bet 5) · API stability commitment
-```
-
-Every release is auto-cut from conventional commits — see `.github/workflows/auto-release.yml`.
-
----
-
-## Out of scope
-
-- **Video generation.** Sibling repo `Reel`. Job-queue model, not gateway.
-- **Real-time voice agents.** Sibling repo `Murmur`. Uses Opod as the LLM backend.
-- **Training / fine-tuning.** Out of project scope. Use `axolotl`, `unsloth`, or `torchtune`.
-- **Vector store as a service.** Opod will ship an *adapter* for SQLite-VSS / pgvector in (4) but won't run its own vector store.
+The pre-pivot roadmap, written when this repo also carried the product surfaces above, is kept for history at
+[`docs/archive/ROADMAP-pre-pivot-2026-06-12.md`](docs/archive/ROADMAP-pre-pivot-2026-06-12.md).

@@ -6,9 +6,17 @@ Concrete task breakdown for the team building Opod. Each milestone ships a usabl
 
 For user-facing docs see [README.md](README.md). For design rationale see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Contraction to essentials (2026-09-05, ADR-022 in `opod-control-plane/docs/DECISIONS.md`)
+## Contraction to essentials — done (2026-09, ADR-022)
 
-Core is being reduced to CLI-only essentials: the embedded web UI, `connect`/`invite`, cloud egress + key pools + Bedrock, the routing chain, Anthropic/audio/rerank adapters, callback sinks, dollar budgets, usage/audit query APIs, guardrail implementations and the automatic update check move to the control plane or are deleted. **The step-by-step plan, gates and rollback live in `opod-control-plane/docs/TASKS.md` → P11** (single roadmap); do not start a core feature listed there. Until P11-5 lands, the shipped-state notes below describe the tree as it is.
+Core **was** reduced to CLI-only inference essentials: the embedded web UI, `connect`'s dashboard tab and
+`invite`, cloud egress + key pools + Bedrock, the routing-chain table, the Anthropic / audio / rerank
+adapters, callback sink implementations, dollar budgets, the usage and audit query APIs, guardrail
+implementations and the automatic update check all left this repo or were deleted. The `opod connect` CLI
+stayed; its snippet templates moved to `opod-sdk`. What remains is the runtime described in
+[ROADMAP.md](ROADMAP.md). **Do not re-add any of it** — the reasons are in that file's
+"Deliberately out of scope" table.
+
+The notes below describe the tree as it stands; the milestone history (M0–M5) follows.
 
 ## Current shipped state
 
@@ -25,73 +33,27 @@ Core is being reduced to CLI-only essentials: the embedded web UI, `connect`/`in
 - **Release tooling**: ✅ CI workflow, GoReleaser config, Homebrew formula, install.sh.
 - **Fixes**: ✅ 15 code-review findings addressed in commit `70ad076` (engine routing per backend, streaming goroutine leaks, audit log content, vLLM/MLX token accounting, Anthropic tool-block preservation, agent 401/404 handling, more).
 
-### What's still open
+### What's still open — pointer
 
-These are the gaps between marketing copy and what the binary actually does today. Anything claimed on the website or README must either map to shipped code or appear here.
+Open work for this repo is tracked with the control plane's, in one checklist, so a core change and
+the change that consumes it never drift: **`PLAN.md` (workspace root)** (it replaced that
+repo's `ROADMAP.md` + `TASKS.md` on 2026-09-18). Core rows carry a problem, a decision, a fix and
+the proof rung that closes them.
 
-**Networking / cluster**
+Core-only rows, kept here because nothing else waits on them:
 
-- **Tailscale `tsnet` mesh** — interface defined, LAN backend ships meanwhile. Plug a `tsnet` backend into `internal/mesh/` to support cross-network workers. (tracked as M5-T09 below)
-- **NetBird mesh backend** — same shape as Tailscale, different overlay; deferred to v1.0. (tracked as M5-T10)
-- ~~**Shard crash recovery**~~ — ✅ shipped 2026-06-07. Supervisor auto-restarts `rpc-server` (and the coordinator `llama-server`) up to 5 times with exponential backoff before declaring `crashloop`. See `internal/agent/supervisor.go` + `internal/scheduler/sharding.go`.
-- ~~**Coordinator on a worker**~~ — ✅ shipped 2026-06-07. `internal/scheduler/sharding.go` picks the highest-RAM host (default: strongest worker, single-machine falls back to leader). Override via `OPOD_COORDINATOR_NODE`. Remote coordinator launches via the same `/v1/process/start` path as `rpc-server`.
-- **Auto-rebalancing sharding** — shard count is currently picked by the admin (`opod shard create <model> <N>`). v1.0 should pick `N` automatically from worker count, model size, and free VRAM. (tracked as M5-T11)
-- ~~**Automatic GGUF distribution**~~ — ✅ M5-T12 **shipped end-to-end**. For `source.type=file` and `source.type=huggingface` entries, `CreateSharded` first resolves the local GGUF (downloading from HuggingFace to `storage.models_dir/<filename>` when needed), then fans it out to every shard host via `/v1/process/file` HEAD + `/v1/process/upload` POST (sha256-verified). No more manual `wget` to leader or `scp` to workers.
-- ~~**`rpc-server` binary bundling**~~ — ✅ shipped 2026-06-07 (M4-T14, brew route). `installer/homebrew/opod.rb` declares `depends_on "llama.cpp" => :recommended` so a brew install picks up both `rpc-server` and `llama-server` automatically. `opod doctor` warns when either binary is missing on the PATH so operators discover the gap before `opod shard create` fails. apt/yum users still need a one-line install of llama.cpp from upstream — documented in the doctor output.
-- ~~**Catalog smoke-test CI**~~ — ✅ shipped 2026-06-07 (M4-T15). Two layers: per-PR parse + filename-matches-id (in the existing drift test), and a daily upstream HEAD probe (`.github/workflows/catalog-live.yml` runs `CATALOG_LIVE_CHECK=1 go test -run TestCatalogSourcesReachable ./cmd/opod/`).
+- **Tailscale `tsnet` mesh backend** (M5-T09) — the interface is defined; the LAN backend ships.
+- **NetBird mesh backend** (M5-T10) — same shape, deferred.
+- **Auto-rebalancing sharding** (M5-T11) — `N` is the admin's today (`opod shard create <model> <N>`);
+  pick it from worker count, model size and free VRAM.
+- **Live model migration** (M4-T07) — LoRA adapters themselves ship.
+- **Image bases pinned by digest** — the worker Dockerfiles still follow moving upstream tags.
 
-**API surface**
-
-- **Anthropic extended thinking** — `/v1/messages` accepts text + tool_use blocks; `thinking` blocks not yet supported. (tracked as M4-T12)
-- **Anthropic computer use** — `computer_20241022` / `bash_20241022` / `text_editor_20241022` tool types not yet handled. (tracked as M4-T13)
-- **Vision on Anthropic adapter** — image content blocks on `/v1/messages` not yet wired (OpenAI shape works via the Ollama path; Anthropic shape pending).
-- ~~**Whisper transcription**~~ — ✅ shipped. `/v1/audio/transcriptions` (and `/v1/audio/speech`) proxy to optional Whisper / Piper-compatible endpoints (`engine.whisper_endpoint` / `engine.piper_endpoint`, or `OPOD_WHISPER_ENDPOINT` / `OPOD_PIPER_ENDPOINT`); HTTP 501 with a setup hint when unconfigured. (was M4-T04)
-- ~~**Rerank**~~ — ✅ shipped. `/v1/rerank` passes through to llama-server's native `/v1/rerank` (b3580+); Cohere-shape response. (see ROADMAP)
-
-**Security / auth**
-
-- **OIDC** for the web UI — currently the UI takes a pasted admin key. Explicitly killed in [ROADMAP](ROADMAP.md#explicitly-killed-or-sibling-projected-scope) — out of scope for OSS.
-- ~~**Worker token security**~~ — ✅ shipped 2026-06-07. HMAC-SHA256 over (v1, method, path, ts) keyed by the per-node token. Token now stays in the DB; only signatures travel. 5-min replay window. Bearer fallback retained for one transition release (disable with `OPOD_REJECT_BEARER=1` on workers). See `internal/auth/hmac.go`.
-
-**Operations / hardware**
-
-- **LoRA, live model migration** — both v0.5. (M4-T02, M4-T07)
-- **Postgres backend** for HA control plane — v1.0.
-- **AMD ROCm engine path** — v1.0.
-- **Worker images — one shape, one source of truth** (2026-09-15; core commits `5b7b0b2`, `b3c4d67`, `e8fe3ec` + this one).
-  *Problem.* Eleven images were described in four places that had silently drifted: `images/build.sh`, the release
-  matrix in `.github/workflows/images.yml`, the `images/README.md` table and the chart's `engineImages` keys. The
-  release lane built the AMD and CPU llama.cpp workers from a Dockerfile with **no RPC pair**, so a CI-published
-  AMD or CPU worker could never be a gang part; an SGLang row named `lmsysorg/sglang:v0.5.2-rocm630`, a tag Docker
-  Hub has never had; the Tenstorrent image was the only one whose name did not say its engine; and three images the
-  chart references were never built at all. Each cost a full release run to discover.
-  *Solution, shipped.* Every llama.cpp image is now `base + a prebuilt RPC pair` substituted through a build
-  context: `llama-rpc-cuda` (nvcc), `llama-rpc-sycl` (oneAPI icpx), `llama-rpc-cpu` (plain C++, built **natively**
-  on amd64 and arm64 runners and joined into one index) and, for ROCm, the pair lifted from upstream's release
-  tarball. The no-RPC Dockerfile is deleted, so the wrong file cannot be chosen again. The release matrix covers all
-  eleven images the chart can reference (llama.cpp ×4, vLLM ×4 incl. Tenstorrent, SGLang ×2, leader). Naming is
-  `opod-worker-<engine>-<vendor>` without exception (`opod-worker-tt` → `opod-worker-vllm-tt`). `cmd/opod/images_drift_test.go`
-  ties the lists together: same Dockerfile and base in both lanes, every image in the README, every referenced file
-  present, one `LLAMA_RELEASE` across the recipes, and every compiled pair exported *and* wired into `build.sh`.
-  Signing retries five times: Sigstore's log refused every signature on 2026-09-15 **after** the images were pushed,
-  reporting nine published images as failures.
-  *Owed.* Publish `llama-rpc-cpu` (dispatch `rpc_cpu=true`) and re-run the matrix · `opod-worker-llamacpp-amd` is the
-  one name ghcr still refuses (`read_package`, and the package does not exist) · bases are still moving tags
-  (`full-cuda`, `full-rocm`, …) which ARCHITECTURE §7 forbids — pin by digest with a deliberate refresh step ·
-  per-vendor hardware verification (see the proof table in the control plane's V-rows).
-- **AMD Instinct and SGLang-on-Radeon: image choice needs the GPU's architecture family** — proposal written
-  2026-09-15 (`artifacts/adr-draft-gpu-arch-family-2026-09-15.md`, awaiting Hadi).
-  *Problem.* Compiled GPU code runs only on the targets it was built for, and `(engine, vendor)` cannot express
-  that: our CUDA pair is `sm_86` only (no A100/H100/5090 — and the design-partner cell has a 5090), our ROCm pair
-  covers RDNA only (no Instinct), `rocm/vllm` ships separate RDNA and CDNA images, and SGLang's ROCm build is
-  Instinct-only with no RDNA tag at all. Today the failure surfaces as `ImagePullBackOff` or a kernel fault at
-  first token, far from the decision that caused it.
-  *Solution.* Widen what we compile (one CUDA arch list; the ROCm pair source-built with every target) — that alone
-  removes the family question for llama.cpp. For vLLM/SGLang, add one fact (`GPUDevice.Arch` from the probes that
-  already run), one vendor-registry method (`Family(arch)`), one lookup (`ImageFor(role, engine, vendor, family)`
-  = variant → default → refusal) and a coded refusal `E-IMAGE-FAMILY` before anything is applied.
-  *Decision needed from Hadi:* family naming, whether to build the 25 GB Instinct vLLM image before a customer has
-  that hardware, and whether SGLang-on-Radeon is worth a source build (recommended: no).
+**Out of scope — do not re-raise** (ADR-022; the packages are gone, verified 2026-09-18): the
+embedded dashboard and its localhost key bootstrap, vendor egress + key pools + Bedrock, the
+Anthropic Messages / audio / rerank protocol surfaces, dollar budgets, usage and audit query APIs,
+guardrail implementations, the automatic update check, and OIDC for the embedded UI. Core is
+CLI-only inference essentials; the control plane's console is the one UI.
 
 ---
 
