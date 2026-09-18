@@ -3,7 +3,7 @@
 What core ships today, by area — the honest inventory after ADR-022 (2026-09-05/07) contracted core to
 the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod/releases). For what moved to the control plane and why, see
-the last section. For what is next, [ROADMAP.md](ROADMAP.md) and [TASKS.md](TASKS.md).
+the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
 ## 2026-09-07 — manager signals, sleep tier, services, SDK
 

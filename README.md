@@ -181,7 +181,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full feature inventory, grouped by area
 **For new users**: see [QUICKSTART.md](QUICKSTART.md) — 3-minute install + first chat completion.
 **For full usage docs**: keep reading this file.
 **For contributors**: see [ARCHITECTURE.md](ARCHITECTURE.md).
-**For the dev team's roadmap**: see [TASKS.md](TASKS.md).
+**For the roadmap**: see [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -376,7 +376,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
 - **Per-key model allowlist** — pin a key to specific model ids (or vendor families via `claude-*` / `gpt-*` globs); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Opod-Request-Id` correlation token (also embedded in audit rows for traceability)
-- OIDC / SSO login for the web UI — **not planned** (explicitly out of scope; see [ROADMAP.md](ROADMAP.md#explicitly-killed-or-sibling-projected-scope)). The UI uses a pasted admin key; per-user API keys + quotas + audit cover accountability
+- OIDC / SSO login for the web UI — **not planned** (explicitly out of scope; see [ROADMAP.md](ROADMAP.md#deliberately-out-of-scope)). The UI uses a pasted admin key; per-user API keys + quotas + audit cover accountability
 
 ```bash
 opod token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
@@ -744,7 +744,7 @@ placement:                            # memory lifecycle for this node's local e
 These features are mentioned elsewhere in this README but have no YAML knob today. The list is here so you don't waste time guessing.
 
 - **Mesh backend selection** — only the LAN backend ships today; there are no `mesh.*` config keys. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation. Tracked in [ROADMAP.md](ROADMAP.md).
-- **OIDC for the UI** — out of scope (see [ROADMAP.md → Explicitly killed scope](ROADMAP.md#explicitly-killed-or-sibling-projected-scope)). `internal/auth/` ships API keys only; the UI uses a pasted admin key.
+- **OIDC for the UI** — out of scope (see [ROADMAP.md → Deliberately out of scope](ROADMAP.md#deliberately-out-of-scope)). `internal/auth/` ships API keys only; the UI uses a pasted admin key.
 - **Scheduler policy / replication** — `internal/scheduler/` ships sharding orchestration + GGUF distribution; placement is naive least-loaded with no policy tunables.
 - **Separate metrics listener** — Prometheus is hardcoded to the main `/metrics` endpoint on the gateway port; there's no dedicated metrics listener. (OTLP tracing *is* configurable — `observability.otlp_endpoint` / `OPOD_OTLP_ENDPOINT` above.)
 - **Per-node config (`~/.opod/node.yaml`)** — not read. Workers inherit engine endpoints from the leader's config or their own env vars.
@@ -978,7 +978,7 @@ opod model remove qwen-coder-14b
 
 ### Add a LoRA adapter (planned)
 
-LoRA adapter loading (`opod model adapter add`) is on the roadmap for a future release; see TASKS.md.
+LoRA adapters are loaded from the worker's `OPOD_ADAPTERS` environment and can be added or dropped at runtime through the leader's `/admin/v1/adapters`; there is no `opod model adapter` CLI verb yet.
 
 ---
 
