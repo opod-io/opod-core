@@ -21,7 +21,6 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"github.com/opod-io/opod/internal/router"
 	"os"
 	"strings"
 	"sync"
@@ -31,6 +30,7 @@ import (
 	"github.com/opod-io/opod-sdk/adminapi"
 
 	"github.com/opod-io/opod/internal/guardrails"
+	"github.com/opod-io/opod/internal/router"
 )
 
 const defaultPolicyPath = "/etc/opod-auth/policy.json"
