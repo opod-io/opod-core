@@ -558,7 +558,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 			"%s "+
 			"exec vllm serve '%s' --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
-		flagOverrides, model, servedName, model, host, port, flagArgs, s.sleepModeArgs())
+		flagOverrides, s.modelSource(model), servedName, model, host, port, flagArgs, s.sleepModeArgs())
 	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
 	if len(adapters) > 0 {
 		env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True" // the /v1/load_lora_adapter route
@@ -624,6 +624,20 @@ func vllmFittedLen(tail []string) (int, bool) {
 	return 0, false
 }
 
+// modelSource is what a safetensors engine is pointed at. When the models
+// directory holds a complete snapshot of the repo at this worker's pinned
+// revision (`opod fetch --snapshot`, run ahead of the launch), the engine loads
+// that directory: no pull inside the launch path, and the revision the plan
+// pinned is the one served. Otherwise it is the repo name, and the engine
+// pulls it itself as it always has.
+func (s *Server) modelSource(model string) string {
+	if dir, ok := fetch.SnapshotPath(s.ModelsDir, model, s.ModelRevision); ok {
+		s.logf("serving %s from its prefetched snapshot %s", model, dir)
+		return dir
+	}
+	return model
+}
+
 // launchSGLang (re)starts SGLang's server for one model, on the host:port the
 // driver probes. It mirrors launchVLLM because the two engines pose the same
 // problem — one model per process, a port that binds only after a long load —
@@ -665,7 +679,7 @@ func (s *Server) launchSGLang(model, servedName string) error {
 			"%s "+
 			"exec python3 -m sglang.launch_server --model-path '%s' --served-model-name '%s' --host %s --port %d "+
 			"--trust-remote-code --mem-fraction-static \"$U\" --tp-size \"$TP\" %s",
-		flagOverrides, model, servedName, host, port, flagArgs)
+		flagOverrides, s.modelSource(model), servedName, host, port, flagArgs)
 	_, err := s.Supervisor.Start(context.Background(), ProcessSpec{
 		ID:          "sglang-serve",
 		Command:     "/bin/sh",

@@ -1,6 +1,6 @@
 package fetch
 
-// One GGUF fetch for every caller — the worker's llama-server launch, the
+// One fetch for every caller — the worker's llama-server launch, the
 // leader's sharding pull, `opod fetch` (the control plane's prefetch Job).
 //
 // The design-partner cell (2026-09-14) corrupted a shared node cache when
@@ -113,6 +113,19 @@ type Options struct {
 	SHA256 string
 }
 
+func (opt Options) withDefaults() Options {
+	if opt.HTTP == nil {
+		opt.HTTP = &http.Client{Timeout: 6 * time.Hour}
+	}
+	if opt.Log == nil {
+		opt.Log = slog.Default()
+	}
+	if opt.LockWait == 0 {
+		opt.LockWait = 6 * time.Hour
+	}
+	return opt
+}
+
 // GGUF makes <dir>/<file> present and returns its path. Present with the
 // declared size = nothing to do; present with another size = pulled again;
 // another caller pulling = wait for it.
@@ -126,15 +139,7 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 	if dir == "" {
 		return "", errors.New("fetch: models directory required")
 	}
-	if opt.HTTP == nil {
-		opt.HTTP = &http.Client{Timeout: 6 * time.Hour}
-	}
-	if opt.Log == nil {
-		opt.Log = slog.Default()
-	}
-	if opt.LockWait == 0 {
-		opt.LockWait = 6 * time.Hour
-	}
+	opt = opt.withDefaults()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("fetch: mkdir %s: %w", dir, err)
 	}
@@ -147,9 +152,21 @@ func GGUF(ctx context.Context, repo, file, dir string, opt Options) (string, err
 		}
 		dir = d
 	}
+	return one(ctx, repo, file, dir, 0, opt)
+}
+
+// one makes a single file of repo present in dir — the step every mode shares,
+// so a GGUF and each file of a snapshot get the same lock, the same atomic
+// write, the same digest check and the same marker. dir is final (the revision
+// directory already applied); size is the file's declared size when the caller
+// already knows it (a snapshot listing), 0 to ask the server.
+func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (string, error) {
 	target := filepath.Join(dir, file)
 	fileURL := HFFileURL(opt.Endpoint, repo, opt.Revision, file)
-	want, known := expectedSize(ctx, opt, fileURL)
+	want, known := size, size > 0
+	if !known {
+		want, known = expectedSize(ctx, opt, fileURL)
+	}
 	if complete(target, want, known) {
 		Touch(target) // least-recently-used pruning needs to know it was wanted (ADR-046)
 		return target, nil
@@ -282,7 +299,7 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 	if opt.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+opt.Token)
 	}
-	opt.Log.Info("fetching gguf", "url", fileURL, "to", target)
+	opt.Log.Info("fetching file", "url", fileURL, "to", target)
 	t0 := time.Now()
 	resp, err := opt.HTTP.Do(req)
 	if err != nil {
@@ -319,7 +336,7 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename %s → %s: %w", tmp, target, err)
 	}
-	opt.Log.Info("gguf fetched", "path", target, "bytes", n, "duration_s", time.Since(t0).Seconds())
+	opt.Log.Info("file fetched", "path", target, "bytes", n, "duration_s", time.Since(t0).Seconds())
 	return nil
 }
 
