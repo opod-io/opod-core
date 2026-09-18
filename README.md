@@ -391,7 +391,7 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 
 - Prometheus metrics endpoint (`/metrics`) — per-model RPS, latency, tokens, errors
 - `GET /loadz` for an external autoscaler: in-flight, rpm, waking 503s, plus the workers' own engine signals (KV-cache %, queue depth, tokens/s, prefix-cache hits) gathered from their heartbeats
-- Per-call usage records (model, protocol, tokens, latency, outcome) on `/admin/v1/usage/stream` (cursor + replay) — the control plane pulls and exports them
+- Per-call usage records (model, protocol, tokens, latency, outcome — `ok`, `error` and `cancelled` alike: a caller who hangs up mid-stream still leaves a row) on `/admin/v1/usage/stream` (cursor + replay) — the control plane pulls and exports them
 - Admin actions are recorded and streamed to the control plane on `/admin/v1/events/stream`
 - OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Opod emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All four engine drivers (ollama, vllm, mlx, llamacpp) export the same span shape. W3C `traceparent` propagation is always on so Opod participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 

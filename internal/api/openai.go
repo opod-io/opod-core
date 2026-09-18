@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -362,6 +363,19 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			})
 		}
 	}
+	// The producer closed the stream without a final event. That is what a
+	// client disconnect looks like from here (every producer stops sending once
+	// the request context is done), and it still owes a usage row.
+	h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), unfinishedOutcome(r.Context()))
+}
+
+// unfinishedOutcome names a stream that ended without its final event: the
+// caller went away, or the engine stopped short.
+func unfinishedOutcome(ctx context.Context) string {
+	if ctx.Err() != nil {
+		return "cancelled"
+	}
+	return "error"
 }
 
 // drainStream consumes any remaining events on the channel in a goroutine so
@@ -381,6 +395,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	var text string
 	var u *engines.Usage
 	reason := "stop"
+	done := false
 	for ev := range stream {
 		if ev.Err != nil {
 			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
@@ -388,6 +403,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 			return
 		}
 		if ev.Done {
+			done = true
 			u = ev.Usage
 			if ev.Reason != "" {
 				reason = ev.Reason
@@ -395,6 +411,12 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 			break
 		}
 		text += ev.Delta
+	}
+	if !done && r.Context().Err() != nil {
+		// The caller left while the answer was being gathered: nobody is there
+		// to read a body, and the row must not claim the request succeeded.
+		h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "cancelled")
+		return
 	}
 	resp := chatResponse{
 		ID: id, Object: "chat.completion", Created: created, Model: modelOut,
