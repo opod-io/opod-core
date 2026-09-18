@@ -110,7 +110,7 @@ One binary, four modes determined by subcommand:
 | `opod join <url>?token=…` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `opod <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
 | `opod doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
-| `opod update` / `opod upgrade` | Hits `api.github.com/repos/opod-io/opod/releases/latest`, downloads the matching platform tarball, verifies SHA-256 against `checksums.txt`, atomically replaces the running binary. Restarts are user-driven (`opod down && opod up`). |
+| `opod update` / `opod upgrade` | Hits `api.github.com/repos/opod-io/opod-core/releases/latest`, downloads the matching platform tarball, verifies SHA-256 against `checksums.txt`, atomically replaces the running binary. Restarts are user-driven (`opod down && opod up`). |
 
 The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/opod/main.go`.
 
@@ -1007,8 +1007,8 @@ git push --tags        # CI builds binaries, publishes checksums + tarballs to G
 ### Your first 30 minutes
 
 ```bash
-git clone https://github.com/opod-io/opod
-cd opod
+git clone https://github.com/opod-io/opod-core
+cd opod-core
 make check             # lint + test + build (this is what CI runs)
 ./opod up             # boots a single-node leader against local Ollama
 ```

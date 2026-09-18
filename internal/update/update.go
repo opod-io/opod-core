@@ -20,8 +20,13 @@ import (
 	"time"
 )
 
-// Repo is the GitHub repository releases are fetched from.
-const Repo = "opod-io/opod"
+// Repo is the GitHub repository releases are fetched from. It is NOT the Go
+// module path (github.com/opod-io/opod, which stays): every URL that has to
+// resolve on github.com is built from this one constant.
+const Repo = "opod-io/opod-core"
+
+// RepoURL is the repository's page: docs links hang off it.
+const RepoURL = "https://github.com/" + Repo
 
 // userAgent identifies us to GitHub: anonymous requests without one hit a
 // stricter rate limit and GitHub's docs ask for it.

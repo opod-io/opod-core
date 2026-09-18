@@ -65,7 +65,7 @@ brew install --cask ollama
 open -a Ollama
 
 # 2. install Opod
-curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 
 # 3. start Opod with a small model (auto-downloads on first run)
 OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
@@ -81,7 +81,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl enable --now ollama
 
 # 2. install Opod
-curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 
 # 3. start Opod with a small model
 OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
@@ -578,7 +578,7 @@ Other options:
 
 ```bash
 opod update --check              # see if there's a new version, don't install
-opod update --version v1.11.0    # pin a specific version (see github.com/opod-io/opod/releases)
+opod update --version v1.11.0    # pin a specific version (see github.com/opod-io/opod-core/releases)
 opod update --force              # reinstall even if already on the latest
 opod upgrade                     # alias of `update`
 ```
@@ -624,7 +624,7 @@ Opod prints this same list at startup as the "Network behavior on this node" ban
 
 | Direction | When | Disable |
 |---|---|---|
-| → `github.com/opod-io/opod/releases/latest` | At `opod up`, max 1× per 24h. Anonymous; no Opod-specific identifier sent. Cached at `~/.opod/update-check.json`. | `OPOD_NO_UPDATE_CHECK=1` |
+| → `github.com/opod-io/opod-core/releases/latest` | At `opod up`, max 1× per 24h. Anonymous; no Opod-specific identifier sent. Cached at `~/.opod/update-check.json`. | `OPOD_NO_UPDATE_CHECK=1` |
 | → engine endpoint (`ollama` / `vllm` / `mlx` / `llamacpp`) | Every inference request. Engine is operator-selected via `engine.preferred`. | Don't pick that engine. |
 | → `api.anthropic.com` | On `claude-*` requests if `ANTHROPIC_API_KEY` is set. | Unset the key. |
 | → `api.openai.com` | On `gpt-*`/`o-*` requests if `OPENAI_API_KEY` is set. | Unset the key. |
@@ -661,4 +661,4 @@ opod model --help            # see the available actions
 
 ---
 
-**Stuck?** Open an issue: <https://github.com/opod-io/opod/issues>
+**Stuck?** Open an issue: <https://github.com/opod-io/opod-core/issues>

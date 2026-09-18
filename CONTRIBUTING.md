@@ -15,8 +15,8 @@ For everything else, the goal of this doc is to get you to a green `make check` 
 ## First run
 
 ```bash
-git clone https://github.com/opod-io/opod
-cd opod
+git clone https://github.com/opod-io/opod-core
+cd opod-core
 make check             # lint + test + build (this is what CI runs)
 ./opod up             # boots a single-node leader against local Ollama
 ```

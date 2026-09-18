@@ -2,7 +2,7 @@
 # Opod installer — production install for macOS and Linux.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 #
 # Flags (after `| sh -s --`):
 #   --help                  show this message
@@ -19,7 +19,7 @@
 # `--`, in which case it runs `opod join` after installing.
 set -eu
 
-REPO="opod-io/opod"
+REPO="opod-io/opod-core"
 VERSION="${OPOD_VERSION:-latest}"
 INSTALL_DIR="${OPOD_INSTALL_DIR:-}"
 SKIP_ENGINE="${OPOD_SKIP_ENGINE:-0}"

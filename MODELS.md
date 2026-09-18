@@ -90,7 +90,7 @@ For per-model walkthroughs (with detailed install + client snippets), the curate
 
 Use the [picker table above](#-picker-table--what-to-install). It covers every model in the catalog with size, RAM, capability ratings, and license — pick the row that matches your hardware, then go by use case.
 
-The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod/issues/new?template=catalog_request.yml) if you'd like a full walkthrough added.
+The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-core/issues/new?template=catalog_request.yml) if you'd like a full walkthrough added.
 
 ### Installing models that aren't in the catalog
 
@@ -671,4 +671,4 @@ These have docs and references in the repo but no catalog YAMLs yet. Coming with
 - **Vision models** (Qwen2.5-VL, Llama 3.2 Vision)
 - **Embeddings** (BGE-M3) + **Whisper** (transcription)
 
-If you have a specific model you want in the curated catalog: open an issue at https://github.com/opod-io/opod/issues with the Ollama tag / HF repo + your hardware target, and we'll add a YAML.
+If you have a specific model you want in the curated catalog: open an issue at https://github.com/opod-io/opod-core/issues with the Ollama tag / HF repo + your hardware target, and we'll add a YAML.

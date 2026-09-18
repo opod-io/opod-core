@@ -7,7 +7,7 @@
 
 class Opod < Formula
   desc "Orchestrate open-weight LLMs across your machines"
-  homepage "https://github.com/opod-io/opod"
+  homepage "https://github.com/opod-io/opod-core"
   license "Apache-2.0"
   version "0.0.0" # placeholder; GoReleaser sets this
 
@@ -19,20 +19,20 @@ class Opod < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/opod-io/opod/releases/download/v#{version}/opod-darwin-arm64.tar.gz"
+      url "https://github.com/opod-io/opod-core/releases/download/v#{version}/opod-darwin-arm64.tar.gz"
       sha256 "REPLACE_WITH_REAL_SHA256"
     else
-      url "https://github.com/opod-io/opod/releases/download/v#{version}/opod-darwin-amd64.tar.gz"
+      url "https://github.com/opod-io/opod-core/releases/download/v#{version}/opod-darwin-amd64.tar.gz"
       sha256 "REPLACE_WITH_REAL_SHA256"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/opod-io/opod/releases/download/v#{version}/opod-linux-arm64.tar.gz"
+      url "https://github.com/opod-io/opod-core/releases/download/v#{version}/opod-linux-arm64.tar.gz"
       sha256 "REPLACE_WITH_REAL_SHA256"
     else
-      url "https://github.com/opod-io/opod/releases/download/v#{version}/opod-linux-amd64.tar.gz"
+      url "https://github.com/opod-io/opod-core/releases/download/v#{version}/opod-linux-amd64.tar.gz"
       sha256 "REPLACE_WITH_REAL_SHA256"
     end
   end

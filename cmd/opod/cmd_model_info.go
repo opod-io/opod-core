@@ -9,6 +9,7 @@ import (
 
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/update"
 )
 
 func modelSearch(query string, sortReleased bool, since string, asJSON bool) {
@@ -273,8 +274,8 @@ func modelInfo(id string, asJSON bool) {
 		fmt.Printf("  codex --model %s\n", entry.ID)
 	}
 	fmt.Println()
-	fmt.Printf("%sFull walkthrough%s   https://github.com/opod-io/opod/blob/main/MODELS.md#%s\n",
-		bold, reset, strings.ReplaceAll(entry.ID, ".", "-"))
+	fmt.Printf("%sFull walkthrough%s   %s/blob/main/MODELS.md#%s\n",
+		bold, reset, update.RepoURL, strings.ReplaceAll(entry.ID, ".", "-"))
 }
 
 func max2(n int) int {
