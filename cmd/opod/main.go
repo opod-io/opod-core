@@ -190,6 +190,8 @@ Commands:
   catalog ls               List the bundled catalog (embedded; opod-sdk/catalog)
   catalog export <dir>     Write the bundled catalog out as files (overrides go beside them)
   fetch <repo> <file>      Make one GGUF present in --dir / $OPOD_MODELS_DIR (exclusive, atomic; a control plane's prefetch)
+  fetch --snapshot <repo>[@rev]
+                           The same for a safetensors model: the file set vLLM / SGLang loads, under <dir>/<repo>@<rev>/
   cache ls|prune           List the node's weight cache, or remove what no plan references (never a file it did not fetch; --apply to delete)
   model info <id>          Full details for one catalog model
   model load <id>          Bring a model into engine RAM (memory-aware)
