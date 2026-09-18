@@ -4,7 +4,7 @@
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For what is next, see [ROADMAP.md](ROADMAP.md).
 
-> **Doc-vs-code currency:** this document covers the shipped feature set — cross-node routing, sharding auto-orchestration, CLI/UI parity, HMAC mutual auth, GGUF distribution, OTLP traces, 19 connect clients, interactive picker, shell completion, `--json` on every read command, `--summary` aggregates for usage/audit, first-run wizard, real progress bar, colored output, engine health watchdog, typed `engine_unreachable` errors. The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
+> **Doc-vs-code currency:** this document covers the shipped feature set — cross-node routing, sharding auto-orchestration, the CLI and `/admin/v1` as the only interfaces, HMAC mutual auth, GGUF distribution, OTLP traces, 15 connect clients, interactive picker, shell completion, `--json` on every read command, first-run wizard, real progress bar, colored output, engine health watchdog, typed `engine_unreachable` errors. The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
 
 ---
 
@@ -84,7 +84,7 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
                               │  carries loaded_models  │
    ┌──────────────────────────┴─────────────────────────┴──────────┐
    │  CONTROL PLANE                                                │
-   │  node registry · model placements · usage · audit · web UI    │
+   │  node registry · model placements · usage · audit · /admin/v1 │
    └───────────────────────────────────────────────────────────────┘
                               ▲
                               │ mesh: LAN today
@@ -106,7 +106,7 @@ One binary, four modes determined by subcommand:
 
 | Mode | What runs in-process |
 |---|---|
-| `opod up` | **Leader**: HTTP gateway · Router · Control plane · Web UI · embedded SQLite · local engine adapter |
+| `opod up` | **Leader**: HTTP gateway · Router · Control plane (`/admin/v1`) · embedded SQLite · local engine adapter. No UI: `/` answers 404 (ADR-022) |
 | `opod join <url>?token=…` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `opod <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
 | `opod doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
@@ -289,7 +289,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 
 #### Failure handling
 
-- If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the CLI/UI.
+- If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the caller (the CLI, or whoever called `/admin/v1/shards/create`).
 - If a shard process crashes *after* CreateSharded returns, the supervisor auto-restarts it up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s; capped at 30s for any longer chain). After 5 the process enters `crashloop` state and stays there — the admin must intervene. Both `rpc-server` (per-shard) and the `llama-server` coordinator are restart-enabled; the policy is set on the `agent.ProcessSpec` at launch time in `internal/scheduler/sharding.go`. Explicit `Stop()` suppresses any pending restart.
 
 #### Out of scope for v0.4
@@ -322,17 +322,16 @@ intra-node, not cross-machine sharding.)
 ```
                        ┌──────────────────────────────────┐
                        │           HTTP Server             │
-                       │   (chi router, embedded UI)       │
+                       │   (chi router — no UI, ADR-022)   │
                        └──────────┬───────────────────────┘
                                   │
-       ┌────────────┬─────────────┼────────────┬──────────────┐
-       ▼            ▼             ▼            ▼              ▼
-   ┌────────┐  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐
-   │  API   │  │  Admin  │  │   Auth   │  │ Metrics │  │  Web UI  │
-   │adapters│  │  API    │  │ (keys,   │  │         │  │ (embed)  │
-   │ OAI/   │  │         │  │  HMAC)   │  │         │  │          │
-   │ Anthr  │  │         │  │          │  │         │  │          │
-   └───┬────┘  └────┬────┘  └──────────┘  └─────────┘  └──────────┘
+       ┌────────────┬─────────────┼────────────┐
+       ▼            ▼             ▼            ▼
+   ┌────────┐  ┌─────────┐  ┌──────────┐  ┌─────────┐
+   │  API   │  │  Admin  │  │   Auth   │  │ Metrics │
+   │adapter │  │  API    │  │ (keys,   │  │         │
+   │ OpenAI │  │         │  │  HMAC)   │  │         │
+   └───┬────┘  └────┬────┘  └──────────┘  └─────────┘
        │            │
        ▼            ▼
    ┌──────────────────────┐
@@ -820,7 +819,7 @@ All three bind to whichever Prometheus data source you pick at import time via t
 ### Auth
 
 - Per-user API keys, revocable.
-- The web UI authenticates with an API key (no OIDC — see § Authentication and authorization).
+- Every caller — a person at the CLI, a client tool, an external manager — authenticates with an API key (no OIDC in core — see § Authentication and authorization).
 - Admin keys are separate from user keys, never sent to workers.
 
 ### Data
@@ -855,7 +854,7 @@ All three bind to whichever Prometheus data source you pick at import time via t
 | SQLite via `modernc.org/sqlite` (default) | Postgres, etcd, mattn/go-sqlite3 | Embedded, file-backed, no operator; pure Go (no CGO) keeps cross-compilation trivial |
 | vLLM / MLX / llama.cpp | Build our own engine | Years of perf work; we'd never catch up |
 | Hand-written adapters | LiteLLM as a library | LiteLLM is Python; we want one binary. We use it as a reference. |
-| Single embedded HTML page (`go:embed`) | Next.js SPA, separate web server | Embedded UI = one binary, no Node toolchain in the build |
+| CLI + `/admin/v1`, no UI in the binary | An embedded dashboard (core had one until ADR-022) | One interface to keep true; a console is a product of its own and drives the same routes from outside |
 | Chi router | gin, echo, stdlib | Minimal, idiomatic, well-typed |
 | Apache 2.0 | MIT, AGPL | Permissive enough for enterprise adoption; patent grant included |
 
@@ -920,8 +919,7 @@ opod/
 │   ├── cache/                 # response cache (memory + SQLite drivers)
 │   ├── lifecycle/             # local-engine memory lifecycle (load/evict/pin)
 │   ├── config/                # YAML + env loader
-│   ├── metrics/               # Prometheus declarations
-│   └── ui/                    # embed.go + index.html (single embedded page)
+│   └── metrics/               # Prometheus declarations
 │
 ├── (catalog lives in opod-io/opod-sdk/catalog — embedded, one copy for the leader and the control plane)
 │   ├── llama-3.2-1b.yaml
@@ -954,16 +952,9 @@ opod/
 - **HTTP**: handlers are thin; logic lives in services. Handlers do parse → call → respond.
 - **Concurrency**: prefer channels at boundaries; use mutexes for small protected state.
 - **No `init()` functions** except for package-level registry registration.
-- **No global mutable state** beyond metrics and the embedded UI fs.
+- **No global mutable state** beyond metrics and the driver registries.
 - **Generics**: only where a type-safe alternative is impossible.
 - **File length**: aim under 600 lines; split at 800.
-
-### UI conventions
-
-- Vanilla JavaScript, inline at the bottom of the file
-- Tailwind via CDN for styles
-- Data fetching via `fetch` against the admin API; live updates via `EventSource` on `/admin/v1/events` (SSE), with polling as the fallback
-- New UI capability = edit `index.html` directly; the backing logic must already exist in `internal/control/` (CLI-first rule)
 
 ---
 
@@ -977,10 +968,10 @@ opod/
 ### Build
 
 ```bash
-git clone https://github.com/opod-io/opod
-cd opod
+git clone https://github.com/opod-io/opod-core
+cd opod-core
 
-# Build the binary — the UI is a single embedded HTML file
+# Build the binary — one static executable, nothing else to bundle
 go build -o opod ./cmd/opod
 
 # Smoke test
@@ -1004,7 +995,7 @@ Tag-driven via GoReleaser:
 
 ```bash
 git tag v0.x.y
-git push --tags        # CI builds binaries (UI is embedded), publishes checksums + tarballs to GH Releases
+git push --tags        # CI builds binaries, publishes checksums + tarballs to GH Releases
 ```
 
 ---
@@ -1020,7 +1011,7 @@ make check             # lint + test + build (this is what CI runs)
 ./opod up             # boots a single-node leader against local Ollama
 ```
 
-You only need Go 1.25+ and a working Ollama install (`brew install --cask ollama` on macOS, or `curl -fsSL https://ollama.com/install.sh | sh` on Linux). No Docker, no Python, no Node — the web UI is a single embedded HTML file compiled into the binary.
+You only need Go 1.25+ and a working Ollama install (`brew install --cask ollama` on macOS, or `curl -fsSL https://ollama.com/install.sh | sh` on Linux). No Docker, no Python, no Node.
 
 The first `opod up` will:
 
@@ -1045,7 +1036,7 @@ The Makefile is intentionally tiny — every target maps to a single `go` invoca
 | `make tidy` | `go mod tidy` |
 | `make clean` | remove the `opod` binary and `data/`, `.opod/` working dirs |
 
-There is no `make dev`, `make ui`, or `make test-e2e` — those are not needed for a hot-reload-free Go binary with an embedded UI. End-to-end tests run inline as `go test ./...` (look for `_test.go` files that spin up an `httptest.Server`).
+There is no `make dev` or `make test-e2e` — a hot-reload-free Go binary with no front end needs neither. End-to-end tests run inline as `go test ./...` (look for `_test.go` files that spin up an `httptest.Server`).
 
 ### Finding your way around
 
@@ -1055,7 +1046,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 2. `cmd/opod/cmd_*.go` — one file per CLI subcommand (no file over 400 lines); each parses flags, calls a package and prints: model install/search → `internal/models` (`Install`, `Search`, `PersistUserCatalogEntry`), boot steps → `internal/control/bootstrap.go`, self-update → `internal/update`
 3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
 4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
-7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule from § CLI / Admin API / Web UI contract above)
+7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule: the CLI and the admin API are two callers of one function)
 8. `internal/router/router.go` — picks the backing engine per request (local → remote → fallback)
 9. `internal/scheduler/sharding.go` — orchestrates sharded models (rpc-server + coordinator)
 10. `internal/engines/types.go` — `Engine` interface; `registry.go` — `Register`/`New`/`NativeName`/`CatalogID`; `internal/engines/{ollama,vllm,mlx,llamacpp}/` are the drivers; `all/` links them
@@ -1070,7 +1061,6 @@ Start with these files in order. Each top-of-file comment explains what the pack
 | Add a new model to the catalog | `opod-sdk/catalog/<id>.yaml` — see the SDK's catalog/README.md for the schema; bump the SDK and the go.mod require |
 | Add a new CLI subcommand | `cmd/opod/cmd_<name>.go` + add a case in `cmd/opod/main.go` + add the mutating function in `internal/control/` first (CLI is the source of truth) |
 | Add a new admin HTTP endpoint | `internal/controlplane/admin_<name>.go` — must delegate to `internal/control/` |
-| Add a UI page or tab | edit `internal/ui/index.html` directly; the JS is inline at the bottom |
 | Add a metric | declare in `internal/metrics/metrics.go`, increment at the relevant call site |
 | Add a config field | extend the `Config` struct in `internal/config/config.go`, add a default in `Default()`, optionally read an env var in `applyEnv()`, document in [README.md → Full reference](README.md#full-reference) |
 

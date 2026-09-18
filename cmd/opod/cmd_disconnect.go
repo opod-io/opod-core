@@ -19,7 +19,7 @@ func cmdDisconnect(args []string) {
 		flags:   fs,
 		examples: []string{
 			"opod disconnect --list                # show supported clients",
-			"opod disconnect claude-code           # unset env vars; point at api.anthropic.com",
+			"opod disconnect aider                 # unset env vars; point back at api.openai.com",
 			"opod disconnect cursor                # GUI steps to clear the override",
 			"opod disconnect openai-sdk            # remove base_url= from code or env",
 		},
