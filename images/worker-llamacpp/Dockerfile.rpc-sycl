@@ -26,19 +26,19 @@
 #     CWD; the base's WORKDIR=/app holds FOREIGN ggml backends, so the wrappers
 #     cd to /opt/llama-rpc before exec. GGML_BACKEND_PATH is not set: in ggml
 #     it names ONE extra backend file, and a directory only logs an error.
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full-intel
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452
 ARG LLAMA_RELEASE=b9934
 # Upstream's pins for this release (.devops/intel.Dockerfile @ LLAMA_RELEASE).
 # The base image is built from the same oneAPI image, so the runtime the
 # SYCL backend links against is the one it was compiled with. Re-read both
 # when bumping LLAMA_RELEASE.
-ARG ONEAPI_VERSION=2025.3.3-0-devel-ubuntu24.04
+ARG ONEAPI_BASE=docker.io/intel/deep-learning-essentials:2025.3.3-0-devel-ubuntu24.04@sha256:2363f73a031b0c71746bf9205b4a3ae585d7ec511b50159e14aaba42c2e77f33
 ARG LEVEL_ZERO_VERSION=1.28.2
 
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
 # `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
-FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -49,7 +49,7 @@ ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
 
 # --- 2) RPC pair: source build (GGML_SYCL=ON + GGML_RPC=ON) ------------------
-FROM docker.io/intel/deep-learning-essentials:${ONEAPI_VERSION} AS rpc-sycl
+FROM ${ONEAPI_BASE} AS rpc-sycl
 ARG LLAMA_RELEASE
 ARG LEVEL_ZERO_VERSION
 ENV HF_UI_VERSION=${LLAMA_RELEASE}

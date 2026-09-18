@@ -22,6 +22,14 @@ forbid everywhere else, and consumers pin a digest anyway (the chart's `engineIm
 rollout by ADR-017). **A dirty tree cannot be pushed** — `ALLOW_DIRTY=1` if you must, and the tag then
 says `-dirty`.
 
+**Every upstream base is pinned by digest** (`<ref>:<tag>@sha256:…`) — in each Dockerfile's `FROM`/`ARG BASE`,
+in `build.sh` and in `images.yml`, the same digest in all three (`cmd/opod/images_drift_test.go` holds both rules).
+The tag stays in the reference for the reader; the digest is what is pulled, and for a multi-arch base it is the
+index digest. A tag like `full-cuda` moves with every upstream release, so an unpinned build is not reproducible
+from its commit. Moving a pin is deliberate: `images/build.sh refresh-bases [--dry-run]` re-resolves every pinned
+tag (read-only, `crane` or `docker buildx`, no daemon) and rewrites the three places together — review the diff,
+rebuild, commit the pins on their own. An override (`VLLM_AMD_BASE=…`, `--build-arg BASE=…`) should name a digest too.
+
 **Multi-arch.** Only the leader and the CPU worker have a base that exists for arm64 (a kind cluster on
 Apple silicon pulls it); the GPU bases are amd64-only. `--multi` builds `<tag>-amd64` and `<tag>-arm64`,
 composes the index under `<tag>` from a name computed once, and **reads it back** to prove both

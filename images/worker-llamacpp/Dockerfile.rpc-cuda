@@ -22,13 +22,13 @@
 #     crash. GGML_BACKEND_PATH is NOT set: in ggml it names one extra backend
 #     FILE, so a directory only logs "cannot read file data: Is a directory" on
 #     every start (seen again on a 3060 Ti, 2026-09-16).
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full-cuda
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:204042f697dced0e99af35993e00c70b12386197d1bdd313f02b25f25f3118c8
 ARG LLAMA_RELEASE=b9934
 
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
 # `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
-FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -46,7 +46,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 # is built ONCE per LLAMA_RELEASE and published as ghcr.io/opod-io/llama-rpc-cuda:<rel>
 # (target `rpc-export` below). Both CI and the local lane then substitute this
 # stage with `--build-context rpc-cuda=docker-image://ghcr.io/opod-io/llama-rpc-cuda:<rel>`.
-FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS rpc-cuda
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97 AS rpc-cuda
 ARG LLAMA_RELEASE
 ENV HF_UI_VERSION=${LLAMA_RELEASE}
 RUN apt-get update && apt-get install -y --no-install-recommends \

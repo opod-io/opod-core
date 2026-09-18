@@ -157,3 +157,101 @@ func TestPrebuiltPairsAreSubstituted(t *testing.T) {
 		}
 	}
 }
+
+// digestPinned is a base that cannot move under us: <ref>[:tag]@sha256:<64 hex>.
+var digestPinned = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
+
+// TestEveryExternalBaseIsDigestPinned: a tag is a name upstream may repoint at any
+// time (`full-cuda` moves with every llama.cpp release), and an image built FROM
+// one is not reproducible from the commit its tag names. Every FROM that leaves
+// the Dockerfile — and every BASE either lane passes in over the ARG default —
+// names a digest. What stays unpinned on purpose: `scratch`, a stage of the same
+// file, and a build context the lanes substitute (the prebuilt opod binary and
+// the prebuilt RPC pairs are our own artefacts, addressed by release).
+// Moving a pin is `images/build.sh refresh-bases`, in a commit of its own.
+func TestEveryExternalBaseIsDigestPinned(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "images", "*", "Dockerfile*"))
+	if err != nil || len(files) < 8 {
+		t.Fatalf("found %d Dockerfiles under images/ (%v) — the layout changed, fix this test", len(files), err)
+	}
+	argRe := regexp.MustCompile(`(?m)^ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)`)
+	fromRe := regexp.MustCompile(`(?mi)^FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?`)
+	copyFromRe := regexp.MustCompile(`(?m)^COPY\s+(?:--\S+\s+)*--from=(\S+)`)
+	varRe := regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		src, name := string(b), filepath.Base(filepath.Dir(f))+"/"+filepath.Base(f)
+		args := map[string]string{}
+		for _, m := range argRe.FindAllStringSubmatch(src, -1) {
+			args[m[1]] = m[2]
+		}
+		stages := map[string]bool{"scratch": true}
+		froms := fromRe.FindAllStringSubmatch(src, -1)
+		if len(froms) == 0 {
+			t.Errorf("%s: no FROM line parsed", name)
+		}
+		for _, m := range froms {
+			ref := varRe.ReplaceAllStringFunc(m[1], func(v string) string {
+				return args[varRe.FindStringSubmatch(v)[1]]
+			})
+			if !stages[ref] && !digestPinned.MatchString(ref) {
+				t.Errorf("%s: FROM %s resolves to %q, which is not pinned by digest — pin it as <ref>:<tag>@sha256:… (images/build.sh refresh-bases keeps it current)", name, m[1], ref)
+			}
+			if m[2] != "" {
+				stages[m[2]] = true
+			}
+		}
+		for _, m := range copyFromRe.FindAllStringSubmatch(src, -1) {
+			if !stages[m[1]] && !digestPinned.MatchString(m[1]) {
+				t.Errorf("%s: COPY --from=%s is neither a stage of this file nor a digest-pinned image", name, m[1])
+			}
+		}
+	}
+
+	// The lanes override ARG BASE, so the value they pass is the one that ships.
+	for name, s := range buildSpecs(t) {
+		if s.base != "-" && !digestPinned.MatchString(s.base) {
+			t.Errorf("%s: images/build.sh builds it on %q, which is not pinned by digest", name, s.base)
+		}
+	}
+	wf := repoFile(t, ".github/workflows/images.yml")
+	for _, r := range regexp.MustCompile(`- \{ name: (opod-[a-z0-9-]+),[^}]*\bbase: "?([^",]*)"?,`).FindAllStringSubmatch(wf, -1) {
+		if base := strings.TrimSpace(r[2]); base != "" && !digestPinned.MatchString(base) {
+			t.Errorf("%s: the release lane builds it on %q, which is not pinned by digest", r[1], base)
+		}
+	}
+}
+
+// TestOneDigestPerBase: the same upstream tag is named in a Dockerfile's ARG
+// default, in build.sh and in the release workflow. If they disagree on its
+// digest, the two lanes ship different images under one name.
+func TestOneDigestPerBase(t *testing.T) {
+	files, _ := filepath.Glob(filepath.Join("..", "..", "images", "*", "Dockerfile*"))
+	files = append(files, filepath.Join("..", "..", "images", "build.sh"), filepath.Join("..", "..", ".github", "workflows", "images.yml"))
+	pinRe := regexp.MustCompile(`([A-Za-z0-9./_-]+:[A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})`)
+	seen := map[string]map[string][]string{}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range pinRe.FindAllStringSubmatch(string(b), -1) {
+			ref := strings.TrimPrefix(m[1], "docker.io/")
+			if seen[ref] == nil {
+				seen[ref] = map[string][]string{}
+			}
+			seen[ref][m[2]] = append(seen[ref][m[2]], filepath.Base(f))
+		}
+	}
+	if len(seen) < 10 {
+		t.Fatalf("found only %d pinned bases — the pin shape changed, fix this test", len(seen))
+	}
+	for ref, digests := range seen {
+		if len(digests) > 1 {
+			t.Errorf("%s is pinned to %d different digests: %v — run images/build.sh refresh-bases", ref, len(digests), digests)
+		}
+	}
+}

@@ -5,11 +5,11 @@
 # stack, we add the opod binary, the catalog and the shared entrypoint. Nothing
 # SGLang-specific lives in the image — the engine's flags and its metric names
 # are the driver's business (internal/engines/sglang).
-ARG BASE=lmsysorg/sglang:v0.5.2-cu126
+ARG BASE=lmsysorg/sglang:v0.5.2-cu126@sha256:fce5585fa8da175224ead70727a4660f719e34adf0638aebf6dd27930f03e1b6
 # Stage `opod` = the binary. CI compiles it here; the LOCAL lane (images/build.sh)
 # overrides this stage with a prebuilt cross-compiled binary via
 # `--build-context opod=dist/linux-amd64` so nothing compiles under emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

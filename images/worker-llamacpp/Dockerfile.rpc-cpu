@@ -18,11 +18,11 @@
 # The compile is a few minutes of C++ on the BUILD platform — never emulated:
 # the local lane builds the arm64 image on Apple silicon and CI builds amd64 on
 # an amd64 runner, each natively (images/build.sh, --multi composes the index).
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full@sha256:a04c81bf304f8b8f6141bb8bdc384d3c3a151624ba0901fa0c8a69baf2b8ac95
 ARG LLAMA_RELEASE=b9934
 
 # --- 1) opod binary ---------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -33,7 +33,7 @@ ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
 
 # --- 2) RPC pair: source build (CPU backend + GGML_RPC=ON) -------------------
-FROM debian:bookworm AS rpc-cpu
+FROM debian:bookworm@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443 AS rpc-cpu
 ARG LLAMA_RELEASE
 ENV HF_UI_VERSION=${LLAMA_RELEASE}
 RUN apt-get update && apt-get install -y --no-install-recommends \

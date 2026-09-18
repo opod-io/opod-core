@@ -1,10 +1,10 @@
 # opod worker — vLLM on the OFFICIAL vllm image.
 #   nvidia: BASE=vllm/vllm-openai:v0.27.1    amd: BASE=rocm/vllm:latest
-ARG BASE=vllm/vllm-openai:v0.27.1
+ARG BASE=vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
 # Stage `opod` = the binary. CI compiles it here; the LOCAL lane (images/build.sh)
 # overrides this stage with a prebuilt cross-compiled binary via
 # `--build-context opod=dist/linux-amd64` so nothing compiles under emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
