@@ -4,9 +4,9 @@
 # Cross-compiles `opod` for linux/amd64 on this machine, then builds every image
 # with buildx on top of the official upstream base and pushes ONLY the thin opod
 # layers to ghcr.io (base layers are already there). Nothing compiles under
-# emulation: the Go build is native, and the llama.cpp RPC pairs that need a
-# compiler (CUDA, SYCL) come from the prebuilt ghcr.io/opod-io/llama-rpc-<vendor>:<LLAMA_RELEASE>
-# images. The ROCm pair is lifted from upstream's release tarball at build time.
+# emulation: the Go build is native, and the llama.cpp RPC pairs (CUDA, ROCm,
+# SYCL, CPU) come from the prebuilt ghcr.io/opod-io/llama-rpc-<vendor>:<LLAMA_RELEASE>
+# images.
 #
 #   images/build.sh [--push] [--multi] [--dry-run] [--tag T] [image ...]
 #       images: leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia

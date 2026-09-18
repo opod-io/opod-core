@@ -89,6 +89,10 @@ COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 # The sharding binaries (rpc-server + the --rpc coordinator), self-contained
 # apart from the base's oneAPI runtime.
 COPY --from=rpc-sycl /opt/llama-rpc /opt/llama-rpc
+# This image can be a part of a llama.cpp RPC gang: rpc-server and the --rpc
+# coordinator are really in it. A scheduler reads the label from the registry
+# instead of guessing from the image name; it is set only where the COPY above is.
+LABEL io.opod.llamacpp.rpc="true"
 
 # rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends are
 # discoverable; PREPEND our libs, then fall through to the base's oneAPI.

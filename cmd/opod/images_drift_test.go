@@ -255,3 +255,51 @@ func TestOneDigestPerBase(t *testing.T) {
 		}
 	}
 }
+
+// rpcLabel is how a llama.cpp worker image says it can be a part of an RPC gang.
+const rpcLabel = `LABEL io.opod.llamacpp.rpc="true"`
+
+// TestRPCLabelMatchesThePair: upstream's GPU builds of llama.cpp ship without the
+// RPC backend, so "is this a llama.cpp image" does not answer "can it join a
+// gang" — a part on an image without rpc-server dies at process launch. The label
+// is the image's own statement, read from the registry by whoever schedules it,
+// so it must be exactly as true as the Dockerfile: present where the final stage
+// carries the pair and the rpc-server entry point, absent everywhere else.
+func TestRPCLabelMatchesThePair(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "images", "*", "Dockerfile*"))
+	if err != nil || len(files) < 8 {
+		t.Fatalf("found %d Dockerfiles under images/ (%v) — the layout changed, fix this test", len(files), err)
+	}
+	pairCopy := regexp.MustCompile(`(?m)^COPY --from=rpc-[a-z]+ /opt/llama-rpc /opt/llama-rpc$`)
+	labelled := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		src, name := string(b), filepath.Base(filepath.Dir(f))+"/"+filepath.Base(f)
+		// Only the last stage is the image that ships; rpc-export also copies the
+		// pair, but it is a carrier for the binaries, not a worker.
+		final := src[strings.LastIndex(src, "\nFROM "):]
+		hasPair := pairCopy.MatchString(final) && strings.Contains(final, "> /usr/local/bin/rpc-server")
+		hasLabel := strings.Contains(final, rpcLabel)
+		switch {
+		case hasPair && !hasLabel:
+			t.Errorf("%s ships rpc-server but does not say so: add %s to its final stage", name, rpcLabel)
+		case hasLabel && !hasPair:
+			t.Errorf("%s claims %s but its final stage has no /opt/llama-rpc pair and rpc-server entry point", name, rpcLabel)
+		}
+		if strings.Count(src, "io.opod.llamacpp.rpc") != strings.Count(final, rpcLabel) {
+			t.Errorf("%s names the RPC label outside its final stage, or in another spelling", name)
+		}
+		if hasLabel {
+			labelled++
+		}
+	}
+	if labelled == 0 {
+		t.Error("no image carries the RPC label — the pair or the label shape changed, fix this test")
+	}
+	if !strings.Contains(repoFile(t, "images/README.md"), "io.opod.llamacpp.rpc") {
+		t.Error("images/README.md does not document the io.opod.llamacpp.rpc label")
+	}
+}
