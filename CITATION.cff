@@ -15,7 +15,7 @@ authors:
   - given-names: Hadi
     family-names: Honarvar Nazari
     email: hadi.work.ca@gmail.com
-repository-code: "https://github.com/opod-io/opod"
+repository-code: "https://github.com/opod-io/opod-core"
 url: "https://opod.io"
 license: Apache-2.0
 keywords:

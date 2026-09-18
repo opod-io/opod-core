@@ -16,7 +16,7 @@ body:
         opod model search <name>
         ```
 
-        and skim [MODELS.md → Picker table](https://github.com/opod-io/opod/blob/main/MODELS.md#-picker-table--what-to-install).
+        and skim [MODELS.md → Picker table](https://github.com/opod-io/opod-core/blob/main/MODELS.md#-picker-table--what-to-install).
 
   - type: input
     id: name

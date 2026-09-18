@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/opod-io/opod/internal/update"
+
 	// Link every in-tree engine driver (engines.Register in each init).
 	_ "github.com/opod-io/opod/internal/engines/all"
 )
@@ -222,5 +224,5 @@ Commands:
 Every command supports --help:
   opod up --help, opod shard --help, opod token --help, etc.
 
-Docs: https://github.com/opod-io/opod`)
+Docs: `+update.RepoURL)
 }

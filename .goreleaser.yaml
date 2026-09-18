@@ -48,7 +48,7 @@ nfpms:
     package_name: opod
     file_name_template: 'opod_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
     vendor: Hadi Honarvar Nazari
-    homepage: https://github.com/opod-io/opod
+    homepage: https://github.com/opod-io/opod-core
     maintainer: Hadi Honarvar Nazari <hadi.work.ca@gmail.com>
     description: |
       Self-hosted control plane for LLMs — one URL + one key for your
@@ -110,17 +110,17 @@ changelog:
 release:
   github:
     owner: opod-io
-    name: opod
+    name: opod-core
   draft: false
   prerelease: auto
   header: |
     ## Install
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/opod-io/opod/main/installer/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
     ```
 
-    More options (specific version, custom install dir, join an existing cluster) — see [QUICKSTART.md](https://github.com/opod-io/opod/blob/main/QUICKSTART.md).
+    More options (specific version, custom install dir, join an existing cluster) — see [QUICKSTART.md](https://github.com/opod-io/opod-core/blob/main/QUICKSTART.md).
 
     ## Upgrading
 
@@ -147,11 +147,11 @@ release:
     Searching for an **OpenRouter alternative**, a **LiteLLM alternative**,
     a **self-hosted Claude Code proxy**, a **multi-machine Ollama**
     frontend, or a **private inference cluster**? You're in the right
-    place — see the [README](https://github.com/opod-io/opod#also-known-as--search-terms)
+    place — see the [README](https://github.com/opod-io/opod-core#also-known-as--search-terms)
     for the full landing context.
 
-    Full feature inventory: [CHANGELOG.md](https://github.com/opod-io/opod/blob/main/CHANGELOG.md).
-    What's coming next: [ROADMAP.md](https://github.com/opod-io/opod/blob/main/ROADMAP.md).
+    Full feature inventory: [CHANGELOG.md](https://github.com/opod-io/opod-core/blob/main/CHANGELOG.md).
+    What's coming next: [ROADMAP.md](https://github.com/opod-io/opod-core/blob/main/ROADMAP.md).
 
 # Homebrew tap publishing is disabled until the opod-io/homebrew-tap
 # repo exists. To re-enable:
@@ -162,7 +162,7 @@ release:
 #
 # brews:
 #   - name: opod
-#     homepage: 'https://github.com/opod-io/opod'
+#     homepage: 'https://github.com/opod-io/opod-core'
 #     description: 'Orchestrate open-weight LLMs across your machines.'
 #     license: Apache-2.0
 #     repository:

@@ -10,7 +10,7 @@ body:
         the underlying problem first — features without a clear user problem
         tend to bloat the codebase.
 
-        For ideas already on the roadmap, check [TASKS.md](https://github.com/opod-io/opod/blob/main/TASKS.md).
+        For ideas already on the roadmap, check [ROADMAP.md](https://github.com/opod-io/opod-core/blob/main/ROADMAP.md).
 
   - type: textarea
     id: problem

@@ -10,7 +10,7 @@ body:
         fields below — the more specific you are, the faster we can fix it.
 
         Before filing, please:
-        - Search [existing issues](https://github.com/opod-io/opod/issues?q=is%3Aissue) to avoid duplicates
+        - Search [existing issues](https://github.com/opod-io/opod-core/issues?q=is%3Aissue) to avoid duplicates
         - Try `opod update` to see if it's already fixed on `main`
         - Run `opod doctor` and attach the output below
 
