@@ -109,6 +109,13 @@ func printNetworkPosture(cfg *config.Config) {
 		fmt.Printf("    · Tracing:       → %s  (your collector; set OFF by clearing OPOD_OTLP_ENDPOINT)\n", cfg.Observability.OTLPEndpoint)
 	}
 
+	// Log export — the same audit: where this process's records go besides stderr.
+	if cfg.Env.OTLPLogsEndpoint == "" {
+		fmt.Println("    · Log export:    OFF  (set OPOD_OTLP_LOGS_ENDPOINT=… to your collector to enable)")
+	} else {
+		fmt.Printf("    · Log export:    → %s  (your collector, beside stderr; set OFF by clearing OPOD_OTLP_LOGS_ENDPOINT)\n", cfg.Env.OTLPLogsEndpoint)
+	}
+
 	fmt.Println("    · Telemetry:     none. Opod never reports installs, usage, errors, or any data to opod.io.")
 }
 
