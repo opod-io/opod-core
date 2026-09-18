@@ -52,11 +52,10 @@ func printReady(cfg *config.Config, adminKey string) {
 		nx := func(label, val string) {
 			fmt.Printf("    →  %-25s%s\n", label, val)
 		}
-		nx("Test in the browser:", base)
-		nx("Wire up Claude Code:", "opod connect claude-code")
+		nx("Wire up Aider:", "opod connect aider")
 		nx("Wire up Cursor:", "opod connect cursor")
 		nx("See all clients:", "opod connect --list")
-		nx("Mint another admin key:", "opod token create dashboard --admin")
+		nx("Mint another admin key:", "opod token create ops --admin")
 		fmt.Println()
 		fmt.Println("  Quick test from the shell:")
 		fmt.Printf("    curl %s/v1/chat/completions \\\n", base)
@@ -75,16 +74,16 @@ func printReady(cfg *config.Config, adminKey string) {
 		if saved != "" {
 			fmt.Printf("  Admin API key (from %s):\n", localAdminKeyPath(cfg))
 			fmt.Printf("    %s\n", saved)
-			fmt.Println("    →  Mint another admin key:  opod token create dashboard --admin")
+			fmt.Println("    →  Mint another admin key:  opod token create ops --admin")
 			fmt.Println()
 		} else {
 			fmt.Printf("  Admin API key:  not saved on this host (%s missing).\n", localAdminKeyPath(cfg))
-			fmt.Println("    →  Mint a new one:  opod token create dashboard --admin")
+			fmt.Println("    →  Mint a new one:  opod token create ops --admin")
 			fmt.Println("    →  Old keys can't be recovered (DB stores hashes only).")
 			fmt.Println()
 		}
 		fmt.Println("  Wire up a tool:")
-		fmt.Println("    opod connect claude-code   # or: cursor, aider, continue, …")
+		fmt.Println("    opod connect cursor        # or: aider, continue, zed, …")
 		fmt.Println("    opod connect --list        # see all supported clients")
 	}
 	printNetworkPosture(cfg)

@@ -209,7 +209,7 @@ Commands:
   config show              Show effective runtime config (secrets redacted)
   config path              Print config file path
   config edit              Print the editor command to edit config
-  connect <client>         Print copy-paste config for a tool (Claude Code, Cursor, …)
+  connect <client>         Print copy-paste config for a tool (Cursor, Aider, …)
   connect --list           List supported clients
   disconnect <client>      Print reversal steps for a previous 'connect'
   doctor                   Diagnose common problems

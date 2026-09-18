@@ -20,12 +20,12 @@ func cmdConnect(args []string) {
 	)
 	help := helpSpec{
 		name:    "connect",
-		summary: "print copy-paste configuration for a tool (Claude Code, Cursor, Aider, …)",
+		summary: "print copy-paste configuration for a tool (Cursor, Aider, Continue, …)",
 		usage:   "opod connect <client>   |   opod connect --list",
 		flags:   fs,
 		examples: []string{
 			"opod connect --list                # show supported clients",
-			"opod connect claude-code           # print env vars for Claude Code",
+			"opod connect aider                 # print env vars for Aider",
 			"opod connect cursor                # print Cursor settings",
 			"opod connect openai-sdk            # print Python SDK snippet",
 			"opod connect curl                  # print a smoke-test curl",
