@@ -99,6 +99,44 @@ func Names() []string {
 	return append([]string(nil), canonical...)
 }
 
+// Info is the identity of one linked driver, as data: what a caller outside
+// this process needs to know to name the engine correctly.
+type Info struct {
+	Name    string   // canonical name, equal to Engine.Name()
+	Aliases []string // other spellings Lookup accepts, sorted
+	// Native is the catalog source field this engine pulls and serves a model
+	// by, first choice: "ollama_name", "repo", "path", or "id" when the driver
+	// has no native naming and goes by the catalog id.
+	Native string
+}
+
+// nativeProbe carries each source field's own name as its value, so whatever a
+// driver's NativeName returns for it IS the name of the field it chose. The
+// rule stays in one place — the driver's function — and is reported, not restated.
+var nativeProbe = Source{ID: "id", OllamaName: "ollama_name", Repo: "repo", Path: "path"}
+
+// Infos describes every linked driver, sorted by canonical name.
+func Infos() []Info {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	out := make([]Info, 0, len(canonical))
+	for _, name := range canonical {
+		d := byName[strings.ToLower(name)]
+		info := Info{Name: d.Name, Native: nativeProbe.ID}
+		for _, a := range d.Aliases {
+			info.Aliases = append(info.Aliases, strings.ToLower(strings.TrimSpace(a)))
+		}
+		sort.Strings(info.Aliases)
+		if d.NativeName != nil {
+			if n := d.NativeName(nativeProbe); n != "" {
+				info.Native = n
+			}
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
 // New returns an Engine by name with no upstream auth. Convenience wrapper
 // around NewWithAuth for backends that don't need an API key.
 func New(name, endpoint string) (Engine, error) {

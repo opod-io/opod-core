@@ -132,3 +132,24 @@ func TestStartHint(t *testing.T) {
 		t.Errorf("StartHint(unknown) = %q, want generic", got)
 	}
 }
+
+func TestInfosReportTheDriversOwnNamingRule(t *testing.T) {
+	registerStub(t, "stub-info", "Stub-Info-B", "stub-info-a") // NativeName → src.Repo
+	Register(Descriptor{
+		Name: "stub-info-plain",
+		New:  func(endpoint, apiKey string) Engine { return stubEngine{name: "stub-info-plain"} },
+	})
+	got := map[string]Info{}
+	for _, i := range Infos() {
+		got[i.Name] = i
+	}
+	repo := got["stub-info"]
+	if repo.Native != "repo" || len(repo.Aliases) != 2 || repo.Aliases[0] != "stub-info-a" || repo.Aliases[1] != "stub-info-b" {
+		t.Errorf("stub-info = %+v, want native repo and both aliases, lowercased and sorted", repo)
+	}
+	// No naming rule of its own: the engine goes by the catalog id, which is
+	// exactly what NativeName() falls back to.
+	if plain := got["stub-info-plain"]; plain.Native != "id" || len(plain.Aliases) != 0 {
+		t.Errorf("stub-info-plain = %+v, want native id and no aliases", plain)
+	}
+}
