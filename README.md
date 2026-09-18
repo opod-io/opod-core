@@ -797,6 +797,12 @@ opod cache prune --keep … --min-age 24h --apply # actually delete, oldest unus
 A file nothing references still survives until it has gone unused for `--min-age`, so a rollback inside that window
 finds its weights warm. A file without that marker is never deleted, whatever the disk pressure.
 
+Pinned revisions live one level down, in `<repo>@<rev>/`, and both commands reach them. A pinned GGUF is listed and
+pruned like any other file (`org-model@v1/model-q4.gguf`). A safetensors snapshot (`opod fetch --snapshot`) is **one
+entry** with the directory's total size: it is pruned whole — under every one of its files' locks — or not at all, and
+one file in it that this binary did not write leaves the whole directory alone. `--keep` takes a file name (kept wherever
+it is cached), a path under the models directory, or a snapshot directory name (`org-model@<rev>`).
+
 ### End-to-end multi-node walkthrough
 
 For a leader + one worker on the same LAN:
@@ -1215,7 +1221,7 @@ opod fetch --snapshot <hf-repo>[@rev] [--dir D]
                                   The same for a safetensors model: the file set
                                   vLLM / SGLang loads, under <dir>/<repo>@<rev>/
 opod cache ls [--json]           What is cached, what is ours, when it was last used
-opod cache prune [--keep a,b] [--min-age 24h] [--target-free GB] [--apply]
+opod cache prune [--keep a.gguf,repo@rev] [--min-age 24h] [--target-free GB] [--apply]
                                   Reclaim space; a dry run unless --apply, and never
                                   a file this binary did not fetch
 
