@@ -61,6 +61,18 @@ func cmdUp(args []string) {
 		die("config: %v", err)
 	}
 	log := newLogger(cfg)
+	// The leader's own records also go to an OTLP collector when one is named
+	// (OPOD_OTLP_LOGS_ENDPOINT). stderr keeps working either way, and a bad
+	// endpoint is a warning: telemetry never decides whether the gateway starts.
+	log, stopLogExport, err := controlplane.ExportLogs(context.Background(), cfg.Env.OTLPLogsEndpoint, version, log)
+	if err != nil {
+		log.Warn("log export disabled", "err", err)
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = stopLogExport(flushCtx)
+	}()
 
 	// 2. Hardware detection
 	caps := agent.Detect()
