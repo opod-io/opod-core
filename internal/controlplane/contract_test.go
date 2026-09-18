@@ -12,6 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/internal/engines"
+	_ "github.com/opod-io/opod/internal/engines/all" // the drivers a shipped binary links
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -61,6 +63,7 @@ func TestLeaderContract(t *testing.T) {
 		Contract string          `json:"contract"`
 		Routes   []ContractRoute `json:"routes"`
 		Features map[string]bool `json:"features"`
+		Engines  []EngineInfo    `json:"engines"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &caps); err != nil || caps.Contract != ContractVersion {
 		t.Fatalf("capabilities: %v %s", err, rec.Body.String())
@@ -73,10 +76,76 @@ func TestLeaderContract(t *testing.T) {
 			t.Errorf("feature %q advertised false — remove the key instead", k)
 		}
 	}
+	assertContractEngines(t, caps.Features, caps.Engines)
+
 	rec = httptest.NewRecorder()
 	srv.adminVersion(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/version", nil))
 	var ver map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &ver); err != nil || ver["version"] == "" || ver["contract"] != ContractVersion {
 		t.Fatalf("version: %v %s", err, rec.Body.String())
+	}
+}
+
+// contractEngineNames is the engine half of the additive-only rule: every id
+// and alias a manager could have been built against. A driver may be added and
+// an alias may be added; dropping or renaming one of these breaks a plan that
+// names it, at process launch, far from here — so it fails here instead.
+var contractEngineNames = map[string]struct {
+	aliases []string
+	native  string
+}{
+	"llamacpp": {[]string{"llama-cpp", "llamacpp-rpc"}, "repo"},
+	"mlx":      {[]string{"mlx-lm"}, "repo"},
+	"ollama":   {nil, "ollama_name"},
+	"sglang":   {[]string{"sgl"}, "repo"},
+	"vllm":     {[]string{"tenstorrent", "tt", "tt-openai"}, "repo"},
+}
+
+// assertContractEngines: capabilities reports exactly the drivers linked into
+// the binary, each under the name the registry resolves, and still carries
+// every name the contract has ever published.
+func assertContractEngines(t *testing.T, features map[string]bool, got []EngineInfo) {
+	t.Helper()
+	if !features["engines"] {
+		t.Error(`feature "engines" is not advertised, so a manager will not read the engine list`)
+	}
+	byID := map[string]EngineInfo{}
+	for _, e := range got {
+		if e.ID == "" || engines.Canonical(e.ID) != e.ID {
+			t.Errorf("engine %+v: id is not a canonical registry name", e)
+		}
+		for _, a := range e.Aliases {
+			if engines.Canonical(a) != e.ID {
+				t.Errorf("engine %s: alias %q resolves to %q", e.ID, a, engines.Canonical(a))
+			}
+		}
+		switch e.Native {
+		case "id", "ollama_name", "repo", "path":
+		default:
+			t.Errorf("engine %s: native = %q, want a catalog source field", e.ID, e.Native)
+		}
+		byID[e.ID] = e
+	}
+	if linked := engines.Names(); len(byID) != len(linked) {
+		t.Errorf("capabilities lists %d engines, the binary links %d (%v)", len(byID), len(linked), linked)
+	}
+	for id, want := range contractEngineNames {
+		e, ok := byID[id]
+		if !ok {
+			t.Errorf("engine %q left the contract — engine ids are additive-only", id)
+			continue
+		}
+		have := map[string]bool{}
+		for _, a := range e.Aliases {
+			have[a] = true
+		}
+		for _, a := range want.aliases {
+			if !have[a] {
+				t.Errorf("engine %s: alias %q left the contract — aliases are additive-only", id, a)
+			}
+		}
+		if e.Native != want.native {
+			t.Errorf("engine %s: native = %q, was %q — a manager resolves model names by it", id, e.Native, want.native)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/opod-io/opod-sdk/adminapi"
 
 	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/internal/engines"
 )
 
 // The leader's stable admin surface, v1.
@@ -95,6 +96,7 @@ func contractFeatures() map[string]bool {
 		"policy_file":           true,
 		"shard_head":            true, // POST /admin/v1/shards/create accepts head: the coordinator is the named worker rank, never the leader (R15.14, D4)
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
+		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)
 		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
 	}
@@ -110,9 +112,48 @@ func (s *Server) adminVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, adminapi.Version{Version: v, Contract: ContractVersion})
 }
 
-// capabilities → the frozen route list + feature flags. A manager compares
-// this against the list it was built with: a missing route means "do not
-// manage this leader", never a guess.
+// EngineInfo is one engine driver linked into this binary, as
+// /admin/v1/capabilities reports it. A manager that offers engines by name
+// compares its own list against this one instead of finding out at process
+// launch that a name was dropped or renamed.
+//
+// Core-local for now: this type (and the Engines field below) moves to
+// opod-sdk/adminapi — onto adminapi.Capabilities — at the next SDK tag, with
+// these exact JSON names.
+type EngineInfo struct {
+	// ID is the canonical engine name: what `opod up --engine`, a plan and a
+	// worker's registration all resolve to.
+	ID string `json:"id"`
+	// Aliases are the other spellings this binary accepts for the same driver.
+	Aliases []string `json:"aliases,omitempty"`
+	// Native is the catalog source field the engine pulls and serves a model
+	// by: "ollama_name", "repo", "path", or "id" (the catalog id itself).
+	Native string `json:"native"`
+}
+
+// capabilitiesResponse is adminapi.Capabilities plus the fields that have not
+// reached an SDK tag yet. Embedded, so the wire shape only gains keys.
+type capabilitiesResponse struct {
+	adminapi.Capabilities
+	Engines []EngineInfo `json:"engines"`
+}
+
+// contractEngines lists the linked drivers, sorted by id.
+func contractEngines() []EngineInfo {
+	infos := engines.Infos()
+	out := make([]EngineInfo, 0, len(infos))
+	for _, i := range infos {
+		out = append(out, EngineInfo{ID: i.Name, Aliases: i.Aliases, Native: i.Native})
+	}
+	return out
+}
+
+// capabilities → the frozen route list + feature flags + the linked engine
+// drivers. A manager compares this against the list it was built with: a
+// missing route means "do not manage this leader", never a guess.
 func (s *Server) adminCapabilities(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, adminapi.Capabilities{Contract: ContractVersion, Routes: LeaderContract, Features: contractFeatures()})
+	writeJSON(w, http.StatusOK, capabilitiesResponse{
+		Capabilities: adminapi.Capabilities{Contract: ContractVersion, Routes: LeaderContract, Features: contractFeatures()},
+		Engines:      contractEngines(),
+	})
 }

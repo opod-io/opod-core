@@ -1140,6 +1140,15 @@ snapshot documents, `Route`/`Version`/`Capabilities` — live in the SDK module
 `github.com/opod-io/opod-sdk/adminapi` (Apache-2.0, stdlib only). The leader marshals those exact structs,
 so a manager imports the package instead of mirroring it; a field changed there is a field changed on the wire.
 
+`capabilities` also lists the **engine drivers linked into the binary** (feature `engines`):
+`engines: [{id, aliases, native}]` — the canonical name (`llamacpp`, `mlx`, `ollama`, `sglang`, `vllm`), the
+other spellings the registry accepts for it, and the catalog source field the driver pulls and serves a
+model by (`ollama_name`, `repo`, `path`, or `id`), reported by probing the driver's own `NativeName` rule
+rather than restating it. A manager that offers engines by name checks its list against this one, so a
+dropped or renamed driver is a failed comparison and not a worker that dies at launch. Engine ids and
+aliases are additive-only like the routes; `TestLeaderContract` pins the published ones. The type is
+core-local (`controlplane.EngineInfo`) until the next SDK tag carries it on `adminapi.Capabilities`.
+
 Two mechanisms a manager drives through this surface (2026-09-07):
 
 - **Load signals** (`load_signals`): a worker engine that implements `engines.LoadReporter` (vLLM and
