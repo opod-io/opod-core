@@ -165,28 +165,28 @@ jobs:
         include:
           # rpc: the compiled pair substituted for the rpc-<vendor> stage, or "" for none.
           - { name: opod-leader,                 file: images/leader/Dockerfile,          base: "", rpc: "", platforms: "linux/amd64,linux/arm64" }
-          - { name: opod-worker-llamacpp-nvidia, file: images/worker-llamacpp/Dockerfile.rpc-cuda, base: ghcr.io/ggml-org/llama.cpp:full-cuda, rpc: cuda }  # base N=1 llama-server + prebuilt /opt/llama-rpc for N>=2
-          - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile.rpc-rocm, base: ghcr.io/ggml-org/llama.cpp:full-rocm, rpc: rocm }  # prebuilt pair: Radeon + Instinct
-          - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1, rpc: "" }
+          - { name: opod-worker-llamacpp-nvidia, file: images/worker-llamacpp/Dockerfile.rpc-cuda, base: ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:204042f697dced0e99af35993e00c70b12386197d1bdd313f02b25f25f3118c8, rpc: cuda }  # base N=1 llama-server + prebuilt /opt/llama-rpc for N>=2
+          - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile.rpc-rocm, base: ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785, rpc: rocm }  # prebuilt pair: Radeon + Instinct
+          - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, rpc: "" }
           # The chart references these two as well; a release that does not publish
           # them leaves values.yaml pointing at images that do not exist.
-          - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile.rpc-cpu, base: "ghcr.io/ggml-org/llama.cpp:full", rpc: cpu, platforms: "linux/amd64,linux/arm64" }  # the pair, or a CPU worker cannot be a gang part
-          - { name: opod-worker-llamacpp-intel,  file: images/worker-llamacpp/Dockerfile.rpc-sycl, base: "ghcr.io/ggml-org/llama.cpp:full-intel", rpc: sycl }  # base N=1 llama-server + prebuilt SYCL /opt/llama-rpc
+          - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile.rpc-cpu, base: "ghcr.io/ggml-org/llama.cpp:full@sha256:a04c81bf304f8b8f6141bb8bdc384d3c3a151624ba0901fa0c8a69baf2b8ac95", rpc: cpu, platforms: "linux/amd64,linux/arm64" }  # the pair, or a CPU worker cannot be a gang part
+          - { name: opod-worker-llamacpp-intel,  file: images/worker-llamacpp/Dockerfile.rpc-sycl, base: "ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452", rpc: sycl }  # base N=1 llama-server + prebuilt SYCL /opt/llama-rpc
           # The other engines the chart can reference. Each is a thin layer on a
           # vendor's own build, so the cost here is the base pull, not a compile.
           # vLLM is published per silicon by different people: upstream is CUDA-only,
           # AMD ships rocm/vllm per GPU family (RDNA here; a CDNA fleet overrides the
           # base), Intel ships intel/vllm for XPU, and Tenstorrent ships tt-metal's own
           # server — whose tag must match the model spec's commits (images/worker-tt).
-          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0", rpc: "" }
-          - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu", rpc: "" }
-          - { name: opod-worker-vllm-tt,         file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e", rpc: "" }
+          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab", rpc: "" }
+          - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3f5abccbfbe38474a27635666f988b4c3c181d856e51beecc", rpc: "" }
+          - { name: opod-worker-vllm-tt,         file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e@sha256:e48d532e8ea57141896af4cd2f098b406b081476a6cbb48d110c7f124873ea8f", rpc: "" }
           # SGLang is an engine core drives like any other (internal/engines/sglang,
           # launchSGLang, the sglang:cache_hit_rate the driver reads), so its images
           # ship with the rest. One node per endpoint until a multi-node path exists:
           # the planner refuses a gang on it, so the image promises nothing more.
-          - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.2-cu126", rpc: "" }
-          - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.19-rocm700-mi30x", rpc: "" }
+          - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.2-cu126@sha256:fce5585fa8da175224ead70727a4660f719e34adf0638aebf6dd27930f03e1b6", rpc: "" }
+          - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58", rpc: "" }
     steps:
       - name: Free disk space (the vLLM, ROCm and tt-metal bases are 7-30GB)
         if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt') || contains(matrix.name, 'sglang')

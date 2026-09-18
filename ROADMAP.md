@@ -25,7 +25,7 @@ system. Everything in that direction lives in a separate product and is not part
 | **Weights** | `opod fetch` — one exclusive, atomic, digest-checked pull per file, with a pinned Hub revision cached as `<repo>@<rev>` so two revisions coexist on a node. `opod cache ls|prune` deletes only files this binary fetched, never anything it did not. |
 | **Auth & limits** | per-key scopes, rpm / tpm / daily-token quotas, expiry, an audit log, and a usage stream with cursors. Plan and auth are watched files, so limits change at runtime without a restart. |
 | **Operations** | `opod doctor`, `opod node ls/show/drain/remove`, `opod model ls/ps/load/unload`, `--json` on every read command, shell completion, an interactive picker, a first-run wizard. Prometheus metrics, OTLP traces across all four drivers, reference Grafana dashboards. |
-| **Packaging** | Homebrew, `.deb`, `.rpm`, `install.sh`, `linux/arm64` and `darwin/arm64` builds, and container images per engine × vendor. |
+| **Packaging** | Homebrew, `.deb`, `.rpm`, `install.sh`, `linux/arm64` and `darwin/arm64` builds, and container images per engine × vendor, every upstream base pinned by digest (`images/build.sh refresh-bases` moves a pin, deliberately). |
 
 ---
 
@@ -33,7 +33,6 @@ system. Everything in that direction lives in a separate product and is not part
 
 | Item | What it adds | Size |
 |---|---|---|
-| **Image bases pinned by digest** | the worker Dockerfiles still follow moving upstream tags; a release built on a moving base is not reproducible | S |
 | **Auto-rebalancing sharding** | `N` is the operator's today; pick it from worker count, model size and free VRAM | M |
 | **Mesh backends** | the interface is defined and the LAN backend ships; a `tsnet` (and later NetBird) backend lets workers join across networks | M |
 | **Live model migration** | move a loaded model between workers without a cold start | M |

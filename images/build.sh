@@ -31,6 +31,12 @@
 #       (cuda ~60 min of nvcc, sycl a oneAPI icpx build; both amd64-only → an amd64 box or CI dispatch
 #       `images.yml` with rpc=true / rpc_sycl=true. cpu builds natively per arch, here or in CI,
 #       and its two halves are joined into one index.) Default vendor: cuda.
+#   images/build.sh refresh-bases [--dry-run]
+#       every upstream base is pinned as <ref>:<tag>@sha256:<digest> (ARCHITECTURE §7) in the Dockerfiles,
+#       in this script and in .github/workflows/images.yml. This re-resolves each pinned <ref>:<tag> against
+#       its registry and rewrites the digest in all three, so moving a base is one deliberate, reviewable
+#       commit and never a side effect of a build. --dry-run prints what would move. Read-only against the
+#       registries; needs `crane` or `docker buildx` (no daemon).
 #
 # One-time login (token stays in the Docker credential store, never in the repo):
 #   gh auth refresh -s write:packages && gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
@@ -46,25 +52,25 @@ SOURCE_URL=${SOURCE_URL:-https://github.com/opod-io/opod-core}
 #   VLLM_AMD_BASE=rocm/vllm:rocm7.14.1_cdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0 \
 #   images/build.sh --push --tag <t> vllm-amd
 # and points chart engineImages.vllmAmd at it. ~25 GB base pull either way.
-VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0}
+VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab}
 # Intel's own vLLM build for XPU (Arc / Flex / Max). Upstream vllm/vllm-openai is
 # CUDA-only, so Intel is a different publisher rather than a different tag. ~7 GB.
 # Single-card serving only until an Intel node proves more: vLLM's XPU backend has
 # no Ray gang path we have run, so a plan that asks for one is refused upstream of
 # this image, not by it.
-VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-intel/vllm:0.21.0-xpu}
+VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3f5abccbfbe38474a27635666f988b4c3c181d856e51beecc}
 # SGLang on AMD is published per Instinct generation and for Instinct ONLY: the
 # tags are …-mi30x (MI200/MI300) and …-mi35x (MI350), with no RDNA build at all,
 # so a Radeon card cannot run this image — llama.cpp or vLLM serve those. The
 # v0.5.2-rocm630 tag this used to name never existed on Docker Hub.
-SGLANG_AMD_BASE=${SGLANG_AMD_BASE:-lmsysorg/sglang:v0.5.19-rocm700-mi30x}
+SGLANG_AMD_BASE=${SGLANG_AMD_BASE:-lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58}
 # Tenstorrent's own tt-metal + vLLM release image. ~17 GB uncompressed, so the
 # build is a thin layer on a very fat base — bump the tag deliberately and check
 # it against the tt-kmd version on the fleet, which tt-metal is strict about.
 # The tag must match the tt-metal/vLLM commits of the model spec being served
 # (see images/worker-tt/Dockerfile): the default is the one tt-inference-server
 # 0.10.1 names for Blackhole P150 / P150X4 LLMs.
-VLLM_TT_BASE=${VLLM_TT_BASE:-ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e}
+VLLM_TT_BASE=${VLLM_TT_BASE:-ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e@sha256:e48d532e8ea57141896af4cd2f098b406b081476a6cbb48d110c7f124873ea8f}
 ARCH=${ARCH:-amd64}
 PLATFORM=linux/$ARCH
 LLAMA_RELEASE=$(sed -nE 's/^ARG LLAMA_RELEASE=(.*)$/\1/p' images/worker-llamacpp/Dockerfile.rpc-cuda)
@@ -92,14 +98,14 @@ die() { printf '\033[1;31m✘ %s\033[0m\n' "$*" >&2; exit 1; }
 spec() {
   case "$1" in
     leader)          echo "opod-leader images/leader/Dockerfile - amd64,arm64" ;;
-    llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda amd64" ;;
-    llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile.rpc-rocm ghcr.io/ggml-org/llama.cpp:full-rocm amd64" ;;
-    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full amd64,arm64" ;;
-    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel amd64" ;;
-    vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1 amd64" ;;
+    llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:204042f697dced0e99af35993e00c70b12386197d1bdd313f02b25f25f3118c8 amd64" ;;
+    llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile.rpc-rocm ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785 amd64" ;;
+    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full@sha256:a04c81bf304f8b8f6141bb8bdc384d3c3a151624ba0901fa0c8a69baf2b8ac95 amd64,arm64" ;;
+    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452 amd64" ;;
+    vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
-    sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126 amd64" ;;
+    sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126@sha256:fce5585fa8da175224ead70727a4660f719e34adf0638aebf6dd27930f03e1b6 amd64" ;;
     sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile $SGLANG_AMD_BASE amd64" ;;
     vllm-tt)         echo "opod-worker-vllm-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
     *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|vllm-tt)" ;;
@@ -113,8 +119,8 @@ while [ $# -gt 0 ]; do
     --multi) multi=1 ;;
     --dry-run) dry=1 ;;
     --tag) tag=$2; shift ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
-    rpc-bootstrap|rpc-build|prune) mode=$1 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    rpc-bootstrap|rpc-build|prune|refresh-bases) mode=$1 ;;
     -*) die "unknown flag $1" ;;
     *) images+=("$1") ;;
   esac; shift
@@ -123,6 +129,38 @@ named=(${images[@]+"${images[@]}"})   # what was typed (bash 3.2-safe when empty
 [ ${#images[@]} -eq 0 ] && images=(leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia)
 
 run() { if [ $dry = 1 ]; then printf '  %q' "$@"; echo; else "$@"; fi; }
+
+# refresh-bases: the digest a pinned <ref>:<tag> resolves to today. For a
+# multi-arch base this is the INDEX digest, so one pin serves every platform.
+resolve_digest() {
+  if command -v crane >/dev/null 2>&1; then crane digest "$1"
+  else docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}'; fi
+}
+refresh_bases() {
+  local files=(images/*/Dockerfile* images/build.sh .github/workflows/images.yml)
+  local pin_re='[A-Za-z0-9./_-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}'
+  local pinned ref old new moved=0 edits=()
+  while read -r pinned; do
+    ref=${pinned%@*} old=${pinned#*@}
+    new=$(resolve_digest "$ref") || die "cannot resolve $ref — a registry that needs a login, or a tag upstream deleted"
+    [[ $new =~ ^sha256:[0-9a-f]{64}$ ]] || die "$ref resolved to '$new', which is not a digest"
+    if [ "$new" = "$old" ]; then log "unchanged  $ref"; continue; fi
+    log "moved      $ref  ${old:0:19}… → ${new:0:19}…"
+    moved=$((moved+1)); edits+=(-e "s|$pinned|$ref@$new|g")
+  done < <(grep -ohE "$pin_re" "${files[@]}" | sort -u)
+  [ $moved -gt 0 ] || { log "every base is already at today's digest"; return 0; }
+  if [ $dry = 1 ]; then log "$moved base(s) would move (dry run: nothing written)"; return 0; fi
+  # One pass at the end, through a temp file + rename: this script is one of the
+  # files, and the running shell keeps reading the old inode.
+  local f
+  for f in "${files[@]}"; do
+    sed "${edits[@]}" "$f" > "$f.refresh"
+    if [ -x "$f" ]; then chmod +x "$f.refresh"; fi
+    mv "$f.refresh" "$f"
+  done
+  log "$moved base(s) re-pinned — review the diff, rebuild, and commit the pins on their own"
+}
+if [ "${mode:-}" = refresh-bases ]; then refresh_bases; exit 0; fi
 
 [ $dry = 1 ] || docker info >/dev/null 2>&1 || die "Docker daemon not running (open -a Docker)"
 

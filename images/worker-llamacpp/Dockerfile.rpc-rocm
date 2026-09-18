@@ -21,7 +21,7 @@
 #     and CPU recipes also export GGML_BACKEND_PATH=/opt/llama-rpc; in ggml
 #     that variable names ONE extra out-of-tree backend file, so a directory
 #     only logs "cannot read file data: Is a directory" — it is left out here.)
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full-rocm
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785
 ARG LLAMA_RELEASE=b9934
 # The ROCm version in the tarball's file name is upstream's CI target, not a
 # choice of ours. It moves with LLAMA_RELEASE; check the release assets when
@@ -30,13 +30,13 @@ ARG LLAMA_RELEASE=b9934
 # the ROCm dev image the pair is compiled in, and the full target list — Instinct
 # (gfx908 MI100, gfx90a MI200, gfx942 MI300) and Radeon (gfx1030 RDNA2, gfx1100-1102
 # RDNA3, gfx1151/1150, gfx1200/1201 RDNA4) in one binary.
-ARG ROCM_VERSION=7.2.1
+ARG ROCM_DEV_BASE=rocm/dev-ubuntu-24.04:7.2.1-complete@sha256:3db551c4e1229aac1857ac44fcb6141bb749f41348eb572452f11279153c13c3
 ARG ROCM_DOCKER_ARCH="gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1102;gfx1151;gfx1150;gfx1200;gfx1201"
 
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
 # `--build-context opod=dist/linux-amd64` (prebuilt, cross-compiled on the Mac).
-FROM --platform=$BUILDPLATFORM golang:1.26 AS opod
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79 AS opod
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -54,7 +54,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 # shape as the CUDA and SYCL pairs: published once per LLAMA_RELEASE as
 # ghcr.io/opod-io/llama-rpc-rocm:<rel> (target `rpc-export`) and substituted, so no
 # image build ever compiles it.
-FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete AS rpc-rocm
+FROM ${ROCM_DEV_BASE} AS rpc-rocm
 ARG LLAMA_RELEASE
 ARG ROCM_DOCKER_ARCH
 ENV HF_UI_VERSION=${LLAMA_RELEASE}
