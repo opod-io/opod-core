@@ -113,6 +113,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   digest check: a node that had once served the model unpinned served those bytes under every `OPOD_MODEL_REVISION` /
   `OPOD_MODEL_SHA256`. A pinned load now always goes through the agent's fetch (`<models>/<repo>@<rev>/`, verified,
   reused when present); the by-path shortcut stays for unpinned models
+- Requires `opod-sdk v0.2.1`: the usage stream carries `ttft_ms` (time to the first usable token of a streamed answer;
+  omitted when not measured), and the revision weights of a canary split are read from the shared, typed policy
+  snapshot instead of re-parsing the raw document
 - **A worker whose engine is not running reports "nothing loaded" (`[]`), not "no report" (`null`).** Since the
   heartbeat learned to say "no report", a refused connection was one too — and the leader takes a worker with no report
   for 30 s out of rotation (`engine-silent`). That hit every worker whose engine is started by a load (vLLM, SGLang,
