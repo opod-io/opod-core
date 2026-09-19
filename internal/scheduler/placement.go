@@ -2,14 +2,60 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/opod-io/opod/internal/store"
 )
 
+// ErrUnplaceable marks a create refused because its workers could not be
+// found. It is returned before the gang being replaced is torn down and
+// before any process starts, so a caller that sees it has nothing to clean
+// up and must not tear anything down on its own.
+var ErrUnplaceable = errors.New("refused, nothing was changed")
+
+// DefaultHeartbeatMaxAge bounds a worker's heartbeat age when the router's
+// own check is off (router.heartbeat_max_age_seconds = 0) — the bound the
+// leader's liveness rule falls back to.
+const DefaultHeartbeatMaxAge = 60 * time.Second
+
+// WorkerFor is THE rule for "may new work be placed on this node row" — a
+// shard part, or a model pinned with `model add --node`. Every placer asks
+// it: the CLI's shard-count picker (WorkerMemoryFacts), the leader's own pick
+// for a count without nodes (pickWorkers) and the check of a caller-named
+// list (pickWorkersByID). why is empty when the row qualifies, else a short
+// reason fit for an error message.
+//
+//   - The leader's own "local" row is never a worker: it reads ready and has
+//     an address, but that address is the gateway, which has no
+//     /v1/process/start — a part placed there fails at launch.
+//   - A row must be ready (so a draining node takes nothing new), reachable
+//     (an address), and heartbeating within maxAge (≤ 0 = DefaultHeartbeatMaxAge).
+func WorkerFor(n store.Node, maxAge time.Duration, now time.Time) (ok bool, why string) {
+	if maxAge <= 0 {
+		maxAge = DefaultHeartbeatMaxAge
+	}
+	switch {
+	case n.ID == "local":
+		return false, "the leader's own row, not a worker"
+	case n.State != store.NodeStateReady:
+		return false, "state " + n.State
+	case n.Address == "":
+		return false, "no address"
+	case now.Sub(n.LastHeartbeat) > maxAge:
+		return false, fmt.Sprintf("last heartbeat %s ago", now.Sub(n.LastHeartbeat).Round(time.Second))
+	}
+	return true, ""
+}
+
+// pickWorkersByID resolves the caller's named nodes (id or hostname), in the
+// caller's order. A name that is unknown, or a row WorkerFor refuses, fails
+// here with the reason rather than at process start on the wrong machine.
 func (o *Orchestrator) pickWorkersByID(ctx context.Context, ids []string) ([]store.Node, error) {
 	all, err := o.Store.Nodes().List(ctx)
 	if err != nil {
@@ -22,35 +68,51 @@ func (o *Orchestrator) pickWorkersByID(ctx context.Context, ids []string) ([]sto
 			byID[nd.Hostname] = nd
 		}
 	}
+	now := time.Now()
 	out := make([]store.Node, 0, len(ids))
 	for _, id := range ids {
 		nd, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("node %q not found", id)
 		}
-		if nd.State != "ready" || nd.Address == "" {
-			return nil, fmt.Errorf("node %q is not ready", id)
+		if ok, why := WorkerFor(nd, o.HeartbeatMaxAge, now); !ok {
+			return nil, fmt.Errorf("node %q is not ready (%s)", id, why)
 		}
 		out = append(out, nd)
 	}
 	return out, nil
 }
 
+// pickWorkers selects the n highest-RAM rows WorkerFor accepts. With fewer
+// than n it refuses with the numbers — how many were asked for, which rows
+// qualify, and why each other row does not — before anything is launched.
 func (o *Orchestrator) pickWorkers(ctx context.Context, n int) ([]store.Node, error) {
 	all, err := o.Store.Nodes().List(ctx)
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	ready := make([]store.Node, 0, len(all))
+	var have, refused []string
 	for _, nd := range all {
-		if nd.State == "ready" && nd.Address != "" {
-			ready = append(ready, nd)
+		if ok, why := WorkerFor(nd, o.HeartbeatMaxAge, now); !ok {
+			refused = append(refused, nd.ID+" — "+why)
+			continue
 		}
+		ready = append(ready, nd)
+		have = append(have, nd.ID)
 	}
 	if len(ready) < n {
-		return nil, fmt.Errorf("need %d ready workers, have %d", n, len(ready))
+		msg := fmt.Sprintf("need %d ready workers, have %d", n, len(ready))
+		if len(have) > 0 {
+			msg += " (" + strings.Join(have, ", ") + ")"
+		}
+		if len(refused) > 0 {
+			msg += "; not counted: " + strings.Join(refused, "; ")
+		}
+		return nil, errors.New(msg + " — join more workers (`opod join`), or name a smaller count")
 	}
-	sort.Slice(ready, func(i, j int) bool { return ready[i].RAMGB > ready[j].RAMGB })
+	sort.SliceStable(ready, func(i, j int) bool { return ready[i].RAMGB > ready[j].RAMGB })
 	return ready[:n], nil
 }
 

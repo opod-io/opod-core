@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/opod-io/opod/internal/scheduler"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -59,6 +60,9 @@ func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ModelID)
 	case errors.Is(err, ErrNoOrchestrator):
 		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, scheduler.ErrUnplaceable):
+		// Not an upstream fault: the fleet cannot hold the shape asked for.
+		writeJSONError(w, http.StatusConflict, err.Error())
 	case err != nil:
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 	default:

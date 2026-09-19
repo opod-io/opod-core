@@ -123,8 +123,9 @@ func ShardNeedBytes(entry models.Entry) int64 {
 // counts as 0, the same optimism admission applies.
 //
 // replacing names a model whose present gang is ignored, because `shard
-// create` tears it down before building the new one. The leader's own "local"
-// row is not a worker and is never a candidate.
+// create` tears it down before building the new one. Which rows are workers
+// is WorkerFor's rule — the one the leader's own create path applies — so the
+// leader's "local" row, a draining node and a stale one are never candidates.
 func WorkerMemoryFacts(ctx context.Context, st store.Store, cat []models.Entry, replacing string,
 	reservePercent int, maxAge time.Duration, now time.Time) ([]WorkerMemory, error) {
 	nodes, err := st.Nodes().List(ctx)
@@ -186,7 +187,7 @@ func WorkerMemoryFacts(ctx context.Context, st store.Store, cat []models.Entry, 
 
 	out := make([]WorkerMemory, 0, len(nodes))
 	for _, n := range nodes {
-		if n.ID == "local" || n.State != "ready" || n.Address == "" || now.Sub(n.LastHeartbeat) > maxAge {
+		if ok, _ := WorkerFor(n, maxAge, now); !ok {
 			continue
 		}
 		w := WorkerMemory{NodeID: n.ID, CapacityBytes: lifecycle.Budget(workerMemoryBytes(n), reservePercent), ResidentBytes: resident[n.ID]}

@@ -185,10 +185,9 @@ func pickShardsFromStore(cfg *config.Config, model string) (scheduler.ShardPick,
 	}
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	maxAge := 60 * time.Second // the leader's own bound when the router check is off
-	if s := cfg.Router.HeartbeatMaxAgeSeconds; s > 0 {
-		maxAge = time.Duration(s) * time.Second
-	}
+	// 0 (the router's check is off) means scheduler.DefaultHeartbeatMaxAge —
+	// the same bound, by the same rule (scheduler.WorkerFor), the leader applies.
+	maxAge := time.Duration(cfg.Router.HeartbeatMaxAgeSeconds) * time.Second
 	workers, err := scheduler.WorkerMemoryFacts(context.Background(), st, cat, model,
 		cfg.Placement.ReservePercent, maxAge, time.Now())
 	if err != nil {

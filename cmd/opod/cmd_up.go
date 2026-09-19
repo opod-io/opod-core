@@ -212,6 +212,7 @@ func cmdUp(args []string) {
 	//     leader runs the coordinator llama-server for sharded models).
 	orch := scheduler.New(st, sup, log, cfg.Storage.ModelsDir)
 	orch.CoordinatorNode, orch.HFToken, orch.HFEndpoint = cfg.Env.CoordinatorNode, cfg.Env.HFToken, cfg.Env.HFEndpoint
+	orch.HeartbeatMaxAge = time.Duration(cfg.Router.HeartbeatMaxAgeSeconds) * time.Second
 
 	// 11. Start server with signal context
 	srv := controlplane.NewServer(cfg, st, eng, cat, log, orch)

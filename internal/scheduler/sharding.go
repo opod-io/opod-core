@@ -47,6 +47,9 @@ type Orchestrator struct {
 	CoordinatorNode string // OPOD_COORDINATOR_NODE: pin the llama.cpp coordinator ("local" = the leader)
 	HFToken         string // HF_TOKEN for the leader's own GGUF pulls
 	HFEndpoint      string // HF_ENDPOINT ("" = the public Hub)
+	// HeartbeatMaxAge is the liveness bound WorkerFor applies to a row
+	// (router.heartbeat_max_age_seconds, set by `opod up`); 0 = DefaultHeartbeatMaxAge.
+	HeartbeatMaxAge time.Duration
 }
 
 // New returns a configured orchestrator.
@@ -160,6 +163,18 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	if err != nil {
 		return err
 	}
+	// Workers first: a create that cannot be placed refuses here, with the
+	// numbers, before the gang it would have replaced is torn down and before
+	// any process starts. Both backends build on this one list.
+	var workers []store.Node
+	if len(nodeIDs) > 0 {
+		workers, err = o.pickWorkersByID(ctx, nodeIDs)
+	} else {
+		workers, err = o.pickWorkers(ctx, shardCount)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrUnplaceable, err)
+	}
 	// IDEMPOTENT REPLACE: tear down any prior shard for this model before
 	// (re)creating. Without this, re-running `shard create` (new --nodes, or after
 	// a worker was recreated with a fresh overlay IP) left the OLD coordinator /
@@ -184,7 +199,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	// parallelism, NOT llama.cpp's rpc-server + coordinator. It skips all the
 	// GGUF machinery below. Selected by the catalog's sharding.engine.
 	if isVLLMRayBackend(entry.Sharding.Engine) {
-		return o.createShardedVLLMRay(ctx, entry, shardCount, nodeIDs, par)
+		return o.createShardedVLLMRay(ctx, entry, workers, par)
 	}
 	// llama.cpp's RPC backend has NO tensor split — it only cuts layers. Silently
 	// ignoring --tp here would hand back a working-but-not-what-you-asked-for shard,
@@ -199,16 +214,6 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	// on disk.
 	if entry.Source.Type != "huggingface" && entry.Source.Path == "" {
 		return fmt.Errorf("sharded model %s requires source.path (local GGUF path)", entry.ID)
-	}
-
-	var workers []store.Node
-	if len(nodeIDs) > 0 {
-		workers, err = o.pickWorkersByID(ctx, nodeIDs)
-	} else {
-		workers, err = o.pickWorkers(ctx, shardCount)
-	}
-	if err != nil {
-		return fmt.Errorf("pick workers: %w", err)
 	}
 
 	// The store-driven teardown above only sees shards THIS leader recorded.

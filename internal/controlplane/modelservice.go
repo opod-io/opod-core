@@ -227,6 +227,12 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 		s.orch.CoordinatorNode = req.Head
 	}
 	if err := s.orch.CreateSharded(ctx, *entry, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices}); err != nil {
+		if errors.Is(err, scheduler.ErrUnplaceable) {
+			// Refused before anything was touched: the gang this create would
+			// have replaced is still serving, and the cleanup below would
+			// take it down for a request that changed nothing.
+			return err
+		}
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		if rmErr := s.orch.RemoveSharded(cleanCtx, req.ModelID); rmErr != nil {
 			s.log.Error("shards/create cleanup failed", "model", req.ModelID, "err", rmErr)

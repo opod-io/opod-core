@@ -1147,7 +1147,7 @@ print(resp.choices[0].message.content)
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
 | `GET` | `/admin/v1/shards` | List shards across all models |
 | `GET` | `/admin/v1/shards/processes` | Process state of the parts the leader supervises (`running` · `starting` · `stopped` · `failed` · `crashloop`) |
-| `POST` | `/admin/v1/shards/create` | Orchestrate a sharded model |
+| `POST` | `/admin/v1/shards/create` | Orchestrate a sharded model. `409` when the workers for the shape cannot be found (never the leader's own row, a draining or a silent node) — refused with the numbers, the gang being replaced left serving |
 | `DELETE` | `/admin/v1/shards/{model_id}` | Tear down a sharded model |
 | `GET` | `/admin/v1/usage/stream` | Per-call usage records, by cursor with replay — the raw facts; summaries are a consumer's job |
 | `GET` | `/admin/v1/events/stream` | Lifecycle + admin-action events, by cursor with replay |

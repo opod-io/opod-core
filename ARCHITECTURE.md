@@ -277,7 +277,8 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
             ▼
    Orchestrator.CreateSharded(entry, 2):
        │
-       ├─ pickWorkers(2) — ready nodes, descending RAM
+       ├─ pickWorkers(2) — rows scheduler.WorkerFor accepts, descending RAM;
+       │     fewer than 2 → refused here (409), nothing torn down or started
        │
        ├─ for each worker i:
        │     spec = { id, command: "rpc-server", args: ["-p", port],
@@ -310,6 +311,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 
 #### Failure handling
 
+- **Which rows are workers is one rule** — `scheduler.WorkerFor` — asked by the CLI's shard-count picker (`WorkerMemoryFacts`), by the leader's own pick for a count without nodes (`pickWorkers`) and by the check of a named list (`pickWorkersByID`, which `model add --node` uses too): state `ready` (so never a draining node), an address, a heartbeat within `router.heartbeat_max_age_seconds` (60 s when that check is off), and never the leader's own `local` row — it reads ready and has an address, but that address is the gateway, which has no `/v1/process/start`. A create that cannot find its workers is refused **before** the gang it would replace is torn down and before any process starts (`scheduler.ErrUnplaceable` → `409`), and the message carries the numbers: `need 3 ready workers, have 1 (w1); not counted: local — the leader's own row, not a worker; w2 — state draining; w3 — last heartbeat 4m0s ago`.
 - If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the caller (the CLI, or whoever called `/admin/v1/shards/create`).
 - If a shard process crashes *after* CreateSharded returns, the supervisor auto-restarts it up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s; capped at 30s for any longer chain). After 5 the process enters `crashloop` state and stays there — the admin must intervene. Both `rpc-server` (per-shard) and the `llama-server` coordinator are restart-enabled; the policy is set on the `agent.ProcessSpec` at launch time in `internal/scheduler/sharding.go`. Explicit `Stop()` suppresses any pending restart.
 

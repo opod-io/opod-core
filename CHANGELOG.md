@@ -66,6 +66,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- One rule for "which rows can take a shard part" (`scheduler.WorkerFor`) on the CLI and the API path alike:
+  never the leader's own `local` row, a draining node or a silent one; a create that cannot find its workers
+  answers `409` with the numbers before the gang it would replace is touched
 - `opod node drain|undrain <id>` (`POST /admin/v1/nodes/{id}/drain|undrain`, feature `node_drain`): the
   router, the hedged pick and the shard pickers give a draining worker nothing new, a gang with a part on
   it leaves rotation, in-flight finishes, `/readyz` and the waking 503 do not count it; the state survives
