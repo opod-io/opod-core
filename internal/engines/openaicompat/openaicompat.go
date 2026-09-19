@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/opod-io/opod/internal/engines"
 )
@@ -30,12 +32,30 @@ type Client struct {
 	Auth func(*http.Request)
 }
 
+// ConnectTimeout bounds how long a connection to the engine (or to a worker: a
+// leader reaches its workers through this client) may take to be ESTABLISHED.
+// It is not a request deadline — responses stream for as long as they take. A
+// server on the same machine or the same cluster network accepts in
+// milliseconds; one that has not in a few seconds is gone. Go's default
+// transport waits 30 s, and an address that no longer exists (a removed pod)
+// does not refuse, it hangs: a request picked for such a worker stalled for
+// 20–30 s before the router could ask the next worker.
+const ConnectTimeout = 3 * time.Second
+
+// streamingHTTPClient has no overall deadline and a bounded connect. Everything
+// else is Go's default transport.
+func streamingHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = (&net.Dialer{Timeout: ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
+	return &http.Client{Timeout: 0, Transport: tr}
+}
+
 // NewClient returns a Client for driver at endpoint. auth may be nil.
 func NewClient(driver, endpoint string, auth func(*http.Request)) Client {
 	return Client{
 		Driver:  driver,
 		BaseURL: strings.TrimRight(endpoint, "/"),
-		HTTP:    &http.Client{Timeout: 0},
+		HTTP:    streamingHTTPClient(),
 		Auth:    auth,
 	}
 }

@@ -100,6 +100,10 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
   (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- A connection to an engine or a worker must be established within 3 s (`openaicompat.ConnectTimeout`); responses still
+  stream with no overall deadline. The client had inherited Go's 30 s connect timeout, and a removed pod's address does
+  not refuse, it hangs — so the request picked for a just-removed worker stalled 20–30 s before the next worker was
+  asked, and an outer deadline sometimes answered it 502 first (one per pod swap, measured)
 - **A worker that has just gone away costs no request while another serves the model.** Its placement row stays
   fresh until its heartbeat ages out; a request picked for it could not connect and was answered 502, because the
   walk went on to the next fallback MODEL, never to the next WORKER. An unreachable worker received nothing, so the
