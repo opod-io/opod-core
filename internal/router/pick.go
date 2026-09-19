@@ -68,6 +68,11 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		metrics.ObserveRouterPick("fallback-to-local", "all-workers-stale")
 		return r.local, r.localNode, nil
 	}
+	// Workers this very request already found unreachable (nextworker.go).
+	if workers = withoutSkipped(ctx, workers); len(workers) == 0 {
+		metrics.ObserveRouterPick("worker", "none-reachable")
+		return nil, "", noWorkerLeft(model)
+	}
 	// Roles (roles.go): generation never lands on a prefill half while a
 	// decode half is alive.
 	workers = decodeOnly(workers, func(id string) string { return roleOf(nodes[id]) })

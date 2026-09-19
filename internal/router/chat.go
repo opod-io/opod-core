@@ -90,7 +90,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attemptSpan.SetStatus(codes.Error, "pick failed")
 			attemptSpan.RecordError(err)
 			attemptSpan.End()
-			if i == 0 {
+			if i == 0 && primaryErr == nil { // a worker's own error, when there was one, says more than "none left"
 				primaryErr = err
 			}
 			continue
@@ -154,8 +154,15 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attemptSpan.SetStatus(codes.Error, "engine.Chat returned synchronously")
 			attemptSpan.RecordError(lastErr)
 			attemptSpan.End()
-			if i == 0 {
+			if i == 0 && primaryErr == nil {
 				primaryErr = lastErr
+			}
+			// The worker was unreachable and got nothing: the same model, another worker.
+			if next, again := r.tryNextWorker(ctx, nodeID, lastErr); again {
+				ctx = next
+				metrics.ObserveRouterFallback("chat", "next-worker")
+				i--
+				continue
 			}
 			if !classified && source == "catalog" {
 				classified = true
