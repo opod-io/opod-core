@@ -116,7 +116,7 @@ _opod() {
     case "$sub" in
         model)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "add ls list ps search info load unload remove rm" -- "$cur") )
+                COMPREPLY=( $(compgen -W "add ls list ps search info load unload move remove rm" -- "$cur") )
                 return 0
             fi
             case "$subsub" in
@@ -125,6 +125,12 @@ _opod() {
                     ;;
                 load|unload|remove|rm)
                     COMPREPLY=( $(compgen -W "$(opod completion __installed 2>/dev/null)" -- "$cur") )
+                    ;;
+                move)
+                    case "$prev" in
+                        --from|--to) COMPREPLY=() ;;
+                        *) COMPREPLY=( $(compgen -W "$(opod completion __installed 2>/dev/null) --from --to" -- "$cur") ) ;;
+                    esac
                     ;;
             esac
             return 0
@@ -210,7 +216,7 @@ _opod() {
             ;;
         sub)
             case $words[2] in
-                model)   _values 'subcommand' add ls list ps search info load unload remove rm ;;
+                model)   _values 'subcommand' add ls list ps search info load unload move remove rm ;;
                 connect|disconnect)
                     local -a clients
                     clients=(${(f)"$(opod completion __clients 2>/dev/null)"})
@@ -230,7 +236,7 @@ _opod() {
                     mods=(${(f)"$(opod completion __models 2>/dev/null)"})
                     _describe 'model' mods
                     ;;
-                'model load'|'model unload'|'model remove'|'model rm')
+                'model load'|'model unload'|'model move'|'model remove'|'model rm')
                     local -a mods
                     mods=(${(f)"$(opod completion __installed 2>/dev/null)"})
                     _describe 'installed model' mods
@@ -265,11 +271,14 @@ complete -c opod -f
 complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard token config doctor update upgrade connect disconnect completion version help"
 
 # model subcommands
-complete -c opod -n "__opod_using_command model" -a "add ls list ps search info load unload remove rm"
+complete -c opod -n "__opod_using_command model" -a "add ls list ps search info load unload move remove rm"
 complete -c opod -n "__opod_using_subcommand 'model add'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'model info'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'model load'" -a "(opod completion __installed 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'model unload'" -a "(opod completion __installed 2>/dev/null)"
+complete -c opod -n "__opod_using_subcommand 'model move'" -a "(opod completion __installed 2>/dev/null)"
+complete -c opod -n "__opod_using_subcommand 'model move'" -l from -d "the worker that serves the model now" -x
+complete -c opod -n "__opod_using_subcommand 'model move'" -l to -d "the worker that takes it over" -x
 complete -c opod -n "__opod_using_subcommand 'model remove'" -a "(opod completion __installed 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'model rm'" -a "(opod completion __installed 2>/dev/null)"
 

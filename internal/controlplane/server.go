@@ -57,6 +57,10 @@ type Server struct {
 	policy         policyFileState
 	rateBuckets    *api.BucketStore
 
+	// movePoll / moveSettle shorten a model move's waits (modelmove.go); zero
+	// = the orchestrator's defaults. Only tests set them.
+	movePoll, moveSettle time.Duration
+
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
 	// publish topic strings on state change.
@@ -378,6 +382,7 @@ func (s *Server) routes() http.Handler {
 			r.Post("/models", s.addModel)
 			r.Delete("/models/{id}", s.deleteModel)
 			r.Post("/models/{id}/unload", s.unloadModel)
+			r.Post("/models/{id}/move", s.moveModel)
 			r.Post("/models/{id}/load", s.loadModel)
 
 			// Adapters (R15.15): LoRA variants of THIS leader's model, added

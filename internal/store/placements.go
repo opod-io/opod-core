@@ -51,6 +51,17 @@ func (s *sqlitePlacements) GetByNode(ctx context.Context, nodeID string) ([]Plac
 // requests already on it finish.
 const PlacementDraining = "draining"
 
+// PlacementReleased marks a placement the leader unloaded from a worker
+// whose engine keeps the weights installed (a finished model move off such a
+// worker): the worker still lists the model, and the leader must not route
+// to it — the engine would load it again on the first request. Unlike a
+// drain it is not tied to one leader process, so a leader start does not
+// lift it. It ends by itself: ReplaceForNode carries it only while the worker
+// reports the model as not in memory (Placement.Cold), so a deliberate load
+// there, from anyone, makes the row `ready` again; and it goes with the row
+// when the weights are removed.
+const PlacementReleased = "released"
+
 // ReplaceForNode atomically replaces the placement set for a node — what a
 // worker reports as loaded on every heartbeat — with one thing carried over:
 // a row marked PlacementDraining keeps that mark while its model stays in the
@@ -58,27 +69,29 @@ const PlacementDraining = "draining"
 // reports, so the report must not erase it; it ends when SetStatus sets the
 // row back, or when the model leaves the worker's report and the row goes
 // with it. Read and write share one transaction, so a mark set a moment
-// before a heartbeat is never lost to it.
+// before a heartbeat is never lost to it. A PlacementReleased mark is carried
+// the same way, but only onto a row the worker reports as cold.
 func (s *sqlitePlacements) ReplaceForNode(ctx context.Context, nodeID string, ps []Placement) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	draining := map[string]bool{}
+	marked := map[string]string{} // model → the leader's mark on its row
 	if len(ps) > 0 {
 		rows, err := tx.QueryContext(ctx,
-			`SELECT model_id FROM model_placements WHERE node_id = ? AND status = ?`, nodeID, PlacementDraining)
+			`SELECT model_id, status FROM model_placements WHERE node_id = ? AND status IN (?, ?)`,
+			nodeID, PlacementDraining, PlacementReleased)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			var id, mark string
+			if err := rows.Scan(&id, &mark); err != nil {
 				_ = rows.Close()
 				return err
 			}
-			draining[id] = true
+			marked[id] = mark
 		}
 		if err := rows.Close(); err != nil {
 			return err
@@ -89,8 +102,9 @@ func (s *sqlitePlacements) ReplaceForNode(ctx context.Context, nodeID string, ps
 	}
 	for _, p := range ps {
 		status := p.Status
-		if draining[p.ModelID] {
-			status = PlacementDraining
+		switch mark := marked[p.ModelID]; {
+		case mark == PlacementDraining, mark == PlacementReleased && p.Cold:
+			status = mark
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO model_placements(node_id, model_id, status, last_seen, cold) VALUES(?,?,?,?,?)

@@ -46,6 +46,10 @@ func TestLoadWouldReplace(t *testing.T) {
 			t.Errorf("%s serving the model itself and its adapter: %v", engine, err)
 		}
 	}
+	released := []store.Placement{{ModelID: "qwen3-8b", Status: store.PlacementReleased}}
+	if err := LoadWouldReplace(nodeRunning(t, "w1", "vllm"), released, "llama-3-8b"); err != nil {
+		t.Errorf("a released row is not something the worker serves: %v", err)
+	}
 	for _, engine := range []string{"ollama", "mlx"} {
 		if err := LoadWouldReplace(nodeRunning(t, "w1", engine), serving("qwen3-8b"), "llama-3-8b"); err != nil {
 			t.Errorf("%s holds several models, a load stops nothing: %v", engine, err)

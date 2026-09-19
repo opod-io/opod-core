@@ -199,6 +199,8 @@ Commands:
   model info <id>          Full details for one catalog model
   model load <id>          Bring a model into engine RAM (memory-aware)
   model unload <id>        Drop a model from engine RAM (weights stay)
+  model move <id> --from <node> --to <node>
+                           Have another worker serve a model instead; the source serves until the target does
   model remove <id>        Uninstall a model
   shard create <model> [N] Orchestrate a sharded model across N workers (no N: picked from the workers' free memory)
   shard ls                 List shards

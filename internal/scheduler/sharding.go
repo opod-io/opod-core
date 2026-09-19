@@ -50,6 +50,8 @@ type Orchestrator struct {
 	// HeartbeatMaxAge is the liveness bound WorkerFor applies to a row
 	// (router.heartbeat_max_age_seconds, set by `opod up`); 0 = DefaultHeartbeatMaxAge.
 	HeartbeatMaxAge time.Duration
+
+	moves moveGuard // one move at a time per model and per node (move.go)
 }
 
 // New returns a configured orchestrator.

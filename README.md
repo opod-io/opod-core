@@ -793,6 +793,18 @@ opod node remove <node-id>  # forget it
 
 A drained node stays drained — across heartbeats and a worker restart — until you `undrain` it. `opod node ls` shows the state the leader acts on: `draining` for a drained node, `lost` for one whose heartbeats stopped (`router.heartbeat_max_age_seconds`), whatever the stored row says. `drain`, `undrain` and `remove` go through the running leader — so its router forgets a removed node's cached connection, cooldown and placements at once — and write the store directly only when no leader answers; each says which it did. A sharded model with a part on it stops serving, and when every worker that holds a model is drained, requests for that model get `503` with `Retry-After` and a message that says it is a drain — other models on the same leader keep serving.
 
+### Move a model to another worker
+
+```bash
+opod model move llama-3.2-3b --from <node-id> --to <node-id>
+```
+
+Another worker takes over a whole (non-sharded) model, and no request fails or waits for a cold load, because the two **overlap**: the target loads the model itself while the source keeps serving; only when the target's own heartbeat shows it serving does the router stop choosing the source; requests already on the source finish (`placement.drain_timeout_seconds`); then the source unloads. A target that never serves (30 minutes by default — a cold target downloads the weights inside that) is unloaded again and **the source is left serving, untouched**. The command prints each step when the move ends; the same steps are events `model.move_started|loaded|flipped|drained|finished|aborted` while it runs.
+
+It refuses up front what cannot work, with the reason: the source does not hold the model, or serves LoRA adapters of it (drop them first — a move does not carry adapters); the target takes no new work (drained, lost), cannot hold the model **beside** what it already has (the model is resident twice during the overlap — the message has the numbers), or runs a one-model-per-process engine (vLLM, SGLang, llama.cpp) that already serves another model, which a load would stop — both models are named; a sharded model (rebuild the gang with `opod shard create`).
+
+What it is not: no KV cache moves, so a conversation the source was serving recomputes its prompt on the target at its next turn (slower first token, same answer). An Ollama source keeps the weights installed after the unload; its placement is marked `released` — not routed to, also after a leader restart — until the model is loaded there again or the weights are removed, and the command says so. A move needs the running leader from start to end (there is no store-only path, unlike `node drain`); a leader that restarts mid-move abandons it safely — the source serves again and the target's copy is simply a second replica.
+
 **The node's weight cache.** Models are pulled once per node into `$OPOD_MODELS_DIR` and shared by every worker on it.
 `opod cache` is how that space is reclaimed safely: it only ever considers files this binary fetched (each carries a
 marker written at download time), it takes the same per-file lock a download takes, and it defaults to a dry run.
@@ -1139,6 +1151,7 @@ print(resp.choices[0].message.content)
 | `POST` | `/admin/v1/models` | Install a model (auto-delegates to shard orchestration if `sharding.required`; `nodes` pulls and warms it on named workers) |
 | `DELETE` | `/admin/v1/models/{id}` | Uninstall (auto-handles sharded teardown) |
 | `POST` | `/admin/v1/models/{id}/load` | Bring a model into engine memory under admission control (`swap`, `pin`, `priority`); 409 `needs_swap` / `blocked_by_pinned`, 422 `impossible` |
+| `POST` | `/admin/v1/models/{id}/move` | Move a whole model between workers by overlap (feature `model_move`). Body `{from, to, ready_timeout_seconds?, drain_timeout_seconds?}`. `200 {model, from, to, steps[], note?}`; `404` unknown model or node; `409` a refusal made before anything was touched (the reason is the message); `502 {error, steps[]}` a move that aborted — the last step says what serves now. Synchronous; the steps are also events `model.move_*` |
 | `POST` | `/admin/v1/models/{id}/unload` | Drain in-flight requests, drop the model from engine RAM (weights stay; cleared from desired placements so it stays unloaded across restarts). Engines that don't support it return `status:"noop"` |
 | `GET` | `/admin/v1/memory` | Live engine residency + the desired set (what `opod model ps` prints) |
 | `POST` | `/admin/v1/adapters` | Load a LoRA adapter on every worker holding the base model, no restart. Body `{name, source, rank?}`; answered per worker. vLLM sizes its LoRA slots at start, so a worker whose engine was started without adapters, or for a smaller rank than `rank`, refuses with both numbers — that adapter needs the worker restarted with it in `OPOD_ADAPTERS` |
@@ -1223,6 +1236,11 @@ opod model load <id> [--swap] [--pin] [--priority N]
                                   models are restored on the next `opod up`.
 opod model unload <id>           Drain, then drop from engine RAM (weights stay
                                   on disk; stays unloaded across restarts)
+opod model move <id> --from <node> --to <node>
+                                  Another worker takes the model over by overlap:
+                                  the source serves until the target does, in-flight
+                                  requests finish, then the source unloads. Refused
+                                  up front when it cannot work; needs the leader
 opod model ps                    Models resident in engine memory + what is free
 
 # --- weights on a node ---

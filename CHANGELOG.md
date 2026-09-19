@@ -81,6 +81,14 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   heartbeating) behind the router, `/readyz`, the waking 503, `/loadz`, `/v1/models`, the shard pickers and
   `opod node ls`; the router applies it before revision groups, so a revision whose only worker is lost or
   cooling down gives its share to the others instead of dropping it on the local fallback
+- `opod model move <id> --from <node> --to <node>` (`POST /admin/v1/models/{id}/move`, feature `model_move`):
+  another worker takes over a whole model by overlap — load on the target while the source serves, flip the
+  router only when the target's heartbeat shows it serving, let in-flight requests on the source finish,
+  unload the source; a target that never serves is unloaded again and the source is left serving; refused up
+  front when it cannot work (target too small beside what it holds, a one-model engine serving something
+  else, a node that takes no new work, a source that does not hold it or serves its adapters, a sharded
+  model); every step is an event `model.move_*`; no KV cache moves; an Ollama source's placement is marked
+  `released` (not routed to, across leader restarts) because its weights stay installed
 - A worker registers which engine it runs (`hardware_json.Engine`, feature `worker_engine`), and each engine
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
