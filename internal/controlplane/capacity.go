@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/opod-io/opod/internal/store"
 )
 
 // Serving capacity, per model.
@@ -51,8 +53,8 @@ func (s *Server) holdersOf(ctx context.Context, model string) modelHolders {
 			continue
 		}
 		for _, p := range ps {
-			if p.ModelID != model {
-				continue
+			if p.ModelID != model || p.Status == store.PlacementReleased {
+				continue // released: moved off this worker; its installed copy is not a holder
 			}
 			switch {
 			case n.Draining():

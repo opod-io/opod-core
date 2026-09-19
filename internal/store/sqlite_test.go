@@ -496,3 +496,48 @@ func TestPlacementColdRoundTripsAndOldRowsAreResident(t *testing.T) {
 		t.Errorf("an upsert writes what it is given: %+v", byModel)
 	}
 }
+
+// A `released` mark (a model the leader moved off a worker whose engine keeps
+// the weights) survives heartbeats while the worker reports the model as not
+// in memory, and a leader-start drain reset does not touch it; the moment the
+// model is resident there again the row is an ordinary ready one.
+func TestReplaceForNodeCarriesReleasedOnlyWhileCold(t *testing.T) {
+	ctx := context.Background()
+	st, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	report := func(cold bool) string {
+		t.Helper()
+		if err := st.Placements().ReplaceForNode(ctx, "w1", []Placement{{NodeID: "w1", ModelID: "m", Status: "ready", LastSeen: time.Now(), Cold: cold}}); err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := st.Placements().GetByNode(ctx, "w1")
+		if len(rows) != 1 {
+			t.Fatalf("rows: %+v", rows)
+		}
+		return rows[0].Status
+	}
+	report(true)
+	if err := st.Placements().SetStatus(ctx, "w1", "m", PlacementReleased); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if got := report(true); got != PlacementReleased {
+			t.Fatalf("heartbeat %d, model installed and not in memory: %q, want released", i, got)
+		}
+	}
+	if n, err := st.Placements().ResetStatus(ctx, PlacementDraining, "ready"); err != nil || n != 0 {
+		t.Fatalf("lifting drains must not touch a released row: %d, %v", n, err)
+	}
+	if rows, _ := st.Placements().GetByModel(ctx, "m"); len(rows) != 0 {
+		t.Fatalf("a released row is not routable: %+v", rows)
+	}
+	if got := report(false); got != "ready" {
+		t.Fatalf("resident again (someone loaded it there): %q, want ready", got)
+	}
+	if got := report(true); got != "ready" {
+		t.Fatalf("the mark does not come back by itself: %q", got)
+	}
+}

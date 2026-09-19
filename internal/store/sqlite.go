@@ -184,7 +184,7 @@ type NodeStore interface {
 type Placement struct {
 	NodeID   string
 	ModelID  string
-	Status   string // ready | loading | error | sleeping | draining (PlacementDraining)
+	Status   string // ready | loading | error | sleeping | draining (PlacementDraining) | released (PlacementReleased)
 	LastSeen time.Time
 	// Cold: the worker answers for the model but it is not in memory now — an
 	// engine that keeps installed weights and loads them on the first request

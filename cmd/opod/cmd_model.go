@@ -19,7 +19,7 @@ func cmdModel(args []string) {
 	help := helpSpec{
 		name:    "model",
 		summary: "install, list, search, inspect, load/unload, or uninstall LLM models",
-		usage:   "opod model <add <id> [--force] [--node a,b,c] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] [--priority N] | unload <id> | remove <id>>",
+		usage:   "opod model <add <id> [--force] [--node a,b,c] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] [--priority N] | unload <id> | move <id> --from <node> --to <node> | remove <id>>",
 		examples: []string{
 			"opod model search                # browse the full catalog",
 			"opod model search coder          # filter to coding models",
@@ -43,6 +43,7 @@ func cmdModel(args []string) {
 			"opod model load nomic-embed-text --pin    # exempt from eviction + engine idle TTL",
 			"opod model remove llama-3.2-3b   # uninstall (prompts; pass --yes to skip)",
 			"opod model unload llama-3.2-3b   # drop from engine RAM without deleting weights",
+			"opod model move llama-3.2-3b --from gpu-a --to gpu-b   # another worker takes the model over; no request fails",
 		},
 		notes: []string{
 			"`add` refuses if the catalog's min_ram_gb / min_vram_gb exceeds detected hardware.",
@@ -50,6 +51,7 @@ func cmdModel(args []string) {
 			"`add` also HEAD-checks the upstream (Ollama registry / HuggingFace) and refuses on a 404 — so a typo'd hf:owner/repo fails here, not at engine launch. Network trouble only warns. OPOD_SKIP_SOURCE_CHECK=1 skips the probe (air-gapped mirrors).",
 			"`load` is memory-aware: it checks live engine residency (Ollama /api/ps) against this machine's RAM budget and refuses rather than overcommit; `--swap` evicts least-recently-used, non-pinned models (drained first, audit-logged). Loaded/pinned models are restored on the next `opod up`.",
 			"`--node a,b,c` pins a (non-sharded) model to specific workers: the leader tells each worker to pull + load it, and it appears as placed once the worker's next heartbeat reports it. Without --node, `add` installs to the leader's local engine.",
+			"`move <id> --from <node> --to <node>` has another worker serve a whole model instead of the one that does, by overlap: the target loads it while the source keeps serving, the router flips only once the target serves, requests in flight on the source finish, then the source unloads. It is refused up front when it cannot work (the target cannot hold the model beside what it has, runs a one-model engine that serves something else, or takes no new work; the source does not hold it, or serves adapters of it; a sharded model). A target that never serves leaves the source serving. No KV cache moves — conversations recompute their prompt on the target. Needs the running leader (`opod up`); steps are events `model.move_*`.",
 			"For sharded models (split across multiple machines) see `opod shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
 			"Adding a model not in the catalog: use a scheme prefix (`hf:owner/repo`, `ollama:tag`, `file:/abs/path.gguf`) for a one-liner, `--from <my.yaml>` to install from your own catalog entry, or drop a YAML file into `~/.opod/catalog/` and run `opod model add <id>`.",
@@ -162,6 +164,12 @@ func cmdModel(args []string) {
 			}
 		}
 		modelUnload(id)
+	case "move":
+		m, err := parseModelMove(args[1:])
+		if err != nil {
+			die("%v\n  usage: opod model move <id> --from <node> --to <node>  (node ids: `opod node ls`)", err)
+		}
+		modelMove(m)
 	case "load":
 		rest := args[1:]
 		id := ""
@@ -192,7 +200,7 @@ func cmdModel(args []string) {
 		_, asJSON := extractJSONFlag(args[1:])
 		modelPs(asJSON)
 	default:
-		dieUnknownSubcommand("model", args[0], []string{"add", "ls", "remove", "search", "info", "load", "unload", "ps"})
+		dieUnknownSubcommand("model", args[0], []string{"add", "ls", "remove", "search", "info", "load", "unload", "move", "ps"})
 	}
 }
 

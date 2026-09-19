@@ -31,13 +31,13 @@ func WorkerEngine(n store.Node) string {
 // (Ollama, MLX) loses nothing. A worker that did not register its engine, or
 // registered one this binary does not link, is judged by the only safe rule:
 // if it serves anything else, refuse. placed is the node's placement rows;
-// the model itself and its own adapter variants ("<model>:<adapter>") are not
-// "something else".
+// the model itself, its own adapter variants ("<model>:<adapter>") and a row
+// the leader released (store.PlacementReleased) are not "something else".
 func LoadWouldReplace(n store.Node, placed []store.Placement, model string) error {
 	var others []string
 	for _, p := range placed {
-		if p.ModelID == model || strings.HasPrefix(p.ModelID, model+":") {
-			continue
+		if p.ModelID == model || strings.HasPrefix(p.ModelID, model+":") || p.Status == store.PlacementReleased {
+			continue // released: installed there, deliberately not served
 		}
 		others = append(others, p.ModelID)
 	}
