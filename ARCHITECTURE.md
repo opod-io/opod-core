@@ -287,6 +287,16 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
    shardCoordinator() returns a llamacpp engine pointing at 127.0.0.1:9001.
 ```
 
+#### Picking the part count: a CLI default, never the API's
+
+`opod shard create <model>` with **no shape at all** — no count, no `--nodes`, no `--tp`/`--pp` — picks the shape itself (`scheduler.PickShards`, a pure function; `internal/scheduler/autoshard.go`). `opod model add <sharded-model>` hands off to the same command, so it picks too.
+
+- **What it reads.** Rows the leader already has — nothing is probed (`scheduler.WorkerMemoryFacts`). A worker is a candidate when its row is `ready` and it heartbeated within `router.heartbeat_max_age_seconds`; the leader's own `local` row never is. Its capacity is the memory it registered — the sum of its cards' memory, else its RAM — under the lifecycle's reserve (`placement.reserve_percent`, `lifecycle.Budget`). What is already on it comes from its placement rows (the models its heartbeats report) and from shard rows (each part of a gang holds an equal share), sized by the lifecycle's estimate, weights × 1.2 (`lifecycle.Footprint`). A model whose size nobody recorded counts as 0, the same optimism admission applies. The gang being replaced is ignored, because a create tears it down first.
+- **The rule.** Parts are taken as equal. A model that fits the freest worker is **1** part. Otherwise it is the **smallest N** whose N freest workers can each hold `need / N`. N never exceeds the live worker count, nor the model's layer count when the catalog records one (`architecture.layers` — a layer is the smallest thing either backend cuts). When nothing fits the command **refuses and names the numbers**: what the model needs, what each worker has free, and what the largest allowed split would ask of the worker that cannot hold it. Equal parts is exact for pipeline stages and conservative for llama.cpp's RPC split, which weights its cut by device memory.
+- **What it sends.** The picked workers go out as an explicit `nodes` list, so the leader builds exactly what was printed (`picked 3 part(s): the model needs …`). A catalog entry with no size keeps its `default_shards`, and says so.
+- **Who wins.** Any shape the operator names is sent untouched and the picker is not consulted (`TestShardShapeExplicitIsNeverChanged`). `POST /admin/v1/shards/create` **never picks**: a body's `nodes`, else its `shards`, else the catalog's `default_shards` is the whole of it (`shardCountFor`, `TestShardCountCallerWins`, `TestCreateShardedNeverPicksACount`). A caller of the API computed its own shape against its own view of the fleet; a leader that chose another would be a second placer with a second truth.
+- **What it does not know.** A worker's `--vram-budget` is not reported to the leader, so a worker sharing its card is sized by the whole card — name the count there. A leader running with an in-memory store (managed mode) shows this command no workers; it refuses and asks for a count.
+
 #### Failure handling
 
 - If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the caller (the CLI, or whoever called `/admin/v1/shards/create`).

@@ -59,6 +59,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - Router: same model on N workers → load-balance; different models → route by placement; a model bigger
   than any node → llama.cpp-RPC sharding (`opod shard create <model> [N] [--nodes …]`), the coordinator on a
   worker, orphan-process sweep on create, `/readyz` counts a ready gang
+- `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
+  workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
+  caller names is sent untouched and `POST /admin/v1/shards/create` never picks
 - Router-only leaders (no local engine) are the default in a cluster; `/readyz` modes: local engine ·
   `router-only` · `sleeping` · `sleeping-workers` · `shard-coordinator`
 - Plan as a watched file (`/etc/opod/plan.json`): one model identity per leader, revision on `/loadz`,

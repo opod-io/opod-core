@@ -8,6 +8,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod/internal/scheduler"
 )
 
 // cmdShard dispatches `opod shard <subcommand>`.
@@ -17,6 +22,7 @@ func cmdShard(args []string) {
 		summary: "orchestrate sharded models (one model split across N machines)",
 		usage:   "opod shard <ls | create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] | remove <model>>",
 		examples: []string{
+			"opod shard create llama-3.3-70b-sharded            # no count: picked from the live workers' free memory",
 			"opod shard create llama-3.3-70b-sharded 2          # split across 2 auto-picked workers",
 			"opod shard create llama-3.3-70b-sharded --nodes gpu-a,gpu-b  # pin to specific machines",
 			"opod shard create llama-3.3-70b-sharded --nodes node-a  # N=1: whole model on one machine, no split",
@@ -31,6 +37,7 @@ func cmdShard(args []string) {
 			"The coordinator runs `llama-server` — by default on the highest-RAM worker (the leader only when there are no workers), so that machine needs `llama-server` on PATH. Override with OPOD_COORDINATOR_NODE=<node_id|local>.",
 			"The catalog entry must have `sharding.required: true` and a local GGUF path in `source.path`.",
 			"A shard count of 1 (or a single --nodes machine) runs the whole model on that host — no rpc-servers, just llama-server on the selected node (the coordinator override is ignored).",
+			"With no count, --nodes, --tp or --pp, this command picks the shape itself: the smallest number of equal parts that fits the live workers' free memory (1 when the model fits one worker; never more parts than workers or than the model's layers) and prints what it picked and why. Any shape you name is sent untouched, and the admin API never picks — a body without a count means the catalog's default_shards.",
 		},
 	}
 	if len(args) == 0 {
@@ -146,8 +153,63 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// shardShape turns what the operator typed into what is sent. A named shape —
+// a count, a node list, a tp/pp split — goes through untouched and pick is
+// never consulted; only a bare `shard create <model>` asks the picker, and its
+// answer is sent as an explicit node list so the leader builds exactly what
+// was printed.
+func shardShape(n int, nodes []string, tp, pp int, pick func() (scheduler.ShardPick, error)) (int, []string, string, error) {
+	if n != 0 || len(nodes) > 0 || tp != 0 || pp != 0 {
+		return n, nodes, "", nil
+	}
+	p, err := pick()
+	if err != nil {
+		return 0, nil, "", err
+	}
+	return p.Shards, p.Nodes, p.Why, nil
+}
+
+// pickShardsFromStore sizes the model against the leader's own rows — the
+// workers it has heard from, what they registered and what is placed on them
+// (scheduler.WorkerMemoryFacts). A model whose size the catalog does not
+// record keeps the catalog's default_shards.
+func pickShardsFromStore(cfg *config.Config, model string) (scheduler.ShardPick, error) {
+	cat := loadCatalogOrExit(cfg)
+	entry := models.FindByID(cat, model)
+	if entry == nil {
+		return scheduler.ShardPick{}, fmt.Errorf("no catalog entry for %q", model)
+	}
+	need := scheduler.ShardNeedBytes(*entry)
+	if need == 0 {
+		return scheduler.ShardPick{Why: "the catalog records no size for this model, so its default_shards applies"}, nil
+	}
+	st := openStoreOrExit(cfg)
+	defer st.Close()
+	maxAge := 60 * time.Second // the leader's own bound when the router check is off
+	if s := cfg.Router.HeartbeatMaxAgeSeconds; s > 0 {
+		maxAge = time.Duration(s) * time.Second
+	}
+	workers, err := scheduler.WorkerMemoryFacts(context.Background(), st, cat, model,
+		cfg.Placement.ReservePercent, maxAge, time.Now())
+	if err != nil {
+		return scheduler.ShardPick{}, fmt.Errorf("read worker memory: %w", err)
+	}
+	return scheduler.PickShards(need, entry.Architecture.Layers, workers)
+}
+
 func shardCreate(model string, n int, nodes []string, tp, pp int) {
 	cfg := loadConfigOrExit()
+	n, nodes, why, err := shardShape(n, nodes, tp, pp, func() (scheduler.ShardPick, error) { return pickShardsFromStore(cfg, model) })
+	if err != nil {
+		die("cannot pick a shard count for %s: %v", model, err)
+	}
+	if why != "" {
+		if n > 0 {
+			note(os.Stdout, "picked %d part(s): %s", n, why)
+		} else {
+			note(os.Stdout, "%s", why)
+		}
+	}
 	body, _ := json.Marshal(map[string]any{
 		"model_id": model, "shards": n, "nodes": nodes, "tp": tp, "pp": pp,
 	})

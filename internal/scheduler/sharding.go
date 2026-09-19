@@ -134,10 +134,12 @@ func (p Parallelism) resolve(ranks int) (Parallelism, error) {
 	return Parallelism{TP: tp, PP: pp, DevicesPerRank: k}, nil
 }
 
-func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, shardCount int, nodeIDs []string, par Parallelism) error {
-	if !entry.Sharding.Required {
-		return fmt.Errorf("model %s is not configured for sharding", entry.ID)
-	}
+// shardCountFor is the whole of how a create request becomes a part count: the
+// named nodes, else the caller's count, else the catalog's default_shards. The
+// leader never derives a count from the fleet — picking one from worker memory
+// is the CLI's default alone (PickShards), sent here as an explicit shape. A
+// caller that computed its own shape therefore always gets exactly that shape.
+func shardCountFor(entry models.Entry, shardCount int, nodeIDs []string) (int, error) {
 	if len(nodeIDs) > 0 {
 		shardCount = len(nodeIDs)
 	}
@@ -145,7 +147,18 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		shardCount = entry.Sharding.DefaultShards
 	}
 	if shardCount < 1 {
-		return fmt.Errorf("shard count must be at least 1 (got %d)", shardCount)
+		return 0, fmt.Errorf("shard count must be at least 1 (got %d)", shardCount)
+	}
+	return shardCount, nil
+}
+
+func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, shardCount int, nodeIDs []string, par Parallelism) error {
+	if !entry.Sharding.Required {
+		return fmt.Errorf("model %s is not configured for sharding", entry.ID)
+	}
+	shardCount, err := shardCountFor(entry, shardCount, nodeIDs)
+	if err != nil {
+		return err
 	}
 	// IDEMPOTENT REPLACE: tear down any prior shard for this model before
 	// (re)creating. Without this, re-running `shard create` (new --nodes, or after
@@ -189,7 +202,6 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	}
 
 	var workers []store.Node
-	var err error
 	if len(nodeIDs) > 0 {
 		workers, err = o.pickWorkersByID(ctx, nodeIDs)
 	} else {

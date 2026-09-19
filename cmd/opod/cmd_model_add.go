@@ -110,7 +110,7 @@ func modelAddDryRunEntry(cfg *config.Config, entry *models.Entry) {
 	}
 
 	if entry.Sharding.Required {
-		fmt.Printf("  %sEngine%s        llama.cpp (sharded across %d workers)\n", bold, reset, entry.Sharding.DefaultShards)
+		fmt.Printf("  %sEngine%s        sharded — the part count is picked from the live workers' free memory (catalog default %d)\n", bold, reset, entry.Sharding.DefaultShards)
 		fmt.Printf("  %sNext step%s     opod shard create %s\n", bold, reset, entry.ID)
 	} else {
 		eng := newEngineFromConfig(cfg)
