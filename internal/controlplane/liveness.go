@@ -36,10 +36,7 @@ const ShardStatusLost = "lost"
 // (check disabled for routing) still needs a bound here; 60 s keeps the old
 // hasServingCapacity default.
 func (s *Server) heartbeatMaxAge() time.Duration {
-	if s.cfg.Router.HeartbeatMaxAgeSeconds > 0 {
-		return time.Duration(s.cfg.Router.HeartbeatMaxAgeSeconds) * time.Second
-	}
-	return store.DefaultHeartbeatMaxAge
+	return store.HeartbeatBound(s.cfg.Router.HeartbeatMaxAgeSeconds)
 }
 
 // nodeAlive reports whether n heartbeated within the staleness bound. The

@@ -789,7 +789,7 @@ opod node undrain <node-id> # changed your mind: back in rotation
 opod node remove <node-id>  # forget it
 ```
 
-A drained node stays drained — across heartbeats and a worker restart — until you `undrain` it; `opod node ls` shows `draining` in its STATE column. A sharded model with a part on it stops serving, and when every worker that holds a model is drained, requests for that model get `503` with `Retry-After` and a message that says it is a drain — other models on the same leader keep serving.
+A drained node stays drained — across heartbeats and a worker restart — until you `undrain` it. `opod node ls` shows the state the leader acts on: `draining` for a drained node, `lost` for one whose heartbeats stopped (`router.heartbeat_max_age_seconds`), whatever the stored row says. `drain`, `undrain` and `remove` go through the running leader — so its router forgets a removed node's cached connection, cooldown and placements at once — and write the store directly only when no leader answers; each says which it did. A sharded model with a part on it stops serving, and when every worker that holds a model is drained, requests for that model get `503` with `Retry-After` and a message that says it is a drain — other models on the same leader keep serving.
 
 **The node's weight cache.** Models are pulled once per node into `$OPOD_MODELS_DIR` and shared by every worker on it.
 `opod cache` is how that space is reclaimed safely: it only ever considers files this binary fetched (each carries a

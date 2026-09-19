@@ -22,6 +22,16 @@ const NodeStateLost = "lost"
 // (router.heartbeat_max_age_seconds = 0).
 const DefaultHeartbeatMaxAge = 60 * time.Second
 
+// HeartbeatBound is the leader's liveness bound for a configured
+// router.heartbeat_max_age_seconds: that many seconds, or
+// DefaultHeartbeatMaxAge when the router's own check is off (0).
+func HeartbeatBound(seconds int) time.Duration {
+	if seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return DefaultHeartbeatMaxAge
+}
+
 // Alive reports whether the node heartbeated within maxAge. The leader's own
 // "local" row never heartbeats and is always alive; maxAge <= 0 means the
 // caller applies no age rule.
