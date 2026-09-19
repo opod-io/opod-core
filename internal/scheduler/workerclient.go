@@ -209,15 +209,31 @@ func (o *Orchestrator) PlaceOnNodes(ctx context.Context, entry models.Entry, nod
 	return nil
 }
 
+// loadModelRequest is the body of the worker's /v1/model/load, field for
+// field what agent.modelLoad reads. File names one GGUF inside Repo: without
+// it a worker given a repository that holds several files has to choose by
+// itself, and may not choose the one the catalog entry means. Key names and
+// the omitted-when-empty File are the wire; the type becomes the SDK's
+// nodeapi.LoadModelRequest when core adopts that package.
+type loadModelRequest struct {
+	ID         string `json:"id"`
+	OllamaName string `json:"ollama_name"`
+	Repo       string `json:"repo"`
+	File       string `json:"file,omitempty"`
+	Path       string `json:"path"`
+	Pin        bool   `json:"pin"`
+}
+
 func (o *Orchestrator) callWorkerLoad(ctx context.Context, node store.Node, entry models.Entry, pin bool) error {
 	// Send source fields, not the whole Entry — the worker resolves the
 	// engine-native name against its own engine (see agent.modelLoad).
-	body, _ := json.Marshal(map[string]any{
-		"id":          entry.ID,
-		"ollama_name": entry.Source.OllamaName,
-		"repo":        entry.Source.Repo,
-		"path":        entry.Source.Path,
-		"pin":         pin,
+	body, _ := json.Marshal(loadModelRequest{
+		ID:         entry.ID,
+		OllamaName: entry.Source.OllamaName,
+		Repo:       entry.Source.Repo,
+		File:       entry.Source.File,
+		Path:       entry.Source.Path,
+		Pin:        pin,
 	})
 	url := workerURL(node.Address) + "/v1/model/load"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
