@@ -789,7 +789,7 @@ opod node undrain <node-id> # changed your mind: back in rotation
 opod node remove <node-id>  # forget it
 ```
 
-A drained node stays drained — across heartbeats and a worker restart — until you `undrain` it; `opod node ls` shows `draining` in its STATE column. A sharded model with a part on it stops serving, and when every worker that holds a model is drained, requests get `503` with `Retry-After` rather than an error from a dead route.
+A drained node stays drained — across heartbeats and a worker restart — until you `undrain` it; `opod node ls` shows `draining` in its STATE column. A sharded model with a part on it stops serving, and when every worker that holds a model is drained, requests for that model get `503` with `Retry-After` and a message that says it is a drain — other models on the same leader keep serving.
 
 **The node's weight cache.** Models are pulled once per node into `$OPOD_MODELS_DIR` and shared by every worker on it.
 `opod cache` is how that space is reclaimed safely: it only ever considers files this binary fetched (each carries a

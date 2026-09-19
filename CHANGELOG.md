@@ -66,6 +66,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- The "can anything serve this?" check is per model: a model whose every holder is drained, lost or asleep
+  answers `503` + `Retry-After` — with the cause in the message — while other models on the leader keep
+  serving; it used to pass a leader-wide check and answer 502/404 from the local engine
 - `GET /v1/models` lists what can be answered for now: a model held only by drained or lost workers (or a
   gang with a part on one) leaves the list; a model that is merely asleep — sleeping workers, a plan that
   scales to zero — is listed, since a request for it is how it wakes
