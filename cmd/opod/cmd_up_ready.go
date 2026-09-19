@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -86,7 +87,7 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println("    opod connect cursor        # or: aider, continue, zed, …")
 		fmt.Println("    opod connect --list        # see all supported clients")
 	}
-	printNetworkPosture(cfg)
+	printNetworkPosture(os.Stdout, cfg)
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")
 	fmt.Println()
@@ -96,27 +97,33 @@ func printReady(cfg *config.Config, adminKey string) {
 // from this process. Designed so an operator running `opod up` can audit
 // the privacy posture at a glance — no surprises, no silent calls. Reads
 // the live config so it reflects what *this* invocation will actually do.
-func printNetworkPosture(cfg *config.Config) {
-	fmt.Println()
-	fmt.Println("  Surfaces:        " + cfg.Surfaces.Summary() + "  (OPOD_UI / OPOD_EGRESS / OPOD_PROTOCOLS / OPOD_CALLBACKS / OPOD_MANAGED)")
-	fmt.Println()
-	fmt.Println("  Network behavior on this node:")
+func printNetworkPosture(w io.Writer, cfg *config.Config) {
+	fmt.Fprintln(w)
+	// Only what exists is named here. This line once listed ui / egress /
+	// callbacks switches for surfaces the binary no longer has.
+	if cfg.Surfaces.Managed {
+		fmt.Fprintln(w, "  Mode:            "+cfg.Surfaces.Summary()+"  (OPOD_MANAGED=1: run by an external manager; the store is an in-memory cache unless OPOD_STORAGE_DSN is set)")
+	} else {
+		fmt.Fprintln(w, "  Mode:            "+cfg.Surfaces.Summary())
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Network behavior on this node:")
 
 	// Tracing
 	if cfg.Observability.OTLPEndpoint == "" {
-		fmt.Println("    · Tracing:       OFF  (set OPOD_OTLP_ENDPOINT=… to your collector to enable)")
+		fmt.Fprintln(w, "    · Tracing:       OFF  (set OPOD_OTLP_ENDPOINT=… to your collector to enable)")
 	} else {
-		fmt.Printf("    · Tracing:       → %s  (your collector; set OFF by clearing OPOD_OTLP_ENDPOINT)\n", cfg.Observability.OTLPEndpoint)
+		fmt.Fprintf(w, "    · Tracing:       → %s  (your collector; set OFF by clearing OPOD_OTLP_ENDPOINT)\n", cfg.Observability.OTLPEndpoint)
 	}
 
 	// Log export — the same audit: where this process's records go besides stderr.
 	if cfg.Env.OTLPLogsEndpoint == "" {
-		fmt.Println("    · Log export:    OFF  (set OPOD_OTLP_LOGS_ENDPOINT=… to your collector to enable)")
+		fmt.Fprintln(w, "    · Log export:    OFF  (set OPOD_OTLP_LOGS_ENDPOINT=… to your collector to enable)")
 	} else {
-		fmt.Printf("    · Log export:    → %s  (your collector, beside stderr; set OFF by clearing OPOD_OTLP_LOGS_ENDPOINT)\n", cfg.Env.OTLPLogsEndpoint)
+		fmt.Fprintf(w, "    · Log export:    → %s  (your collector, beside stderr; set OFF by clearing OPOD_OTLP_LOGS_ENDPOINT)\n", cfg.Env.OTLPLogsEndpoint)
 	}
 
-	fmt.Println("    · Telemetry:     none. Opod never reports installs, usage, errors, or any data to opod.io.")
+	fmt.Fprintln(w, "    · Telemetry:     none. Opod never reports installs, usage, errors, or any data to opod.io.")
 }
 
 // isLlamaCppEngine matches every alias the engine registry accepts for
