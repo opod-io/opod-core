@@ -33,6 +33,15 @@ type Handler struct {
 	Catalog []models.Entry
 	Default string // default model when request.model is "" or "auto"
 
+	// HeartbeatMaxAge is the liveness bound GET /v1/models applies to a
+	// worker (the owner's router.heartbeat_max_age_seconds); 0 =
+	// store.DefaultHeartbeatMaxAge.
+	HeartbeatMaxAge time.Duration
+	// WakesByDesign names models this endpoint answers for even with nothing
+	// awake — a plan whose floor is zero: a request for one gets the waking
+	// 503 + Retry-After, which is how it wakes, so it stays listed. nil = none.
+	WakesByDesign func() []string
+
 	policy atomic.Pointer[Policy] // request-path policy, swapped by the owner (see policy.go)
 }
 
@@ -68,16 +77,42 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 			OwnedBy: "opod",
 		})
 	}
-	// Models resident only on workers (heartbeat placements) are routable, so
-	// list them too — otherwise a router-only leader advertises nothing.
+	// Models resident only on workers (heartbeat placements) are listed too —
+	// otherwise a router-only leader advertises nothing. Listed is what a
+	// request can be answered for NOW, by the rule the router routes by
+	// (store.Node.TakesNewWork): a model held only by drained or lost workers
+	// is not, because picking it from this list would be a 503. A model that
+	// is merely asleep stays: a sleeping placement on a live worker, and a
+	// model the owner says wakes by design — asking for it is how it wakes.
+	maxAge, now := h.HeartbeatMaxAge, time.Now()
+	if maxAge <= 0 {
+		maxAge = store.DefaultHeartbeatMaxAge
+	}
 	if nodes, err := h.Store.Nodes().List(r.Context()); err == nil {
+		takes := make(map[string]bool, len(nodes))
 		for _, n := range nodes {
+			takes[n.ID] = n.TakesNewWork(maxAge, now)
+		}
+		// A sharded model is served by its whole gang: one part on a node
+		// that takes no new work takes the model off the list.
+		gangDown := map[string]bool{}
+		if shards, err := h.Store.Shards().List(r.Context()); err == nil {
+			for _, sh := range shards {
+				if sh.NodeID != "" && sh.NodeID != "local" && !takes[sh.NodeID] {
+					gangDown[sh.ModelID] = true
+				}
+			}
+		}
+		for _, n := range nodes {
+			if !takes[n.ID] {
+				continue
+			}
 			ps, err := h.Store.Placements().GetByNode(r.Context(), n.ID)
 			if err != nil {
 				continue
 			}
 			for _, p := range ps {
-				if seen[p.ModelID] || (p.Status != "" && p.Status != "ready") {
+				if seen[p.ModelID] || gangDown[p.ModelID] || !listedStatus(p.Status) {
 					continue
 				}
 				seen[p.ModelID] = true
@@ -85,7 +120,22 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if h.WakesByDesign != nil {
+		for _, id := range h.WakesByDesign() {
+			if id != "" && !seen[id] {
+				seen[id] = true
+				out.Data = append(out.Data, modelObj{ID: id, Object: "model", Created: now.Unix(), OwnedBy: "opod"})
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// listedStatus: a placement that serves now ("ready"; "" on rows from before
+// statuses) or wakes on demand ("sleeping"). A placement the leader is
+// draining, one still loading and a failed one are not listed.
+func listedStatus(status string) bool {
+	return status == "" || status == "ready" || status == "sleeping"
 }
 
 // ---- /v1/chat/completions ----

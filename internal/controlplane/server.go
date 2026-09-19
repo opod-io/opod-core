@@ -158,6 +158,15 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
 	// policy snapshot switches the weights on.
 	routed.SetLoadSource(s.loadSignal)
+	// GET /v1/models lists what can be answered for now, by the leader's
+	// liveness bound — plus the plan's model while the plan parks it by design.
+	openaiH.HeartbeatMaxAge = s.heartbeatMaxAge()
+	openaiH.WakesByDesign = func() []string {
+		if _, model := s.plan.get(); model != "" && s.plan.sleepsByDesign() {
+			return []string{model}
+		}
+		return nil
+	}
 	return s
 }
 

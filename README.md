@@ -1110,7 +1110,7 @@ print(resp.choices[0].message.content)
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
 | `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
-| `GET` | `/v1/models` | Lists available models |
+| `GET` | `/v1/models` | Lists the models a request can be answered for now: installed on the leader, or held by a worker that takes new work. A model held only by drained or lost workers is not listed; one that is merely asleep (sleeping workers, or a plan that scales to zero) is, because a request for it is how it wakes (`503` + `Retry-After`) |
 
 (Planned: `/v1/completions`.)
 
