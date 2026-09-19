@@ -273,5 +273,5 @@ for img in "${images[@]}"; do
   fi
 done
 
-[ $push = 1 ] && log "done. Re-pin on the cell: console → Rollouts → 'Roll out plan…' (or POST /api/v1/endpoints/{id}/rollouts)."
+[ $push = 1 ] && log "done. A cluster that pins images by digest picks the new one up when its operator re-pins (a rollout)."
 exit 0

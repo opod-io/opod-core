@@ -3,8 +3,8 @@ package fetch
 // One fetch for every caller — the worker's llama-server launch, the
 // leader's sharding pull, `opod fetch` (the control plane's prefetch Job).
 //
-// The design-partner cell (2026-09-14) corrupted a shared node cache when
-// three workers pulled one file into the same path at once: each writer
+// A shared node cache was corrupted (2026-09-14) when three workers pulled
+// one file into the same path at once: each writer
 // opened the target and their writes interleaved. Here a download is
 // (1) exclusive per target — a lock file taken with O_EXCL; a second caller
 // waits for the first to finish instead of pulling beside it — (2) written to

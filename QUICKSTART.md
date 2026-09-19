@@ -585,22 +585,15 @@ opod upgrade                     # alias of `update`
 
 If your binary lives in `/usr/local/bin/` (installed with sudo), `opod update` stages the new binary next to it and prints the exact `sudo mv` command to finish.
 
-### 🔔 Update notice on `opod up`
+### 🔕 No automatic update check
 
-`opod up` checks GitHub for a newer release on startup and prints a one-liner if one exists. The check is cached for 24 hours at `~/.opod/update-check.json` so it only hits GitHub once a day, with a hard 1-second budget so it never slows startup.
-
-To disable (offline environments, privacy):
-
-```bash
-export OPOD_NO_UPDATE_CHECK=1
-opod up
-```
+`opod up` never contacts GitHub. A release is looked up only when you run `opod update` (or `opod update --check`) yourself — there is nothing to switch off in an offline or private environment.
 
 ---
 
 ## 🎯 Next steps
 
-- **See the full UI tour, CLI reference, troubleshooting**: [README.md](README.md)
+- **See the full CLI + API reference, configuration, troubleshooting**: [README.md](README.md)
 - **Understand the architecture**: [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Per-command help**: `opod <cmd> --help` for any command
 - **Add more workers**: see [Add a second machine](#-add-a-second-or-third-machine) above
@@ -624,29 +617,15 @@ Opod prints this same list at startup as the "Network behavior on this node" ban
 
 | Direction | When | Disable |
 |---|---|---|
-| → `github.com/opod-io/opod-core/releases/latest` | At `opod up`, max 1× per 24h. Anonymous; no Opod-specific identifier sent. Cached at `~/.opod/update-check.json`. | `OPOD_NO_UPDATE_CHECK=1` |
-| → engine endpoint (`ollama` / `vllm` / `mlx` / `llamacpp`) | Every inference request. Engine is operator-selected via `engine.preferred`. | Don't pick that engine. |
-| → `api.anthropic.com` | On `claude-*` requests if `ANTHROPIC_API_KEY` is set. | Unset the key. |
-| → `api.openai.com` | On `gpt-*`/`o-*` requests if `OPENAI_API_KEY` is set. | Unset the key. |
-| → `bedrock-runtime.<region>.amazonaws.com` | On `anthropic.*` requests if `OPOD_BEDROCK_REGION` is set. Uses AWS credentials chain. | Unset `OPOD_BEDROCK_REGION`. |
-| → `<location>-aiplatform.googleapis.com` | On `gemini-*` requests if `OPOD_VERTEX_PROJECT` is set. Uses ADC. | Unset `OPOD_VERTEX_PROJECT`. |
-| → `openrouter.ai/api/v1` | On `openrouter/<model>` requests if `OPENROUTER_API_KEY` is set. | Unset the key (or set `router.fallback.openrouter_url` to redirect). |
-| → `api.groq.com/openai/v1` | On `groq/<model>` requests if `GROQ_API_KEY` is set. | Unset the key. |
-| → `api.together.xyz/v1` | On `together/<model>` requests if `TOGETHER_API_KEY` is set. | Unset the key. |
-| → `api.fireworks.ai/inference/v1` | On `fireworks/<model>` requests if `FIREWORKS_API_KEY` is set. | Unset the key. |
-| → `api.cohere.com/compatibility/v1` | On `cohere/<model>` requests if `COHERE_API_KEY` is set. | Unset the key. |
-| → `api.mistral.ai/v1` | On `mistral/<model>` requests if `MISTRAL_API_KEY` is set. | Unset the key. |
-| → `api.perplexity.ai` | On `perplexity/<model>` requests if `PERPLEXITY_API_KEY` is set. | Unset the key. |
-| → `OPOD_WHISPER_ENDPOINT` | On `POST /v1/audio/transcriptions` if set. | Unset; endpoint returns 501 with setup hint. |
-| → `OPOD_PIPER_ENDPOINT` | On `POST /v1/audio/speech` if set. | Unset; endpoint returns 501. |
-| → OTLP collector | If `OPOD_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector, not upstream. | Unset `OPOD_OTLP_ENDPOINT`. |
-| → webhook URL(s) | Every usage / audit event if `observability.callbacks: [- kind: webhook]` is configured. HMAC-SHA256 signature in `X-Opod-Signature`. | Remove the entry from `config.yaml`. |
-| → `cloud.langfuse.com` (or `host`) | Every usage event if `observability.callbacks: [- kind: langfuse]` is configured. | Remove the entry. |
-| → S3 bucket (or `endpoint`) | Batched usage / audit events as NDJSON objects if `observability.callbacks: [- kind: s3]` is configured. Uploads on the worker goroutine, never the request path. | Remove the entry. |
-| → guardrail webhook URL(s) | Every `/v1/chat/completions` if `observability.guardrails:` is configured. **Synchronous on the request path**; gateway waits for the response. | Remove the entry. |
-| → HuggingFace / Ollama registry | At `opod model add` when pulling weights for a catalog entry. Operator-invoked. | Don't run `opod model add`. |
+| → engine endpoint (`ollama` / `vllm` / `sglang` / `mlx` / `llamacpp`) | Every inference request. The engine is operator-selected (`engine.preferred`) and normally on this host or your LAN. | Don't pick that engine. |
+| ↔ leader / workers | A worker you joined heartbeats to its leader every 5 s and receives model loads; HMAC-signed per node. Only between machines you joined. | `opod node remove`, or don't `opod join`. |
+| → Hugging Face Hub (or `HF_ENDPOINT`) / the Ollama registry | When weights are pulled: `opod model add`, `opod fetch`, the first-run starter model you accepted, a worker loading a model it does not hold yet. | Pre-place the weights in the models directory; point `HF_ENDPOINT` at your mirror. |
+| → `github.com/opod-io/opod-core/releases/latest` | Only when you run `opod update` / `opod update --check`. Anonymous; no Opod-specific identifier sent. **Never at `opod up`.** | Don't run `opod update`. |
+| → OTLP collector (traces) | If `OPOD_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector. | Unset `OPOD_OTLP_ENDPOINT`. |
+| → OTLP collector (logs) | If `OPOD_OTLP_LOGS_ENDPOINT` is set. This process's log records, beside stderr, to your own collector. | Unset `OPOD_OTLP_LOGS_ENDPOINT`. |
+| → guardrail webhook URL(s) | Every `/v1/chat/completions` if `observability.guardrails:` is configured. **Synchronous on the request path**; the gateway waits for the answer. | Remove the entry from `config.yaml`. |
 
-Set `OPOD_NO_UPDATE_CHECK=1` if you want **zero** outbound calls from `opod up` itself (assuming no API keys / OTLP / Bedrock / Vertex are configured). The gateway only talks to engines you've chosen and vendors you've keyed.
+That is the whole list. Opod does not forward requests to any cloud model vendor, holds no vendor API keys, and has no usage callbacks; with no OTLP endpoint and no guardrail configured, `opod up` makes **zero** outbound calls beyond the engines and nodes you chose.
 
 ---
 
