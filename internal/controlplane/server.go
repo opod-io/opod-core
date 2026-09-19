@@ -180,7 +180,25 @@ func buildResponseCache(cfg config.ResponseCacheConfig, st store.Store, log *slo
 	}
 }
 
+// liftStaleDrains sets every placement left `draining` back to `ready`. A
+// placement drain belongs to the leader process that started it — whatever
+// was driving it (an eviction, a move) died with that process — and since the
+// mark now outlives heartbeats, one left in a file-backed store would keep a
+// serving worker out of rotation with nothing alive to end it. The model was
+// never unloaded, so it is simply serving again.
+func (s *Server) liftStaleDrains(ctx context.Context) {
+	n, err := s.store.Placements().ResetStatus(ctx, store.PlacementDraining, "ready")
+	if err != nil {
+		s.log.Warn("placements left draining by a previous leader process were not lifted", "err", err)
+		return
+	}
+	if n > 0 {
+		s.log.Info("lifted placement drains left by a previous leader process", "placements", n)
+	}
+}
+
 func (s *Server) Start(ctx context.Context) error {
+	s.liftStaleDrains(ctx)
 	s.StartPlanWatcher(ctx)
 	s.StartAuthWatcher(ctx)
 	s.StartPolicyWatcher(ctx)

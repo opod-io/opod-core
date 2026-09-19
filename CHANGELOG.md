@@ -66,6 +66,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- A placement the leader marks `draining` stays out of rotation across the worker's heartbeats (feature
+  `placement_drain`) — it used to be rewritten to `ready` within 5 s; it ends when it is set back, when the
+  model leaves the worker, or at a leader start
 - A LoRA adapter's `rank` travels on the live path too (`POST /admin/v1/adapters {name, source, rank?}` →
   the worker's `/v1/adapters/load`); a worker whose vLLM was started without LoRA slots, or for a smaller
   rank, refuses with `409` and both numbers instead of relaying the engine's error

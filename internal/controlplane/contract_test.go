@@ -76,6 +76,11 @@ func TestLeaderContract(t *testing.T) {
 			t.Errorf("feature %q advertised false — remove the key instead", k)
 		}
 	}
+	for _, k := range contractFeatureFloor {
+		if !caps.Features[k] {
+			t.Errorf("feature %q left the contract — feature keys are additive-only: a manager probes for it", k)
+		}
+	}
 	assertContractEngines(t, caps.Features, caps.Engines)
 
 	rec = httptest.NewRecorder()
@@ -84,6 +89,18 @@ func TestLeaderContract(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &ver); err != nil || ver["version"] == "" || ver["contract"] != ContractVersion {
 		t.Fatalf("version: %v %s", err, rec.Body.String())
 	}
+}
+
+// contractFeatureFloor is every feature key the contract has published. A key
+// may be added (here too); one that disappears fails the build, because a
+// manager that probes for it would silently stop using the mechanism.
+var contractFeatureFloor = []string{
+	"events_stream", "usage_stream", "loadz", "shards", "plan_file", "auth_file", "router_only_ready",
+	"routing_weights", "model_revision", "adapters_runtime", "vram_budget", "stream_boot", "load_signals",
+	"lora", "boot_id", "tls_listener", "pd_roles", "routing_load_aware", "worker_sleep", "policy_file",
+	"shard_head", "ttft", "engines", "fetch_snapshot", "otlp_logs", "cache_prune", "gang_devices_per_rank",
+	"node_drain",      // POST /admin/v1/nodes/{id}/drain|undrain, honoured by every picker
+	"placement_drain", // a draining placement survives the worker's heartbeats
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

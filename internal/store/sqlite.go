@@ -184,7 +184,7 @@ type NodeStore interface {
 type Placement struct {
 	NodeID   string
 	ModelID  string
-	Status   string // ready | loading | error
+	Status   string // ready | loading | error | sleeping | draining (PlacementDraining)
 	LastSeen time.Time
 }
 
@@ -199,6 +199,9 @@ type PlacementStore interface {
 	// A draining placement is invisible to GetByModel, so the router
 	// stops sending new requests to it.
 	SetStatus(ctx context.Context, nodeID, modelID, status string) error
+	// ResetStatus rewrites every placement whose status is from to to, and
+	// says how many it changed.
+	ResetStatus(ctx context.Context, from, to string) (int64, error)
 }
 
 // DesiredPlacement is the operator's declared intent that a node should
