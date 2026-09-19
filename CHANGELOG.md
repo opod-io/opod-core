@@ -66,6 +66,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- `opod node remove` goes through the running leader (its router drops the node's cached connection, cooldown
+  and placements) and falls back to the store — placements included — only when none answers; drain, undrain
+  and remove say which path they took; `opod node ls` shows the live state (`lost`, `draining`)
 - The "can anything serve this?" check is per model: a model whose every holder is drained, lost or asleep
   answers `503` + `Retry-After` — with the cause in the message — while other models on the leader keep
   serving; it used to pass a leader-wide check and answer 502/404 from the local engine

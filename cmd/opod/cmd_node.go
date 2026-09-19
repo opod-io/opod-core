@@ -9,12 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
 )
 
-// cmdNode dispatches `opod node <subcommand>`. ls/show/remove read and write
-// the leader's store directly; drain/undrain go through the admin API when a
-// leader is running (setNodeState).
+// cmdNode dispatches `opod node <subcommand>`. ls/show read the leader's
+// store; drain/undrain/remove go through the admin API when a leader is
+// running and fall back to the store when none answers (throughLeader), and
+// say which it was.
 func cmdNode(args []string) {
 	help := helpSpec{
 		name:    "node",
@@ -25,10 +27,12 @@ func cmdNode(args []string) {
 			"opod node show n_abc123",
 			"opod node drain n_abc123             # no new requests or shard parts go to it; in-flight finishes",
 			"opod node undrain n_abc123           # back in rotation",
-			"opod node remove n_abc123            # forget it (prompts; worker keeps running)",
+			"opod node remove n_abc123            # forget it, through the running leader (prompts; worker keeps running)",
 			"opod node remove n_abc123 --yes      # skip the prompt (for scripts)",
 		},
 		notes: []string{
+			"`ls` shows the state the leader acts on: `lost` when a worker's heartbeats stopped, `draining` when you drained it.",
+			"drain, undrain and remove ask the running leader and fall back to the store only when none answers; each says which.",
 			"Add a new node: `opod token create --node` then on the worker run `opod join \"<url>?token=…\"` (quoted: `?` is a glob in zsh).",
 		},
 	}
@@ -83,11 +87,29 @@ func nodeLs() {
 		return
 	}
 	fmt.Printf("%-14s %-20s %-12s %-22s %-10s %s\n", "ID", "HOSTNAME", "OS/ARCH", "ADDRESS", "STATE", "LAST HB")
-	for _, n := range nodes {
-		fmt.Printf("%-14s %-20s %-12s %-22s %-10s %s\n",
-			n.ID, n.Hostname, n.OS+"/"+n.Arch, n.Address, n.State,
-			n.LastHeartbeat.Format(time.RFC3339))
+	for _, r := range nodeRows(cfg, nodes, time.Now()) {
+		fmt.Printf("%-14s %-20s %-12s %-22s %-10s %s\n", r.ID, r.Hostname, r.Platform, r.Address, r.State, r.LastHB)
 	}
+}
+
+// nodeRow is one line of `opod node ls`.
+type nodeRow struct{ ID, Hostname, Platform, Address, State, LastHB string }
+
+// nodeRows renders the listing. STATE is the state the leader acts on, not
+// the stored column: the same rule the router routes by (store.Node.LiveState
+// under the leader's heartbeat bound), so a worker whose heartbeats stopped
+// reads `lost` here exactly when the leader stops sending it requests, and a
+// drained one reads `draining`.
+func nodeRows(cfg *config.Config, nodes []store.Node, now time.Time) []nodeRow {
+	maxAge := store.HeartbeatBound(cfg.Router.HeartbeatMaxAgeSeconds)
+	out := make([]nodeRow, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeRow{
+			ID: n.ID, Hostname: n.Hostname, Platform: n.OS + "/" + n.Arch, Address: n.Address,
+			State: n.LiveState(maxAge, now), LastHB: n.LastHeartbeat.Format(time.RFC3339),
+		})
+	}
+	return out
 }
 
 func nodeShow(id string) {
@@ -123,46 +145,102 @@ func nodeDrain(id string) {
 	if id == "local" {
 		die("the leader's own node cannot be drained — unload its models (`opod model unload <id>`) or stop the leader (`opod down`)")
 	}
-	setNodeState(id, "drain", store.NodeStateDraining)
-	ok(os.Stdout, "%s is draining: it gets no new requests and no new shard parts; requests already on it finish. A sharded model with a part on it stops serving.", id)
+	cfg := loadConfigOrExit()
+	via, err := setNodeState(cfg, id, "drain", store.NodeStateDraining)
+	if err != nil {
+		die("drain %s: %v", id, err)
+	}
+	ok(os.Stdout, "%s is draining (%s): it gets no new requests and no new shard parts; requests already on it finish. A sharded model with a part on it stops serving.", id, via)
 	note(os.Stdout, "it stays drained across heartbeats and a worker restart — undo with `opod node undrain %s`", id)
 }
 
 func nodeUndrain(id string) {
-	setNodeState(id, "undrain", store.NodeStateReady)
-	ok(os.Stdout, "%s is back in rotation: the router may choose it from the next request on", id)
+	cfg := loadConfigOrExit()
+	via, err := setNodeState(cfg, id, "undrain", store.NodeStateReady)
+	if err != nil {
+		die("undrain %s: %v", id, err)
+	}
+	ok(os.Stdout, "%s is back in rotation (%s): the router may choose it from the next request on", id, via)
+}
+
+// The two ways a node command reaches the leader's state, as the command
+// reports them.
+const (
+	viaLeader = "through the running leader"
+	viaStore  = "written to the store — no leader answered"
+)
+
+// throughLeader runs one admin call and says whether a leader took it. A
+// leader that answers with a refusal is final (its body is the error); only
+// a call that reached nobody falls back to the store.
+func throughLeader(cfg *config.Config, method, path string) (took bool, err error) {
+	resp, adminErr := adminCall(context.Background(), cfg, method, path, nil)
+	if adminErr == nil {
+		return true, nil
+	}
+	if len(resp) > 0 {
+		return true, fmt.Errorf("%v: %s", adminErr, strings.TrimSpace(string(resp)))
+	}
+	return false, nil
 }
 
 // setNodeState asks the running leader (POST /admin/v1/nodes/{id}/<verb>, so
 // the change is on its event stream); with no leader answering it writes the
-// state column of the row directly — the leader reads it on every pick.
-func setNodeState(id, verb, state string) {
-	cfg := loadConfigOrExit()
-	resp, adminErr := adminCall(context.Background(), cfg, "POST", "/admin/v1/nodes/"+url.PathEscape(id)+"/"+verb, nil)
-	if adminErr == nil {
-		return
-	}
-	// A body means the leader IS running and refused: its word is final.
-	if len(resp) > 0 {
-		die("%s %s: %v: %s", verb, id, adminErr, strings.TrimSpace(string(resp)))
+// state column of the row directly — a leader reads it on every pick.
+func setNodeState(cfg *config.Config, id, verb, state string) (via string, err error) {
+	if took, err := throughLeader(cfg, "POST", "/admin/v1/nodes/"+url.PathEscape(id)+"/"+verb); took {
+		return viaLeader, err
 	}
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	found, err := st.Nodes().SetState(context.Background(), id, state)
 	if err != nil {
-		die("update node: %v", err)
+		return "", fmt.Errorf("update node: %w", err)
 	}
 	if !found {
-		die("no such node: %s", id)
+		return "", fmt.Errorf("no such node")
 	}
+	return viaStore, nil
 }
 
 func nodeRemove(id string) {
 	cfg := loadConfigOrExit()
+	via, err := removeNode(cfg, id)
+	if err != nil {
+		die("remove %s: %v", id, err)
+	}
+	if via == viaLeader {
+		ok(os.Stdout, "removed %s (%s): its placements are gone and the router dropped its cached connection, cooldown and sticky pins", id, via)
+		return
+	}
+	ok(os.Stdout, "removed %s and its placements (%s)", id, via)
+}
+
+// removeNode forgets a node. A running leader must do it itself (DELETE
+// /admin/v1/nodes/{id}): besides the rows it holds a cached connection to the
+// worker, its cooldown and its sticky pins in memory, and a row deleted
+// behind its back leaves all of that — and the node's placements — in place.
+// With no leader answering, the node row and its placements are deleted from
+// the store.
+func removeNode(cfg *config.Config, id string) (via string, err error) {
+	if took, err := throughLeader(cfg, "DELETE", "/admin/v1/nodes/"+url.PathEscape(id)); took {
+		return viaLeader, err
+	}
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	if err := st.Nodes().Delete(context.Background(), id); err != nil {
-		die("delete node: %v", err)
+	ctx := context.Background()
+	n, err := st.Nodes().Get(ctx, id)
+	if err != nil {
+		return "", err
 	}
-	ok(os.Stdout, "removed %s", id)
+	if n == nil {
+		return "", fmt.Errorf("no such node")
+	}
+	if err := st.Placements().ReplaceForNode(ctx, id, nil); err != nil {
+		return "", fmt.Errorf("delete placements: %w", err)
+	}
+	if err := st.Nodes().Delete(ctx, id); err != nil {
+		return "", fmt.Errorf("delete node: %w", err)
+	}
+	return viaStore, nil
 }
