@@ -102,6 +102,7 @@ func contractFeatures() map[string]bool {
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one
 		"otlp_logs":             true, // OPOD_OTLP_LOGS_ENDPOINT: the leader's own log records over OTLP/HTTP, teed beside stderr; bounded queue, never blocks
 		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)
+		"placement_drain":       true, // a placement the leader marks draining stays out of rotation across the worker's heartbeats, until it is set back, the model leaves the worker, or the leader restarts
 		"node_drain":            true, // POST /admin/v1/nodes/{id}/drain|undrain: a draining node gets no new request and no new shard part, in-flight finishes; the state survives heartbeats and a re-register; /readyz and the waking 503 do not count it
 		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
 	}

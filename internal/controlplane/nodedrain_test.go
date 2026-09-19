@@ -269,3 +269,70 @@ func TestLeaderNodeIsNotDrainable(t *testing.T) {
 		t.Fatalf("local reads %+v after a refused drain", n)
 	}
 }
+
+// TestPlacementDrainSurvivesHeartbeats: the per-model switch. A placement the
+// leader marks draining used to be rewritten to ready by the worker's next
+// heartbeat (5 s), so nothing could be drained per model on a worker. It now
+// holds: requests for that model go to the other worker and none fails, the
+// worker's other models are untouched, the row goes when the model leaves the
+// heartbeat, and a leader start lifts marks a previous process left behind.
+func TestPlacementDrainSurvivesHeartbeats(t *testing.T) {
+	srv, ts, workers := drainFixture(t)
+	ctx := context.Background()
+	admin := Caller{Admin: true}
+	beat := func(id string, models ...string) {
+		t.Helper()
+		if err := srv.HeartbeatNode(ctx, HeartbeatRequest{ID: id, LoadedModels: models}, admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beat("w1", "m", "other")
+	if err := srv.store.Placements().SetStatus(ctx, "w1", "m", store.PlacementDraining); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		beat("w1", "m", "other")
+	}
+	status := func(node string) map[string]string {
+		rows, _ := srv.store.Placements().GetByNode(ctx, node)
+		out := map[string]string{}
+		for _, r := range rows {
+			out[r.ModelID] = r.Status
+		}
+		return out
+	}
+	if got := status("w1"); got["m"] != store.PlacementDraining || got["other"] != "ready" {
+		t.Fatalf("after three heartbeats: %v, want m draining and other ready", got)
+	}
+	before1, before2 := workers["w1"].chats.Load(), workers["w2"].chats.Load()
+	for i := 0; i < 10; i++ {
+		if resp, out := chat(t, ts, drainChatBody, ""); resp.StatusCode != http.StatusOK {
+			t.Fatalf("chat %d with w1's placement draining: %d %s", i, resp.StatusCode, out)
+		}
+	}
+	if workers["w1"].chats.Load() != before1 || workers["w2"].chats.Load() != before2+10 {
+		t.Errorf("requests for a draining placement: w1 +%d, w2 +%d; want 0 and 10",
+			workers["w1"].chats.Load()-before1, workers["w2"].chats.Load()-before2)
+	}
+	// The worker's other model still routes to it.
+	if resp, out := chat(t, ts, `{"model":"other","messages":[{"role":"user","content":"hi"}]}`, ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the worker's other model: %d %s", resp.StatusCode, out)
+	}
+	if workers["w1"].chats.Load() != before1+1 {
+		t.Error("a placement drain took the whole worker out")
+	}
+
+	// The model leaves the heartbeat: the row goes, exactly as before.
+	beat("w1", "other")
+	if got := status("w1"); len(got) != 1 || got["other"] != "ready" {
+		t.Fatalf("model gone from the heartbeat: %v", got)
+	}
+
+	// A mark a previous leader process left behind is lifted at start.
+	beat("w1", "m", "other")
+	_ = srv.store.Placements().SetStatus(ctx, "w1", "m", store.PlacementDraining)
+	srv.liftStaleDrains(ctx)
+	if got := status("w1"); got["m"] != "ready" {
+		t.Fatalf("after a leader start: %v, want m ready", got)
+	}
+}

@@ -45,23 +45,57 @@ func (s *sqlitePlacements) GetByNode(ctx context.Context, nodeID string) ([]Plac
 	return scanPlacements(rows)
 }
 
-// ReplaceForNode atomically replaces the placement set for a node — useful
-// when a worker reports its full loaded-model list on heartbeat.
+// PlacementDraining marks a placement the leader is taking out of rotation:
+// GetByModel does not return it, so the router sends it nothing new, while
+// requests already on it finish.
+const PlacementDraining = "draining"
+
+// ReplaceForNode atomically replaces the placement set for a node — what a
+// worker reports as loaded on every heartbeat — with one thing carried over:
+// a row marked PlacementDraining keeps that mark while its model stays in the
+// set. The mark is the leader's word (SetStatus), not something a worker
+// reports, so the report must not erase it; it ends when SetStatus sets the
+// row back, or when the model leaves the worker's report and the row goes
+// with it. Read and write share one transaction, so a mark set a moment
+// before a heartbeat is never lost to it.
 func (s *sqlitePlacements) ReplaceForNode(ctx context.Context, nodeID string, ps []Placement) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	draining := map[string]bool{}
+	if len(ps) > 0 {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT model_id FROM model_placements WHERE node_id = ? AND status = ?`, nodeID, PlacementDraining)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			draining[id] = true
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM model_placements WHERE node_id = ?`, nodeID); err != nil {
 		return err
 	}
 	for _, p := range ps {
+		status := p.Status
+		if draining[p.ModelID] {
+			status = PlacementDraining
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO model_placements(node_id, model_id, status, last_seen) VALUES(?,?,?,?)
 			 ON CONFLICT(node_id, model_id) DO UPDATE SET
 			   status=excluded.status, last_seen=excluded.last_seen`,
-			p.NodeID, p.ModelID, p.Status, p.LastSeen.Unix()); err != nil {
+			p.NodeID, p.ModelID, status, p.LastSeen.Unix()); err != nil {
 			return err
 		}
 	}
@@ -85,6 +119,14 @@ func (s *sqlitePlacements) SetStatus(ctx context.Context, nodeID, modelID, statu
 		return fmt.Errorf("no placement for %s on %s", modelID, nodeID)
 	}
 	return nil
+}
+
+func (s *sqlitePlacements) ResetStatus(ctx context.Context, from, to string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE model_placements SET status = ? WHERE status = ?`, to, from)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func scanPlacements(rows *sql.Rows) ([]Placement, error) {

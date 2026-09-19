@@ -178,6 +178,11 @@ func (s *Server) reconcileShardsOn(n store.Node) {
 // engine-native names mapped back to catalog ids, one row per (node,
 // model), status "sleeping" while the engine sleeps. Residency changes are
 // recorded as model.loaded / model.unloaded.
+//
+// A heartbeat reports residency, not routability: a placement the leader
+// marked draining (Placements().SetStatus) stays draining for as long as the
+// worker keeps reporting the model (ReplaceForNode carries the mark), and
+// goes like any other row when the model leaves the report.
 func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller Caller) error {
 	n, err := s.store.Nodes().Get(ctx, req.ID)
 	if err != nil {

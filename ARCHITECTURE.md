@@ -226,6 +226,11 @@ Worker heartbeats carry `loaded_models`; the leader calls `PlacementStore.Replac
 `draining` instantly unroutes it — that's the hook the memory lifecycle uses
 during evictions (drain → unload → back to `ready`, since the model stays
 installed and demand-loadable).
+A heartbeat does not undo the flip: `ReplaceForNode` keeps a `draining` mark
+while the worker still reports the model, and the row goes — mark and all —
+when the model leaves the report (`TestReplaceForNodeKeepsADrainingMark`,
+`TestPlacementDrainSurvivesHeartbeats`). A leader start lifts marks left by a
+previous process.
 
 ### Memory lifecycle (`internal/lifecycle`)
 
@@ -679,7 +684,7 @@ Steps 2–3 are bounded by a timeout, and **a timeout leaves everything as it wa
 **What is missing today** — each is a small, additive mechanism; together they are the work:
 
 1. **A worker-side unload.** Workers expose `/v1/model/load`, `/sleep` and `/resume`; there is no `/v1/model/unload`. The leader's `POST /admin/v1/models/{id}/unload` acts on the leader's own engine only. Needed: `POST /v1/model/unload {id}` on the worker — engine unload where the driver supports it, a supervisor stop of the engine process where the worker launched one (`vllm-serve`, `sglang-serve`, `llama-server`) — refused while a shard part of that model runs there.
-2. **A flip that survives a heartbeat.** The store already has the right switch: a placement whose status is `draining` is invisible to `Placements().GetByModel`, which is how the local lifecycle drains before an eviction. But a worker's rows are rewritten as `ready` by every heartbeat (`HeartbeatNode` → `ReplaceForNode`, every 5 s), so on a worker the mark lasts at most one interval. Needed: the leader remembers the (node, model) pairs it is draining and `HeartbeatNode` writes those rows as `draining` until the move ends — in memory is enough, since a leader restart abandons the move and the source, never unloaded, is simply serving again.
+2. **A flip that survives a heartbeat — built (feature `placement_drain`).** A placement whose status is `draining` is invisible to `Placements().GetByModel`, which is how the local lifecycle drains before an eviction; on a worker the mark used to last one heartbeat, because every heartbeat rewrote the node's rows as `ready`. `ReplaceForNode` now carries the mark: inside its one transaction a row that was `draining` stays `draining` while the model is still in the worker's report, and goes with the row when the model leaves it. The heartbeat body is unchanged — a worker reports residency, never routability. The mark is set and lifted with `Placements().SetStatus` (no admin route sets it yet: the move is its first caller), and since it now lives in the store rather than in one heartbeat interval, a leader start lifts every mark a previous process left (`liftStaleDrains`) — a restart abandons the move and the source, never unloaded, is simply serving again.
 3. **The worker's engine, known to the leader.** Registration carries hardware, not the engine. Without it the leader cannot tell a one-model worker from an Ollama one, so it can neither refuse the target that would lose its model (row 1 of the table) nor choose the right step 6. Until it is registered, the only safe rule is the blunt one: refuse any target that has a placement for another model.
 4. **An answer for Ollama sources** (last cell of the table): delete the weights on the source, or keep the exclusion as durable state. Deleting is what "move" says; it is also the only one of the two that survives a leader restart without new state. It needs a worker-side delete, which does not exist either.
 

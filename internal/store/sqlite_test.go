@@ -358,3 +358,83 @@ func TestNodeHeartbeatKeepsOperatorState(t *testing.T) {
 		t.Fatalf("SetState on an unknown node = %v, %v; want false, nil", found, err)
 	}
 }
+
+// A worker's report (ReplaceForNode, every heartbeat) says what is resident,
+// not what is routable: a row the leader marked draining keeps the mark while
+// the model stays in the report, other rows are written as reported, and a
+// model that leaves the report takes its row — and its mark — with it.
+func TestReplaceForNodeKeepsADrainingMark(t *testing.T) {
+	st, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, p := context.Background(), st.Placements()
+	report := func(models ...string) {
+		t.Helper()
+		ps := make([]Placement, 0, len(models))
+		for _, m := range models {
+			ps = append(ps, Placement{NodeID: "w", ModelID: m, Status: "ready", LastSeen: time.Now()})
+		}
+		if err := p.ReplaceForNode(ctx, "w", ps); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status := func() map[string]string {
+		rows, err := p.GetByNode(ctx, "w")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, r := range rows {
+			out[r.ModelID] = r.Status
+		}
+		return out
+	}
+	report("a", "b")
+	if err := p.SetStatus(ctx, "w", "a", PlacementDraining); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		report("a", "b")
+	}
+	if got := status(); got["a"] != PlacementDraining || got["b"] != "ready" {
+		t.Fatalf("after three reports: %v, want a draining and b ready", got)
+	}
+	if rows, _ := p.GetByModel(ctx, "a"); len(rows) != 0 {
+		t.Fatalf("a draining placement is routable: %v", rows)
+	}
+	// Another node's row for the same model is its own row.
+	if err := p.ReplaceForNode(ctx, "w2", []Placement{{NodeID: "w2", ModelID: "a", Status: "ready", LastSeen: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := p.GetByModel(ctx, "a"); len(rows) != 1 || rows[0].NodeID != "w2" {
+		t.Fatalf("the other node's placement must route: %v", rows)
+	}
+	// The model leaves the report: the row goes, as it always did — and a
+	// later load is a fresh, routable row.
+	report("b")
+	if got := status(); len(got) != 1 || got["b"] != "ready" {
+		t.Fatalf("model gone from the report: %v", got)
+	}
+	report("a", "b")
+	if got := status(); got["a"] != "ready" {
+		t.Fatalf("a model loaded again must not inherit an old mark: %v", got)
+	}
+	// SetStatus back ends a drain; ResetStatus ends them all.
+	_ = p.SetStatus(ctx, "w", "a", PlacementDraining)
+	_ = p.SetStatus(ctx, "w", "b", PlacementDraining)
+	if err := p.SetStatus(ctx, "w", "a", "ready"); err != nil {
+		t.Fatal(err)
+	}
+	report("a", "b")
+	if got := status(); got["a"] != "ready" || got["b"] != PlacementDraining {
+		t.Fatalf("after setting a back: %v", got)
+	}
+	if n, err := p.ResetStatus(ctx, PlacementDraining, "ready"); err != nil || n != 1 {
+		t.Fatalf("ResetStatus = %d, %v; want 1", n, err)
+	}
+	if got := status(); got["b"] != "ready" {
+		t.Fatalf("after ResetStatus: %v", got)
+	}
+}
