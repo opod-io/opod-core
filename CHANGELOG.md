@@ -100,6 +100,11 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
   (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- **Worker images: a pinned model version is never satisfied by a file of the same name.** The entrypoint loaded "the
+  whole file at the top of the node cache" by path whenever one existed, which skipped the revision directory AND the
+  digest check: a node that had once served the model unpinned served those bytes under every `OPOD_MODEL_REVISION` /
+  `OPOD_MODEL_SHA256`. A pinned load now always goes through the agent's fetch (`<models>/<repo>@<rev>/`, verified,
+  reused when present); the by-path shortcut stays for unpinned models
 - A connection to an engine or a worker must be established within 3 s (`openaicompat.ConnectTimeout`); responses still
   stream with no overall deadline. The client had inherited Go's 30 s connect timeout, and a removed pod's address does
   not refuse, it hangs — so the request picked for a just-removed worker stalled 20–30 s before the next worker was
