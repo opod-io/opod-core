@@ -100,6 +100,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
   (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- A leader-driven model load (`opod model add --node`, `opod model move`) is no longer cut at 60 s: the worker
+  answers when the pull and the load are done, so the call rides the weights client (as the GGUF upload does),
+  bounded by the caller's context — a cold pull used to fail at the leader while the worker carried on
 - **`engine.preferred: sglang` starts.** The SGLang driver was registered, but the function that builds the
   configured engine for `opod up` / `opod join` chose the endpoint in a hand-written list without it, so a leader
   or worker set to SGLang exited with `unknown engine "sglang" (valid: … sglang …)`. The endpoint is now chosen by

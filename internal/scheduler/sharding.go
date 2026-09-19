@@ -38,6 +38,12 @@ type Orchestrator struct {
 	Supervisor *agent.Supervisor // leader's own supervisor (coordinator runs here)
 	Log        *slog.Logger
 	HTTP       *http.Client
+	// WeightsHTTP carries the calls that move or load model weights (a worker's
+	// /v1/model/load, a GGUF upload): they answer when the work is DONE, which
+	// on a cold cache is minutes to hours. HTTP's 60 s is the budget of a small
+	// control call and cut them mid-pull. The generous timeout is a backstop
+	// only — the caller's context decides when to give up.
+	WeightsHTTP *http.Client
 	// ModelsDir is the local destination for HuggingFace GGUF downloads
 	// when a sharded catalog entry sets source.type=huggingface. Empty
 	// means HF auto-download is disabled — operators have to pre-place
@@ -54,17 +60,27 @@ type Orchestrator struct {
 	moves moveGuard // one move at a time per model and per node (move.go)
 }
 
+// weightsHTTP is WeightsHTTP, or its default for an Orchestrator built as a
+// literal (tests do): a missing client must not turn a load into a nil call.
+func (o *Orchestrator) weightsHTTP() *http.Client {
+	if o.WeightsHTTP != nil {
+		return o.WeightsHTTP
+	}
+	return &http.Client{Timeout: 6 * time.Hour}
+}
+
 // New returns a configured orchestrator.
 func New(st store.Store, sup *agent.Supervisor, log *slog.Logger, modelsDir string) *Orchestrator {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Orchestrator{
-		Store:      st,
-		Supervisor: sup,
-		Log:        log,
-		HTTP:       &http.Client{Timeout: 60 * time.Second},
-		ModelsDir:  modelsDir,
+		Store:       st,
+		Supervisor:  sup,
+		Log:         log,
+		HTTP:        &http.Client{Timeout: 60 * time.Second},
+		WeightsHTTP: &http.Client{Timeout: 6 * time.Hour},
+		ModelsDir:   modelsDir,
 	}
 }
 

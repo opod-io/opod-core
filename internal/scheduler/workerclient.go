@@ -240,7 +240,7 @@ func (o *Orchestrator) callWorkerLoad(ctx context.Context, node store.Node, entr
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+node.WorkerToken) // transition; HMAC below is the real auth
 	auth.SignRequest(req, node.ID, node.WorkerToken)
-	resp, err := o.HTTP.Do(req)
+	resp, err := o.weightsHTTP().Do(req) // answers when the pull and the load are done — not a control call
 	if err != nil {
 		return err
 	}

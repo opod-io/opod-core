@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/store"
@@ -114,13 +113,10 @@ func (o *Orchestrator) ensureGGUFOnNode(ctx context.Context, node store.Node, lo
 	o.Log.Info("uploading gguf to worker",
 		"node", node.ID, "name", name, "bytes", stat.Size(), "sha256", sum[:12])
 
-	// o.HTTP has a 60s timeout meant for small control calls (file-check,
-	// process start/stop). Streaming a multi-GB GGUF over the overlay can't
-	// finish in 60s, so it 502'd mid-upload. Use a dedicated client with a
-	// generous timeout (cancellation still flows through the request ctx),
-	// mirroring the 6h client the HF download uses.
-	uploadClient := &http.Client{Timeout: 6 * time.Hour}
-	upResp, err := uploadClient.Do(upReq)
+	// Streaming a multi-GB GGUF over the overlay is a weights call, not a control
+	// call: o.HTTP's 60 s 502'd it mid-upload (cancellation still flows through
+	// the request ctx).
+	upResp, err := o.weightsHTTP().Do(upReq)
 	if err != nil {
 		return "", fmt.Errorf("upload: %w", err)
 	}
