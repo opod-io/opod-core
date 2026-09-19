@@ -277,4 +277,18 @@ jobs:
         # The worker images are mostly someone else's base (vLLM, llama.cpp,
         # ROCm), so the SBOM is the only place a customer can see what they are
         # actually running and under which licences.
-        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+        # The attestation is written to the same transparency log as the signature,
+        # so it gets the same terms: retried, fatal on a tag build, not a failed job
+        # on a manual dispatch. On 2026-09-19 six images that were pushed AND signed
+        # were reported as failures because this step had one attempt and the log
+        # refused it.
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+          for i in 1 2 3 4 5; do
+            cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$ref" && break
+            [ $i = 5 ] && { echo "::error::cosign could not attest the SBOM of $ref after 5 attempts — the image IS pushed and signed; re-run this job when Sigstore recovers"; exit 1; }
+            echo "attest attempt $i failed (Sigstore); retrying in $((i * 30))s"
+            sleep $((i * 30))
+          done
