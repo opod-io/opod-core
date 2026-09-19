@@ -66,6 +66,8 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- `opod model add <id> --node <n>` sends the catalog entry's `source.file` to the worker (`/v1/model/load`
+  `file`, omitted when empty), so a repository holding several GGUF files loads the one the entry names
 - One rule for "which rows can take a shard part" (`scheduler.WorkerFor`) on the CLI and the API path alike:
   never the leader's own `local` row, a draining node or a silent one; a create that cannot find its workers
   answers `409` with the numbers before the gang it would replace is touched
