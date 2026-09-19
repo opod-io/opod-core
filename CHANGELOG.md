@@ -5,6 +5,13 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
+## 2026-09-19 — router log
+
+- **"router skipping stale worker" is logged once per stale episode, not once per request.** A worker whose process is
+  replaced keeps its node row, and every pick that walked past the row logged a WARN — one line per request per dead row
+  for as long as the leader ran. It is now logged when the worker becomes stale, and again only if it heartbeats and goes
+  stale a second time. The `router_pick` metric still counts every skip.
+
 ## 2026-09-18 — `opod image`
 
 - **The images as data.** `images/images.yaml` lists every image the repository builds — engine, vendor, platforms,
