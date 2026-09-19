@@ -152,6 +152,7 @@ type Router struct {
 	cooldowns   map[string]time.Time      // node_id → time the node leaves the penalty box
 	failures    map[string]int            // node_id → consecutive recent failures
 	stickiness  map[string]stickyEntry    // user_id|model → pinned node + expiry
+	staleWarned map[string]bool           // node_id → its current stale episode was logged once
 
 	// stickyInserts counts rememberSticky calls so the map can be swept
 	// of expired entries opportunistically (every stickySweepEvery-th
@@ -200,6 +201,7 @@ func New(local engines.Engine, st store.Store) *Router {
 		cooldowns:   make(map[string]time.Time),
 		failures:    make(map[string]int),
 		stickiness:  make(map[string]stickyEntry),
+		staleWarned: make(map[string]bool),
 		latency:     newLatencyStats(LatencyConfig{}),
 	}
 }

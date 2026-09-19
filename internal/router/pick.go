@@ -172,6 +172,25 @@ func (r *Router) takesRequests(n *store.Node, now time.Time) (ok bool, why strin
 	return true, ""
 }
 
+// staleEpisode records whether nodeID is stale now and reports true only when
+// it BECAME stale: the WARN is for that moment, not for every pick that walks
+// past the row. A worker whose pod was replaced keeps its row indefinitely, and a
+// per-pick warning was one log line per request per dead row. The metric still
+// counts every skip.
+func (r *Router) staleEpisode(nodeID string, stale bool) (began bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !stale {
+		delete(r.staleWarned, nodeID)
+		return false
+	}
+	if r.staleWarned[nodeID] {
+		return false
+	}
+	r.staleWarned[nodeID] = true
+	return true
+}
+
 // takingRequests narrows placements to workers takesRequests accepts and
 // returns their node rows, read once for every later step of the pick.
 func (r *Router) takingRequests(ctx context.Context, model string, ps []store.Placement) ([]store.Placement, map[string]*store.Node) {
@@ -184,12 +203,12 @@ func (r *Router) takingRequests(ctx context.Context, model string, ps []store.Pl
 			n = nil
 		}
 		ok, why := r.takesRequests(n, now)
+		if r.staleEpisode(p.NodeID, why == "stale-heartbeat") && r.log != nil {
+			r.log.Warn("router skipping stale worker", "node", p.NodeID, "model", model,
+				"last_heartbeat", n.LastHeartbeat, "max_age", r.heartbeatMaxAge)
+		}
 		if !ok {
 			metrics.ObserveRouterPick("worker", why)
-			if why == "stale-heartbeat" && r.log != nil {
-				r.log.Warn("router skipping stale worker", "node", p.NodeID, "model", model,
-					"last_heartbeat", n.LastHeartbeat, "max_age", r.heartbeatMaxAge)
-			}
 			continue
 		}
 		nodes[p.NodeID] = n
