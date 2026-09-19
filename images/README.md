@@ -54,13 +54,20 @@ some other way (upstream's own, a fork without the pair) has no label and should
 Read it from the registry without pulling: `crane config <image> | jq '.config.Labels'`, or
 `docker buildx imagetools inspect <image> --format '{{json .Image.Config.Labels}}'`. A drift test holds label ↔ pair.
 
+**`images.yaml` is this table as data** — engine, vendor, platforms, weight format, gang scheme (`rpc` | `ray` | none),
+whether the image has served on the hardware it names, what the node must provide, and its limits. It is embedded in
+the binary and printed by `opod image ls | show <image> | recommend <model>` (`--json` for a script or an agent), so
+"which image serves this model on that accelerator" has one answer that needs no checkout. **A new image is a row in
+four places** — `build.sh`, `images.yml`, this table and `images.yaml`; `cmd/opod/images_drift_test.go` fails until
+the manifest names the same Dockerfile, base tag and platforms as `build.sh`, and until `gang: rpc` matches the label below.
+
 | Image | Dockerfile | BASE |
 |---|---|---|
 | `opod-leader` | `leader/` | debian:bookworm-slim |
 | `opod-worker-llamacpp-nvidia` | `worker-llamacpp/` | ghcr.io/ggml-org/llama.cpp:full-cuda |
 | `opod-worker-llamacpp-amd` | `worker-llamacpp/` (`Dockerfile.rpc-rocm`) | ghcr.io/ggml-org/llama.cpp:full-rocm **plus a source-built RPC pair** in `/opt/llama-rpc` from `llama-rpc-rocm:<rel>` (the base is built without `GGML_RPC`). Compiled with upstream's full target list — Instinct (gfx908, gfx90a, gfx942) and Radeon (gfx1030, gfx1100–1102, gfx1150–1151, gfx1200–1201) in one binary — because upstream's ROCm release tarball carries RDNA targets only and compiled GPU code does not fall back. The tarball-lifted pair was proven 2026-09-15 on a 3× RX 7900 XTX (gfx1100) host; the source-built one still owes its run on hardware. |
 | `opod-worker-llamacpp-cpu` | `worker-llamacpp/` (`Dockerfile.rpc-cpu`) | ghcr.io/ggml-org/llama.cpp:full (CPU; dev clusters, kind CI, a GPU-less node the plan names — the control plane's vendor "none") **plus a source-built RPC pair** in `/opt/llama-rpc` since 2026-09-14 (the upstream image has no rpc-server and no `--rpc`), so a CPU worker can be a part of a gang — the laptop gang drills (A12, D10) need no GPU. A few minutes of C++ on the build platform, never emulated: the local lane builds arm64 natively on Apple silicon, CI builds amd64 |
-| `opod-worker-llamacpp-intel` | `worker-llamacpp/` (`Dockerfile.rpc-sycl`) | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver) **plus a source-built RPC pair** from `llama-rpc-sycl:<rel>`: upstream's own Intel recipe (same oneAPI image and level-zero) with `GGML_RPC=ON`, because neither the base nor the sycl release tarball carries an RPC backend. Unproven on hardware until the pair is published and an Intel node runs it |
+| `opod-worker-llamacpp-intel` | `worker-llamacpp/` (`Dockerfile.rpc-sycl`) | ghcr.io/ggml-org/llama.cpp:full-intel (SYCL/oneAPI; Arc A770 / Pro B60 with the i915/xe driver) **plus a source-built RPC pair** from `llama-rpc-sycl:<rel>`: upstream's own Intel recipe (same oneAPI image and level-zero) with `GGML_RPC=ON`, because neither the base nor the sycl release tarball carries an RPC backend. Served whole-model on an Arc A770 2026-09-18; the RPC split has not been run on Intel hardware, and the B60 has not served |
 | `opod-worker-vllm-nvidia` | `worker-vllm/` | vllm/vllm-openai:v0.27.1 |
 | `opod-worker-vllm-amd` | `worker-vllm/` | rocm/vllm — **one build per GPU family, not one image**: `…_rdna_…` for Radeon / Radeon Pro (gfx11xx, the default) and `…_cdna_…` for Instinct MI2xx/MI3xx (gfx9xx). Neither runs the other's kernels. Override with `VLLM_AMD_BASE=`. ~25 GB base; not built by default. |
 | `opod-worker-sglang-nvidia` | `worker-sglang/` | lmsysorg/sglang CUDA (`v0.5.2-cu126`). The agent runs `sglang.launch_server` on model load, as for any engine core drives. One node per endpoint: core has no multi-node path for SGLang, so the planner refuses a gang |

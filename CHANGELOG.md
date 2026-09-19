@@ -5,6 +5,14 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
+## 2026-09-18 — `opod image`
+
+- **The images as data.** `images/images.yaml` lists every image the repository builds — engine, vendor, platforms,
+  weight format, gang scheme, proven on hardware or not, node requirements, limits — embedded in the binary and held
+  to `images/build.sh` by a drift test. `opod image ls | show <image> | recommend <model>` print it, all with `--json`;
+  `recommend` names the image for a catalog model (or an `hf:` / `file:` id) per accelerator vendor and says why every
+  other engine was passed over. Offline and read-only: no config, no store, no registry call.
+
 ## 2026-09-07 — manager signals, sleep tier, services, SDK
 
 - **Load signals (`load_signals`).** vLLM and llama.cpp workers scrape their own `/metrics` (KV-cache %,

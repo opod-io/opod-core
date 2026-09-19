@@ -1003,6 +1003,28 @@ How it works:
 > Residency reporting requires Ollama today. Other engines degrade gracefully:
 > processes are killed (memory freed) on shutdown by the process supervisor.
 
+### Pick a container image for a model
+
+Workers also ship as container images — one engine on one accelerator per image, listed with their limits in
+[`images/README.md`](images/README.md). The same list is embedded in the binary as data
+([`images/images.yaml`](images/images.yaml)), so a person, a script or an agent can ask which image serves a model
+without a checkout or a registry call:
+
+```bash
+opod image ls                                        # every image: engine, vendor, platforms, gang, proven
+opod image show vllm-nvidia                          # what the node must provide, limits, how to pin it
+opod image recommend llama-3.1-8b --vendor nvidia    # the image for a catalog model on that accelerator
+opod image recommend hf:Qwen/Qwen2.5-7B-Instruct --json
+```
+
+`recommend` is a lookup, not a measurement: it walks the model's `recommended_engines` in order, keeps the engines
+whose images load the entry's weights (a GGUF file → llama.cpp; a safetensors Hugging Face repo → vLLM or SGLang; an
+Ollama-library entry → no image), narrows a model that must be split across workers to images that can join a gang
+(`rpc`, `ray`), and stars one pick per vendor — images proven on hardware first. Everything it passed over is listed
+with the reason. Whether the model fits a card is `min_vram_gb` in the answer and your call. Every sub-verb takes
+`--json`; image fields are `name`, `repository`, `engine`, `vendor`, `arch`, `weights`, `gang`, `proven`,
+`requires`, `notes` (plus `tag` on a release binary — there is no floating `latest`, pin a digest).
+
 ### Remove a model
 
 ```bash
@@ -1226,6 +1248,15 @@ opod model info <id> [--json]    Full details for one catalog model
 opod model remove <id> [--yes]   Uninstall a model (prompts unless --yes)
 opod catalog ls                  List the catalog embedded in the binary
 opod catalog export <dir>        Write it out as files (overrides go beside them)
+
+# --- container images (embedded manifest; offline, read-only) ---
+opod image ls [--engine E] [--vendor V] [--json]
+                                  The published images: engine, vendor,
+                                  platforms, gang (rpc | ray | -), proven
+opod image show <image> [--json] One image: node requirements, limits, base
+opod image recommend <model> [--vendor V] [--json]
+                                  Which image serves a catalog model (or
+                                  hf:/file: id), one pick per vendor + why not
 
 # --- memory lifecycle (which models occupy RAM right now) ---
 opod model load <id> [--swap] [--pin] [--priority N]

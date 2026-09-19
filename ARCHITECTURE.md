@@ -1025,6 +1025,10 @@ opod/
 │   ├── config/                # YAML + env loader
 │   └── metrics/               # Prometheus declarations
 │
+├── images/                    # one Dockerfile dir per image + build.sh (local lane) + entrypoint.sh
+│   ├── images.yaml            # the images as data: engine, vendor, arch, weights, gang, proven, node requirements
+│   └── images.go, recommend.go  # package images: embeds the manifest; `opod image ls | show | recommend` prints it
+│
 ├── (catalog lives in opod-io/opod-sdk/catalog — embedded, one copy for the leader and the control plane)
 │   ├── llama-3.2-1b.yaml
 │   ├── llama-3.2-3b.yaml

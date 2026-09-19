@@ -82,6 +82,8 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 - **My team has 4 Mac Studios** → install the same model (e.g. `qwen3.6-27b`) on each — Opod load-balances automatically. No sharding needed for throughput.
 - **A model bigger than any one machine** → sharded tier. Start with `step-3.7-flash-sharded` (Apache-2.0) or `deepseek-v4-flash-sharded` (MIT).
 
+Serving from a container instead of a host engine? `opod image recommend <id> [--vendor nvidia|amd|intel|tt|cpu]` names the worker image that can load the entry's weights on that accelerator, and says why any engine the entry lists was passed over (`--json` for scripts and agents).
+
 For per-model walkthroughs (with detailed install + client snippets), the curated set below covers the longest-standing entries. For the rest of the catalog (10+ newer additions including Gemma 4 family, MiMo, Qwen3-VL, Pixtral, Moondream), run `opod model info <id>` — same fields as the table above, plus engine compatibility, license, and release date.
 
 ---

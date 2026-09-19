@@ -47,6 +47,8 @@ func main() {
 		cmdCatalog(args)
 	case "fetch":
 		cmdFetch(args)
+	case "image":
+		cmdImage(args)
 	case "cache":
 		cmdCache(args)
 	case "token":
@@ -79,7 +81,7 @@ func main() {
 // topLevelCommands is the set of verbs main() dispatches. Kept here so both
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
-	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog", "fetch",
+	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog", "fetch", "image",
 	"token", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
@@ -196,6 +198,9 @@ Commands:
   fetch --snapshot <repo>[@rev]
                            The same for a safetensors model: the file set vLLM / SGLang loads, under <dir>/<repo>@<rev>/
   cache ls|prune           List the node's weight cache, or remove what no plan references (never a file it did not fetch; --apply to delete)
+  image ls                 The container images opod publishes: engine, vendor, platforms, gang, proven (--json)
+  image show <image>       One image: what the node must provide, its limits, how to pin it
+  image recommend <model>  Which image serves a catalog model, per accelerator vendor (--vendor, --json)
   model info <id>          Full details for one catalog model
   model load <id>          Bring a model into engine RAM (memory-aware)
   model unload <id>        Drop a model from engine RAM (weights stay)

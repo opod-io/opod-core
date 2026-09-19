@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/opod-io/opod/images"
 )
 
 func repoFile(t *testing.T, rel string) string {
@@ -30,9 +32,9 @@ func repoFile(t *testing.T, rel string) string {
 }
 
 // buildSpec is one image as images/build.sh's spec() describes it.
-type buildSpec struct{ name, file, base string }
+type buildSpec struct{ name, file, base, arches string }
 
-var specRe = regexp.MustCompile(`(?m)^\s+([a-z0-9-]+)\)\s+echo "(opod-[a-z0-9-]+) (images/[^ ]+) ([^ ]+) `)
+var specRe = regexp.MustCompile(`(?m)^\s+([a-z0-9-]+)\)\s+echo "(opod-[a-z0-9-]+) (images/[^ ]+) ([^ ]+) ([a-z0-9,]+)"`)
 
 func buildSpecs(t *testing.T) map[string]buildSpec {
 	t.Helper()
@@ -51,12 +53,54 @@ func buildSpecs(t *testing.T) map[string]buildSpec {
 				base = v
 			}
 		}
-		out[m[2]] = buildSpec{name: m[2], file: m[3], base: base}
+		out[m[2]] = buildSpec{name: m[2], file: m[3], base: base, arches: m[5]}
 	}
 	if len(out) < 8 {
 		t.Fatalf("parsed only %d rows from images/build.sh — the spec() shape changed, fix this test", len(out))
 	}
 	return out
+}
+
+// TestManifestMatchesBuildScript: images/images.yaml is what `opod image` prints
+// and what an agent plans a deployment from, so it may only describe images the
+// lanes really build: the same set, from the same Dockerfile, on the same base
+// (tag; the digest stays with the lanes) for the same platforms. And an image
+// that claims gang=rpc must be one whose Dockerfile sets the RPC label — the
+// claim is what sends a gang part to it.
+func TestManifestMatchesBuildScript(t *testing.T) {
+	specs := buildSpecs(t)
+	manifest, err := images.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, img := range manifest.Images {
+		listed[img.Name] = true
+		spec, ok := specs[img.Name]
+		if !ok {
+			t.Errorf("%s is in images/images.yaml but has no images/build.sh row: the CLI would offer an image nobody builds", img.Name)
+			continue
+		}
+		if img.Dockerfile != spec.file {
+			t.Errorf("%s: manifest says %s, build.sh builds %s", img.Name, img.Dockerfile, spec.file)
+		}
+		if got := strings.Join(img.Arch, ","); got != spec.arches {
+			t.Errorf("%s: manifest platforms %s, build.sh %s", img.Name, got, spec.arches)
+		}
+		// The leader's row has no BASE argument ("-"); its base is the Dockerfile's FROM.
+		if tag, _, _ := strings.Cut(spec.base, "@"); spec.base != "-" && img.Base != tag {
+			t.Errorf("%s: manifest base %s, build.sh base %s", img.Name, img.Base, tag)
+		}
+		labelled := strings.Contains(repoFile(t, img.Dockerfile), `LABEL io.opod.llamacpp.rpc="true"`)
+		if claims := img.Gang == images.GangRPC; claims != labelled {
+			t.Errorf("%s: manifest gang=%q but %s sets the RPC label: %v", img.Name, img.Gang, img.Dockerfile, labelled)
+		}
+	}
+	for name := range specs {
+		if !listed[name] {
+			t.Errorf("%s is built but missing from images/images.yaml, so `opod image ls` never shows it", name)
+		}
+	}
 }
 
 // TestReleaseLaneMatchesBuildScript: every image the release workflow builds is a
