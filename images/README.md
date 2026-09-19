@@ -69,7 +69,7 @@ Read it from the registry without pulling: `crane config <image> | jq '.config.L
 | `opod-worker-vllm-tt` | `worker-tt/` | Tenstorrent's `tt-inference-server` vLLM build — **the tag must match the tt-metal and vLLM commits of the model spec being served**, see `worker-tt/README.md`. Serving proven on a Blackhole p150b 2026-09-15; needs `/dev/hugepages-1G` and a mounted model spec, which the control plane's Tenstorrent render supplies. Override with `VLLM_TT_BASE=` |
 
 **ghcr visibility.** Worker and leader packages must be **public** — nodes pull them anonymously and no
-cluster of ours holds a registry token (the design-partner cell has none by design). A package first
+cluster should need a registry token to run them. A package first
 published from this Mac starts **private**; the OCI `image.source` label links it to `opod-io/opod-core`,
 but linking does not change visibility, and no REST API can. It is a one-click flip in the package's
 settings page. As of 2026-09-10 `opod-worker-llamacpp-amd` and `opod-worker-llamacpp-intel` are still
