@@ -43,6 +43,7 @@ func (s *Server) usageStream(w http.ResponseWriter, r *http.Request) {
 				APIKeyID: u.APIKeyID, UserID: u.UserID, Model: u.Model, Protocol: u.Protocol,
 				PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, LatencyMS: u.LatencyMS,
 				Outcome: u.Outcome, CostUSD: u.CostUSD, NodeID: u.NodeID,
+				TTFTMS: u.TTFTMS, // R15.13; on the wire since opod-sdk v0.2.1 (0 = not measured: a non-streamed answer has no first token)
 			},
 		})
 		next = u.ID

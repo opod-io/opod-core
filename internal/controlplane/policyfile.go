@@ -96,12 +96,7 @@ func (s *Server) StartPolicyWatcher(ctx context.Context) {
 		}
 		lastMod = st.ModTime()
 		s.applyPolicySnapshot(&doc)
-		// R15.17: the revision split is read from the raw document rather than
-		// from the shared type, because the field is additive and the published
-		// SDK module has not been tagged with it yet. Reading the JSON directly
-		// means the mechanism works the day a manager writes the field, and the
-		// line below collapses to doc.Routing.Revisions when the tag lands.
-		s.applyRevisionWeights(raw)
+		s.applyRevisionWeights(doc.Routing.Revisions) // R15.17; typed since opod-sdk v0.2.1
 	}
 	load()
 	go func() {
@@ -186,25 +181,17 @@ func buildGuardrailRegistry(rules []GuardrailRule) (*guardrails.Registry, int) {
 	return &guardrails.Registry{Pre: guardrails.NewChain(pre...), Post: guardrails.NewChain(post...), LoggingOnly: guardrails.NewChain(logOnly...)}, skipped
 }
 
-// applyRevisionWeights reads policy.routing.revisions and hands it to the
-// router (R15.17, feature routing_weights). Empty or absent turns the split
-// off, which is every endpoint that is not mid-canary.
-//
-// This parses the raw snapshot instead of the shared adminapi type on purpose:
-// the field is additive and the published SDK module is not yet tagged with it.
-// A manager that writes it gets the behaviour today; when the tag lands this
-// becomes one line off doc.Routing.
-func (s *Server) applyRevisionWeights(raw []byte) {
+// applyRevisionWeights hands policy.routing.revisions to the router (R15.17,
+// feature routing_weights). Empty or absent turns the split off, which is every
+// endpoint that is not mid-canary. (Until opod-sdk v0.2.1 carried the field this
+// re-parsed the raw snapshot; it is the shared type's now.)
+func (s *Server) applyRevisionWeights(ws []adminapi.RevisionWeight) {
 	if s.router == nil {
 		return
 	}
-	var doc struct {
-		Routing struct {
-			Revisions []router.RevisionWeight `json:"revisions"`
-		} `json:"routing"`
+	out := make([]router.RevisionWeight, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, router.RevisionWeight{Revision: w.Revision, Weight: w.Weight})
 	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return // the snapshot already parsed above; a shape we cannot read here just means no split
-	}
-	s.router.SetRevisionWeights(doc.Routing.Revisions)
+	s.router.SetRevisionWeights(out)
 }
