@@ -104,7 +104,8 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   fresh until its heartbeat ages out; a request picked for it could not connect and was answered 502, because the
   walk went on to the next fallback MODEL, never to the next WORKER. An unreachable worker received nothing, so the
   same model is picked again with that node set aside for this request (chat and embeddings); an engine's own
-  answer — a refusal included — is never replayed. Seen as one failed chat per worker move under a manager's rollout
+  answer — a refusal included — is never replayed. The re-pick stays in the revision group the request was assigned
+  to, so a traffic split is not re-rolled by a retry. Seen as one failed chat per worker move under a manager's rollout
 - `opod model add <id> --node …` no longer replaces what a worker serves in silence: every named worker is judged
   first (the rule `model move` already used), a load that would stop another model is refused with 409 naming both
   — before any worker is touched — and `--force` (`"force": true`) is how an operator says the replacement is meant

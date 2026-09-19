@@ -24,6 +24,7 @@ package router
 // does nothing at all and the picker behaves exactly as it did.
 
 import (
+	"context"
 	"encoding/json"
 	"math/rand"
 	"sync"
@@ -105,18 +106,29 @@ func chooseRevision(ws []RevisionWeight, live map[int]int, roll func(int) int) i
 
 // pickRevisionGroup narrows workers to one revision, when a split is
 // configured and more than one revision is actually serving.
-func (r *Router) pickRevisionGroup(workers []store.Placement, revision func(nodeID string) int) []store.Placement {
+//
+// A request is assigned to a group ONCE (nextworker.go): when it comes back for
+// another worker of the same model it stays in its group while that group has a
+// worker, instead of rolling the weights again.
+func (r *Router) pickRevisionGroup(ctx context.Context, model string, workers []store.Placement, revision func(nodeID string) int) []store.Placement {
 	ws := r.revisionWeights()
-	if len(ws) == 0 || len(workers) < 2 {
+	if len(ws) == 0 {
 		return workers
 	}
 	live := map[int]int{}
 	for _, w := range workers {
 		live[revision(w.NodeID)]++
 	}
-	chosen := chooseRevision(ws, live, func(n int) int { return rand.Intn(n) }) //nolint:gosec // traffic splitting, not cryptography
-	if chosen == 0 {
-		return workers
+	chosen, again := assignedRevision(ctx, model)
+	if !again || live[chosen] == 0 {
+		if len(workers) < 2 {
+			return workers
+		}
+		chosen = chooseRevision(ws, live, func(n int) int { return rand.Intn(n) }) //nolint:gosec // traffic splitting, not cryptography
+		if chosen == 0 {
+			return workers
+		}
+		assignRevision(ctx, model, chosen)
 	}
 	out := workers[:0:0]
 	for _, w := range workers {

@@ -20,6 +20,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 	)
 	defer span.End()
 
+	ctx = withPickState(ctx) // what this request remembers between picks (nextworker.go)
 	ov := FromContext(ctx)
 	chain, source, chains := r.chainFor(req.Model, ov)
 	switch {
