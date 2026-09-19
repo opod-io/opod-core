@@ -25,7 +25,7 @@ func cmdNode(args []string) {
 			"opod node remove n_abc123 --yes      # skip the prompt (for scripts)",
 		},
 		notes: []string{
-			"Add a new node: `opod token create --node` then on the worker run `opod join <url>?token=…`.",
+			"Add a new node: `opod token create --node` then on the worker run `opod join \"<url>?token=…\"` (quoted: `?` is a glob in zsh).",
 		},
 	}
 	if len(args) == 0 {

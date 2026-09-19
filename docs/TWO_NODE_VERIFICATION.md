@@ -57,28 +57,27 @@ On the leader:
 
 ```bash
 ./opod token create --node
-# → prints: sk-orc-... and a one-line `opod join` invocation
 ```
 
 The output should look like:
 
 ```
-worker token: sk-orc-XXXXXXXX
-join command:  opod join http://<leader-ip>:8080?token=sk-orc-XXXXXXXX
+✔ created node-join (id=k_…, scope=node)
+
+  Key (shown once — store it now):
+    sk-orc-XXXXXXXX
 ```
 
-If `<leader-ip>` is `localhost` or `127.0.0.1`, override with `OPOD_EXTERNAL_URL`:
-
-```bash
-OPOD_EXTERNAL_URL=http://192.0.2.42:8080 ./opod up
-```
+It prints the key only; the join command is yours to assemble from the leader's address — one the
+worker can reach, not `localhost` — and that key.
 
 ### Step 3 — join the worker
 
-On the **second** machine, paste the join command from step 2:
+On the **second** machine, join with the leader's address and the key from step 2. Keep the quotes — an
+unquoted `?` is a glob in zsh:
 
 ```bash
-./opod join http://192.0.2.42:8080?token=sk-orc-XXXXXXXX
+./opod join "http://192.0.2.42:8080?token=sk-orc-XXXXXXXX"
 ```
 
 You should see:

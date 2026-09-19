@@ -25,7 +25,7 @@ import (
 //
 // Usage:
 //
-//	opod join http://leader:8080?token=sk-orc-...
+//	opod join "http://leader:8080?token=sk-orc-..."
 //
 // workerBaseEnv is what every engine process this worker launches sees in
 // addition to its own environment: the device it may use and the VRAM budget
@@ -58,11 +58,11 @@ func cmdJoin(args []string) {
 		showHelp(helpSpec{
 			name:    "join",
 			summary: "join this machine to an existing opod cluster as a worker",
-			usage:   "opod join <leader-url>?token=<token> [--gpu <index>] [--vram-budget <GB>]",
+			usage:   "opod join \"<leader-url>?token=<token>\" [--gpu <index>] [--vram-budget <GB>]",
 			examples: []string{
-				"opod join http://leader.local:8080?token=sk-orc-...",
-				"opod join https://opod.example.com?token=sk-orc-...",
-				"opod join http://leader:8080?token=sk-orc-... --gpu 1 --vram-budget 20",
+				"opod join \"http://leader.local:8080?token=sk-orc-...\"",
+				"opod join \"https://opod.example.com?token=sk-orc-...\"",
+				"opod join \"http://leader:8080?token=sk-orc-...\" --gpu 1 --vram-budget 20",
 			},
 			notes: []string{
 				"Generate the token on the leader: `opod token create --node`",
@@ -74,7 +74,7 @@ func cmdJoin(args []string) {
 		})
 	}
 	if len(args) == 0 {
-		die("usage: opod join <leader-url>?token=<token>  (run `opod join --help` for details)")
+		die("usage: opod join \"<leader-url>?token=<token>\"  (run `opod join --help` for details)")
 	}
 	leader, token, err := parseJoinTarget(args[0])
 	if err != nil {

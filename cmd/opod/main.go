@@ -180,7 +180,7 @@ Commands:
   up                       Start the local node (leader on first run)
   down                     Stop the local node
   status                   Show local node and cluster status
-  join <url>?token=...     Join an existing cluster as a worker
+  join "<url>?token=..."   Join an existing cluster as a worker (quote the URL: ? is a shell glob)
   node ls                  List nodes
   node show <id>           Show one node
   node drain <id>          Mark node as draining

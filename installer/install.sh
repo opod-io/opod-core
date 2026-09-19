@@ -15,7 +15,7 @@
 # Env overrides (alternative to flags):
 #   OPOD_VERSION, OPOD_INSTALL_DIR, OPOD_SKIP_ENGINE=1
 #
-# This installer also accepts a `join <leader-url>?token=…` positional after
+# This installer also accepts a `join "<leader-url>?token=…"` positional after
 # `--`, in which case it runs `opod join` after installing.
 set -eu
 
@@ -60,7 +60,7 @@ Examples:
 
   # install + join an existing cluster:
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/installer/install.sh | \\
-    sh -s -- join https://leader.local:8080?token=...
+    sh -s -- join "https://leader.local:8080?token=..."
 
   # install to a specific path, skip engine check:
   curl -fsSL https://... | sh -s -- --install-dir ~/.local/bin --no-engine
@@ -91,7 +91,7 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY_RUN=1; shift ;;
         join)
             if [ $# -lt 2 ] || [ -z "$2" ]; then
-                err "join requires a leader URL (e.g. join http://leader:8080?token=...)"
+                err 'join requires a leader URL (e.g. join "http://leader:8080?token=...")'
                 usage >&2
                 exit 1
             fi
@@ -377,7 +377,7 @@ print_next_steps() {
     Have the leader's admin run:
          opod token create --node
     then on this machine:
-         opod join http://<leader-host>:8080?token=<TOKEN>
+         opod join "http://<leader-host>:8080?token=<TOKEN>"
 
   Docs: https://github.com/${REPO}
 "
