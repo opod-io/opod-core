@@ -81,6 +81,11 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   heartbeating) behind the router, `/readyz`, the waking 503, `/loadz`, `/v1/models`, the shard pickers and
   `opod node ls`; the router applies it before revision groups, so a revision whose only worker is lost or
   cooling down gives its share to the others instead of dropping it on the local fallback
+- A worker can be asked to stop holding a model: `POST /v1/model/unload` (feature `worker_unload`, HMAC-signed
+  like `/v1/model/load`, the same source fields) — the engine's own unload where it has one (Ollama), a stop
+  of the engine process where the worker launched it (`vllm serve`, SGLang, `llama-server`); idempotent
+  (`noop` when not resident), `409` for a shard part or a held adapter of the model, `501` when the engine
+  cannot and the worker did not start it; the model leaves the next heartbeat and its placement row goes
 - A placement the leader marks `draining` stays out of rotation across the worker's heartbeats (feature
   `placement_drain`) — it used to be rewritten to `ready` within 5 s; it ends when it is set back, when the
   model leaves the worker, or at a leader start
