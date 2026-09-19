@@ -8,6 +8,26 @@
 #            OPOD_ENGINE_FLAGS (json), POD_IP / POD_NAME (Kubernetes downward API)
 # Nothing here knows about Kubernetes or the control plane — it is plain opod.
 set -euo pipefail
+
+# A base image whose own ENTRYPOINT prepared the environment before exec'ing its
+# command (Intel's XPU images: `source /opt/intel/oneapi/setvars.sh --force`)
+# lost that step when this script replaced it, and the engine then dies on its
+# first import ("libccl.so.1: cannot open shared object file"). Such an image
+# records the script and its arguments at build time (images/worker-vllm); it is
+# sourced here, once, for every process this entrypoint starts. Vendor scripts
+# are not written for `set -eu`, so both are off while it runs.
+base_env() {
+  local rec="${OPOD_BASE_ENV_FILE:-/usr/local/share/opod/base-env}" script args
+  [ -r "$rec" ] || return 0
+  read -r script args < "$rec" || true
+  [ -r "$script" ] || { echo "entrypoint: $rec names '$script', which this image does not have" >&2; return 1; }
+  set +eu
+  # shellcheck disable=SC1090,SC2086
+  . "$script" $args >/dev/null
+  set -eu
+}
+base_env
+
 ROLE="${OPOD_ROLE:-leader}"
 DATA="${OPOD_DATA_DIR:-/var/lib/opod}"
 MODELS="${OPOD_MODELS_DIR:-/data/models}"

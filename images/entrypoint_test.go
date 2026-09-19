@@ -47,3 +47,45 @@ func TestAPinnedModelNeverTakesTheUnpinnedFileByPath(t *testing.T) {
 		t.Fatalf("unpinned, nothing cached: want repo+file, got %s", got)
 	}
 }
+
+// baseEnv runs the entrypoint's base_env against a record file and prints what
+// the rest of the entrypoint would then see.
+func baseEnv(t *testing.T, record string) (string, error) {
+	t.Helper()
+	script := `set -euo pipefail; eval "$(sed -n '/^base_env() {/,/^}/p' entrypoint.sh)"; base_env; echo "lib=${BASE_LIB:-} strict=$-"`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "OPOD_BASE_ENV_FILE=" + record}
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// A base image that prepared its environment in its own ENTRYPOINT (Intel's XPU
+// vLLM image sources oneAPI's setvars.sh) lost it under ours: the engine died at
+// `import torch` with "libccl.so.1: cannot open shared object file". The image
+// now records the script; the entrypoint sources it — with its arguments, and
+// although such scripts read unset variables and return non-zero freely.
+func TestTheBaseImagesEnvironmentScriptIsSourced(t *testing.T) {
+	dir := t.TempDir()
+	vendor := filepath.Join(dir, "setvars.sh")
+	body := "echo noise\n[ \"$1\" = --force ] || return 3\n: \"$NEVER_SET\"\nfalse\nexport BASE_LIB=/opt/vendor/lib\n"
+	if err := os.WriteFile(vendor, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(dir, "base-env")
+	if err := os.WriteFile(record, []byte(vendor+" --force\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := baseEnv(t, record)
+	if err != nil || !strings.HasPrefix(got, "lib=/opt/vendor/lib strict=") || !strings.Contains(got, "e") || !strings.Contains(got, "u") {
+		t.Fatalf("want the script's exports, none of its output, and -eu back on afterwards; got %q (%v)", got, err)
+	}
+	if got, err := baseEnv(t, filepath.Join(dir, "absent")); err != nil || !strings.HasPrefix(got, "lib= ") {
+		t.Fatalf("an image that records nothing starts as before; got %q (%v)", got, err)
+	}
+	if err := os.WriteFile(record, []byte(filepath.Join(dir, "gone.sh")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := baseEnv(t, record); err == nil || !strings.Contains(got, "does not have") {
+		t.Fatalf("a record naming a script the image lacks must stop the start, by name; got %q (%v)", got, err)
+	}
+}
