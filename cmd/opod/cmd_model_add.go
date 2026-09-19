@@ -156,12 +156,18 @@ func modelAddDryRunEntry(cfg *config.Config, entry *models.Entry) {
 // resolves the catalog entry and dials each worker's /v1/model/load; the worker's
 // engine pulls + loads it and reports it on the next heartbeat. Unlike the
 // default install, this does NOT pull on the leader.
-func modelAddOnNodes(id string, nodes []string) {
+//
+// A worker whose engine serves one model per process would stop what it serves;
+// the leader refuses that and names both models. force is --force: replace it.
+func modelAddOnNodes(id string, nodes []string, force bool) {
 	cfg := loadConfigOrExit()
-	body, _ := json.Marshal(map[string]any{"id": id, "nodes": nodes})
+	body, _ := json.Marshal(map[string]any{"id": id, "nodes": nodes, "force": force})
 	note(os.Stdout, "placing %s on %s (workers pull + load; this may take a few minutes)…", id, strings.Join(nodes, ", "))
 	resp, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/models", body, weightsOpTimeout)
 	if err != nil {
+		if !force && strings.Contains(string(resp)+err.Error(), "would stop it") {
+			die("%v: %s\n  (replace it on purpose with `opod model add %s --node %s --force`)", err, string(resp), id, strings.Join(nodes, ","))
+		}
 		die("%v: %s", err, string(resp))
 	}
 	ok(os.Stdout, "placed %s on %s", id, strings.Join(nodes, ", "))

@@ -90,7 +90,7 @@ func cmdModel(args []string) {
 					}
 				}
 			}
-			modelAddOnNodes(id, nodes)
+			modelAddOnNodes(id, nodes, force)
 			return
 		}
 		// Scheme-prefixed ids (hf:, ollama:, file:) skip the catalog lookup

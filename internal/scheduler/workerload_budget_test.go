@@ -44,14 +44,14 @@ func TestALeaderDrivenLoadOutlastsTheControlCallBudget(t *testing.T) {
 	o.HTTP = &http.Client{Timeout: pull / 10} // the control-call budget, scaled down with the pull
 
 	entry := models.Entry{ID: "m", Source: models.SourceSpec{Type: "huggingface", Repo: "example/M"}}
-	if err := o.PlaceOnNodes(ctx, entry, []string{"w1"}, false); err != nil {
+	if err := o.PlaceOnNodes(ctx, entry, []string{"w1"}, false, false); err != nil {
 		t.Fatalf("a load that takes longer than a control call was cut by the leader: %v", err)
 	}
 
 	// The caller still decides when to give up: its context, not a client timeout.
 	short, cancel := context.WithTimeout(ctx, pull/10)
 	defer cancel()
-	if err := o.PlaceOnNodes(short, entry, []string{"w1"}, false); !errors.Is(err, context.DeadlineExceeded) {
+	if err := o.PlaceOnNodes(short, entry, []string{"w1"}, false, false); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("the caller's deadline must end the load, got %v", err)
 	}
 }

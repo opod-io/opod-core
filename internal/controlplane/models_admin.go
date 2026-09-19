@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/opod-io/opod/internal/scheduler"
 	"net/http"
 	"time"
 
@@ -52,6 +53,8 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "source for "+req.ID+" does not exist: "+err.Error())
 	case errors.Is(err, ErrNoOrchestrator):
 		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, scheduler.ErrUnplaceable):
+		writeJSONError(w, http.StatusConflict, err.Error()+` (send "force": true to replace it)`)
 	case errors.Is(err, ErrUpstream):
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 	case err != nil:

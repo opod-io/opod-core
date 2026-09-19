@@ -195,10 +195,27 @@ func (o *Orchestrator) callWorkerStop(ctx context.Context, node store.Node, proc
 // is, via pickWorkersByID. Each worker reports the model on its next heartbeat,
 // at which point the leader reconciles the placement — so this only drives the
 // load; it writes no placement rows itself.
-func (o *Orchestrator) PlaceOnNodes(ctx context.Context, entry models.Entry, nodeIDs []string, pin bool) error {
+//
+// A load on a worker whose engine serves one model per process stops what that
+// worker serves. Every named worker is judged first (LoadWouldReplace) and the
+// placement is refused before any of them is touched; force is the operator
+// saying the replacement is meant, and it is logged with what it stops.
+func (o *Orchestrator) PlaceOnNodes(ctx context.Context, entry models.Entry, nodeIDs []string, pin, force bool) error {
 	workers, err := o.pickWorkersByID(ctx, nodeIDs)
 	if err != nil {
 		return err
+	}
+	for _, nd := range workers {
+		placed, err := o.Store.Placements().GetByNode(ctx, nd.ID)
+		if err != nil {
+			return err
+		}
+		if lost := LoadWouldReplace(nd, placed, entry.ID); lost != nil {
+			if !force {
+				return lost
+			}
+			o.Log.Warn("forced placement replaces what the worker serves", "model", entry.ID, "node", nd.ID, "refusal", lost.Error())
+		}
 	}
 	for _, nd := range workers {
 		if err := o.callWorkerLoad(ctx, nd, entry, pin); err != nil {

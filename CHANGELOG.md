@@ -100,6 +100,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
   (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- `opod model add <id> --node …` no longer replaces what a worker serves in silence: every named worker is judged
+  first (the rule `model move` already used), a load that would stop another model is refused with 409 naming both
+  — before any worker is touched — and `--force` (`"force": true`) is how an operator says the replacement is meant
 - A leader-driven model load (`opod model add --node`, `opod model move`) is no longer cut at 60 s: the worker
   answers when the pull and the load are done, so the call rides the weights client (as the GGUF upload does),
   bounded by the caller's context — a cold pull used to fail at the leader while the worker carried on

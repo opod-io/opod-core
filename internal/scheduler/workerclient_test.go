@@ -49,11 +49,11 @@ func TestPlaceOnNodesSendsTheCatalogFile(t *testing.T) {
 	o := New(st, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 
 	multi := models.Entry{ID: "qwen-gguf", Source: models.SourceSpec{Type: "huggingface", Repo: "example/Qwen-GGUF", File: "qwen-q4_k_m.gguf"}}
-	if err := o.PlaceOnNodes(ctx, multi, []string{"w1"}, true); err != nil {
+	if err := o.PlaceOnNodes(ctx, multi, []string{"w1"}, true, false); err != nil {
 		t.Fatal(err)
 	}
 	whole := models.Entry{ID: "qwen-awq", Source: models.SourceSpec{Type: "huggingface", Repo: "example/Qwen-AWQ"}}
-	if err := o.PlaceOnNodes(ctx, whole, []string{"w1"}, false); err != nil {
+	if err := o.PlaceOnNodes(ctx, whole, []string{"w1"}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(bodies) != 2 {

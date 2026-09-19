@@ -369,7 +369,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Worker unload (`worker_unload`): `POST /v1/model/unload` on a worker is the counterpart of `/v1/model/load` — the engine's unload (Ollama), or a stop of the engine process the worker launched (vLLM, SGLang, llama.cpp); idempotent, `409` while a shard part or an adapter of the model is held there, `501` when the engine cannot. The leader calls it; there is no CLI verb on it yet
 
 - One-command join — `opod join "<leader-url>?token=…"` registers a worker (hardware, and which engine it runs); heartbeats every 5 s carry the models it answers for and, from an engine that loads on request (Ollama), which of them are in memory
-- Placement by residency — a worker serves what its engine has loaded (`opod model add <id> --node a,b` pulls and warms it there); the router prefers local, then the least-loaded worker
+- Placement by residency — a worker serves what its engine has loaded (`opod model add <id> --node a,b` pulls and warms it there; on a worker whose engine serves one model per process — vLLM, SGLang, llama.cpp — that would stop what it serves, so it is refused naming both models unless you add `--force`); the router prefers local, then the least-loaded worker
 - **Memory lifecycle** — admission control against live engine residency (a machine is never overcommitted), `opod model load --swap` with LRU evict-and-drain, `--pin` to protect a model, desired placements restored on restart, `opod down` releases engine memory by default, `--exclusive` for one-model-per-machine
 - Heterogeneous sharding via llama.cpp RPC for models larger than any single node — `opod shard create <model> <N>` orchestrates the coordinator + every rpc-server end-to-end
 - Live model migration (planned)
