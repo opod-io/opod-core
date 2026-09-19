@@ -715,6 +715,21 @@ tags: [coding, agent]
 
 Loaded into the model registry at startup. Users add via `opod model add qwen3-coder`.
 
+### Signed catalog files
+
+A catalog entry decides which weights are pulled and how an engine is launched, so a directory an operator does not fully control is worth a signature. The scheme is [minisign](https://jedisct1.github.io/minisign/): `minisign -S -m my-model.yaml` writes `my-model.yaml.minisig` beside the file, and the reader (`internal/models/trust.go`, the `github.com/jedisct1/go-minisign` verifier) checks it against **one** public key, `OPOD_CATALOG_PUBKEY` — the base64 line itself, or a file holding it (`minisign.pub`). Both knobs are rows of the environment contract (`config.Env`, side `both`): a worker does not read the catalog to serve — the leader sends it a model's source fields — but the CLI on a worker machine does.
+
+| Configured | A file with a signature | A file without one |
+|---|---|---|
+| no key | loaded — the signature is not read | loaded |
+| `OPOD_CATALOG_PUBKEY` | must verify, **or the load is refused** | loaded |
+| + `OPOD_CATALOG_REQUIRE_SIGNED=1` | must verify, or the load is refused | **refused** |
+
+- **A signature that is present and wrong is always a refusal**, never "warn and load": it means the file changed after it was signed or another key signed it, and neither is something to serve from. `OPOD_CATALOG_REQUIRE_SIGNED=1` with no key is a configuration error, refused the same way.
+- **Where it runs.** At every catalog load — `opod up` and every CLI command that reads the catalog go through one function (`loadCatalog` → `models.LoadCatalogTrusted`), for every directory in the merge: the share directories, `$OPOD_CATALOG_DIR`, `~/.opod/catalog`, and an explicit `catalog_dir`. A refusal fails the load and names the file, exactly as a YAML that does not parse does; the file is checked before it is decoded. And in `opod model add --from <file>`, against `<file>.minisig`, before anything is planned, saved or pulled; the signature is saved beside the copy in the user catalog (`<id>.yaml.minisig`) so the copy verifies the way the original did. `opod doctor` reports a refusal as what it is and says which policy is in force.
+- **The embedded catalog is not subject to it.** It ships inside the binary; whoever trusts the binary trusts it. A directory file that is byte-for-byte the embedded entry of the same name — what `opod catalog export` writes, and what the worker image's entrypoint exports at start — *is* that entry and is not checked. Edit it, or keep an export from an older binary, and it is a directory file like any other.
+- **What it is not.** Without `OPOD_CATALOG_REQUIRE_SIGNED=1` this is an integrity check on the files that carry a signature, not a boundary: whoever can write the directory can also delete the `.minisig`. The switch is the boundary. The scheme ids (`hf:`, `ollama:`, `file:`) involve no catalog file and are untouched by it. One key, no rotation set: to rotate, re-sign the files and change the variable together.
+
 ### Puller
 
 Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `file`. CLI shorthand: `hf:owner/repo[:file.gguf]`, `ollama:name[:tag]`, `file:/abs/path/x.gguf`. There is no `https://`, `s3://`, or `minio://` support.
@@ -850,6 +865,7 @@ All three bind to whichever Prometheus data source you pick at import time via t
 | Compromised leader | Treat leader as trust root; rotate admin keys periodically |
 | Jailbroken local model | Optional gateway-level moderation hook |
 | Supply chain (downloaded weights) | SHA256 verification against catalog or HF |
+| Supply chain (a catalog file that names the weights) | minisign signatures on directory catalog files, required with `OPOD_CATALOG_REQUIRE_SIGNED=1` ("Signed catalog files"); the embedded catalog ships in the binary |
 
 ### Reporting vulnerabilities
 
@@ -1128,7 +1144,7 @@ E.g. swapping LAN for Tailscale tsnet:
 
 ### Add a new model to the catalog
 
-Add `catalog/<id>.yaml` in `opod-io/opod-sdk` (embedded into the binary; an operator can also drop a file in `~/.opod/catalog` or `OPOD_CATALOG_DIR` to add or override one at runtime). See the SDK's catalog/README.md for the schema and required fields.
+Add `catalog/<id>.yaml` in `opod-io/opod-sdk` (embedded into the binary; an operator can also drop a file in `~/.opod/catalog` or `OPOD_CATALOG_DIR` to add or override one at runtime). A dropped-in file can carry a minisign signature — see "Signed catalog files". See the SDK's catalog/README.md for the schema and required fields.
 
 ## Stable admin surface (v1)
 

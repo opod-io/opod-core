@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.1.0
+	github.com/jedisct1/go-minisign v0.0.0-20260527172527-a09352b57a22
 	github.com/mattn/go-isatty v0.0.20
 	github.com/prometheus/client_golang v1.20.5
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
@@ -22,6 +23,7 @@ require (
 require (
 	github.com/kr/text v0.2.0 // indirect
 	go.opentelemetry.io/otel/log v0.22.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 )
 
 require (

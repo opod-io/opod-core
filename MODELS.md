@@ -620,6 +620,8 @@ tags: [chat]
 
 Restart `opod up` — your model now appears in `opod model search`, `opod model info my-model` and the `opod model add` picker.
 
+To have the file checked before it is ever loaded, sign it — `minisign -S -m ~/.opod/catalog/my-model.yaml` — and set `OPOD_CATALOG_PUBKEY` to your public key; add `OPOD_CATALOG_REQUIRE_SIGNED=1` to refuse unsigned files as well. See the README's "Supported models" section.
+
 ---
 
 ## Switching models on the fly

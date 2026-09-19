@@ -53,6 +53,7 @@ func cmdModel(args []string) {
 			"For sharded models (split across multiple machines) see `opod shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
 			"Adding a model not in the catalog: use a scheme prefix (`hf:owner/repo`, `ollama:tag`, `file:/abs/path.gguf`) for a one-liner, `--from <my.yaml>` to install from your own catalog entry, or drop a YAML file into `~/.opod/catalog/` and run `opod model add <id>`.",
+			"Signed catalog files: with OPOD_CATALOG_PUBKEY set (a minisign public key, or a file holding one), a catalog file that has `<file>.minisig` beside it must verify — in `--from <my.yaml>` and in every catalog directory — and one that does not is refused. OPOD_CATALOG_REQUIRE_SIGNED=1 refuses unsigned files too. The embedded catalog is never checked.",
 		},
 	}
 	if len(args) == 0 {
@@ -202,7 +203,7 @@ func catalogHasID(id string) bool {
 		return false
 	}
 	cfg := loadConfigOrExit()
-	cat, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
+	cat, err := loadCatalog(cfg)
 	if err != nil {
 		return false
 	}

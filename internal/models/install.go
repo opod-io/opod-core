@@ -45,7 +45,9 @@ func SourceCompatibleWithEngine(sourceType, engineName string) bool {
 // catalog dir (configuredDir, else ~/.opod/catalog) as <id>.yaml so it shows
 // up in search/info next run. Never overwrites: an existing entry with the
 // same id is an error the caller surfaces. Returns the destination path.
-func PersistUserCatalogEntry(configuredDir, id string, data []byte) (string, error) {
+// sig, when the entry came with a minisign signature, lands beside it as
+// <id>.yaml.minisig so the saved copy verifies the same way the original did.
+func PersistUserCatalogEntry(configuredDir, id string, data, sig []byte) (string, error) {
 	dir := configuredDir
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -60,6 +62,16 @@ func PersistUserCatalogEntry(configuredDir, id string, data []byte) (string, err
 	dest := filepath.Join(dir, id+".yaml")
 	if _, err := os.Stat(dest); err == nil {
 		return "", fmt.Errorf("%s already exists — remove or rename it first", dest)
+	}
+	// The signature first: a crash between the two writes must never leave a
+	// catalog file whose signature is still on its way.
+	if sig != nil {
+		if err := os.WriteFile(dest+SignatureSuffix, sig, 0o644); err != nil {
+			return "", fmt.Errorf("write %s%s: %w", dest, SignatureSuffix, err)
+		}
+	} else if err := os.Remove(dest + SignatureSuffix); err != nil && !os.IsNotExist(err) {
+		// A signature left behind by an entry that is gone would condemn this one.
+		return "", fmt.Errorf("remove stale %s%s: %w", dest, SignatureSuffix, err)
 	}
 	if err := os.WriteFile(dest, data, 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", dest, err)
