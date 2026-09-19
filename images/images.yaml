@@ -193,4 +193,5 @@ images:
     summary: SGLang on ROCm. Safetensors models from a Hugging Face repo, one node per endpoint.
     notes:
       - Instinct only - upstream has no RDNA build, so a Radeon card serves through llama.cpp or vLLM instead. MI350 needs the -mi35x base (rebuild with SGLANG_AMD_BASE=).
+      - 'Confirmed on a Radeon RX 7900 XTX 2026-09-19: the worker joins, SGLang starts and its scheduler dies with "HIP error: invalid device function" - no kernel in the image is compiled for RDNA.'
       - One node only - core has no multi-node path for SGLang.
