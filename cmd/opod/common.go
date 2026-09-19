@@ -63,11 +63,22 @@ func openStoreOrExit(cfg *config.Config) store.Store {
 }
 
 func loadCatalogOrExit(cfg *config.Config) []models.Entry {
-	entries, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
+	entries, err := loadCatalog(cfg)
 	if err != nil {
 		die("catalog: %v", err)
 	}
 	return entries
+}
+
+// loadCatalog is the one way this binary reads its catalog: the embedded set,
+// then the directories, every directory file under the operator's signature
+// policy (OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED; models/trust.go).
+func loadCatalog(cfg *config.Config) ([]models.Entry, error) {
+	trust, err := models.NewCatalogTrust(cfg.Env.CatalogPubKey, cfg.Env.CatalogMustSign)
+	if err != nil {
+		return nil, err
+	}
+	return models.LoadCatalogTrusted(trust, cfg.CatalogDir, cfg.Env.CatalogDir)
 }
 
 func newEngineFromConfig(cfg *config.Config) engines.Engine {

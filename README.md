@@ -419,6 +419,8 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 
 Opod ships a curated catalog of **47 open-weight models**, embedded in the binary from [`opod-io/opod-sdk/catalog`](https://github.com/opod-io/opod-sdk) (`opod catalog ls`, `opod catalog export <dir>`), spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `opod model add hf:<owner>/<repo>` (HuggingFace direct) or `opod model add ollama:<name>` (any Ollama-pullable tag). See the SDK's `catalog/README.md` for the YAML schema if you want to PR an entry; a file dropped in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` adds or overrides one locally. `opod fetch <repo> <file> --dir <models dir>` makes one GGUF present in a models directory — exclusive per file (a second caller waits for the first), written to a temp sibling and renamed only when the byte count matches the server's, skipped when already there — the same pull a worker runs before launching llama-server.
 
+**Signed catalog files.** A catalog entry decides which weights get pulled, so files you add can be signed with [minisign](https://jedisct1.github.io/minisign/): `minisign -S -m my-model.yaml` writes `my-model.yaml.minisig` beside it. Set `OPOD_CATALOG_PUBKEY` (the public key line, or the path of your `minisign.pub`) and every signed file in `~/.opod/catalog/`, `$OPOD_CATALOG_DIR` and the share directories must verify — at every catalog load, and in `opod model add --from my-model.yaml`, which also saves the signature beside its copy. A signature that is present and does not verify is always a refusal that names the file. Unsigned files keep loading unless you also set `OPOD_CATALOG_REQUIRE_SIGNED=1` — that switch is what makes it a boundary, since whoever can write the directory could otherwise just delete the signature. The embedded catalog ships inside the binary and is not subject to any of this, and neither is an unedited `opod catalog export` copy of it.
+
 > 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/audio/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
 
 ### Shipped catalog at a glance
@@ -738,6 +740,8 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_EXCLUSIVE` | `placement.exclusive` (truthy `1/true`) — one resident model per machine |
 | `OPOD_PLACEMENT_DRAIN_TIMEOUT_SECONDS` | `placement.drain_timeout_seconds` — eviction drain bound (default 30) |
 | `OPOD_UNLOAD_ON_EXIT` | `1` → Ctrl-C of `opod up` also unloads engine-resident models (the `opod down` path already does this by default) |
+| `OPOD_CATALOG_PUBKEY` | A [minisign](https://jedisct1.github.io/minisign/) public key — the base64 line, or a file holding it. A catalog file in a directory that has `<file>.minisig` beside it must verify against this key; one that does not is **always refused**, never loaded with a warning. The embedded catalog is never checked. Unset → signatures are ignored |
+| `OPOD_CATALOG_REQUIRE_SIGNED` | `1` → a directory catalog file with **no** signature is refused too (needs `OPOD_CATALOG_PUBKEY`). Default: unsigned files load |
 | `OPOD_SKIP_SOURCE_CHECK` | `1` → skip the pre-flight HEAD probe that `opod model add` runs against the upstream registry (use for air-gapped mirrors / custom registries) |
 
 ### Not yet configurable (roadmap)

@@ -60,9 +60,18 @@ type (
 // contract) read after the share directories and before ~/.opod/catalog;
 // ignored when dir names one directory to read alone.
 func LoadCatalog(dir string, overrides ...string) ([]Entry, error) {
+	return LoadCatalogTrusted(nil, dir, overrides...)
+}
+
+// LoadCatalogTrusted is LoadCatalog under a signature policy (trust.go): every
+// file read from a directory is checked, and a refusal fails the load naming
+// the file — a catalog entry decides which weights get pulled and how an
+// engine is launched, so a file that is not trusted is not skipped quietly.
+// The embedded catalog is never checked. A nil trust checks nothing.
+func LoadCatalogTrusted(trust *CatalogTrust, dir string, overrides ...string) ([]Entry, error) {
 	var out []Entry
 	if dir != "" {
-		got, err := readCatalogDir(dir)
+		got, err := readCatalogDir(dir, trust)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +91,7 @@ func LoadCatalog(dir string, overrides ...string) ([]Entry, error) {
 			merged[e.ID] = e
 		}
 		for _, d := range resolveCatalogDirs(overrides) {
-			got, err := readCatalogDir(d)
+			got, err := readCatalogDir(d, trust)
 			if err != nil {
 				return nil, err
 			}
@@ -141,7 +150,7 @@ func ExportBundled(dir string) error {
 
 // readCatalogDir reads a single directory's worth of YAML files into
 // Entry values. Used both by the explicit-dir path and by the merge.
-func readCatalogDir(dir string) ([]Entry, error) {
+func readCatalogDir(dir string, trust *CatalogTrust) ([]Entry, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read catalog %s: %w", dir, err)
@@ -157,6 +166,13 @@ func readCatalogDir(dir string) ([]Entry, error) {
 		data, err := os.ReadFile(filepath.Join(dir, de.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", de.Name(), err)
+		}
+		// Trust before parsing: an untrusted file is not even decoded. An
+		// exported copy of an embedded entry is that entry.
+		if trust != nil && !isEmbeddedEntry(de.Name(), data) {
+			if _, err := trust.VerifyFile(filepath.Join(dir, de.Name()), data); err != nil {
+				return nil, err
+			}
 		}
 		var e Entry
 		if err := yaml.Unmarshal(data, &e); err != nil {

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/opod-io/opod/internal/control"
-	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -50,7 +49,7 @@ func cmdCompletion(args []string) {
 	case "__models":
 		// Internal hook used by completion scripts. Prints one catalog ID per line.
 		cfg := loadConfigOrExit()
-		cat, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir)
+		cat, err := loadCatalog(cfg)
 		if err != nil {
 			os.Exit(0)
 		}

@@ -260,6 +260,36 @@ func modelAddEntry(entry *models.Entry, force bool) {
 	}
 }
 
+// verifyCatalogFile applies the operator's signature policy (models/trust.go)
+// to a catalog file given to `model add --from`; its signature is
+// <path>.minisig. It returns the signature to save beside the persisted copy
+// (nil = there is none) and, when a configured key verified it, that key's id.
+// With no key configured a signature is not checked, but it still travels with
+// the file, so the saved copy verifies the day a key is configured.
+func verifyCatalogFile(env config.Env, path string, data []byte) (sig []byte, verifiedBy string, err error) {
+	trust, err := models.NewCatalogTrust(env.CatalogPubKey, env.CatalogMustSign)
+	if err != nil {
+		return nil, "", err
+	}
+	sig, err = os.ReadFile(path + models.SignatureSuffix)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		sig = nil
+	case err != nil:
+		return nil, "", fmt.Errorf("read %s%s: %w", path, models.SignatureSuffix, err)
+	case sig == nil:
+		sig = []byte{} // present and empty is present
+	}
+	signed, err := trust.Verify(path, data, sig)
+	if err != nil {
+		return nil, "", err
+	}
+	if signed {
+		verifiedBy = trust.KeyID()
+	}
+	return sig, verifiedBy, nil
+}
+
 // modelAddFromYAML loads a user-supplied catalog YAML at `path`, copies
 // it into `~/.opod/catalog/<id>.yaml` so it persists across runs and
 // shows up in `opod model search` / `info`, then runs the standard
@@ -284,6 +314,16 @@ func modelAddFromYAML(path string, force, dryRun bool) {
 
 	cfg := loadConfigOrExit()
 
+	// The signature policy applies to the file as it was handed over, before
+	// anything is planned, saved or pulled.
+	sig, keyID, err := verifyCatalogFile(cfg.Env, path, data)
+	if err != nil {
+		die("%v", err)
+	}
+	if keyID != "" {
+		ok(os.Stdout, "signature verified against key %s", keyID)
+	}
+
 	// Dry run plans against the parsed YAML and stops BEFORE the
 	// copy-to-user-catalog write below — "no weights pulled" must also
 	// mean "nothing persisted".
@@ -295,7 +335,7 @@ func modelAddFromYAML(path string, force, dryRun bool) {
 	// Persist into ~/.opod/catalog/ so this entry is visible to future
 	// `opod model search/info/ls` runs. We use UserCatalogDir() to honor
 	// OPOD_CATALOG_DIR when set; otherwise default to ~/.opod/catalog.
-	dest, err := models.PersistUserCatalogEntry(cfg.CatalogDir, entry.ID, data)
+	dest, err := models.PersistUserCatalogEntry(cfg.CatalogDir, entry.ID, data, sig)
 	if err != nil {
 		warn(os.Stdout, "could not persist %s into the user catalog (%v) — proceeding with one-shot install", entry.ID, err)
 	} else if dest != "" {

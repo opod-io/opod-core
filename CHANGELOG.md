@@ -46,6 +46,10 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - 47 curated entries with `released:` dates and licence metadata enforced by CI; `opod model search|info|ls|ps`
 - Non-catalog installs: `opod model add hf:owner/repo`, `ollama:tag`, `file:/path.gguf`, `--from my.yaml`;
   user entries persist in `~/.opod/catalog/`
+- Signed catalog files: a minisign `<file>.minisig` beside a directory catalog file is verified against
+  `OPOD_CATALOG_PUBKEY` at every catalog load and in `opod model add --from`; a signature that does not
+  verify is always a refusal, `OPOD_CATALOG_REQUIRE_SIGNED=1` refuses unsigned files too, and the embedded
+  catalog is exempt
 - Pre-flight source probe on add (a certain 404 is refused; an unverifiable source proceeds with a warning)
 - Memory lifecycle: installed vs resident, admission, evict-and-swap, release (`/admin/v1/memory`)
 - Per-worker VRAM budgets (`opod join --gpu <i> --vram-budget <GB>`) → vLLM `--gpu-memory-utilization`

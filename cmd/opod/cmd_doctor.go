@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/agent"
+	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/models"
 )
 
@@ -96,8 +98,13 @@ func cmdDoctor(args []string) {
 
 	// Catalog — `opod up` hard-fails without it, so escalate to a warning
 	// with an actionable hint pointing at the user-writable install location.
-	if entries, err := models.LoadCatalog(cfg.CatalogDir, cfg.Env.CatalogDir); err == nil {
-		ok(os.Stdout, "catalog: %d entries", len(entries))
+	if entries, err := loadCatalog(cfg); err == nil {
+		ok(os.Stdout, "catalog: %d entries%s", len(entries), catalogPolicyNote(cfg.Env))
+	} else if errors.Is(err, models.ErrCatalogSignature) {
+		// Not a missing catalog: a file the signature policy refuses. The
+		// message names the file; reinstalling would not change it.
+		warn(os.Stdout, "catalog: %v", err)
+		warn(os.Stdout, "  → sign the file (`minisign -S -m <file>`), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
 	} else {
 		warn(os.Stdout, "catalog: %v", err)
 		warn(os.Stdout, "  → reinstall to drop the bundled catalog at ~/.opod/catalog,")
@@ -117,4 +124,17 @@ func portAvailable(addr string) bool {
 	}
 	_ = ln.Close()
 	return true
+}
+
+// catalogPolicyNote says, beside the entry count, which signature policy the
+// directory files were loaded under — nothing when none is configured.
+func catalogPolicyNote(env config.Env) string {
+	switch {
+	case env.CatalogPubKey == "":
+		return ""
+	case env.CatalogMustSign:
+		return " (directory files: minisign signature required)"
+	default:
+		return " (directory files: minisign signature verified when present)"
+	}
 }

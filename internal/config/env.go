@@ -40,6 +40,8 @@ type Env struct {
 	GPUIndex      string `env:"OPOD_GPU_INDEX" side:"worker" doc:"the device index the worker was pinned to (informational; the engine sees CUDA_VISIBLE_DEVICES & co)"`
 	// both
 	CatalogDir      string `env:"OPOD_CATALOG_DIR" side:"both" doc:"a catalog directory that overrides the bundled entries (beaten only by ~/.opod/catalog)"`
+	CatalogPubKey   string `env:"OPOD_CATALOG_PUBKEY" side:"both" doc:"a minisign public key (the base64 line, or a file holding one): a catalog file in a directory that has a <file>.minisig beside it must verify against it, and a signature that does not is always a refusal. The embedded catalog is never checked. Empty = signatures are ignored"`
+	CatalogMustSign bool   `env:"OPOD_CATALOG_REQUIRE_SIGNED" side:"both" doc:"1 = a catalog file in a directory with NO signature is refused too (needs OPOD_CATALOG_PUBKEY); default: unsigned files load"`
 	SkipSourceCheck bool   `env:"OPOD_SKIP_SOURCE_CHECK" side:"both" doc:"1 = never HEAD-check a model's upstream (air-gapped mirrors)"`
 	HFToken         string `env:"HF_TOKEN" side:"both" doc:"Hugging Face token for gated repositories"`
 	HFEndpoint      string `env:"HF_ENDPOINT" side:"both" doc:"Hugging Face Hub base URL (a mirror); default https://huggingface.co"`
