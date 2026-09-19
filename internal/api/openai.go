@@ -318,6 +318,11 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, status, code, msg)
 			return
 		}
+		if msg, gone := workerGone(router.NodeFrom(ctx), err); gone {
+			w.Header().Set("Retry-After", "10")
+			writeJSONError(w, http.StatusServiceUnavailable, "worker_unreachable", msg)
+			return
+		}
 		code, msg := classifyEngineError(h.Engine, err)
 		writeJSONError(w, http.StatusBadGateway, code, msg)
 		return
@@ -642,6 +647,20 @@ func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
 	hint := engineRestartHint(eng.Name())
 	return "engine_unreachable", fmt.Sprintf("%s at %s is not reachable (%v). %s",
 		eng.Name(), eng.Endpoint(), err, hint)
+}
+
+// workerGone says whether a failed dispatch is "the worker the router picked
+// could not be reached, and it had no other to ask" — node is the last worker
+// the request was dispatched to (router.NodeFrom). That is not a fault of the
+// leader's own engine, which is what classifyEngineError describes (with a hint
+// to start it): it is no capacity right now — a worker that was parked, moved
+// or died and still looks alive for a heartbeat or two. The caller answers 503
+// + Retry-After, the same thing a leader with no live worker says.
+func workerGone(node string, err error) (string, bool) {
+	if node == "" || node == "local" || strings.HasPrefix(node, "shard:") || !errors.Is(err, engines.ErrUnreachable) {
+		return "", false
+	}
+	return fmt.Sprintf("worker %s could not be reached and no other worker can take this request right now; retry shortly (%v)", node, err), true
 }
 
 // upstreamPassthrough decides whether an engine's non-2xx answer is relayed

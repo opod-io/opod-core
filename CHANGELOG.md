@@ -105,6 +105,10 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   digest check: a node that had once served the model unpinned served those bytes under every `OPOD_MODEL_REVISION` /
   `OPOD_MODEL_SHA256`. A pinned load now always goes through the agent's fetch (`<models>/<repo>@<rev>/`, verified,
   reused when present); the by-path shortcut stays for unpinned models
+- When the worker the router picked cannot be reached and no other can take the request, the gateway answers `503
+  worker_unreachable` + `Retry-After` — no capacity right now — instead of `502 engine_unreachable` naming the LEADER's
+  own engine with a hint to start `llama-server`. A parked or just-removed worker still looks alive for a heartbeat or
+  two; its first caller was told to fix an engine that was never there (chat and embeddings)
 - A connection to an engine or a worker must be established within 3 s (`openaicompat.ConnectTimeout`); responses still
   stream with no overall deadline. The client had inherited Go's 30 s connect timeout, and a removed pod's address does
   not refuse, it hangs — so the request picked for a just-removed worker stalled 20–30 s before the next worker was
