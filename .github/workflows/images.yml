@@ -265,9 +265,17 @@ jobs:
         # registry directly instead of asking the daemon for a second copy.
         run: sudo mkdir -p /mnt/syft-tmp && sudo chown "$USER" /mnt/syft-tmp
       - uses: anchore/sbom-action@v0
+        # A package-level SBOM: every package, version and licence, without a record
+        # for each file a package owns. With them the vLLM image's document is 36 MB
+        # (41,060 files, 28 MB of it) and the public transparency log rejects the
+        # attestation outright — a 16 MB document is accepted — so until 2026-09-19 no
+        # image larger than the llama.cpp CUDA worker ever carried its SBOM. Measured on
+        # the leader: 2.72 MB -> 0.55 MB, the same 156 packages, versions and licences.
         env:
           TMPDIR: /mnt/syft-tmp
           SYFT_DEFAULT_IMAGE_PULL_SOURCE: registry
+          SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP: "false"
+          SYFT_FILE_METADATA_SELECTION: none
         with:
           image: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
           format: spdx-json
@@ -279,13 +287,14 @@ jobs:
         # actually running and under which licences.
         # The attestation is written to the same transparency log as the signature,
         # so it gets the same terms: retried, fatal on a tag build, not a failed job
-        # on a manual dispatch. On 2026-09-19 six images that were pushed AND signed
-        # were reported as failures because this step had one attempt and the log
-        # refused it.
+        # on a manual dispatch. (The six failures of 2026-09-19 were NOT an outage:
+        # the log rejects a document that large every time — see the SBOM step. The
+        # size is printed so the next rejection reads as what it is.)
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+          echo "sbom.spdx.json: $(du -h sbom.spdx.json | cut -f1) (16 MB has been accepted, 36 MB rejected)"
           for i in 1 2 3 4 5; do
             cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$ref" && break
             [ $i = 5 ] && { echo "::error::cosign could not attest the SBOM of $ref after 5 attempts — the image IS pushed and signed; re-run this job when Sigstore recovers"; exit 1; }
