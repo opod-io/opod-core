@@ -134,12 +134,15 @@ images:
     base: intel/vllm:0.21.0-xpu
     weights: [safetensors]
     proven: false
-    hardware: Intel Arc / Flex / Max (XPU)
+    hardware: Intel Xe2 / Xe3 GPUs (Arc B-series, Arc Pro B60) and Data Center GPU Max (XPU) - NOT Arc A-series
     requires:
       - i915 or xe driver on the node; /dev/dri passed to the container
+      - an Xe2 or newer GPU - upstream's XPU attention kernels refuse older silicon
     summary: vLLM on Intel XPU. Safetensors models from a Hugging Face repo, one card.
     notes:
       - Single-card serving only - no Ray gang has been run on the XPU backend.
+      - 'Arc A-series (Xe-HPG, e.g. A770) does not serve: run on an A770 2026-09-19 the engine needed --dtype=half (bfloat16 is refused on that card) and fp64 emulation (OverrideDefaultFP64Settings=1, IGC_EnableDPEmulation=1) to start, loaded the model, and died on the first request with "Only XE2/XE3 cutlass kernel is supported currently". Use the llama.cpp Intel image on those cards.'
+      - No Xe2 card has served through this image yet.
 
   - name: opod-worker-vllm-tt
     role: worker
