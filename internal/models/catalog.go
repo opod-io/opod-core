@@ -26,39 +26,39 @@ type (
 	HardwareSpec     = catalog.Hardware
 )
 
-// LoadCatalog reads every *.yaml file in dir (non-recursive) and returns parsed entries.
-// If dir is empty, the built-in resolution order is walked and **all**
-// directories that exist are merged. Later directories override earlier
-// ones on ID collision — so a user-supplied entry in
-// `~/.opod/catalog/` wins over the binary's bundled
-// `./catalog/<same-id>.yaml`. The precedence makes "edit-locally to
-// override" actually work; before the merge change the user's drop-in
-// was silently shadowed.
+// LoadCatalog returns the catalog.
 //
-// Merge precedence (last writer wins):
+// With dir empty — the normal case — it starts from the catalog embedded in
+// the binary (BundledCatalog: the SDK's files, always present, never looked
+// up on disk) and merges every override directory that exists over it, keyed
+// by id. A later source replaces an earlier one's entry whole, so a user's
+// drop-in wins over the embedded entry of the same id ("edit locally to
+// override"). Merge order, last writer wins:
 //
-//  1. ./catalog (relative to cwd)              (bundled — least authoritative)
-//  2. <exe-dir>/catalog
-//  3. /usr/local/share/opod/catalog
-//  4. /usr/share/opod/catalog
-//  5. $OPOD_CATALOG_DIR        (the catalog the operator points at — wins over the bundled tree)
-//  6. ~/.opod/catalog          (most authoritative — user overrides)
+//  1. the embedded catalog                     (least authoritative)
+//  2. /usr/local/share/opod/catalog
+//  3. /usr/share/opod/catalog                  (.deb / .rpm; a worker image's exported copy)
+//  4. overrides, in order — $OPOD_CATALOG_DIR  (whoever names a directory means it)
+//  5. ~/.opod/catalog                          (most authoritative — user overrides)
+//
+// Nothing else is read: not ./catalog under the working directory and not a
+// catalog/ beside the executable — both were candidates while the bundled set
+// was a directory the binary had to find, and left with it when the set was
+// embedded. resolveCatalogDirs is the list; this comment follows it.
 //
 // $OPOD_CATALOG_DIR sat first (least authoritative) until 2026-09-14: an
 // entry there that reused a bundled id was silently shadowed by the bundled
 // one, so a leader given a sharded entry for a catalog model answered "not
-// configured for sharding". Whoever names the directory means it.
+// configured for sharding".
 //
-// An explicit non-empty dir argument skips the merge and reads only
-// that directory (used by tests and callers that know exactly what they
-// want).
+// A non-empty dir (config.yaml's catalog_dir; tests) is read ALONE: no
+// embedded catalog, no merge, overrides ignored — for callers that know
+// exactly which files they want. Only *.yaml directly inside a directory is
+// read, never a subdirectory.
 //
 // Entries are returned sorted by SizeBytes ascending on every path —
 // AutoPick (and anything else scanning for "largest that fits") relies
 // on that invariant.
-// overrides are extra directories (OPOD_CATALOG_DIR through the config
-// contract) read after the share directories and before ~/.opod/catalog;
-// ignored when dir names one directory to read alone.
 func LoadCatalog(dir string, overrides ...string) ([]Entry, error) {
 	return LoadCatalogTrusted(nil, dir, overrides...)
 }
@@ -266,14 +266,16 @@ func ParseSchemeID(id string) (*Entry, bool) {
 	return nil, false
 }
 
-// resolveCatalogDirs returns every catalog directory that exists, in
-// merge order: least-authoritative first, most-authoritative last. The
-// home-config dir (`~/.opod/catalog`) is placed last so user-edited
-// entries override the binary's bundled catalog on ID collision.
+// resolveCatalogDirs returns every override directory that exists, in
+// merge order: least-authoritative first, most-authoritative last — the
+// two share directories, then the caller's overrides ($OPOD_CATALOG_DIR),
+// then `~/.opod/catalog`, so a user-edited entry beats everything. The
+// embedded catalog is not a directory and is merged under all of them by
+// the caller (LoadCatalogTrusted).
 //
 // Earlier this returned a single directory and stopped at the first
-// match, which silently shadowed a user's drop-in YAML when the same
-// id existed in `./catalog/`. The merge fixes that.
+// match, which silently shadowed a user's drop-in YAML when another
+// directory held the same id. The merge fixes that.
 func resolveCatalogDirs(overrides []string) []string {
 	var out []string
 	add := func(d string) {

@@ -765,6 +765,8 @@ tags: [coding, agent]
 
 Loaded into the model registry at startup. Users add via `opod model add qwen3-coder`.
 
+**Where entries come from** (`models.LoadCatalog` → `resolveCatalogDirs`). The catalog embedded in the binary is the base; every override directory that exists is merged over it by id, a later source replacing an earlier one's entry whole: embedded → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` → `$OPOD_CATALOG_DIR` → `~/.opod/catalog`. Nothing else is searched — `./catalog` and a `catalog/` beside the executable were candidates only while the bundled set was a directory on disk. `catalog_dir` in `config.yaml` is not part of the merge: a non-empty value reads that one directory alone, without the embedded catalog.
+
 ### Signed catalog files
 
 A catalog entry decides which weights are pulled and how an engine is launched, so a directory an operator does not fully control is worth a signature. The scheme is [minisign](https://jedisct1.github.io/minisign/): `minisign -S -m my-model.yaml` writes `my-model.yaml.minisig` beside the file, and the reader (`internal/models/trust.go`, the `github.com/jedisct1/go-minisign` verifier) checks it against **one** public key, `OPOD_CATALOG_PUBKEY` — the base64 line itself, or a file holding it (`minisign.pub`). Both knobs are rows of the environment contract (`config.Env`, side `both`): a worker does not read the catalog to serve — the leader sends it a model's source fields — but the CLI on a worker machine does.

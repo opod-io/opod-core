@@ -182,3 +182,45 @@ func TestLoadCatalog_ExplicitEnvDirOverridesBundled(t *testing.T) {
 		t.Fatalf("the OPOD_CATALOG_DIR entry must win over ./catalog: %+v", e)
 	}
 }
+
+// The documented search list, pinned: the embedded catalog is the base, and
+// neither ./catalog under the working directory nor a catalog/ beside the
+// executable is read — both were candidates only while the bundled set was a
+// directory on disk. A file there is not an entry, and cannot shadow one.
+func TestLoadCatalog_ReadsNoWorkingDirCatalog(t *testing.T) {
+	root := t.TempDir()
+	cwdCatalog := filepath.Join(root, "catalog")
+	if err := os.MkdirAll(cwdCatalog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	embedded, err := BundledCatalog()
+	if err != nil || len(embedded) == 0 {
+		t.Fatalf("embedded catalog: %d entries, %v", len(embedded), err)
+	}
+	shadow := embedded[0].ID
+	for name, body := range map[string]string{
+		"only-in-cwd.yaml": "id: only-in-cwd\ndisplay_name: cwd\nsource: {type: huggingface, repo: x/y}\n",
+		shadow + ".yaml":   "id: " + shadow + "\ndisplay_name: shadowed from ./catalog\nsource: {type: huggingface, repo: x/y}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(cwdCatalog, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(root)
+	t.Setenv("HOME", filepath.Join(root, "nohome"))
+	cat, err := LoadCatalog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if FindByID(cat, "only-in-cwd") != nil {
+		t.Error("./catalog under the working directory was read; the documented search list does not include it")
+	}
+	if e := FindByID(cat, shadow); e == nil || e.DisplayName != embedded[0].DisplayName {
+		t.Errorf("embedded entry %q must be served as embedded, got %+v", shadow, e)
+	}
+	// catalog_dir (a non-empty dir) is that directory ALONE: no embedded base.
+	alone, err := LoadCatalog(cwdCatalog)
+	if err != nil || len(alone) != 2 {
+		t.Fatalf("an explicit dir reads only itself: %d entries, %v", len(alone), err)
+	}
+}

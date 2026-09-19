@@ -667,7 +667,7 @@ listen: ":8080"                       # HTTP listen address (used by leader and 
 external_url: ""                      # public URL printed by `opod up` and embedded in `opod connect` snippets; empty → use listen addr
 data_dir: "~/.opod"                  # root for state.db, models, logs
 log_level: "info"                     # debug | info | warn | error
-catalog_dir: ""                       # empty → built-in catalog/ directory
+catalog_dir: ""                       # empty → the embedded catalog + override dirs (see OPOD_CATALOG_DIR); a path → ONLY that directory
 max_body_bytes: 0                     # request-body cap on /v1/* in bytes;
                                       # 0 → built-in 32 MiB ceiling
 
@@ -731,7 +731,7 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent). The old unprefixed `VLLM_API_KEY` still works as a deprecated fallback; the prefixed form wins when both are set |
 | `OPOD_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |
-| `OPOD_CATALOG_DIR` | `catalog_dir` — a catalog directory merged over the bundled one: every directory that exists is merged and a later one wins on an id collision, in the order `./catalog` → `<exe-dir>/catalog` → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) → `$OPOD_CATALOG_DIR` → `~/.opod/catalog` (user overrides, most authoritative) |
+| `OPOD_CATALOG_DIR` | a catalog directory merged over the catalog embedded in the binary. Every source that exists is merged by id and a later one wins, in the order: the embedded catalog → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) → `$OPOD_CATALOG_DIR` → `~/.opod/catalog` (user overrides, most authoritative). Nothing else is searched — not `./catalog`, not a `catalog/` beside the binary. No YAML equivalent: `catalog_dir` in `config.yaml` is a different switch — it reads that one directory **alone**, without the embedded catalog or the merge |
 | `OPOD_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `OPOD_OTLP_LOGS_ENDPOINT` | the leader's own log records over OTLP/HTTP to a collector (URL or bare `host:port`; no YAML equivalent). stderr keeps working; the queue is bounded and never blocks. Empty = off |
 | `OPOD_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
