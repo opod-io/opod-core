@@ -148,7 +148,12 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		Inputs: inputs,
 	})
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
+		if msg, gone := workerGone(router.NodeFrom(ctx), err); gone { // no capacity right now, not a fault of ours (openai.go)
+			w.Header().Set("Retry-After", "10")
+			writeJSONError(w, http.StatusServiceUnavailable, "worker_unreachable", msg)
+		} else {
+			writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
+		}
 		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
 		return
 	}
