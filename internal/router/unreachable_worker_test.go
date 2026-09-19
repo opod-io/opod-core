@@ -78,3 +78,41 @@ func TestAnUnreachableWorkerCostsNoEmbedding(t *testing.T) {
 		t.Fatalf("want one attempt on each worker, got gone=%v alive=%v", dead.calls, live.calls)
 	}
 }
+
+// Asking the next worker must not re-roll the traffic split. With a revision
+// split configured, a request is first assigned to a revision group by weight.
+// When the worker picked inside that group turned out to be gone, the re-pick
+// rolled the weights AGAIN — every retry handed the canary another 20 % chance,
+// so while a removed worker lingered in the old group a 20 % canary served 36 %
+// (measured on a cluster: 69 of 194). The request stays in its group.
+func TestNextWorkerStaysInTheRequestsRevisionGroup(t *testing.T) {
+	r, _ := drainRouter(t,
+		store.Node{ID: "old-gone", State: store.NodeStateReady, HardwareJSON: `{"PlanRevision":1}`},
+		store.Node{ID: "old-alive", State: store.NodeStateReady, HardwareJSON: `{"PlanRevision":1}`},
+		store.Node{ID: "canary", State: store.NodeStateReady, HardwareJSON: `{"PlanRevision":2}`})
+	dead := &stubEngine{name: "old-gone", failFor: map[string]error{"m": gone("old-gone")}}
+	alive, canary := &stubEngine{name: "old-alive"}, &stubEngine{name: "canary"}
+	r.remotes["old-gone"], r.remotes["old-alive"], r.remotes["canary"] = dead, alive, canary
+	r.SetRevisionWeights([]RevisionWeight{{Revision: 1, Weight: 80}, {Revision: 2, Weight: 20}})
+	r.inflight["old-alive"] = 1000 // inside the old group the gone worker is always tried first
+
+	const n = 3000
+	for i := 0; i < n; i++ {
+		stream, err := r.Chat(context.Background(), engines.ChatRequest{Model: "m"})
+		if err != nil {
+			t.Fatalf("request %d failed: %v", i, err)
+		}
+		for range stream {
+		}
+		r.mu.Lock()
+		r.inflight["old-alive"] = 1000 // keep the order; the stream's own decrement is not the point here
+		r.mu.Unlock()
+	}
+	share := float64(len(canary.calls)) / n
+	if share < 0.16 || share > 0.24 {
+		t.Fatalf("the canary served %.1f %% of %d requests under a 20 %% split (a re-rolled retry gives 36 %%)", share*100, n)
+	}
+	if len(alive.calls)+len(canary.calls) != n {
+		t.Fatalf("every request is served exactly once: old-alive=%d canary=%d", len(alive.calls), len(canary.calls))
+	}
+}

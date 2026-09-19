@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
@@ -25,32 +26,73 @@ import (
 // on as before. An answer from an engine, a refusal included, is never
 // replayed elsewhere.
 
-type skippedNodesKey struct{}
+// pickState is what one request remembers between its picks: the workers it
+// found unreachable, and the revision group it was assigned to per model. The
+// second matters as much as the first: a re-pick that rolled the revision
+// weights AGAIN handed the canary another chance on every retry, so while a
+// removed worker lingered in the old group a 20 % canary served 36 %. A request
+// is assigned to a group once; asking the next worker stays inside it (unless
+// the group has no worker left — then its share goes to the rest, as always).
+type pickState struct {
+	mu       sync.Mutex
+	skipped  map[string]bool
+	revision map[string]int // model → the revision group this request was assigned to
+}
 
-// skipNode returns ctx with node set aside for the rest of this request.
-func skipNode(ctx context.Context, node string) context.Context {
-	prev, _ := ctx.Value(skippedNodesKey{}).(map[string]bool)
-	next := make(map[string]bool, len(prev)+1)
-	for k := range prev {
-		next[k] = true
+type pickStateKey struct{}
+
+// withPickState gives the request its state. Chat and Embed call it once, before the walk.
+func withPickState(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(pickStateKey{}).(*pickState); ok {
+		return ctx
 	}
-	next[node] = true
-	return context.WithValue(ctx, skippedNodesKey{}, next)
+	return context.WithValue(ctx, pickStateKey{}, &pickState{skipped: map[string]bool{}, revision: map[string]int{}})
+}
+
+func pickStateOf(ctx context.Context) *pickState {
+	st, _ := ctx.Value(pickStateKey{}).(*pickState)
+	return st
 }
 
 // withoutSkipped drops the workers this request already found unreachable.
 func withoutSkipped(ctx context.Context, workers []store.Placement) []store.Placement {
-	skipped, _ := ctx.Value(skippedNodesKey{}).(map[string]bool)
-	if len(skipped) == 0 {
+	st := pickStateOf(ctx)
+	if st == nil {
+		return workers
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.skipped) == 0 {
 		return workers
 	}
 	kept := make([]store.Placement, 0, len(workers))
 	for _, w := range workers {
-		if !skipped[w.NodeID] {
+		if !st.skipped[w.NodeID] {
 			kept = append(kept, w)
 		}
 	}
 	return kept
+}
+
+// assignedRevision is the group this request was already assigned to for the
+// model (ok=false: not yet); assignRevision records the first choice.
+func assignedRevision(ctx context.Context, model string) (int, bool) {
+	st := pickStateOf(ctx)
+	if st == nil {
+		return 0, false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	rev, ok := st.revision[model]
+	return rev, ok
+}
+
+func assignRevision(ctx context.Context, model string, rev int) {
+	if st := pickStateOf(ctx); st != nil {
+		st.mu.Lock()
+		st.revision[model] = rev
+		st.mu.Unlock()
+	}
 }
 
 // errNoWorkerLeft is the pick's answer when every worker that takes requests
@@ -66,8 +108,12 @@ func noWorkerLeft(model string) error {
 // aside. Only a remote worker qualifies: the local engine and a shard
 // coordinator have no sibling to ask.
 func (r *Router) tryNextWorker(ctx context.Context, nodeID string, err error) (context.Context, bool) {
-	if !errors.Is(err, engines.ErrUnreachable) || nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
+	st := pickStateOf(ctx)
+	if st == nil || !errors.Is(err, engines.ErrUnreachable) || nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
 		return ctx, false
 	}
-	return skipNode(ctx, nodeID), true
+	st.mu.Lock()
+	st.skipped[nodeID] = true
+	st.mu.Unlock()
+	return ctx, true
 }

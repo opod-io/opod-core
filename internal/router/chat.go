@@ -33,6 +33,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	// candidate (so its duration covers the full streamed response), or
 	// inline below if every candidate fails synchronously.
 
+	ctx = withPickState(ctx) // what this request remembers between picks (nextworker.go)
 	ov := FromContext(ctx)
 	if r.prefixAffinity {
 		ctx = withPrefixKey(ctx, prefixKeyOf(req))
