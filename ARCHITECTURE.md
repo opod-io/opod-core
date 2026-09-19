@@ -1241,7 +1241,9 @@ Two mechanisms a manager drives through this surface (2026-09-07):
 - **Load signals** (`load_signals`): a worker engine that implements `engines.LoadReporter` (vLLM and
   llama.cpp scrape their own `/metrics`) sends `{kv_used_pct, queue_depth, tokens_per_s, prefix_hit_pct}`
   with every heartbeat; `/loadz` aggregates the ALIVE workers of the plan model (max KV, Σ queue, Σ tok/s,
-  mean prefix hits, `workers`, `reporting`); a sample older than 30 s stops reporting.
+  mean prefix hits, `workers`, `reporting`); a sample older than 30 s stops reporting. `workers` counts only
+  workers that can take a NEW request for the plan's model — the node takes new work (the one rule) and holds
+  a routable placement of it — so a drained, lost, sleeping or still-loading worker is neither capacity nor pressure.
 - **Sleep tier** (`worker_sleep`): `engines.Sleeper` (vLLM sleep mode) behind the worker's
   `/v1/model/sleep|resume`; the heartbeat says `sleeping`, the leader keeps those placements as
   `sleeping` (not routable), `/readyz` answers `sleeping-workers`, requests get `503 waking`; an engine with

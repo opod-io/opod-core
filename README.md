@@ -1119,7 +1119,7 @@ print(resp.choices[0].message.content)
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/healthz` `/readyz` | Liveness / readiness (`/readyz` modes: local engine · `router-only` · `sleeping` · `sleeping-workers` · `shard-coordinator`). No key |
-| `GET` | `/loadz` | Load for an external autoscaler: in-flight, rpm, waking 503s, plus the workers' engine signals (`kv_used_pct`, `queue_depth`, `tokens_per_s`, `prefix_hit_pct`, `workers`, `reporting`). No key |
+| `GET` | `/loadz` | Load for an external autoscaler: in-flight, rpm, waking 503s, plus the workers' engine signals (`kv_used_pct`, `queue_depth`, `tokens_per_s`, `prefix_hit_pct`, `workers`, `reporting`). `workers` = workers that can take a new request for the plan's model now: a drained, lost or sleeping one is not counted, and neither is its pressure. No key |
 | `GET` | `/metrics` | Prometheus exposition. No key |
 | `GET` | `/admin/v1/version` | Binary version + contract version |
 | `GET` | `/admin/v1/capabilities` | The frozen route list, feature flags, and the engine drivers linked into this binary |

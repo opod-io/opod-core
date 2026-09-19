@@ -105,10 +105,17 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// aggregateWorkerLoad folds the live workers' engine samples into the
+// aggregateWorkerLoad folds the serving workers' engine samples into the
 // leader's /loadz (build item 14): max KV use (one full cache is pressure),
-// summed queue and tokens/s, mean prefix hits. Only alive workers count
-// (liveness.go), only fresh samples report.
+// summed queue and tokens/s, mean prefix hits.
+//
+// `workers` is capacity a reader can count on: workers that can take a NEW
+// request for the plan's model right now — the node takes new work
+// (store.Node.TakesNewWork: not drained, heartbeating) and holds a routable
+// placement of it (any model when no plan names one). A draining worker, a
+// lost one, one whose engine sleeps or is still loading is not counted, and
+// its pressure is not reported: `reporting` is the counted workers with a
+// fresh sample.
 func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, now time.Time) {
 	nodes, err := s.store.Nodes().List(ctx)
 	if err != nil {
@@ -117,7 +124,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum float64
 	for _, n := range nodes {
-		if n.ID == "local" || !nodeAlive(n, maxAge, now) {
+		if n.ID == "local" || !n.TakesNewWork(maxAge, now) || !s.servesNow(ctx, n.ID, out.PlanModel) {
 			continue
 		}
 		out.Workers++
@@ -140,6 +147,21 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	if out.Reporting > 0 {
 		out.PrefixHitPct = prefixSum / float64(out.Reporting)
 	}
+}
+
+// servesNow reports whether the node holds a routable placement of model
+// (of any model when model is ""): the row the router would route to.
+func (s *Server) servesNow(ctx context.Context, nodeID, model string) bool {
+	ps, err := s.store.Placements().GetByNode(ctx, nodeID)
+	if err != nil {
+		return false
+	}
+	for _, p := range ps {
+		if (p.Status == "" || p.Status == "ready") && (model == "" || p.ModelID == model) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadSignal is the router's LoadSource: a worker's last engine sample when
