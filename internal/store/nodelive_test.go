@@ -24,6 +24,11 @@ func TestNodeTakesNewWork(t *testing.T) {
 		{"drained and silent stays drained", Node{ID: "w", State: NodeStateDraining, LastHeartbeat: silent}, time.Minute, false, "state draining", "draining"},
 		{"no age rule", Node{ID: "w", State: NodeStateReady, LastHeartbeat: silent}, 0, true, "", "ready"},
 		{"the leader's own row never heartbeats", Node{ID: "local", State: NodeStateReady, LastHeartbeat: silent}, time.Minute, true, "", "ready"},
+		{"one slow engine tick", Node{ID: "w", State: NodeStateReady, LastHeartbeat: fresh, EngineSilentSince: fresh}, time.Minute, true, "", "ready"},
+		{"its engine stopped answering", Node{ID: "w", State: NodeStateReady, LastHeartbeat: fresh, EngineSilentSince: silent}, time.Minute, false, "its engine has not answered it for 10m0s", NodeStateEngineSilent},
+		{"engine silence has no off switch", Node{ID: "w", State: NodeStateReady, LastHeartbeat: fresh, EngineSilentSince: silent}, 0, false, "its engine has not answered it for 10m0s", NodeStateEngineSilent},
+		{"drained with a silent engine stays drained", Node{ID: "w", State: NodeStateDraining, LastHeartbeat: fresh, EngineSilentSince: silent}, time.Minute, false, "state draining", "draining"},
+		{"lost outranks a silent engine", Node{ID: "w", State: NodeStateReady, LastHeartbeat: silent, EngineSilentSince: silent}, time.Minute, false, "last heartbeat 10m0s ago", NodeStateLost},
 		{"a state this version does not serve from", Node{ID: "w", State: "retired", LastHeartbeat: fresh}, time.Minute, false, "state retired", "retired"},
 	} {
 		if got := c.n.TakesNewWork(c.maxAge, now); got != c.takes {

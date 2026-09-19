@@ -21,7 +21,8 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Decorate each row: state is the LIVE state (a node whose heartbeats
-	// stopped reads "lost" — liveness.go), heartbeat_age_seconds says how
+	// stopped reads "lost", one whose engine stopped answering it reads
+	// "engine-silent" — store/nodelive.go), heartbeat_age_seconds says how
 	// stale it is, and cooldown_until appears when the router has the node
 	// in its penalty box. JSON omits the zero cooldown so legacy clients
 	// see the unchanged shape.
@@ -34,10 +35,9 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	out := make([]nodeView, 0, len(nodes))
 	for _, n := range nodes {
-		alive := nodeAlive(n, maxAge, now)
 		v := nodeView{
 			Node:                n,
-			State:               liveNodeState(n, alive),
+			State:               n.LiveState(maxAge, now), // lost, engine-silent: the one rule's word (store/nodelive.go)
 			HeartbeatAgeSeconds: int64(now.Sub(n.LastHeartbeat).Seconds()),
 		}
 		if n.ID == "local" {

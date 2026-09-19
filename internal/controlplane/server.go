@@ -61,6 +61,10 @@ type Server struct {
 	// = the orchestrator's defaults. Only tests set them.
 	movePoll, moveSettle time.Duration
 
+	// engineSilentTold: nodes whose engine silence has been journalled
+	// (node.engine_silent), so it is said once (nodeservice.go).
+	engineSilentTold sync.Map
+
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
 	// publish topic strings on state change.

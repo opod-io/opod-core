@@ -10,8 +10,8 @@ import (
 // shard gangs), /readyz and the waking 503, /loadz `workers`, GET /v1/models,
 // the shard pickers (scheduler.WorkerFor adds "has an address, is not the
 // leader's own row") and `opod node ls`. It is derived from the row, never
-// stored: a returning heartbeat or an undrain makes the node live again with
-// no reconciliation step.
+// stored: a returning heartbeat, a returning engine report or an undrain
+// makes the node live again with no reconciliation step.
 
 // NodeStateLost is the derived state of a node believed ready whose
 // heartbeats stopped. It is never persisted.
@@ -32,6 +32,28 @@ func HeartbeatBound(seconds int) time.Duration {
 	return DefaultHeartbeatMaxAge
 }
 
+// NodeStateEngineSilent is the derived state of a worker that heartbeats but
+// whose engine has not answered it for longer than the bound: alive, and
+// nothing says what it serves. Never persisted.
+const NodeStateEngineSilent = "engine-silent"
+
+// EngineSilent reports whether the worker's heartbeats have carried no
+// engine report for longer than bound. The worker asks its engine on every
+// heartbeat (every 5 s, waiting 2 s): one missed answer is a slow tick and
+// changes nothing; the bound is the patience a worker that stops heartbeating
+// gets — by then a dozen probes in a row went unanswered. bound <= 0 =
+// DefaultHeartbeatMaxAge: unlike heartbeat age this rule has no off switch,
+// because a heartbeating worker never turns "lost" on its own.
+func (n Node) EngineSilent(bound time.Duration, now time.Time) bool {
+	if n.EngineSilentSince.IsZero() {
+		return false
+	}
+	if bound <= 0 {
+		bound = DefaultHeartbeatMaxAge
+	}
+	return now.Sub(n.EngineSilentSince) > bound
+}
+
 // Alive reports whether the node heartbeated within maxAge. The leader's own
 // "local" row never heartbeats and is always alive; maxAge <= 0 means the
 // caller applies no age rule.
@@ -44,8 +66,8 @@ func (n Node) Alive(maxAge time.Duration, now time.Time) bool {
 
 // WhyNoNewWork is the rule: "" when the node takes new work — a request, a
 // shard part — else the reason, fit for a message. A node takes new work
-// when an operator has not drained it, its state is a serving one, and it is
-// alive.
+// when an operator has not drained it, its state is a serving one, it is
+// alive, and its engine has not been silent past the same bound.
 func (n Node) WhyNoNewWork(maxAge time.Duration, now time.Time) string {
 	switch n.State {
 	case NodeStateReady, NodeStateJoining, "":
@@ -54,6 +76,9 @@ func (n Node) WhyNoNewWork(maxAge time.Duration, now time.Time) string {
 	}
 	if !n.Alive(maxAge, now) {
 		return fmt.Sprintf("last heartbeat %s ago", now.Sub(n.LastHeartbeat).Round(time.Second))
+	}
+	if n.EngineSilent(maxAge, now) {
+		return fmt.Sprintf("its engine has not answered it for %s", now.Sub(n.EngineSilentSince).Round(time.Second))
 	}
 	return ""
 }
@@ -67,10 +92,13 @@ func (n Node) TakesNewWork(maxAge time.Duration, now time.Time) bool {
 // node believed ready (or still joining) whose heartbeats stopped is lost.
 // Draining is kept as written — an operator's word outlives a silent node.
 func (n Node) LiveState(maxAge time.Duration, now time.Time) string {
-	if n.Alive(maxAge, now) {
-		return n.State
+	if !n.Alive(maxAge, now) {
+		return StateWhenSilent(n.State)
 	}
-	return StateWhenSilent(n.State)
+	if n.EngineSilent(maxAge, now) && StateWhenSilent(n.State) == NodeStateLost {
+		return NodeStateEngineSilent // a drain is kept as written here too
+	}
+	return n.State
 }
 
 // StateWhenSilent is what a stored state reads as once heartbeats stopped.

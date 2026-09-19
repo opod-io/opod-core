@@ -38,16 +38,18 @@ type moveWorker struct {
 	id     string
 	engine string
 
-	mu          sync.Mutex
-	listed      []string // loaded_models
-	resident    []string // resident_models; sent only when keepsWeights
-	neverServes bool     // the load is accepted and the model never listed
-	unloadTakes time.Duration
-	unloadFails bool // the worker answers 409: something of the model is held there
-	chatStarts  []time.Time
-	loads       int
-	unloads     int
-	chats       atomic.Int64
+	mu             sync.Mutex
+	listed         []string // loaded_models
+	resident       []string // resident_models; sent only when keepsWeights
+	neverServes    bool     // the load is accepted and the model never listed
+	unloadTakes    time.Duration
+	unloadFails    bool // the worker answers 409: something of the model is held there
+	silentTicks    int  // this many of the next heartbeats carry no engine report (loaded_models null)
+	silentAtUnload int  // set silentTicks to this when the unload arrives: slow engine ticks mid-drain
+	chatStarts     []time.Time
+	loads          int
+	unloads        int
+	chats          atomic.Int64
 }
 
 // keepsWeights: an engine that keeps installed models and reports residency.
@@ -94,6 +96,7 @@ func newMoveWorker(t *testing.T, id, engine string, serving ...string) *moveWork
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			w.mu.Lock()
 			takes, fails := w.unloadTakes, w.unloadFails
+			w.silentTicks += w.silentAtUnload
 			if fails {
 				w.unloads++
 			}
@@ -170,7 +173,13 @@ func moveFixture(t *testing.T, workers ...*moveWorker) (*Server, *httptest.Serve
 		}
 		beat := func(w *moveWorker) {
 			w.mu.Lock()
-			req := HeartbeatRequest{ID: w.id, LoadedModels: append([]string(nil), w.listed...)}
+			// Never nil: a worker whose engine answered with nothing sends [],
+			// and null means "the engine did not answer" (silentTicks below).
+			req := HeartbeatRequest{ID: w.id, LoadedModels: append([]string{}, w.listed...)}
+			if w.silentTicks > 0 {
+				w.silentTicks--
+				req.LoadedModels = nil
+			}
 			if w.keepsWeights() {
 				resident := append([]string{}, w.resident...)
 				req.ResidentModels = &resident
@@ -294,6 +303,11 @@ func TestModelMoveFailsNoRequestAndFlipsTheSource(t *testing.T) {
 	w1 := newMoveWorker(t, "w1", "vllm", "m")
 	w2 := newMoveWorker(t, "w2", "vllm")
 	w1.unloadTakes = 300 * time.Millisecond
+	// While the source is flipped and still stopping its engine, several of its
+	// heartbeats carry no engine report (a slow engine tick). They must leave
+	// the draining mark alone: a report-less heartbeat that cleared the rows
+	// would let the next real one recreate the row `ready` — back in rotation.
+	w1.silentAtUnload = 5
 	srv, ts := moveFixture(t, w1, w2)
 
 	stop := traffic(ts, 4)
@@ -328,6 +342,12 @@ func TestModelMoveFailsNoRequestAndFlipsTheSource(t *testing.T) {
 	// the source heartbeats the model for another ~300 ms.
 	if last := w1.lastChatStart(); last.After(flipped.At.Add(100 * time.Millisecond)) {
 		t.Errorf("a request reached the source %s after the flip", last.Sub(flipped.At))
+	}
+	w1.mu.Lock()
+	ticksLeft := w1.silentTicks
+	w1.mu.Unlock()
+	if ticksLeft != 0 {
+		t.Fatalf("%d of the report-less heartbeats were never sent — the window this test watches did not contain them", ticksLeft)
 	}
 	if drained, _ := ans.step(scheduler.MoveDrained); drained.Data["timed_out"] != false {
 		t.Errorf("the source must go idle, not time out: %v", drained.Data)
