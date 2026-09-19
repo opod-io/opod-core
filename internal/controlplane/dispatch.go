@@ -39,11 +39,13 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 			"this endpoint serves only "+planModel+" (requested "+model+")")
 		return
 	}
-	// Router-only leader with nothing awake to serve: answer an honest
-	// 503 "waking" instead of the 502 the dead local-engine fallback
-	// would produce. The 503 itself is the autoscaler's wake signal
-	// (it shows up in /loadz unavailable_1m).
-	if !s.cfg.Router.PullDefaultModel && !s.hasServingCapacity(r.Context()) {
+	// Nothing can take this request right now: answer an honest 503 +
+	// Retry-After instead of the 502/404 the local-engine fallback would
+	// produce. Asked PER MODEL (capacity.go): a model whose every holder is
+	// drained, lost or asleep is unavailable even while another model on this
+	// leader serves. The 503 itself is the autoscaler's wake signal (it shows
+	// up in /loadz unavailable_1m), and the message says which cause it is.
+	if reason := s.unavailable(r.Context(), model); reason != "" {
 		// Policy fallback (P12-2): forward instead of 503 when the snapshot
 		// names a target — after the pre guardrail chain, so a blocked prompt
 		// is refused here and never leaves the endpoint.
@@ -57,8 +59,7 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 			}
 		}
 		w.Header().Set("Retry-After", "10")
-		writeJSONError(w, http.StatusServiceUnavailable,
-			"no workers are awake for this model — waking (scale-up in progress or floor is 0); retry shortly")
+		writeJSONError(w, http.StatusServiceUnavailable, reason)
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
