@@ -105,6 +105,12 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   digest check: a node that had once served the model unpinned served those bytes under every `OPOD_MODEL_REVISION` /
   `OPOD_MODEL_SHA256`. A pinned load now always goes through the agent's fetch (`<models>/<repo>@<rev>/`, verified,
   reused when present); the by-path shortcut stays for unpinned models
+- **A worker whose engine is not running reports "nothing loaded" (`[]`), not "no report" (`null`).** Since the
+  heartbeat learned to say "no report", a refused connection was one too — and the leader takes a worker with no report
+  for 30 s out of rotation (`engine-silent`). That hit every worker whose engine is started by a load (vLLM, SGLang,
+  llama.cpp) once it had idled for 30 s, and every part of a llama.cpp RPC gang for ever: a part runs an rpc-server,
+  never an engine, so the gang was never routable and its leader never ready. A slow engine, or one that answers with
+  an error, is still "no report"
 - When the worker the router picked cannot be reached and no other can take the request, the gateway answers `503
   worker_unreachable` + `Retry-After` — no capacity right now — instead of `502 engine_unreachable` naming the LEADER's
   own engine with a hint to start `llama-server`. A parked or just-removed worker still looks alive for a heartbeat or
