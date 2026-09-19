@@ -31,11 +31,12 @@ const name = "sglang"
 
 func init() {
 	engines.Register(engines.Descriptor{
-		Name:       name,
-		Aliases:    []string{"sgl"},
-		New:        func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
-		NativeName: openaicompat.NativeName,
-		StartHint:  "start SGLang (python -m sglang.launch_server --model-path <repo>) and ensure OPOD_SGLANG_ENDPOINT matches",
+		Name:        name,
+		Aliases:     []string{"sgl"},
+		New:         func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
+		NativeName:  openaicompat.NativeName,
+		SingleModel: true,
+		StartHint:   "start SGLang (python -m sglang.launch_server --model-path <repo>) and ensure OPOD_SGLANG_ENDPOINT matches",
 	})
 }
 

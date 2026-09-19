@@ -119,7 +119,8 @@ func ShardNeedBytes(entry models.Entry) int64 {
 // live worker has free. Nothing is probed: capacity is what the worker
 // registered (its cards' memory, else its RAM) under the lifecycle's reserve,
 // and residency is what heartbeats and shard creates already recorded, sized
-// by the lifecycle's footprint estimate. A model whose size nobody recorded
+// by the lifecycle's footprint estimate — less the rows a worker reported as
+// installed but not in memory (store.Placement.Cold). A model whose size nobody recorded
 // counts as 0, the same optimism admission applies.
 //
 // replacing names a model whose present gang is ignored, because `shard
@@ -196,6 +197,9 @@ func WorkerMemoryFacts(ctx context.Context, st store.Store, cat []models.Entry, 
 			return nil, err
 		}
 		for _, p := range placed {
+			if p.Cold { // installed on the worker, not in its memory (store.Placement.Cold)
+				continue
+			}
 			if !sharded[p.ModelID] { // a gang is already counted by its parts
 				w.ResidentBytes += need[p.ModelID]
 			}

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -436,5 +437,62 @@ func TestReplaceForNodeKeepsADrainingMark(t *testing.T) {
 	}
 	if got := status(); got["b"] != "ready" {
 		t.Fatalf("after ResetStatus: %v", got)
+	}
+}
+
+// Placement.Cold (installed on the worker, not in its memory) is carried by
+// every write path and read back by both readers; a database written before
+// the column opens, and its rows read as resident — what they always meant.
+func TestPlacementColdRoundTripsAndOldRowsAreResident(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE model_placements (node_id TEXT NOT NULL, model_id TEXT NOT NULL, status TEXT NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (node_id, model_id))`,
+		`INSERT INTO model_placements(node_id, model_id, status, last_seen) VALUES('w0','legacy','ready',1)`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("a database from before the column must open: %v", err)
+	}
+	defer st.Close()
+	if rows, err := st.Placements().GetByNode(ctx, "w0"); err != nil || len(rows) != 1 || rows[0].Cold {
+		t.Fatalf("a row from before the column reads as resident: %+v, %v", rows, err)
+	}
+
+	now := time.Now()
+	if err := st.Placements().ReplaceForNode(ctx, "w1", []Placement{
+		{NodeID: "w1", ModelID: "warm", Status: "ready", LastSeen: now},
+		{NodeID: "w1", ModelID: "cold", Status: "ready", LastSeen: now, Cold: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	rows, _ := st.Placements().GetByNode(ctx, "w1")
+	for _, r := range rows {
+		got[r.ModelID] = r.Cold
+	}
+	if len(got) != 2 || got["warm"] || !got["cold"] {
+		t.Errorf("GetByNode: %v", got)
+	}
+	if byModel, _ := st.Placements().GetByModel(ctx, "cold"); len(byModel) != 1 || !byModel[0].Cold {
+		t.Errorf("a cold row is routable and says it is cold: %+v", byModel)
+	}
+	if err := st.Placements().Upsert(ctx, Placement{NodeID: "w1", ModelID: "cold", Status: "ready", LastSeen: now}); err != nil {
+		t.Fatal(err)
+	}
+	if byModel, _ := st.Placements().GetByModel(ctx, "cold"); len(byModel) != 1 || byModel[0].Cold {
+		t.Errorf("an upsert writes what it is given: %+v", byModel)
 	}
 }

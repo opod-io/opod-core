@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/agent"
+	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/mesh"
 
 	"gopkg.in/yaml.v3"
@@ -177,6 +178,7 @@ func cmdJoin(args []string) {
 
 	// Local engine — the worker proxies its inference requests to this.
 	eng := newEngineFromConfig(cfg)
+	caps.Engine = engines.Canonical(eng.Name()) // registered with the hardware: the leader learns what a load does here
 	// One alias table, written by the load handler and read by the heartbeat.
 	aliases := &agent.Aliases{}
 

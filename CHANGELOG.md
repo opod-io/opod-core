@@ -81,6 +81,14 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   heartbeating) behind the router, `/readyz`, the waking 503, `/loadz`, `/v1/models`, the shard pickers and
   `opod node ls`; the router applies it before revision groups, so a revision whose only worker is lost or
   cooling down gives its share to the others instead of dropping it on the local fallback
+- A worker registers which engine it runs (`hardware_json.Engine`, feature `worker_engine`), and each engine
+  driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
+  (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
+  (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- An Ollama worker's heartbeat says which of its installed models are in memory (`resident_models`, feature
+  of the same name) beside `loaded_models`, which stays "what this worker answers for" — the router needs
+  that; the leader marks the rest `cold` (routable, holding no memory) and the shard-count picker's memory
+  facts stop counting installed-but-idle Ollama models as memory in use
 - A worker can be asked to stop holding a model: `POST /v1/model/unload` (feature `worker_unload`, HMAC-signed
   like `/v1/model/load`, the same source fields) — the engine's own unload where it has one (Ollama), a stop
   of the engine process where the worker launched it (`vllm serve`, SGLang, `llama-server`); idempotent

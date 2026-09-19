@@ -45,6 +45,11 @@ type HeartbeatRequest struct {
 	Load         *engines.EngineLoad `json:"load"`     // optional engine load sample (build item 14)
 	Sleeping     bool                `json:"sleeping"` // sleep tier (build item 13): the engine sleeps, its placements are not routable
 	BootID       string              `json:"boot_id"`  // the worker process (R10.1)
+	// ResidentModels: which of LoadedModels are in the engine's memory right
+	// now, from an engine that keeps installed models and loads on request
+	// (Ollama). nil = the worker did not say, and everything loaded is taken
+	// as resident; an empty list = nothing is in memory.
+	ResidentModels *[]string `json:"resident_models"`
 }
 
 // Caller is who is calling: admin keys pass every binding; a node key owns
@@ -219,6 +224,13 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	if req.Sleeping {
 		status = PlacementSleeping
 	}
+	var resident map[string]bool // nil = not reported
+	if req.ResidentModels != nil {
+		resident = make(map[string]bool, len(*req.ResidentModels))
+		for _, m := range *req.ResidentModels {
+			resident[s.catalogIDForNative(m)] = true
+		}
+	}
 	placements := make([]store.Placement, 0, len(req.LoadedModels))
 	seen := make(map[string]bool, len(req.LoadedModels))
 	for _, m := range req.LoadedModels {
@@ -227,7 +239,10 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 			continue
 		}
 		seen[id] = true
-		placements = append(placements, store.Placement{NodeID: req.ID, ModelID: id, Status: status, LastSeen: time.Now()})
+		// Installed and not in memory is still a routable row — the engine loads
+		// it on the first request — but it holds no memory (Placement.Cold).
+		placements = append(placements, store.Placement{NodeID: req.ID, ModelID: id, Status: status, LastSeen: time.Now(),
+			Cold: resident != nil && !resident[id]})
 	}
 	prev := map[string]bool{}
 	if old, err := s.store.Placements().GetByNode(ctx, req.ID); err == nil {
