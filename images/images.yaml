@@ -1,0 +1,193 @@
+# The images this repository builds, as data. Embedded in the opod binary and
+# printed by `opod image ls | show | recommend` (add --json for a script or an
+# agent). images/build.sh and .github/workflows/images.yml stay what the two
+# lanes execute; cmd/opod/images_drift_test.go holds this file to them — name,
+# Dockerfile, base and platforms — so a row here is a row that is really built.
+#
+# One row per image:
+#   role        leader | worker
+#   engine      the core engine driver the worker runs (internal/engines)
+#   vendor      nvidia | amd | intel | tt | cpu — the accelerator the base is built for
+#   arch        platforms the image is published for
+#   base        the upstream image, tag without digest (the digest lives with the lanes)
+#   weights     what the engine loads: gguf (one file) | safetensors (a Hugging Face repo)
+#   gang        how a worker on this image takes part in a model split across nodes:
+#               rpc (llama.cpp RPC parts) | ray (vLLM multi-node) | omitted = one node only
+#   proven      true once this image has served requests on the hardware it names
+#   requires    what the node must provide before the container can see the device
+#   notes       limits a reader must know before choosing it
+schema: 1
+registry: ghcr.io/opod-io
+
+images:
+  - name: opod-leader
+    role: leader
+    arch: [amd64, arm64]
+    dockerfile: images/leader/Dockerfile
+    base: debian:bookworm-slim
+    proven: true
+    summary: The leader of one endpoint - OpenAI gateway, router, auth, join tokens. No engine, no GPU.
+    notes:
+      - Runs anywhere, including a node without an accelerator.
+
+  - name: opod-worker-llamacpp-nvidia
+    role: worker
+    engine: llamacpp
+    vendor: nvidia
+    arch: [amd64]
+    dockerfile: images/worker-llamacpp/Dockerfile.rpc-cuda
+    base: ghcr.io/ggml-org/llama.cpp:full-cuda
+    weights: [gguf]
+    gang: rpc
+    proven: true
+    hardware: NVIDIA GPUs (CUDA)
+    requires:
+      - NVIDIA driver and the NVIDIA container runtime on the node
+    summary: llama.cpp on CUDA. GGUF models, whole on one card or split across nodes as RPC parts.
+
+  - name: opod-worker-llamacpp-amd
+    role: worker
+    engine: llamacpp
+    vendor: amd
+    arch: [amd64]
+    dockerfile: images/worker-llamacpp/Dockerfile.rpc-rocm
+    base: ghcr.io/ggml-org/llama.cpp:full-rocm
+    weights: [gguf]
+    gang: rpc
+    proven: false
+    hardware: AMD Radeon (gfx1030, gfx1100-1102, gfx1150-1151, gfx1200-1201) and Instinct (gfx908, gfx90a, gfx942)
+    requires:
+      - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
+    summary: llama.cpp on ROCm. GGUF models, whole on one card or split across nodes as RPC parts.
+    notes:
+      - The RPC pair is source-built for Radeon and Instinct in one binary; that build still owes its run on hardware (a tarball-lifted pair served on a 3x RX 7900 XTX host).
+
+  - name: opod-worker-llamacpp-intel
+    role: worker
+    engine: llamacpp
+    vendor: intel
+    arch: [amd64]
+    dockerfile: images/worker-llamacpp/Dockerfile.rpc-sycl
+    base: ghcr.io/ggml-org/llama.cpp:full-intel
+    weights: [gguf]
+    gang: rpc
+    proven: true
+    hardware: Intel Arc A770 / Arc Pro B60 (SYCL, oneAPI; served on an Arc A770)
+    requires:
+      - i915 or xe driver on the node; /dev/dri passed to the container
+    summary: llama.cpp on SYCL. GGUF models, whole on one card or split across nodes as RPC parts.
+    notes:
+      - Served whole-model on one Arc A770; the RPC split has not been run on Intel hardware, and the Arc Pro B60 has not served.
+
+  - name: opod-worker-llamacpp-cpu
+    role: worker
+    engine: llamacpp
+    vendor: cpu
+    arch: [amd64, arm64]
+    dockerfile: images/worker-llamacpp/Dockerfile.rpc-cpu
+    base: ghcr.io/ggml-org/llama.cpp:full
+    weights: [gguf]
+    gang: rpc
+    proven: true
+    hardware: No accelerator - CPU only
+    summary: llama.cpp on the CPU, for dev clusters, kind and CI. Carries the RPC pair, so gang drills need no GPU.
+    notes:
+      - For small models and tests; not a serving choice when the node has a GPU.
+
+  - name: opod-worker-vllm-nvidia
+    role: worker
+    engine: vllm
+    vendor: nvidia
+    arch: [amd64]
+    dockerfile: images/worker-vllm/Dockerfile
+    base: vllm/vllm-openai:v0.27.1
+    weights: [safetensors]
+    gang: ray
+    proven: true
+    hardware: NVIDIA GPUs (CUDA)
+    requires:
+      - NVIDIA driver and the NVIDIA container runtime on the node
+    summary: vLLM on CUDA. Safetensors models from a Hugging Face repo; tensor parallel inside a node, Ray across nodes.
+
+  - name: opod-worker-vllm-amd
+    role: worker
+    engine: vllm
+    vendor: amd
+    arch: [amd64]
+    dockerfile: images/worker-vllm/Dockerfile
+    base: rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0
+    weights: [safetensors]
+    proven: false
+    hardware: AMD Radeon / Radeon Pro (gfx11xx). Instinct needs a different build - see notes
+    requires:
+      - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
+    summary: vLLM on ROCm. Safetensors models from a Hugging Face repo.
+    notes:
+      - One build per GPU family - the published image is the RDNA build. Instinct MI2xx/MI3xx needs the _cdna_ base (rebuild with VLLM_AMD_BASE=); neither runs the other's kernels.
+
+  - name: opod-worker-vllm-intel
+    role: worker
+    engine: vllm
+    vendor: intel
+    arch: [amd64]
+    dockerfile: images/worker-vllm/Dockerfile
+    base: intel/vllm:0.21.0-xpu
+    weights: [safetensors]
+    proven: false
+    hardware: Intel Arc / Flex / Max (XPU)
+    requires:
+      - i915 or xe driver on the node; /dev/dri passed to the container
+    summary: vLLM on Intel XPU. Safetensors models from a Hugging Face repo, one card.
+    notes:
+      - Single-card serving only - no Ray gang has been run on the XPU backend.
+
+  - name: opod-worker-vllm-tt
+    role: worker
+    engine: vllm
+    vendor: tt
+    arch: [amd64]
+    dockerfile: images/worker-tt/Dockerfile
+    base: ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e
+    weights: [safetensors]
+    proven: true
+    hardware: Tenstorrent Wormhole / Blackhole (served on a Blackhole p150b)
+    requires:
+      - tt-kmd loaded on the node
+      - /dev/hugepages-1G mounted
+      - the model spec of the model being served mounted into the container
+    summary: Tenstorrent's tt-metal vLLM build. The vendor launcher starts the engine; opod proxies its OpenAI API.
+    notes:
+      - The base tag must match the tt-metal and vLLM commits of the model spec being served - see images/worker-tt/README.md. Rebuild with VLLM_TT_BASE= for another spec.
+
+  - name: opod-worker-sglang-nvidia
+    role: worker
+    engine: sglang
+    vendor: nvidia
+    arch: [amd64]
+    dockerfile: images/worker-sglang/Dockerfile
+    base: lmsysorg/sglang:v0.5.2-cu126
+    weights: [safetensors]
+    proven: false
+    hardware: NVIDIA GPUs (CUDA)
+    requires:
+      - NVIDIA driver and the NVIDIA container runtime on the node
+    summary: SGLang on CUDA. Safetensors models from a Hugging Face repo, one node per endpoint.
+    notes:
+      - One node only - core has no multi-node path for SGLang.
+
+  - name: opod-worker-sglang-amd
+    role: worker
+    engine: sglang
+    vendor: amd
+    arch: [amd64]
+    dockerfile: images/worker-sglang/Dockerfile
+    base: lmsysorg/sglang:v0.5.19-rocm700-mi30x
+    weights: [safetensors]
+    proven: false
+    hardware: AMD Instinct MI200 / MI300 only
+    requires:
+      - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
+    summary: SGLang on ROCm. Safetensors models from a Hugging Face repo, one node per endpoint.
+    notes:
+      - Instinct only - upstream has no RDNA build, so a Radeon card serves through llama.cpp or vLLM instead. MI350 needs the -mi35x base (rebuild with SGLANG_AMD_BASE=).
+      - One node only - core has no multi-node path for SGLang.

@@ -106,7 +106,7 @@ _opod() {
     local subsub=${words[2]:-}
 
     # Top-level subcommands
-    local cmds="up down status join node model shard token config doctor update upgrade connect disconnect completion version help"
+    local cmds="up down status join node model shard image token config doctor update upgrade connect disconnect completion version help"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
@@ -139,6 +139,18 @@ _opod() {
             if [[ $cword -eq 2 ]]; then
                 COMPREPLY=( $(compgen -W "$(opod completion __clients 2>/dev/null) --list" -- "$cur") )
             fi
+            return 0
+            ;;
+        image)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "ls show recommend" -- "$cur") )
+                return 0
+            fi
+            case "$subsub" in
+                recommend)
+                    COMPREPLY=( $(compgen -W "$(opod completion __models 2>/dev/null)" -- "$cur") )
+                    ;;
+            esac
             return 0
             ;;
         shard)
@@ -194,6 +206,7 @@ _opod() {
         'node:manage worker nodes'
         'model:install, list, search, inspect, or uninstall LLM models'
         'shard:orchestrate sharded models'
+        'image:container images, and which one serves a model'
         'token:manage API keys'
                 'config:show / edit runtime config'
         'doctor:diagnose common problems'
@@ -227,6 +240,7 @@ _opod() {
                 token)   _values 'subcommand' create ls list edit expire renew revoke ;;
                 config)  _values 'subcommand' show path edit ;;
                 completion) _values 'shell' bash zsh fish ;;
+                image)   _values 'subcommand' ls show recommend ;;
             esac
             ;;
         args)
@@ -241,7 +255,7 @@ _opod() {
                     mods=(${(f)"$(opod completion __installed 2>/dev/null)"})
                     _describe 'installed model' mods
                     ;;
-                'shard create'|'shard remove'|'shard rm')
+                'shard create'|'shard remove'|'shard rm'|'image recommend')
                     local -a mods
                     mods=(${(f)"$(opod completion __models 2>/dev/null)"})
                     _describe 'model' mods
@@ -268,7 +282,7 @@ end
 complete -c opod -f
 
 # Top-level
-complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard token config doctor update upgrade connect disconnect completion version help"
+complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard image token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard image token config doctor update upgrade connect disconnect completion version help"
 
 # model subcommands
 complete -c opod -n "__opod_using_command model" -a "add ls list ps search info load unload move remove rm"
@@ -288,6 +302,8 @@ complete -c opod -n "__opod_using_command disconnect" -a "(opod completion __cli
 
 # shard subcommands
 complete -c opod -n "__opod_using_command shard" -a "create ls list remove rm"
+complete -c opod -n "__opod_using_command image" -a "ls show recommend"
+complete -c opod -n "__opod_using_subcommand 'image recommend'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'shard create'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'shard remove'" -a "(opod completion __models 2>/dev/null)"
 
