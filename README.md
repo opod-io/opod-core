@@ -784,9 +784,12 @@ The token is a node-scoped key (`sk-orc-<your-key>`): the shared secret between 
 ### Remove a node
 
 ```bash
-opod node drain <node-id>   # stop routing new requests to it
+opod node drain <node-id>   # no new requests or shard parts go to it; what is in flight finishes
+opod node undrain <node-id> # changed your mind: back in rotation
 opod node remove <node-id>  # forget it
 ```
+
+A drained node stays drained — across heartbeats and a worker restart — until you `undrain` it; `opod node ls` shows `draining` in its STATE column. A sharded model with a part on it stops serving, and when every worker that holds a model is drained, requests get `503` with `Retry-After` rather than an error from a dead route.
 
 **The node's weight cache.** Models are pulled once per node into `$OPOD_MODELS_DIR` and shared by every worker on it.
 `opod cache` is how that space is reclaimed safely: it only ever considers files this binary fetched (each carries a
@@ -1126,7 +1129,7 @@ print(resp.choices[0].message.content)
 | `GET` | `/admin/v1/nodes` | List nodes |
 | `POST` | `/admin/v1/nodes/register` | (scope=admin or node) Worker registration |
 | `POST` | `/admin/v1/nodes/heartbeat` | (scope=admin or node) Worker heartbeat with loaded models, the engine's load sample and whether it sleeps |
-| `POST` | `/admin/v1/nodes/{id}/drain` | Mark node as draining |
+| `POST` | `/admin/v1/nodes/{id}/drain` `/undrain` | Take a worker out of rotation (no new requests or shard parts; in-flight finishes; survives heartbeats and a re-register) / put it back. The leader's own `local` node is refused |
 | `POST` | `/admin/v1/nodes/{id}/sleep` `/resume` | Sleep tier: the worker's engine drops its GPU working set / wakes (vLLM sleep mode; engines without one answer 501 `unsupported`) |
 | `DELETE` | `/admin/v1/nodes/{id}` | Forget a node |
 | `GET` | `/admin/v1/models` | List installed models |
@@ -1191,7 +1194,8 @@ opod version                     Print version
 # --- nodes ---
 opod node ls                     List nodes
 opod node show <id>              Inspect a node
-opod node drain <id>             Drain a node (no new requests routed to it)
+opod node drain <id>             Drain a node (no new requests or shard parts; in-flight finishes)
+opod node undrain <id>           Put a drained node back in rotation
 opod node remove <id> [--yes]    Forget a node (prompts unless --yes)
 
 # --- models (non-sharded) ---

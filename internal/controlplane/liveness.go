@@ -79,6 +79,22 @@ func (s *Server) aliveNodes(ctx context.Context) map[string]bool {
 	return out
 }
 
+// routableNodes is aliveNodes minus the draining ones: the nodes new work may
+// be sent to. A listing reports a draining node as what it is (alive, state
+// "draining"); readiness and the waking 503 must not count on it.
+func (s *Server) routableNodes(ctx context.Context) map[string]bool {
+	out := map[string]bool{"local": true}
+	nodes, err := s.store.Nodes().List(ctx)
+	if err != nil {
+		return out
+	}
+	maxAge, now := s.heartbeatMaxAge(), time.Now()
+	for _, n := range nodes {
+		out[n.ID] = nodeAlive(n, maxAge, now) && !n.Draining()
+	}
+	return out
+}
+
 // shardAlive reports whether a shard part's node is alive. Parts hosted by
 // the leader itself (NodeID "local" or empty, the pre-worker-head layout)
 // are alive as long as the leader is.
@@ -122,17 +138,21 @@ func servableShardModels(shards []store.Shard, alive map[string]bool) map[string
 	return out
 }
 
-// hasServableShardGroup reports whether any sharded model can serve now.
+// hasServableShardGroup reports whether any sharded model can serve now. A
+// gang with a part on a draining node is out with it — the router does not
+// send it new requests (router.shardGroupRoutable), so it is not capacity.
 func (s *Server) hasServableShardGroup(ctx context.Context) bool {
 	shards, err := s.store.Shards().List(ctx)
 	if err != nil || len(shards) == 0 {
 		return false
 	}
-	return len(servableShardModels(shards, s.aliveNodes(ctx))) > 0
+	return len(servableShardModels(shards, s.routableNodes(ctx))) > 0
 }
 
-// hasLivePlacement reports whether any alive non-local worker has a ready
-// placement — the router-only readiness condition.
+// hasLivePlacement reports whether any alive non-local worker the router
+// would choose has a ready placement — the router-only readiness condition.
+// A draining worker is alive but takes no new request, so it does not count:
+// when every worker holding the model drains, requests get the waking 503.
 func (s *Server) hasLivePlacement(ctx context.Context) bool {
 	nodes, err := s.store.Nodes().List(ctx)
 	if err != nil {
@@ -140,7 +160,7 @@ func (s *Server) hasLivePlacement(ctx context.Context) bool {
 	}
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	for _, n := range nodes {
-		if n.ID == "local" || !nodeAlive(n, maxAge, now) {
+		if n.ID == "local" || n.Draining() || !nodeAlive(n, maxAge, now) {
 			continue
 		}
 		ps, err := s.store.Placements().GetByNode(ctx, n.ID)

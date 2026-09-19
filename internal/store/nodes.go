@@ -66,6 +66,26 @@ func (s *sqliteNodes) List(ctx context.Context) ([]Node, error) {
 	return out, rows.Err()
 }
 
+func (s *sqliteNodes) SetState(ctx context.Context, id, state string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE nodes SET state = ? WHERE id = ?`, state, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *sqliteNodes) Heartbeat(ctx context.Context, id string, at time.Time, bootID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET
+		   last_heartbeat = ?,
+		   boot_id = CASE WHEN ? != '' THEN ? ELSE boot_id END,
+		   state = CASE WHEN state = ? THEN ? ELSE state END
+		 WHERE id = ?`,
+		at.Unix(), bootID, bootID, NodeStateJoining, NodeStateReady, id)
+	return err
+}
+
 func (s *sqliteNodes) Delete(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
 	return err

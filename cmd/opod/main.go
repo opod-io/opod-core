@@ -183,7 +183,8 @@ Commands:
   join "<url>?token=..."   Join an existing cluster as a worker (quote the URL: ? is a shell glob)
   node ls                  List nodes
   node show <id>           Show one node
-  node drain <id>          Mark node as draining
+  node drain <id>          Take a node out of rotation (in-flight finishes)
+  node undrain <id>        Put a drained node back in rotation
   node remove <id>         Remove a node
   model add <id>           Install a model from the catalog
   model ls                 List installed models

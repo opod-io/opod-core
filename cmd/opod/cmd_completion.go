@@ -149,7 +149,7 @@ _opod() {
             ;;
         node)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "ls list show drain remove rm" -- "$cur") )
+                COMPREPLY=( $(compgen -W "ls list show drain undrain remove rm" -- "$cur") )
             fi
             return 0
             ;;
@@ -217,7 +217,7 @@ _opod() {
                     _describe 'client' clients
                     ;;
                 shard)   _values 'subcommand' create ls list remove rm ;;
-                node)    _values 'subcommand' ls list show drain remove rm ;;
+                node)    _values 'subcommand' ls list show drain undrain remove rm ;;
                 token)   _values 'subcommand' create ls list edit expire renew revoke ;;
                 config)  _values 'subcommand' show path edit ;;
                 completion) _values 'shell' bash zsh fish ;;
@@ -283,7 +283,7 @@ complete -c opod -n "__opod_using_subcommand 'shard create'" -a "(opod completio
 complete -c opod -n "__opod_using_subcommand 'shard remove'" -a "(opod completion __models 2>/dev/null)"
 
 # node / token / config
-complete -c opod -n "__opod_using_command node" -a "ls list show drain remove rm"
+complete -c opod -n "__opod_using_command node" -a "ls list show drain undrain remove rm"
 complete -c opod -n "__opod_using_command token" -a "create ls list edit expire renew revoke"
 complete -c opod -n "__opod_using_command config" -a "show path edit"
 complete -c opod -n "__opod_using_command completion" -a "bash zsh fish"

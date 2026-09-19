@@ -153,11 +153,30 @@ type Node struct {
 	BootID string
 }
 
+// Node states the leader writes. "lost" is derived from heartbeat age and
+// never stored.
+const (
+	NodeStateJoining  = "joining"
+	NodeStateReady    = "ready"
+	NodeStateDraining = "draining"
+)
+
+// Draining reports whether an operator took the node out of rotation: it
+// keeps its in-flight work and receives nothing new — no request, no shard
+// part — until it is undrained.
+func (n Node) Draining() bool { return n.State == NodeStateDraining }
+
 type NodeStore interface {
 	Upsert(ctx context.Context, n Node) error
 	Get(ctx context.Context, id string) (*Node, error)
 	List(ctx context.Context) ([]Node, error)
 	Delete(ctx context.Context, id string) error
+	// SetState writes the state column alone; false = no such node.
+	SetState(ctx context.Context, id, state string) (bool, error)
+	// Heartbeat records a worker's ping: last_heartbeat, the boot id when one
+	// is presented, and joining → ready. It never writes any other state, so
+	// a drain set between a heartbeat's read and its write is not lost.
+	Heartbeat(ctx context.Context, id string, at time.Time, bootID string) error
 }
 
 // Placement records that a given node currently hosts a given model.
