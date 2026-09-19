@@ -261,8 +261,8 @@ jobs:
       - name: room for the SBOM scan
         # syft unpacks the image to read it. The ROCm vLLM and SGLang images are 25-30 GB: the docker
         # daemon had no room left to pull them again and the registry fallback filled /tmp (2026-09-19,
-        # "no space left on device" for both). /mnt is the runner's large disk; the scan reads the
-        # registry directly instead of asking the daemon for a second copy.
+        # "no space left on device" for both). /mnt is the runner's large disk, and it is where the
+        # registry scan below unpacks; what keeps the daemon out of it is registry-username there.
         run: sudo mkdir -p /mnt/syft-tmp && sudo chown "$USER" /mnt/syft-tmp
       - uses: anchore/sbom-action@v0
         # A package-level SBOM: every package, version and licence, without a record
@@ -273,10 +273,17 @@ jobs:
         # the leader: 2.72 MB -> 0.55 MB, the same 156 packages, versions and licences.
         env:
           TMPDIR: /mnt/syft-tmp
-          SYFT_DEFAULT_IMAGE_PULL_SOURCE: registry
           SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP: "false"
           SYFT_FILE_METADATA_SELECTION: none
         with:
+          # registry-username is what makes the action run `syft scan registry:<image>`.
+          # Without it syft is given a bare reference and asks the Docker daemon FIRST:
+          # on 2026-09-19 that pulled the 25-30 GB ROCm images onto the root disk for 17
+          # minutes until "no space left on device", for both, with TMPDIR on /mnt and
+          # SYFT_DEFAULT_IMAGE_PULL_SOURCE=registry set - neither stops the daemon being
+          # tried. The credentials are the ones this job already pushed the image with.
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
           image: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
