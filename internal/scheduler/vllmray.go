@@ -12,17 +12,7 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, shardCount int, nodeIDs []string, par Parallelism) error {
-	var workers []store.Node
-	var err error
-	if len(nodeIDs) > 0 {
-		workers, err = o.pickWorkersByID(ctx, nodeIDs)
-	} else {
-		workers, err = o.pickWorkers(ctx, shardCount)
-	}
-	if err != nil {
-		return fmt.Errorf("pick workers: %w", err)
-	}
+func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, workers []store.Node, par Parallelism) error {
 	if len(workers) < 1 {
 		return fmt.Errorf("vllm-ray sharding needs at least one worker")
 	}
@@ -218,12 +208,6 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 		"note", "vLLM is loading across the Ray cluster — first requests warm it up")
 	return nil
 }
-
-// pickWorkers selects N nodes ordered by descending RAM. Future revisions
-// will incorporate GPU memory, current load, and same-site preference.
-// pickWorkersByID selects the named ready workers, preserving the caller's order.
-// Errors if any named node is unknown or not ready, so a typo fails fast here
-// rather than silently sharding across the wrong machines.
 
 // rayCommand is the `exec ray …` line a login shell runs — like `vllm serve`
 // (agent.launchVLLM), because the `ray` entry point lives on the image's login
