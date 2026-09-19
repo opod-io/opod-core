@@ -258,7 +258,16 @@ jobs:
             --certificate-identity-regexp 'https://github.com/${{ github.repository }}/' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$ref" >/dev/null
           echo "signed + verified $ref"
+      - name: room for the SBOM scan
+        # syft unpacks the image to read it. The ROCm vLLM and SGLang images are 25-30 GB: the docker
+        # daemon had no room left to pull them again and the registry fallback filled /tmp (2026-09-19,
+        # "no space left on device" for both). /mnt is the runner's large disk; the scan reads the
+        # registry directly instead of asking the daemon for a second copy.
+        run: sudo mkdir -p /mnt/syft-tmp && sudo chown "$USER" /mnt/syft-tmp
       - uses: anchore/sbom-action@v0
+        env:
+          TMPDIR: /mnt/syft-tmp
+          SYFT_DEFAULT_IMAGE_PULL_SOURCE: registry
         with:
           image: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
           format: spdx-json
