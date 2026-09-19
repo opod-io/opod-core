@@ -20,6 +20,10 @@ var (
 	ErrNodeBoundToOtherKey = errors.New("node is bound to a different key")
 	// ErrUnknownNode: heartbeat / drain for an id the leader has never seen.
 	ErrUnknownNode = errors.New("unknown node — register first")
+	// ErrLeaderNotDrainable: the leader's own "local" row. The router serves
+	// from the local engine before it looks at any worker, so a drain there
+	// would be a state nothing honours.
+	ErrLeaderNotDrainable = errors.New("the leader's own node cannot be drained — unload its models or stop the leader instead")
 )
 
 // RegisterRequest is the worker's registration body.
@@ -69,8 +73,14 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 	}
 	n := store.Node{
 		ID: req.ID, Hostname: req.Hostname, OS: req.OS, Arch: req.Arch, RAMGB: req.RAMGB, Address: req.Address,
-		WorkerToken: bearer, BoundKeyID: boundKeyID, HardwareJSON: req.HardwareJSON, LastHeartbeat: time.Now(), State: "ready",
+		WorkerToken: bearer, BoundKeyID: boundKeyID, HardwareJSON: req.HardwareJSON, LastHeartbeat: time.Now(), State: store.NodeStateReady,
 		BootID: req.BootID,
+	}
+	if existing != nil && existing.Draining() {
+		// A drain is the operator's word about the node id, not about one
+		// process: a worker that restarts and registers again stays out of
+		// rotation until it is undrained.
+		n.State = store.NodeStateDraining
 	}
 	if err := s.store.Nodes().Upsert(ctx, n); err != nil {
 		return store.Node{}, err
@@ -195,11 +205,9 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	if _, again := s.reconcileNodes.LoadAndDelete(req.ID); again {
 		go s.reconcileShardsOn(*n)
 	}
-	n.LastHeartbeat = time.Now()
-	if n.State == "joining" {
-		n.State = "ready"
-	}
-	if err := s.store.Nodes().Upsert(ctx, *n); err != nil {
+	// A targeted write, never the row read above: a drain (or undrain) that
+	// lands between that read and this write must not be undone by it.
+	if err := s.store.Nodes().Heartbeat(ctx, n.ID, time.Now(), n.BootID); err != nil {
 		return err
 	}
 	status := "ready"
@@ -241,20 +249,32 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	return nil
 }
 
-// DrainNode marks the node draining (the router stops choosing it for new work).
+// DrainNode takes the node out of rotation: the router stops choosing it for
+// new requests (router/pick.go, hedge.go) and the shard pickers stop placing
+// parts on it; what is in flight on it finishes. The state survives
+// heartbeats and a re-register; UndrainNode is the only way back.
 func (s *Server) DrainNode(ctx context.Context, id string) error {
-	n, err := s.store.Nodes().Get(ctx, id)
+	if id == "local" {
+		return ErrLeaderNotDrainable
+	}
+	return s.setNodeState(ctx, id, store.NodeStateDraining, "node.drained")
+}
+
+// UndrainNode puts a drained node back in rotation. The router reads the
+// state on every pick, so the next request may already land on it.
+func (s *Server) UndrainNode(ctx context.Context, id string) error {
+	return s.setNodeState(ctx, id, store.NodeStateReady, "node.undrained")
+}
+
+func (s *Server) setNodeState(ctx context.Context, id, state, event string) error {
+	found, err := s.store.Nodes().SetState(ctx, id, state)
 	if err != nil {
 		return err
 	}
-	if n == nil {
+	if !found {
 		return ErrUnknownNode
 	}
-	n.State = "draining"
-	if err := s.store.Nodes().Upsert(ctx, *n); err != nil {
-		return err
-	}
-	s.record("node.drained", id, nil)
+	s.record(event, id, nil)
 	return nil
 }
 

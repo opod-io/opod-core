@@ -99,11 +99,29 @@ func (s *Server) drainNode(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrUnknownNode):
 		writeJSONError(w, http.StatusNotFound, "no such node: "+id)
 		return
+	case errors.Is(err, ErrLeaderNotDrainable):
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "draining", "id": id})
+}
+
+// undrainNode is drainNode's inverse: the node is routable again.
+func (s *Server) undrainNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	err := s.UndrainNode(r.Context(), id)
+	switch {
+	case errors.Is(err, ErrUnknownNode):
+		writeJSONError(w, http.StatusNotFound, "no such node: "+id)
+		return
+	case err != nil:
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": store.NodeStateReady, "id": id})
 }
 
 func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {

@@ -340,6 +340,7 @@ func (s *Server) routes() http.Handler {
 			// Nodes
 			r.Get("/nodes", s.listNodes)
 			r.Post("/nodes/{id}/drain", s.drainNode)
+			r.Post("/nodes/{id}/undrain", s.undrainNode)
 			r.Post("/nodes/{id}/sleep", s.sleepWorker)   // sleep tier (build item 13)
 			r.Post("/nodes/{id}/resume", s.resumeWorker) // wake it
 			r.Delete("/nodes/{id}", s.deleteNode)

@@ -53,6 +53,16 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		metrics.ObserveRouterPick("fallback-to-local", "no-workers")
 		return r.local, r.localNode, nil
 	}
+	// Draining workers leave the candidate list here, before roles, revision
+	// groups and load scores see them: a draining node gets no new request
+	// for any model, and a revision whose only worker drains is a revision
+	// with no worker (its share goes to the rest). What is in flight on the
+	// node is not touched — it finishes on the engine it started on.
+	workers = r.withoutDraining(ctx, workers)
+	if len(workers) == 0 {
+		metrics.ObserveRouterPick("fallback-to-local", "all-workers-draining")
+		return r.local, r.localNode, nil
+	}
 	// Roles (roles.go): generation never lands on a prefill half while a
 	// decode half is alive.
 	roles := map[string]string{}
@@ -176,13 +186,6 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 // shardCoordinator returns the llamacpp engine pointing at the coordinator
 // of a sharded model, or (nil, false) if the model isn't sharded.
 func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.Engine, bool) {
-	cacheKey := "shard:" + modelID
-	r.mu.RLock()
-	if eng, ok := r.remotes[cacheKey]; ok {
-		r.mu.RUnlock()
-		return eng, true
-	}
-	r.mu.RUnlock()
 	shards, err := r.store.Shards().GetByModel(ctx, modelID)
 	if err != nil || len(shards) == 0 {
 		return nil, false
@@ -190,8 +193,18 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	// One lost part takes the gang out: llama-server does not survive a
 	// dead rpc backend, so a coordinator on a live node with a stale
 	// sibling is not a route either (same rule as the leader's /readyz).
-	if !r.shardGroupAlive(ctx, shards) {
+	// Checked on every pick, before the cached engine: a gang that was
+	// routable on its first request can lose a worker, or have one drained,
+	// at any time after it.
+	if !r.shardGroupRoutable(ctx, shards) {
 		return nil, false
+	}
+	cacheKey := "shard:" + modelID
+	r.mu.RLock()
+	eng, cached := r.remotes[cacheKey]
+	r.mu.RUnlock()
+	if cached {
+		return eng, true
 	}
 	for _, s := range shards {
 		if s.Role == "coordinator" && s.Status == "ready" {
@@ -207,25 +220,46 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	return nil, false
 }
 
-// shardGroupAlive reports whether every part of a gang sits on a worker
-// that heartbeated within heartbeatMaxAge. Parts hosted by the leader
-// itself ("local" / empty node id) are always alive; 0 max age disables
-// the check (legacy behaviour).
-func (r *Router) shardGroupAlive(ctx context.Context, shards []store.Shard) bool {
-	if r.heartbeatMaxAge <= 0 {
-		return true
-	}
+// shardGroupRoutable reports whether every part of a gang sits on a worker
+// that takes new work: not draining, and heartbeated within heartbeatMaxAge
+// (0 max age disables the heartbeat half — legacy behaviour). A gang is one
+// serving unit, so draining the node of any part takes the whole gang out
+// of rotation. Parts hosted by the leader itself ("local" / empty node id)
+// always pass.
+func (r *Router) shardGroupRoutable(ctx context.Context, shards []store.Shard) bool {
 	now := time.Now()
 	for _, sh := range shards {
 		if sh.NodeID == "" || sh.NodeID == "local" {
 			continue
 		}
 		n, err := r.store.Nodes().Get(ctx, sh.NodeID)
-		if err != nil || n == nil || now.Sub(n.LastHeartbeat) > r.heartbeatMaxAge {
+		if err != nil || n == nil {
+			if r.heartbeatMaxAge <= 0 {
+				continue // legacy: no liveness rule, an unknown node is not judged
+			}
+			return false
+		}
+		if n.Draining() {
+			return false
+		}
+		if r.heartbeatMaxAge > 0 && now.Sub(n.LastHeartbeat) > r.heartbeatMaxAge {
 			return false
 		}
 	}
 	return true
+}
+
+// withoutDraining drops the placements whose node an operator drained. A
+// node the store cannot return stays in: the walk in pick() reports it.
+func (r *Router) withoutDraining(ctx context.Context, ps []store.Placement) []store.Placement {
+	out := ps[:0:0]
+	for _, p := range ps {
+		if n, err := r.store.Nodes().Get(ctx, p.NodeID); err == nil && n != nil && n.Draining() {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // InvalidateModel drops any cached engine for the given model. Called by

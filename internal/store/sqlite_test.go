@@ -314,3 +314,47 @@ func TestLastUsedByModel(t *testing.T) {
 		t.Errorf("models with no usage must be absent from the map")
 	}
 }
+
+// A heartbeat is a targeted write: it refreshes liveness and the boot id and
+// finishes a join, and it never touches a state an operator set — so a drain
+// that lands between a heartbeat's read and its write cannot be lost, and
+// neither can the undrain that ends it.
+func TestNodeHeartbeatKeepsOperatorState(t *testing.T) {
+	st, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	old := time.Now().Add(-time.Hour)
+	if err := st.Nodes().Upsert(ctx, Node{ID: "w", Hostname: "w", State: NodeStateJoining, LastHeartbeat: old, BootID: "b1"}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() Node {
+		n, err := st.Nodes().Get(ctx, "w")
+		if err != nil || n == nil {
+			t.Fatalf("get: %v %v", n, err)
+		}
+		return *n
+	}
+	if err := st.Nodes().Heartbeat(ctx, "w", time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := state(); n.State != NodeStateReady || n.BootID != "b1" || !n.LastHeartbeat.After(old) {
+		t.Fatalf("first heartbeat: joining → ready, boot id kept, liveness refreshed; got %+v", n)
+	}
+	if found, err := st.Nodes().SetState(ctx, "w", NodeStateDraining); err != nil || !found {
+		t.Fatalf("SetState: %v %v", found, err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := st.Nodes().Heartbeat(ctx, "w", time.Now(), "b2"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := state(); !n.Draining() || n.BootID != "b2" {
+		t.Fatalf("after three heartbeats: want draining with the new boot id, got %+v", n)
+	}
+	if found, err := st.Nodes().SetState(ctx, "nobody", NodeStateDraining); err != nil || found {
+		t.Fatalf("SetState on an unknown node = %v, %v; want false, nil", found, err)
+	}
+}

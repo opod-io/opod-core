@@ -66,6 +66,10 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- `opod node drain|undrain <id>` (`POST /admin/v1/nodes/{id}/drain|undrain`, feature `node_drain`): the
+  router, the hedged pick and the shard pickers give a draining worker nothing new, a gang with a part on
+  it leaves rotation, in-flight finishes, `/readyz` and the waking 503 do not count it; the state survives
+  heartbeats and a re-register
 - Router-only leaders (no local engine) are the default in a cluster; `/readyz` modes: local engine ·
   `router-only` · `sleeping` · `sleeping-workers` · `shard-coordinator`
 - Plan as a watched file (`/etc/opod/plan.json`): one model identity per leader, revision on `/loadz`,

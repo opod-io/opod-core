@@ -7,7 +7,7 @@ package controlplane
 //	GET /admin/v1/events/stream?after=<id>&limit=<n≤1000>
 //	→ {"events":[{"id","type","ts","data":{…}}], "next", "more"}
 //
-// Types today: node.registered · node.drained · node.removed ·
+// Types today: node.registered · node.drained · node.undrained · node.removed ·
 // model.loaded · model.unloaded · shard.created · shard.removed ·
 // plan.updated. Additive — consumers must ignore unknown types.
 

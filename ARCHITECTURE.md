@@ -171,6 +171,17 @@ The Router is what makes "leverage multiple machines" mean something. It impleme
 
 The router's wrapping of the engine channel decrements the in-flight counter when the upstream stream closes, so counts stay accurate without explicit acknowledgement from the caller.
 
+### Draining a node (`opod node drain` · `POST /admin/v1/nodes/{id}/drain|undrain`)
+
+A drain is one column — the node row's `state = "draining"` — that every picker reads at pick time; nothing is cached, so it takes effect on the next request and `undrain` does too.
+
+- **No new request.** `pick()` drops draining workers from the candidate list *before* roles, revision groups and load scores see them, so the load-aware scorer never ranks one and a revision whose only worker drains is a revision with no worker (its share goes to the rest). The hedged pick skips them the same way. Requests already streaming from the node are not touched: they finish on the engine they started on.
+- **A gang is one unit.** A sharded model with *any* part on a draining node — coordinator or rpc backend — stops receiving requests (`shardGroupRoutable`, checked on every pick ahead of the cached coordinator engine, together with the heartbeat-age rule).
+- **No new shard part.** The shard pickers take `ready` rows only, so a draining worker is never picked; naming one outright — `opod shard create --nodes …`, `opod model add <id> --node …` — is refused (`node … is not ready`, `pickWorkersByID`).
+- **Nothing left = the waking 503.** Draining workers are not serving capacity: `/readyz` and the dispatch check (`hasServingCapacity`) skip them, so when every worker that could serve drains, a router-only leader answers the same `503` + `Retry-After` it answers while workers wake.
+- **It survives.** Heartbeats write liveness with a targeted update (`NodeStore.Heartbeat`: `last_heartbeat`, boot id, `joining → ready`) and never the state, so a drain cannot be lost to the read-modify-write of a concurrent heartbeat; a worker that restarts and registers again under the same id stays drained. `undrain` is the only way back. The leader's own `local` row is refused — the router serves from the local engine before it looks at workers, so that state would be honoured by nothing.
+- **What it does not do.** It moves no model and waits for nothing: there is no per-model drain on a worker yet, and no "wait for in-flight to reach zero, then remove" (see *Drain algorithm* under Scheduler — still planned). Feature key `node_drain`; events `node.drained` / `node.undrained`.
+
 ### Engine placement on the accelerator
 
 llama.cpp keeps every layer on the CPU unless it is told otherwise. A worker that holds a GPU therefore
