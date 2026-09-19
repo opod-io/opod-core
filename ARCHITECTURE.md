@@ -171,6 +171,14 @@ The Router is what makes "leverage multiple machines" mean something. It impleme
 
 The router's wrapping of the engine channel decrements the in-flight counter when the upstream stream closes, so counts stay accurate without explicit acknowledgement from the caller.
 
+### Which workers take new work — one rule
+
+"Live" is decided in one place, from the node row, and never stored: `store.Node.TakesNewWork(maxAge, now)` (`internal/store/nodelive.go`; `WhyNoNewWork` is the same rule with the reason, `LiveState` the state to show). A node takes new work when it is not drained, its state is a serving one, and it heartbeated within `router.heartbeat_max_age_seconds`. Everything that decides or reports on workers asks it:
+
+- the router — `takingRequests` filters a model's holders once, *before* roles, revision groups and load scores, adding the two things only a router knows (an address to dial, its cooldown penalty box). So a revision whose only worker is drained, lost or cooling down is a revision with no worker: its weight goes to the others instead of being rolled and then dropped on the local fallback. The hedged pick and the shard-gang check (`shardGroupRoutable`) use the same function;
+- `/readyz`, the waking `503`, `/loadz` `workers`, `GET /v1/models`;
+- the shard pickers (`scheduler.WorkerFor` = this rule + "has an address, is not the leader's own row") and `opod node ls`.
+
 ### Draining a node (`opod node drain` · `POST /admin/v1/nodes/{id}/drain|undrain`)
 
 A drain is one column — the node row's `state = "draining"` — that every picker reads at pick time; nothing is cached, so it takes effect on the next request and `undrain` does too.

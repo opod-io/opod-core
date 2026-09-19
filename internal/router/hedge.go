@@ -134,7 +134,7 @@ type hedgeCandidate struct {
 }
 
 // hedgePickWorkers returns up to `n` least-loaded workers that host
-// the model, skipping draining nodes, cooldowns + stale heartbeats. Returns the
+// the model that take requests (takesRequests — the pick's own rule). Returns the
 // chosen candidates in arbitrary order.
 func (r *Router) hedgePickWorkers(ctx context.Context, model string, n int) []hedgeCandidate {
 	if model == "" || r.store == nil {
@@ -161,14 +161,10 @@ func (r *Router) hedgePickWorkers(ctx context.Context, model string, n int) []he
 			continue
 		}
 		node, err := r.store.Nodes().Get(ctx, p.NodeID)
-		if err != nil || node == nil || node.Address == "" || node.Draining() {
+		if err != nil {
 			continue
 		}
-		if r.heartbeatMaxAge > 0 && !node.LastHeartbeat.IsZero() &&
-			time.Since(node.LastHeartbeat) > r.heartbeatMaxAge {
-			continue
-		}
-		if r.inCooldown(node.ID) {
+		if ok, _ := r.takesRequests(node, time.Now()); !ok {
 			continue
 		}
 		out = append(out, hedgeCandidate{

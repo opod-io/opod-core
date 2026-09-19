@@ -23,8 +23,10 @@ import (
 // returning heartbeat makes them live again with no reconciliation step.
 
 // NodeStateLost is the derived state reported for a node whose heartbeat is
-// older than router.heartbeat_max_age_seconds. It is never persisted.
-const NodeStateLost = "lost"
+// older than router.heartbeat_max_age_seconds. It is never persisted. The
+// rule itself lives with the row (store.Node.Alive / TakesNewWork /
+// LiveState) so the router, the shard pickers and the CLI ask the same one.
+const NodeStateLost = store.NodeStateLost
 
 // ShardStatusLost is the derived status reported for a shard part whose node
 // is lost. It is never persisted.
@@ -37,16 +39,13 @@ func (s *Server) heartbeatMaxAge() time.Duration {
 	if s.cfg.Router.HeartbeatMaxAgeSeconds > 0 {
 		return time.Duration(s.cfg.Router.HeartbeatMaxAgeSeconds) * time.Second
 	}
-	return 60 * time.Second
+	return store.DefaultHeartbeatMaxAge
 }
 
 // nodeAlive reports whether n heartbeated within the staleness bound. The
 // leader's own "local" node never heartbeats and is always alive.
 func nodeAlive(n store.Node, maxAge time.Duration, now time.Time) bool {
-	if n.ID == "local" {
-		return true
-	}
-	return now.Sub(n.LastHeartbeat) <= maxAge
+	return n.Alive(maxAge, now)
 }
 
 // liveNodeState is the state the leader reports for n: the stored state,
@@ -56,11 +55,7 @@ func liveNodeState(n store.Node, alive bool) string {
 	if alive {
 		return n.State
 	}
-	switch n.State {
-	case "ready", "joining", "":
-		return NodeStateLost
-	}
-	return n.State
+	return store.StateWhenSilent(n.State)
 }
 
 // aliveNodes returns id → alive for every registered node. Unknown ids
@@ -90,7 +85,7 @@ func (s *Server) routableNodes(ctx context.Context) map[string]bool {
 	}
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	for _, n := range nodes {
-		out[n.ID] = nodeAlive(n, maxAge, now) && !n.Draining()
+		out[n.ID] = n.TakesNewWork(maxAge, now)
 	}
 	return out
 }
@@ -160,7 +155,7 @@ func (s *Server) hasLivePlacement(ctx context.Context) bool {
 	}
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	for _, n := range nodes {
-		if n.ID == "local" || n.Draining() || !nodeAlive(n, maxAge, now) {
+		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
 			continue
 		}
 		ps, err := s.store.Placements().GetByNode(ctx, n.ID)
