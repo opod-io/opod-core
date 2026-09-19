@@ -306,7 +306,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 
 - The coordinator (`llama-server`) is placed on the highest-RAM host in the shard set — by default the strongest worker, not the leader. Override with `OPOD_COORDINATOR_NODE=<node_id>` (or `local` to force leader). When the coordinator runs on a worker it's launched via the same `/v1/process/start` endpoint used for `rpc-server`, and the leader's router dials it at `<worker-address>:<coord_port>`. Single-machine sharding still pins the coordinator to the local supervisor.
 - **Automatic GGUF download + distribution** fully closes M5-T12. For catalog entries with `source.type: huggingface` + `source.file:`, `CreateSharded` first downloads the GGUF from `huggingface.co/<repo>/resolve/main/<file>` into `storage.models_dir` on the leader (skipped if already present, partial→rename atomicity). Then for both `huggingface` and `file` types, fans the local file out to every shard host via `/v1/process/file` HEAD + `/v1/process/upload` POST (sha256-verified, skipped if the worker already has the file). No more manual `wget` to leader or `scp` to workers — `opod shard create <id>` is sufficient.
-- Live shard migration / rebalancing.
+- Live shard migration / rebalancing. (Moving a whole, unsharded model between workers is designed — "Live model move" under Scheduler — and not built.)
 - Dynamic shard count change.
 
 #### Experimental: vLLM + Ray backend (true tensor / pipeline parallelism)
@@ -634,6 +634,43 @@ remove node from registry
 - `auto` — start with 1 replica; scheduler adds replicas when sustained queue depth > threshold for >5 min
 - `always` — every model gets ≥2 replicas if hardware allows
 - `never` — exactly 1 replica per model
+
+### Live model move (planned — not implemented)
+
+`opod model move <id> --from <node> --to <node>`: take a model that one worker serves and have another worker serve it instead, with no request failing and none waiting for a cold load. This section is the design and the reason it is **not built yet**: the sequence is sound, but three of the mechanisms it stands on do not exist today, and building it on the ones that do would produce a command that reports success and quietly does something else. No feature key is registered — a key in `contractFeatures()` means the mechanism ships.
+
+**What "without a cold start" can honestly mean.** Weights are never transferred between engines; the target loads them itself (from its cache, the Hub, or the leader's GGUF fan-out). What a move can promise is *overlap*: the source keeps serving until the target is proven ready, so no request ever meets a model that is loading.
+
+```
+1. admit     the target is a live worker that can hold the model (below); the source holds it
+2. load      POST /v1/model/load on the target — the source keeps serving, untouched
+3. ready     the target's placement row appears, written by its own heartbeat
+4. flip      the router stops choosing the source for this model (new requests → target)
+5. drain     in-flight requests on (source, model) run to completion (router.InflightByModel → 0)
+6. unload    the source releases the model
+```
+
+Steps 2–3 are bounded by a timeout, and **a timeout leaves everything as it was**: the source was never touched, so it is still serving; the move reports the failure and the half-loaded target is the operator's to inspect. Nothing before step 4 is visible to a client. After step 4 the only irreversible act is step 6, and it happens only once step 5 has seen zero in-flight or its drain timeout has passed (the same `placement.drain_timeout_seconds` the local lifecycle uses, with the same warning).
+
+**What it costs.** The model is resident twice for the overlap — once on each machine. The target must hold it *in addition to* what it already serves: admission uses the same facts as the shard-count picker (`scheduler.WorkerMemoryFacts`, the lifecycle's footprint estimate) and refuses, naming the numbers, when the target's free memory is below the model's footprint. The target also fetches the weights if it does not have them; that time is inside step 2's timeout, not in front of any request.
+
+**What it is not.** No KV-cache transfer. Every conversation that was being served by the source loses its prefix cache: its next turn is recomputed from the prompt on the target (slower first token, same answer). The router's prefix-affinity and sticky pins for the source are dropped at step 4 for the same reason. It is not a way to move a sharded model (a gang is rebuilt with `opod shard create`), and it does not move a LoRA adapter on its own — adapters already load and unload live on the workers that hold the base (`/admin/v1/adapters`) and follow the base.
+
+**Per engine**, because "load" and "unload" are different acts on each:
+
+| Worker engine | Step 2 on the target | Step 3's ready signal | Step 6 on the source |
+|---|---|---|---|
+| vLLM, SGLang, llama.cpp | launches the engine process for this model. These workers serve **exactly one model**: `/v1/model/load` stops whatever is running first, so a target that already serves another model would drop it. The move must refuse such a target | honest: the heartbeat lists the model only once the server answers `/v1/models`, i.e. after the weights are in | stop the supervised engine process; the model leaves the heartbeat and the placement row goes with it |
+| Ollama | pull + warm load, synchronous; other models stay resident | weaker: the heartbeat lists *installed* models, so the row appears once pulled. The load call's own success is the signal that it is warm | an engine unload frees the memory, but the model stays installed, so the heartbeat keeps listing it and the row stays. "Moved" needs either the weights deleted from the source or a standing exclusion of (source, model) |
+
+**What is missing today** — each is a small, additive mechanism; together they are the work:
+
+1. **A worker-side unload.** Workers expose `/v1/model/load`, `/sleep` and `/resume`; there is no `/v1/model/unload`. The leader's `POST /admin/v1/models/{id}/unload` acts on the leader's own engine only. Needed: `POST /v1/model/unload {id}` on the worker — engine unload where the driver supports it, a supervisor stop of the engine process where the worker launched one (`vllm-serve`, `sglang-serve`, `llama-server`) — refused while a shard part of that model runs there.
+2. **A flip that survives a heartbeat.** The store already has the right switch: a placement whose status is `draining` is invisible to `Placements().GetByModel`, which is how the local lifecycle drains before an eviction. But a worker's rows are rewritten as `ready` by every heartbeat (`HeartbeatNode` → `ReplaceForNode`, every 5 s), so on a worker the mark lasts at most one interval. Needed: the leader remembers the (node, model) pairs it is draining and `HeartbeatNode` writes those rows as `draining` until the move ends — in memory is enough, since a leader restart abandons the move and the source, never unloaded, is simply serving again.
+3. **The worker's engine, known to the leader.** Registration carries hardware, not the engine. Without it the leader cannot tell a one-model worker from an Ollama one, so it can neither refuse the target that would lose its model (row 1 of the table) nor choose the right step 6. Until it is registered, the only safe rule is the blunt one: refuse any target that has a placement for another model.
+4. **An answer for Ollama sources** (last cell of the table): delete the weights on the source, or keep the exclusion as durable state. Deleting is what "move" says; it is also the only one of the two that survives a leader restart without new state. It needs a worker-side delete, which does not exist either.
+
+**Shape when built.** The sequence is leader-driven and lives beside `PlaceOnNodes` in `internal/scheduler`; the admin route is `POST /admin/v1/models/{id}/move {from, to}` with feature key `model_move` (additive; `TestLeaderContract` extended); the CLI is `opod model move <id> --from <node> --to <node>`, printing each step as it completes. The proofs it lands with: a router test in which requests run continuously through the move and none fails, and after the flip none is routed to the source; a test that a target which never becomes ready leaves the source serving and its row `ready`; a test that a heartbeat from the source during the drain does not make it routable again; a refusal test per admission rule (target too small, target serving another model, source not holding the model, either node not live, a sharded model).
 
 ---
 
