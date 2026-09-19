@@ -10,6 +10,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,7 +59,7 @@ func TestOneWorkerRefusingIsReportedPerNode(t *testing.T) {
 	seedHolder(t, st, "n1", adapterWorker(t, 200).URL, "ready", "qwen")
 	seedHolder(t, st, "n2", adapterWorker(t, 502).URL, "ready", "qwen")
 
-	res, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora")
+	res, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora", 0)
 	if err != nil {
 		t.Fatalf("the call itself failed: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestADrainingHolderIsSkippedNotFatal(t *testing.T) {
 	seedHolder(t, st, "n1", adapterWorker(t, 200).URL, "ready", "qwen")
 	seedHolder(t, st, "n2", "http://127.0.0.1:1", "draining", "qwen")
 
-	res, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora")
+	res, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora", 0)
 	if err != nil {
 		t.Fatalf("one draining node stopped the whole fan-out: %v", err)
 	}
@@ -96,11 +97,47 @@ func TestADrainingHolderIsSkippedNotFatal(t *testing.T) {
 
 func TestNoHolderIsRefusedWithAReason(t *testing.T) {
 	o, _ := adapterOrch(t)
-	_, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora")
+	_, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora", 0)
 	if err == nil {
 		t.Fatal("loading an adapter with no worker holding the base read as success")
 	}
 	if !strings.Contains(err.Error(), "qwen") {
 		t.Fatalf("the refusal does not say what is missing: %v", err)
+	}
+}
+
+// The adapter's rank travels on the live path, as it does in OPOD_ADAPTERS at
+// start: present when the caller states one, and the key omitted when it does
+// not (`json:"rank,omitempty"`, the typed node protocol's shape).
+func TestLoadAdapterCarriesTheRank(t *testing.T) {
+	var bodies []map[string]any
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("body: %v", err)
+		}
+		got["_path"] = r.URL.Path
+		bodies = append(bodies, got)
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	}))
+	defer worker.Close()
+	o, st := adapterOrch(t)
+	seedHolder(t, st, "n1", worker.URL, "ready", "qwen")
+
+	if _, err := o.LoadAdapter(context.Background(), "qwen", "legal", "hf/legal-lora", 64); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.LoadAdapter(context.Background(), "qwen", "support", "hf/support-lora", 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("the worker saw %d calls, want 2", len(bodies))
+	}
+	b := bodies[0]
+	if b["_path"] != "/v1/adapters/load" || b["base"] != "qwen" || b["name"] != "legal" || b["source"] != "hf/legal-lora" || b["rank"] != float64(64) {
+		t.Errorf("a stated rank must reach the worker beside base, name and source: %v", b)
+	}
+	if _, present := bodies[1]["rank"]; present {
+		t.Errorf("an unstated rank must omit the key: %v", bodies[1])
 	}
 }

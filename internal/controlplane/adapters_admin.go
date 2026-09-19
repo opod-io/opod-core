@@ -29,13 +29,17 @@ import (
 
 var adminAdapterName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// adaptersLoad — POST /admin/v1/adapters {name, source}. The base is this
-// leader's one model identity (D5); asking for another is meaningless here.
+// adaptersLoad — POST /admin/v1/adapters {name, source, rank?}. The base is
+// this leader's one model identity (D5); asking for another is meaningless
+// here. rank is the adapter's own r when the caller knows it (absent or 0 =
+// not stated); it travels to every worker, which refuses — per worker, in the
+// result — an adapter larger than its running engine was started for.
 func (s *Server) adaptersLoad(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req struct {
 		Name   string `json:"name"`
 		Source string `json:"source"`
+		Rank   int    `json:"rank"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -49,11 +53,15 @@ func (s *Server) adaptersLoad(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "source is required: a Hugging Face repo id or a path under the node model cache")
 		return
 	}
+	if req.Rank < 0 {
+		writeJSONError(w, http.StatusBadRequest, "rank must not be negative (omit it when the adapter's rank is not known)")
+		return
+	}
 	base, ok := s.adapterBase(w)
 	if !ok {
 		return
 	}
-	res, err := s.orch.LoadAdapter(r.Context(), base, req.Name, req.Source)
+	res, err := s.orch.LoadAdapter(r.Context(), base, req.Name, req.Source, req.Rank)
 	if err != nil {
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return

@@ -996,7 +996,7 @@ opod model remove qwen-coder-14b
 
 ### LoRA adapters
 
-LoRA adapters are loaded from the worker's `OPOD_ADAPTERS` environment and can be added or dropped at runtime through the leader's `/admin/v1/adapters`; there is no `opod model adapter` CLI verb yet.
+LoRA adapters are loaded from the worker's `OPOD_ADAPTERS` environment and can be added or dropped at runtime through the leader's `/admin/v1/adapters`; there is no `opod model adapter` CLI verb yet. A runtime add works within what the engine was started for: vLLM fixes `--enable-lora` and `--max-lora-rank` at launch (the worker passes them for the adapters and the largest `rank` in `OPOD_ADAPTERS`), so a worker started with no adapter, or asked for a `rank` above its launch value, answers `409` naming both numbers instead of relaying the engine's error.
 
 ---
 
@@ -1139,7 +1139,7 @@ print(resp.choices[0].message.content)
 | `POST` | `/admin/v1/models/{id}/load` | Bring a model into engine memory under admission control (`swap`, `pin`, `priority`); 409 `needs_swap` / `blocked_by_pinned`, 422 `impossible` |
 | `POST` | `/admin/v1/models/{id}/unload` | Drain in-flight requests, drop the model from engine RAM (weights stay; cleared from desired placements so it stays unloaded across restarts). Engines that don't support it return `status:"noop"` |
 | `GET` | `/admin/v1/memory` | Live engine residency + the desired set (what `opod model ps` prints) |
-| `POST` | `/admin/v1/adapters` | Load a LoRA adapter on every worker holding the base model, no restart |
+| `POST` | `/admin/v1/adapters` | Load a LoRA adapter on every worker holding the base model, no restart. Body `{name, source, rank?}`; answered per worker. vLLM sizes its LoRA slots at start, so a worker whose engine was started without adapters, or for a smaller rank than `rank`, refuses with both numbers — that adapter needs the worker restarted with it in `OPOD_ADAPTERS` |
 | `DELETE` | `/admin/v1/adapters/{name}` | Drop one |
 | `GET` | `/admin/v1/tokens` | List API keys (no hash, no plaintext) |
 | `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |

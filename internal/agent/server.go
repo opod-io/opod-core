@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod/internal/auth"
@@ -70,6 +71,9 @@ type Server struct {
 	// adapterSet is what this worker holds as LoRA variants (adapters.go).
 	adaptersOnce sync.Once
 	adapterSet   *adapterState
+	// loraLaunched is the LoRA sizing of this worker's own vLLM launch
+	// (adapters.go); nil until it launches one.
+	loraLaunched atomic.Pointer[loraLaunch]
 
 	http *http.Server
 }
@@ -523,6 +527,9 @@ func (s *Server) launchVLLM(model, servedName string) error {
 		MaxRestarts: 3,
 		Adapt:       vllmFitContext(s.EngineFlags, cmdline),
 	})
+	if err == nil {
+		s.noteLoRALaunch()
+	}
 	return err
 }
 
