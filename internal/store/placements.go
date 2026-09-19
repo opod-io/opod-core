@@ -14,18 +14,19 @@ type sqlitePlacements struct{ db *sql.DB }
 
 func (s *sqlitePlacements) Upsert(ctx context.Context, p Placement) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO model_placements(node_id, model_id, status, last_seen)
-		 VALUES(?,?,?,?)
+		`INSERT INTO model_placements(node_id, model_id, status, last_seen, cold)
+		 VALUES(?,?,?,?,?)
 		 ON CONFLICT(node_id, model_id) DO UPDATE SET
 		   status=excluded.status,
-		   last_seen=excluded.last_seen`,
-		p.NodeID, p.ModelID, p.Status, p.LastSeen.Unix())
+		   last_seen=excluded.last_seen,
+		   cold=excluded.cold`,
+		p.NodeID, p.ModelID, p.Status, p.LastSeen.Unix(), boolToInt(p.Cold))
 	return err
 }
 
 func (s *sqlitePlacements) GetByModel(ctx context.Context, modelID string) ([]Placement, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT node_id, model_id, status, last_seen FROM model_placements
+		`SELECT node_id, model_id, status, last_seen, cold FROM model_placements
 		 WHERE model_id = ? AND status = 'ready'`, modelID)
 	if err != nil {
 		return nil, err
@@ -36,7 +37,7 @@ func (s *sqlitePlacements) GetByModel(ctx context.Context, modelID string) ([]Pl
 
 func (s *sqlitePlacements) GetByNode(ctx context.Context, nodeID string) ([]Placement, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT node_id, model_id, status, last_seen FROM model_placements
+		`SELECT node_id, model_id, status, last_seen, cold FROM model_placements
 		 WHERE node_id = ?`, nodeID)
 	if err != nil {
 		return nil, err
@@ -92,10 +93,10 @@ func (s *sqlitePlacements) ReplaceForNode(ctx context.Context, nodeID string, ps
 			status = PlacementDraining
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO model_placements(node_id, model_id, status, last_seen) VALUES(?,?,?,?)
+			`INSERT INTO model_placements(node_id, model_id, status, last_seen, cold) VALUES(?,?,?,?,?)
 			 ON CONFLICT(node_id, model_id) DO UPDATE SET
-			   status=excluded.status, last_seen=excluded.last_seen`,
-			p.NodeID, p.ModelID, status, p.LastSeen.Unix()); err != nil {
+			   status=excluded.status, last_seen=excluded.last_seen, cold=excluded.cold`,
+			p.NodeID, p.ModelID, status, p.LastSeen.Unix(), boolToInt(p.Cold)); err != nil {
 			return err
 		}
 	}
@@ -133,11 +134,12 @@ func scanPlacements(rows *sql.Rows) ([]Placement, error) {
 	var out []Placement
 	for rows.Next() {
 		var p Placement
-		var ts int64
-		if err := rows.Scan(&p.NodeID, &p.ModelID, &p.Status, &ts); err != nil {
+		var ts, cold int64
+		if err := rows.Scan(&p.NodeID, &p.ModelID, &p.Status, &ts, &cold); err != nil {
 			return nil, err
 		}
 		p.LastSeen = time.Unix(ts, 0)
+		p.Cold = cold != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()

@@ -35,6 +35,11 @@ type Descriptor struct {
 	// NativeName returns the identifier this engine pulls and serves a
 	// catalog model by. Return "" to fall back to the catalog id.
 	NativeName func(src Source) string
+	// SingleModel says a server of this engine serves exactly one model, fixed
+	// when the process starts (vLLM, SGLang, llama-server): a worker asked to
+	// load another model stops what runs and starts the engine again for it.
+	// False for an engine that holds several models and loads on request.
+	SingleModel bool
 	// StartHint is one lowercase clause telling an operator how to start
 	// the engine locally, e.g. "start it with: ollama serve".
 	StartHint string
@@ -90,6 +95,13 @@ func Canonical(name string) string {
 		return d.Name
 	}
 	return name
+}
+
+// SingleModel reports Descriptor.SingleModel for a name or alias; known is
+// false when no linked driver claims the name, and then nothing is known.
+func SingleModel(name string) (single, known bool) {
+	d, ok := Lookup(name)
+	return ok && d.SingleModel, ok
 }
 
 // Names lists the canonical names of every linked driver, sorted.

@@ -186,6 +186,11 @@ type Placement struct {
 	ModelID  string
 	Status   string // ready | loading | error | sleeping | draining (PlacementDraining)
 	LastSeen time.Time
+	// Cold: the worker answers for the model but it is not in memory now — an
+	// engine that keeps installed weights and loads them on the first request
+	// said so (the heartbeat's resident_models). A cold row routes like any
+	// other; it holds no memory. False for every engine that cannot tell.
+	Cold bool
 }
 
 type PlacementStore interface {
@@ -458,6 +463,7 @@ CREATE TABLE IF NOT EXISTS model_placements (
     model_id   TEXT NOT NULL,
     status     TEXT NOT NULL,
     last_seen  INTEGER NOT NULL,
+    cold       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (node_id, model_id)
 );
 CREATE INDEX IF NOT EXISTS idx_placements_model ON model_placements(model_id);
@@ -571,6 +577,9 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		// downstream). '' = answered locally / never dispatched (legacy rows).
 		{table: "usage", column: "ttft_ms", ddl: `ALTER TABLE usage ADD COLUMN ttft_ms INTEGER NOT NULL DEFAULT 0`},
 		{table: "usage", column: "node_id", ddl: `ALTER TABLE usage ADD COLUMN node_id TEXT NOT NULL DEFAULT ''`},
+		// Installed but not in memory, as a worker's engine reported it. 0 =
+		// resident, which is what every row written before the column meant.
+		{table: "model_placements", column: "cold", ddl: `ALTER TABLE model_placements ADD COLUMN cold INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)

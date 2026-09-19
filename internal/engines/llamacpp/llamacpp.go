@@ -50,11 +50,12 @@ const name = "llamacpp"
 
 func init() {
 	engines.Register(engines.Descriptor{
-		Name:       name,
-		Aliases:    []string{"llama-cpp", "llamacpp-rpc"},
-		New:        func(endpoint, _ string) engines.Engine { return New(endpoint) },
-		NativeName: openaicompat.NativeName,
-		StartHint:  "start llama.cpp: llama-server -m /path/to/model.gguf --port 8089",
+		Name:        name,
+		Aliases:     []string{"llama-cpp", "llamacpp-rpc"},
+		New:         func(endpoint, _ string) engines.Engine { return New(endpoint) },
+		NativeName:  openaicompat.NativeName,
+		SingleModel: true,
+		StartHint:   "start llama.cpp: llama-server -m /path/to/model.gguf --port 8089",
 	})
 }
 

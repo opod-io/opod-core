@@ -100,6 +100,22 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 		"loaded_models": loaded,
 		"boot_id":       a.BootID,
 	}
+	// loaded_models is what this worker answers a request for. For an engine
+	// that keeps installed models and loads one on its first request (Ollama)
+	// that is more than what is in memory, so such an engine ALSO says which of
+	// them are resident right now — sent even when empty, omitted when the
+	// engine cannot tell the two apart (then everything listed is resident).
+	if rl, ok := a.Engine.(engines.ResidentLister); ok && a.Engine != nil {
+		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if resident, err := rl.Resident(rctx); err == nil {
+			names := make([]string, 0, len(resident))
+			for _, m := range resident {
+				names = append(names, m.Name)
+			}
+			hb["resident_models"] = a.Aliases.Resolve(names)
+		}
+		cancel()
+	}
 	// Sleep tier (build item 13): the engine's own word on whether it sleeps.
 	if sl, ok := a.Engine.(engines.Sleeper); ok && a.Engine != nil {
 		sctx, cancel := context.WithTimeout(ctx, 2*time.Second)

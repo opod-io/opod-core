@@ -28,11 +28,12 @@ const name = "vllm"
 
 func init() {
 	engines.Register(engines.Descriptor{
-		Name:       name,
-		Aliases:    []string{"tt-openai", "tenstorrent", "tt"},
-		New:        func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
-		NativeName: openaicompat.NativeName,
-		StartHint:  "start vLLM (see https://docs.vllm.ai/) and ensure OPOD_VLLM_ENDPOINT matches",
+		Name:        name,
+		Aliases:     []string{"tt-openai", "tenstorrent", "tt"},
+		New:         func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
+		NativeName:  openaicompat.NativeName,
+		SingleModel: true,
+		StartHint:   "start vLLM (see https://docs.vllm.ai/) and ensure OPOD_VLLM_ENDPOINT matches",
 	})
 }
 

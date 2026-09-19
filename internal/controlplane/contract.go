@@ -103,6 +103,8 @@ func contractFeatures() map[string]bool {
 		"otlp_logs":             true, // OPOD_OTLP_LOGS_ENDPOINT: the leader's own log records over OTLP/HTTP, teed beside stderr; bounded queue, never blocks
 		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)
 		"placement_drain":       true, // a placement the leader marks draining stays out of rotation across the worker's heartbeats, until it is set back, the model leaves the worker, or the leader restarts
+		"worker_engine":         true, // a worker registers the canonical id of its engine driver (hardware_json.Engine); /admin/v1/capabilities `engines` lists the ids
+		"resident_models":       true, // heartbeats from an engine that loads on request carry resident_models beside loaded_models; the rest of its placements are cold — routable, holding no memory
 		"worker_unload":         true, // POST /v1/model/unload on a worker (scheduler.UnloadFromNode): the engine's unload, or a stop of the engine process the worker launched; idempotent; 409 for a shard part or a held adapter, 501 when the engine cannot
 		"node_drain":            true, // POST /admin/v1/nodes/{id}/drain|undrain: a draining node gets no new request and no new shard part, in-flight finishes; the state survives heartbeats and a re-register; /readyz and the waking 503 do not count it
 		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts

@@ -28,6 +28,13 @@ type Capabilities struct {
 	// workers by it and gives each group its share. Zero = not stated, which
 	// is every worker a manager has not told, and those form one group.
 	PlanRevision int `json:"PlanRevision,omitempty"`
+	// Engine is the canonical id of the engine driver this worker serves
+	// through (engines.Canonical: "vllm", "sglang", "llamacpp", "ollama",
+	// "mlx"). The leader needs it to know what a load does THERE: an engine
+	// that serves one model per process drops the model it serves when asked
+	// to load another, an engine that holds several does not. Empty = a worker
+	// that predates the field; the leader then assumes nothing.
+	Engine string `json:"Engine,omitempty"`
 }
 
 // GPU describes a single GPU device.

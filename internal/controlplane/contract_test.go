@@ -102,6 +102,8 @@ var contractFeatureFloor = []string{
 	"node_drain",      // POST /admin/v1/nodes/{id}/drain|undrain, honoured by every picker
 	"placement_drain", // a draining placement survives the worker's heartbeats
 	"worker_unload",   // POST /v1/model/unload on a worker
+	"worker_engine",   // hardware_json.Engine
+	"resident_models", // heartbeat resident_models → cold placements
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id
