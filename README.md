@@ -682,11 +682,12 @@ auth:
   require_keys: true                  # set false to disable API-key auth (dev only)
 
 engine:
-  preferred: "ollama"                 # ollama | vllm | mlx | llamacpp
+  preferred: "ollama"                 # ollama | vllm | sglang | mlx | llamacpp (a driver's aliases work too)
   ollama_endpoint:   "http://127.0.0.1:11434"
   vllm_endpoint:     "http://127.0.0.1:8000"
   mlx_endpoint:      "http://127.0.0.1:8080"
   llamacpp_endpoint: "http://127.0.0.1:8089"   # llama-server (single-node or RPC coordinator) — port chosen to avoid Opod leader :8080 and worker :8081
+  sglang_endpoint:   "http://127.0.0.1:30000"  # the port a worker launches sglang.launch_server on
 
 router:
   default_model: ""                   # empty → auto-pick on first up
@@ -729,7 +730,7 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_LOG_LEVEL` | `log_level` |
 | `OPOD_EXTERNAL_URL` | `external_url` |
 | `OPOD_ENGINE` | `engine.preferred` |
-| `OPOD_OLLAMA_ENDPOINT` / `OPOD_VLLM_ENDPOINT` / `OPOD_MLX_ENDPOINT` / `OPOD_LLAMACPP_ENDPOINT` | corresponding `engine.*_endpoint` |
+| `OPOD_OLLAMA_ENDPOINT` / `OPOD_VLLM_ENDPOINT` / `OPOD_MLX_ENDPOINT` / `OPOD_LLAMACPP_ENDPOINT` / `OPOD_SGLANG_ENDPOINT` | corresponding `engine.*_endpoint` |
 | `OPOD_VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent). The old unprefixed `VLLM_API_KEY` still works as a deprecated fallback; the prefixed form wins when both are set |
 | `OPOD_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |

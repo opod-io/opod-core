@@ -100,6 +100,12 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
   (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- **`engine.preferred: sglang` starts.** The SGLang driver was registered, but the function that builds the
+  configured engine for `opod up` / `opod join` chose the endpoint in a hand-written list without it, so a leader
+  or worker set to SGLang exited with `unknown engine "sglang" (valid: … sglang …)`. The endpoint is now chosen by
+  the driver registry's canonical name (aliases are spelled once, by the driver), SGLang has its own setting
+  (`engine.sglang_endpoint`, `OPOD_SGLANG_ENDPOINT`, default `http://127.0.0.1:30000`), and a test fails when a
+  linked driver has no endpoint
 - An Ollama worker's heartbeat says which of its installed models are in memory (`resident_models`, feature
   of the same name) beside `loaded_models`, which stays "what this worker answers for" — the router needs
   that; the leader marks the rest `cold` (routable, holding no memory) and the shard-count picker's memory

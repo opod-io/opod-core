@@ -81,20 +81,33 @@ func loadCatalog(cfg *config.Config) ([]models.Entry, error) {
 	return models.LoadCatalogTrusted(trust, cfg.CatalogDir, cfg.Env.CatalogDir)
 }
 
+// engineEndpoint is where the configured engine listens. The name is resolved
+// through the driver registry first, so an alias ("sgl", "llama-cpp", "tt") is
+// spelled in ONE place — the driver that declares it — and a linked driver
+// cannot be missing here without TestEveryLinkedEngineHasAnEndpoint failing:
+// for a week `sglang` was a registered driver this function did not know, and
+// `opod up` refused it with an error that listed it as valid.
+func engineEndpoint(cfg *config.Config, name string) (canonical, endpoint, apiKey string, ok bool) {
+	canonical = engines.Canonical(name)
+	switch canonical {
+	case "ollama":
+		return canonical, cfg.Engine.OllamaEndpoint, "", true
+	case "vllm":
+		return canonical, cfg.Engine.VLLMEndpoint, cfg.Engine.VLLMAPIKey, true
+	case "mlx":
+		return canonical, cfg.Engine.MLXEndpoint, "", true
+	case "llamacpp":
+		return canonical, cfg.Engine.LlamaCppEndpoint, "", true
+	case "sglang":
+		return canonical, cfg.Engine.SGLangEndpoint, "", true
+	}
+	return canonical, "", "", false
+}
+
 func newEngineFromConfig(cfg *config.Config) engines.Engine {
 	name := cfg.Engine.Preferred
-	var endpoint, apiKey string
-	switch name {
-	case "ollama":
-		endpoint = cfg.Engine.OllamaEndpoint
-	case "vllm":
-		endpoint = cfg.Engine.VLLMEndpoint
-		apiKey = cfg.Engine.VLLMAPIKey
-	case "mlx", "mlx-lm":
-		endpoint = cfg.Engine.MLXEndpoint
-	case "llamacpp", "llama-cpp", "llamacpp-rpc":
-		endpoint = cfg.Engine.LlamaCppEndpoint
-	default:
+	_, endpoint, apiKey, ok := engineEndpoint(cfg, name)
+	if !ok {
 		die("unknown engine %q (valid: %s)", name, strings.Join(engines.Names(), ", "))
 	}
 	eng, err := engines.NewWithAuth(name, endpoint, apiKey)

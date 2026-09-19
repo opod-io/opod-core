@@ -152,6 +152,7 @@ type EngineConfig struct {
 	VLLMAPIKey       string `yaml:"-" json:"-"` // populated from VLLM_API_KEY env
 	MLXEndpoint      string `yaml:"mlx_endpoint"`
 	LlamaCppEndpoint string `yaml:"llamacpp_endpoint"`
+	SGLangEndpoint   string `yaml:"sglang_endpoint"`
 }
 
 type RouterConfig struct {
@@ -261,6 +262,7 @@ func Default() *Config {
 			VLLMEndpoint:     "http://127.0.0.1:8000",
 			MLXEndpoint:      "http://127.0.0.1:8080",
 			LlamaCppEndpoint: "http://127.0.0.1:8089",
+			SGLangEndpoint:   "http://127.0.0.1:30000", // the port a worker launches sglang.launch_server on
 		},
 		Router: RouterConfig{
 			DefaultModel:           "",
@@ -387,6 +389,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPOD_LLAMACPP_ENDPOINT"); v != "" {
 		c.Engine.LlamaCppEndpoint = v
+	}
+	if v := os.Getenv("OPOD_SGLANG_ENDPOINT"); v != "" {
+		c.Engine.SGLangEndpoint = v
 	}
 	if v := os.Getenv("OPOD_ENGINE"); v != "" {
 		c.Engine.Preferred = v
