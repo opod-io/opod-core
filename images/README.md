@@ -30,6 +30,15 @@ from its commit. Moving a pin is deliberate: `images/build.sh refresh-bases [--d
 tag (read-only, `crane` or `docker buildx`, no daemon) and rewrites the three places together — review the diff,
 rebuild, commit the pins on their own. An override (`VLLM_AMD_BASE=…`, `--build-arg BASE=…`) should name a digest too.
 
+**Signed, with an SBOM (CI lane only).** Every image the release lane pushes is signed keyless through Sigstore and
+carries a **package-level SPDX SBOM** as an attestation — every package, version and licence in the image, most of
+which is someone else's base. Package-level on purpose: with a record per file the vLLM image's document is 36 MB and
+the public transparency log rejects the attestation (16 MB is accepted), so until 2026-09-19 only the leader and the
+llama.cpp CPU/CUDA workers ever carried one. Read it without pulling the image:
+`cosign verify-attestation --type spdxjson --certificate-identity-regexp 'https://github.com/opod-io/opod-core/'
+--certificate-oidc-issuer https://token.actions.githubusercontent.com <image>@<digest> | jq -r .payload | base64 -d`.
+An image pushed from the local lane has neither.
+
 **Multi-arch.** Only the leader and the CPU worker have a base that exists for arm64 (a kind cluster on
 Apple silicon pulls it); the GPU bases are amd64-only. `--multi` builds `<tag>-amd64` and `<tag>-arm64`,
 composes the index under `<tag>` from a name computed once, and **reads it back** to prove both
