@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"syscall"
 	"time"
 
 	"github.com/opod-io/opod/internal/auth"
@@ -93,6 +95,15 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 		defer cancel()
 		if m, err := a.Engine.List(listCtx); err == nil {
 			loaded = a.Aliases.Resolve(m)
+		} else if engineNotRunning(err) {
+			// Nothing listens where the engine would: a definite report — nothing is
+			// loaded — not the absence of one. "No report" (nil) is for an engine that
+			// did not answer in time or answered with an error. The difference
+			// matters: the leader takes a worker with no report for too long out of
+			// rotation, and a worker whose engine is launched BY a load (vLLM, SGLang,
+			// llama.cpp), or a llama.cpp RPC part (an rpc-server, never an engine),
+			// has nothing listening by design.
+			loaded = []string{}
 		}
 	}
 	hb := map[string]any{
@@ -254,4 +265,10 @@ func (a *Agent) post(ctx context.Context, path string, body []byte) (int, error)
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// engineNotRunning: the connection was refused — no process listens on the
+// engine's address. A timeout is NOT this: a hung engine may hold a model.
+func engineNotRunning(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
