@@ -122,7 +122,7 @@ func (o *Orchestrator) callWorkerGet(ctx context.Context, node store.Node, proce
 // leftovers of a previous leader life. Best-effort: an unreachable worker is
 // skipped (its orphan will collide later and surface as a create error).
 func (o *Orchestrator) stopOrphanShardProcs(ctx context.Context, entry models.Entry) {
-	prefix := "s-" + safeID(entry.ID) + "-"
+	prefix := agent.ShardProcessPrefix(entry.ID)
 	nodes, err := o.Store.Nodes().List(ctx)
 	if err != nil {
 		return
@@ -252,6 +252,110 @@ func (o *Orchestrator) callWorkerLoad(ctx context.Context, node store.Node, entr
 	return nil
 }
 
+// unloadModelRequest / unloadModelResponse are the worker's /v1/model/unload
+// wire (agent.modelUnload): the load body's source fields without `file` and
+// `pin`. They become the SDK's nodeapi.UnloadModelRequest / Response when
+// core adopts that package.
+type unloadModelRequest struct {
+	ID         string `json:"id"`
+	OllamaName string `json:"ollama_name"`
+	Repo       string `json:"repo"`
+	Path       string `json:"path"`
+}
+
+type unloadModelResponse struct {
+	Status string `json:"status"`
+	Model  string `json:"model,omitempty"`
+	Engine string `json:"engine,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// UnloadResult is a worker's answer to an unload it carried out or had no
+// need to: Unloaded is false when the model was not resident there (the call
+// is idempotent) and Reason says so.
+type UnloadResult struct {
+	Unloaded bool
+	Model    string // the engine-native name
+	Reason   string
+}
+
+// WorkerRefusal is a worker's non-2xx answer, kept typed so a caller can tell
+// "cannot, by design" from "failed": 409 = a shard part or an adapter of the
+// model is held there, 501 = the engine cannot unload and the worker did not
+// start it, 502 = the engine failed.
+type WorkerRefusal struct {
+	Code    int
+	Message string
+}
+
+func (e *WorkerRefusal) Error() string {
+	return fmt.Sprintf("%d %s: %s", e.Code, http.StatusText(e.Code), e.Message)
+}
+
+// UnloadFromNode asks one worker (id or hostname) to stop holding a
+// non-sharded model: POST /v1/model/unload, the counterpart of PlaceOnNodes.
+// The worker need not take new work — unloading from a drained node is the
+// point — but it must be a registered worker with an address. Like a load,
+// this writes no placement row: the model leaves the worker's next heartbeat
+// and the row, with any draining mark on it, goes then.
+func (o *Orchestrator) UnloadFromNode(ctx context.Context, entry models.Entry, nodeID string) (UnloadResult, error) {
+	all, err := o.Store.Nodes().List(ctx)
+	if err != nil {
+		return UnloadResult{}, err
+	}
+	for _, nd := range all {
+		if nd.ID != nodeID && (nd.Hostname == "" || nd.Hostname != nodeID) {
+			continue
+		}
+		if nd.ID == "local" || nd.Address == "" {
+			return UnloadResult{}, fmt.Errorf("node %q is not a worker with an address", nodeID)
+		}
+		res, err := o.callWorkerUnload(ctx, nd, entry)
+		if err != nil {
+			return UnloadResult{}, fmt.Errorf("node %s: %w", nd.ID, err)
+		}
+		o.Log.Info("model unloaded from worker", "model", entry.ID, "node", nd.ID, "unloaded", res.Unloaded, "reason", res.Reason)
+		return res, nil
+	}
+	return UnloadResult{}, fmt.Errorf("node %q not found", nodeID)
+}
+
+func (o *Orchestrator) callWorkerUnload(ctx context.Context, node store.Node, entry models.Entry) (UnloadResult, error) {
+	body, _ := json.Marshal(unloadModelRequest{
+		ID:         entry.ID,
+		OllamaName: entry.Source.OllamaName,
+		Repo:       entry.Source.Repo,
+		Path:       entry.Source.Path,
+	})
+	url := workerURL(node.Address) + "/v1/model/unload"
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+node.WorkerToken) // transition; HMAC below is the real auth
+	auth.SignRequest(req, node.ID, node.WorkerToken)
+	resp, err := o.HTTP.Do(req)
+	if err != nil {
+		return UnloadResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	var ans unloadModelResponse
+	decodeErr := json.Unmarshal(raw, &ans)
+	if resp.StatusCode >= 400 {
+		msg := strings.TrimSpace(string(raw))
+		if decodeErr == nil && ans.Reason != "" { // the typed 501
+			msg = fmt.Sprintf("engine %s: %s", ans.Engine, ans.Reason)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			msg = "this worker has no /v1/model/unload — it runs a version that predates it"
+		}
+		return UnloadResult{}, &WorkerRefusal{Code: resp.StatusCode, Message: msg}
+	}
+	if decodeErr != nil {
+		return UnloadResult{}, fmt.Errorf("decode unload answer: %w", decodeErr)
+	}
+	return UnloadResult{Unloaded: ans.Status == "unloaded", Model: ans.Model, Reason: ans.Reason}, nil
+}
+
 func workerURL(address string) string {
 	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
 		return strings.TrimRight(address, "/")
@@ -259,17 +363,6 @@ func workerURL(address string) string {
 	return "http://" + address
 }
 
-func safeID(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
-			out = append(out, c)
-		} else if c >= 'A' && c <= 'Z' {
-			out = append(out, c+32)
-		} else {
-			out = append(out, '-')
-		}
-	}
-	return string(out)
-}
+// safeID folds a model id into a process id; the rule is the worker's
+// (agent.SafeProcessID), which recognises the ids the leader builds with it.
+func safeID(s string) string { return agent.SafeProcessID(s) }

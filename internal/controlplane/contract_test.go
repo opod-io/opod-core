@@ -101,6 +101,7 @@ var contractFeatureFloor = []string{
 	"shard_head", "ttft", "engines", "fetch_snapshot", "otlp_logs", "cache_prune", "gang_devices_per_rank",
 	"node_drain",      // POST /admin/v1/nodes/{id}/drain|undrain, honoured by every picker
 	"placement_drain", // a draining placement survives the worker's heartbeats
+	"worker_unload",   // POST /v1/model/unload on a worker
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

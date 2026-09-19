@@ -252,13 +252,15 @@ func (s *Server) unloadAdapter(ctx context.Context, base, name string) error {
 // loadAdaptersWhenReady loads the env-configured adapters once the base model
 // is resident (vLLM binds its port only after the weights load). Bounded by
 // the same patience as the engine launch; a failure is logged per adapter and
-// retried on the next attempt, never fatal to the worker.
-func (s *Server) loadAdaptersWhenReady(base string, adapters []Adapter) {
+// retried on the next attempt, never fatal to the worker. gen is the launch it
+// waits on (Server.launchGen): a later launch, or an unload of the base, ends
+// it — the engine it was loading into is gone.
+func (s *Server) loadAdaptersWhenReady(base string, adapters []Adapter, gen int64) {
 	if len(adapters) == 0 {
 		return
 	}
 	deadline := time.Now().Add(40 * time.Minute)
-	for time.Now().Before(deadline) {
+	for time.Now().Before(deadline) && s.launchGen.Load() == gen {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		models, err := s.Engine.List(ctx)
 		cancel()
@@ -275,6 +277,9 @@ func (s *Server) loadAdaptersWhenReady(base string, adapters []Adapter) {
 		}
 		pending := adapters[:0:0]
 		for _, a := range adapters {
+			if s.launchGen.Load() != gen {
+				return
+			}
 			lctx, lcancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			err := s.loadAdapter(lctx, base, a)
 			lcancel()

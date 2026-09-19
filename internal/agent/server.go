@@ -74,6 +74,11 @@ type Server struct {
 	// loraLaunched is the LoRA sizing of this worker's own vLLM launch
 	// (adapters.go); nil until it launches one.
 	loraLaunched atomic.Pointer[loraLaunch]
+	// launched is the engine process this worker started for a model, nil when
+	// it started none; launchGen counts launches and unloads, so work that
+	// waits on one launch notices it was replaced (unload.go).
+	launched  atomic.Pointer[launchedEngine]
+	launchGen atomic.Int64
 
 	http *http.Server
 }
@@ -90,6 +95,7 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
 	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))      // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
 	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))       // leader-side placement: pull+load a model on this worker
+	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload))   // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
 	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))     // sleep tier (build item 13): engine drops its GPU working set, process stays
 	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume))   // wake it (sub-second on vLLM)
 	mux.HandleFunc("/v1/adapters", s.auth(s.adaptersList))      // LoRA variants held (adapters.go, feature lora)
@@ -450,8 +456,9 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "vllm serve: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		s.noteLaunch("vllm-serve", req.ID, name)
 		if s.AdaptersErr == nil && len(s.Adapters) > 0 {
-			go s.loadAdaptersWhenReady(req.ID, s.Adapters)
+			go s.loadAdaptersWhenReady(req.ID, s.Adapters, s.launchGen.Add(1))
 		}
 	}
 	// SGLang, like vLLM, has no persistent server and its driver never starts
@@ -462,6 +469,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "sglang launch_server: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		s.noteLaunch("sglang-serve", req.ID, name)
 	}
 	// llama.cpp whole-model placement (for load-balancing replicas): launch a
 	// whole llama-server for this model. Like vLLM, the driver never starts one
@@ -472,6 +480,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "llama-server: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		s.noteLaunch("llama-server", req.ID, name)
 	}
 	// Warm-load into memory when the engine can (ollama). Engines that can't
 	// (vLLM/MLX/llama-server) don't implement Loader — the Pull above is enough
