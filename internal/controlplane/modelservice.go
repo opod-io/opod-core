@@ -30,9 +30,13 @@ var (
 
 // AddModelRequest installs a model: by catalog id or scheme id, optionally
 // pinned to named workers.
+//
+// Force applies to Nodes: a load on a worker whose engine serves one model per
+// process stops what it serves, and is refused (409) unless forced.
 type AddModelRequest struct {
 	ID    string   `json:"id"`
 	Nodes []string `json:"nodes"`
+	Force bool     `json:"force,omitempty"`
 }
 
 // ModelOutcome says how the model landed.
@@ -80,7 +84,10 @@ func (s *Server) AddModel(ctx context.Context, req AddModelRequest) (ModelOutcom
 		if s.orch == nil {
 			return ModelOutcome{}, ErrNoOrchestrator
 		}
-		if err := s.orch.PlaceOnNodes(ctx, *entry, req.Nodes, false); err != nil {
+		if err := s.orch.PlaceOnNodes(ctx, *entry, req.Nodes, false, req.Force); err != nil {
+			if errors.Is(err, scheduler.ErrUnplaceable) {
+				return ModelOutcome{}, err // the operator's to resolve, not an upstream failure
+			}
 			return ModelOutcome{}, errors.Join(ErrUpstream, err)
 		}
 		// Registered as installed (for `model ls`); placement rows arrive
