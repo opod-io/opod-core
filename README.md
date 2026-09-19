@@ -872,6 +872,8 @@ opod shard remove llama-3.3-70b-sharded    # stops coordinator + every rpc-serve
 
 `opod shard create <model> --nodes a,b,c` pins the parts to named workers instead of letting Opod pick; the same routes are `GET|POST|DELETE /admin/v1/shards…` for a manager.
 
+`opod shard create <model>` with no count picks one: the smallest number of equal parts that fits the live workers' free memory — 1 when the model fits one worker, never more parts than workers or than the model's layers — and prints what it picked and why; when nothing fits it refuses and names the numbers. This is a default of the command only. A count, `--nodes` or `--tp`/`--pp` you give is sent untouched, and `POST /admin/v1/shards/create` never picks: a body without a count means the catalog's `default_shards`.
+
 **Caveats:**
 - Shard crash recovery is automatic for up to 5 restarts with exponential backoff (1s, 2s, 4s, 8s, 16s). After that the process enters `crashloop` state and the admin must intervene — typically by re-running `opod shard create`. Both `rpc-server` and the `llama-server` coordinator restart this way. See `internal/agent/supervisor.go`.
 - The coordinator runs on the shard worker with the most RAM (the leader only when there are no workers). `OPOD_COORDINATOR_NODE=<node-id>` pins it; `local` forces the leader.

@@ -206,7 +206,7 @@ func (m *Manager) resolve(ctx context.Context, id string) (*resolved, error) {
 // custom models).
 func (m *Manager) footprint(ctx context.Context, id string, weightsBytes int64) int64 {
 	if weightsBytes > 0 {
-		return weightsBytes + weightsBytes/footprintOverheadDivisor
+		return Footprint(weightsBytes)
 	}
 	if entry := models.FindByID(m.Catalog, id); entry != nil && entry.Hardware.MinRAMGB > 0 {
 		return int64(entry.Hardware.MinRAMGB) << 30
@@ -215,11 +215,27 @@ func (m *Manager) footprint(ctx context.Context, id string, weightsBytes int64) 
 }
 
 func (m *Manager) budgetBytes() int64 {
-	reserve := m.ReservePercent
-	if reserve <= 0 || reserve >= 100 {
-		reserve = DefaultReservePercent
+	return Budget(m.TotalRAMBytes, m.ReservePercent)
+}
+
+// Footprint is the resident memory weights of the given size are expected to
+// occupy: the weights plus ~20% for KV cache and runtime buffers. It is the
+// one estimate every memory decision in this binary uses — admission here,
+// and the shard-count picker (scheduler.PickShards) for workers.
+func Footprint(weightsBytes int64) int64 {
+	if weightsBytes <= 0 {
+		return 0
 	}
-	return m.TotalRAMBytes * int64(100-reserve) / 100
+	return weightsBytes + weightsBytes/footprintOverheadDivisor
+}
+
+// Budget is what a machine with totalBytes of memory may hold once
+// reservePercent is set aside (out of range = DefaultReservePercent).
+func Budget(totalBytes int64, reservePercent int) int64 {
+	if reservePercent <= 0 || reservePercent >= 100 {
+		reservePercent = DefaultReservePercent
+	}
+	return totalBytes * int64(100-reservePercent) / 100
 }
 
 // nativeToCatalog builds the native-name → catalog-id map from the
