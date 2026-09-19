@@ -28,6 +28,12 @@ ARG RAY_VERSION=2.58.0
 RUN python3 -c "import ray" 2>/dev/null || pip install --no-cache-dir "ray[default]==${RAY_VERSION}"
 COPY --from=opod /opod /usr/local/bin/opod
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Intel's XPU base sets up oneAPI in its own ENTRYPOINT (`source setvars.sh
+# --force && exec "$@"`), which the worker's entrypoint replaces: without it
+# torch cannot find libccl and vLLM never starts. Record the script for
+# entrypoint.sh (base_env) when this base has one; every other base records
+# nothing and starts exactly as before.
+RUN if [ -r /opt/intel/oneapi/setvars.sh ]; then mkdir -p /usr/local/share/opod && echo "/opt/intel/oneapi/setvars.sh --force" > /usr/local/share/opod/base-env; fi
 ENV OPOD_ROLE=worker OPOD_ENGINE=vllm OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1 VLLM_WORKER_MULTIPROC_METHOD=spawn
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
