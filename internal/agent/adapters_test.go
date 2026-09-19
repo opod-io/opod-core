@@ -173,3 +173,89 @@ func TestLoRARankSizesTheEngine(t *testing.T) {
 		t.Errorf("rank lost in ParseAdapters: %+v", as[1])
 	}
 }
+
+// vLLM sizes its LoRA slots when it starts. A live add the running engine
+// cannot take is refused by the worker — 409, naming the adapter's rank, the
+// rank the engine was started for and the remedy — and never reaches the
+// engine, whose own error names neither number.
+func TestLiveAdapterTheLaunchCannotTakeIsRefused(t *testing.T) {
+	f := newFakeVLLM(t, "mimo-7b")
+	newServer := func(atStart []Adapter, flags EngineFlags) (*Server, func(body string) (int, string)) {
+		srv := &Server{Token: "sk", Engine: &loraEngine{f: f}, Aliases: &Aliases{}, Adapters: atStart, EngineFlags: flags}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/adapters/load", srv.auth(srv.adaptersLoad))
+		ts := httptest.NewServer(mux)
+		t.Cleanup(ts.Close)
+		return srv, func(body string) (int, string) {
+			r, _ := http.NewRequest("POST", ts.URL+"/v1/adapters/load", strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer sk")
+			resp, err := http.DefaultClient.Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			b := make([]byte, 1024)
+			n, _ := resp.Body.Read(b)
+			return resp.StatusCode, string(b[:n])
+		}
+	}
+
+	// Started with one rank-8 adapter: --enable-lora, vLLM's default max rank.
+	srv, load := newServer([]Adapter{{Name: "sql", Source: "org/sql", Rank: 8}}, nil)
+	srv.noteLoRALaunch()
+	code, body := load(`{"base":"mimo-7b","name":"big","source":"org/big","rank":64}`)
+	if code != http.StatusConflict {
+		t.Fatalf("rank 64 on an engine started for 16: %d %s, want 409", code, body)
+	}
+	for _, want := range []string{`"big"`, "rank 64", "--max-lora-rank 16", "restart", "OPOD_ADAPTERS"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the refusal does not say %q: %s", want, body)
+		}
+	}
+	if len(f.loaded) != 0 {
+		t.Fatalf("a refused adapter reached the engine: %v", f.loaded)
+	}
+	// At the launched rank, and with no rank stated, the engine is asked.
+	if code, body := load(`{"base":"mimo-7b","name":"fits","source":"org/fits","rank":16}`); code != 200 {
+		t.Fatalf("rank 16 on an engine started for 16: %d %s", code, body)
+	}
+	if code, body := load(`{"base":"mimo-7b","name":"unstated","source":"org/u"}`); code != 200 {
+		t.Fatalf("no rank stated — the engine answers: %d %s", code, body)
+	}
+	if code, _ := load(`{"base":"mimo-7b","name":"neg","source":"org/n","rank":-1}`); code != http.StatusBadRequest {
+		t.Fatalf("a negative rank: %d, want 400", code)
+	}
+
+	// Started for a rank-64 set: 64 fits, 65 does not.
+	srv, load = newServer([]Adapter{{Name: "a", Source: "org/a", Rank: 40}}, nil)
+	srv.noteLoRALaunch()
+	if code, body := load(`{"base":"mimo-7b","name":"r64","source":"org/r","rank":64}`); code != 200 {
+		t.Fatalf("rank 64 on an engine started with --max-lora-rank 64: %d %s", code, body)
+	}
+	if code, body := load(`{"base":"mimo-7b","name":"r65","source":"org/r","rank":65}`); code != http.StatusConflict || !strings.Contains(body, "--max-lora-rank 64") {
+		t.Fatalf("rank 65 on an engine started for 64: %d %s", code, body)
+	}
+
+	// Started with no adapter at all: no --enable-lora, nothing can be added live.
+	srv, load = newServer(nil, nil)
+	srv.noteLoRALaunch()
+	before := len(f.loaded)
+	if code, body := load(`{"base":"mimo-7b","name":"late","source":"org/late"}`); code != http.StatusConflict || !strings.Contains(body, "without LoRA slots") {
+		t.Fatalf("an engine started without LoRA slots: %d %s", code, body)
+	}
+	if len(f.loaded) != before {
+		t.Fatal("the engine was asked although it has no LoRA slots")
+	}
+
+	// What the worker does not know, it does not refuse: an engine it did not
+	// launch, and one whose operator sized LoRA in the extra flags.
+	_, load = newServer(nil, nil) // no launch recorded — an external vLLM
+	if code, body := load(`{"base":"mimo-7b","name":"ext","source":"org/e","rank":128}`); code != 200 {
+		t.Fatalf("an engine this worker did not launch answers for itself: %d %s", code, body)
+	}
+	srv, load = newServer(nil, EngineFlags{"extra": "--enable-lora --max-lora-rank 128"})
+	srv.noteLoRALaunch()
+	if code, body := load(`{"base":"mimo-7b","name":"op","source":"org/o","rank":128}`); code != 200 {
+		t.Fatalf("an operator-sized engine answers for itself: %d %s", code, body)
+	}
+}

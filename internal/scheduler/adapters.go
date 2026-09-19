@@ -36,12 +36,25 @@ type AdapterResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// loadAdapterRequest is the body of the worker's /v1/adapters/load. Rank is
+// the adapter's own r, omitted when the caller did not state one: an engine's
+// LoRA slots are sized at its start, so a worker told the rank can refuse an
+// adapter its engine cannot take — naming both numbers — instead of relaying
+// the engine's error. The type becomes the SDK's nodeapi.LoadAdapterRequest
+// when core adopts that package.
+type loadAdapterRequest struct {
+	Base   string `json:"base"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	Rank   int    `json:"rank,omitempty"`
+}
+
 // LoadAdapter tells every ready worker holding base to load the adapter into
 // its engine and serve it as "<base>:<name>". Workers that do not hold the base
-// are skipped, not failed: they have nothing to attach it to.
-func (o *Orchestrator) LoadAdapter(ctx context.Context, base, name, source string) ([]AdapterResult, error) {
+// are skipped, not failed: they have nothing to attach it to. rank 0 = not stated.
+func (o *Orchestrator) LoadAdapter(ctx context.Context, base, name, source string, rank int) ([]AdapterResult, error) {
 	return o.adapterFanOut(ctx, base, "/v1/adapters/load",
-		map[string]any{"base": base, "name": name, "source": source})
+		loadAdapterRequest{Base: base, Name: name, Source: source, Rank: rank})
 }
 
 // UnloadAdapter is the reverse. A worker that does not hold the adapter is not
@@ -51,7 +64,7 @@ func (o *Orchestrator) UnloadAdapter(ctx context.Context, base, name string) ([]
 		map[string]any{"base": base, "name": name})
 }
 
-func (o *Orchestrator) adapterFanOut(ctx context.Context, base, path string, body map[string]any) ([]AdapterResult, error) {
+func (o *Orchestrator) adapterFanOut(ctx context.Context, base, path string, body any) ([]AdapterResult, error) {
 	holders, err := o.workersHolding(ctx, base)
 	if err != nil {
 		return nil, err

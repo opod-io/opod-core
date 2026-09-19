@@ -10,14 +10,15 @@ package agent
 // model accepts its "<model>:<adapter>" variants (controlplane.planAllowsModel).
 //
 // Adapters arrive two ways: OPOD_ADAPTERS in the worker's env (a JSON list of
-// {name, source} — what a control plane renders from its plan) is loaded once
-// the base model is resident; POST /v1/adapters/load|unload changes the set
-// at runtime.
+// {name, source, rank} — what a control plane renders from its plan) is loaded
+// once the base model is resident; POST /v1/adapters/load|unload changes the
+// set at runtime, within what the engine was started for (loraFits).
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,11 +86,14 @@ func vllmLoRAArgs(n, maxRank int) string {
 	return args
 }
 
+// vllmDefaultLoRARank is vLLM's own --max-lora-rank when the flag is absent.
+const vllmDefaultLoRARank = 16
+
 // loRARankFor rounds a rank up to a value vLLM accepts for --max-lora-rank
 // (1, 8, 16, 32, 64, 128, 256); 0 when the default (16) already covers it, so
 // the flag is passed only when it changes something.
 func loRARankFor(maxRank int) int {
-	if maxRank <= 16 {
+	if maxRank <= vllmDefaultLoRARank {
 		return 0
 	}
 	for _, r := range []int{32, 64, 128, 256} {
@@ -109,6 +113,61 @@ func MaxAdapterRank(as []Adapter) int {
 		}
 	}
 	return largest
+}
+
+// loraLaunch is what this worker's own `vllm serve` launch fixed for LoRA.
+// vLLM sizes its slots once, at start: an engine started without
+// --enable-lora takes no adapter at all, and one started for rank r refuses a
+// larger adapter when it is loaded — with an error that names neither number.
+// Recorded by launchVLLM so a live add (POST /v1/adapters/load) that cannot
+// work is refused HERE, saying what the engine has, what the adapter needs
+// and that only a restart changes it.
+type loraLaunch struct {
+	slots   bool // --enable-lora was passed (an adapter was configured at start)
+	maxRank int  // the effective --max-lora-rank (vLLM's default when the flag was not passed)
+}
+
+// noteLoRALaunch records the LoRA sizing of the launch just made. Nothing is
+// recorded — and so nothing is ever refused on the engine's behalf — when the
+// operator's own extra flags mention LoRA: then only the engine knows its size.
+func (s *Server) noteLoRALaunch() {
+	if extra, _ := s.EngineFlags.get("extra"); strings.Contains(strings.ToLower(extra), "lora") {
+		s.loraLaunched.Store(nil)
+		return
+	}
+	var adapters []Adapter
+	if s.AdaptersErr == nil {
+		adapters = s.Adapters
+	}
+	l := &loraLaunch{slots: len(adapters) > 0, maxRank: loRARankFor(MaxAdapterRank(adapters))}
+	if l.maxRank == 0 {
+		l.maxRank = vllmDefaultLoRARank
+	}
+	s.loraLaunched.Store(l)
+}
+
+// errAdapterNeedsRestart: the running engine cannot take this adapter and no
+// retry will change that.
+type errAdapterNeedsRestart struct{ msg string }
+
+func (e errAdapterNeedsRestart) Error() string { return e.msg }
+
+// loraFits checks an adapter against the launch this worker made. A worker
+// that did not launch its engine (an external vLLM), an adapter with no
+// stated rank, and an operator-sized engine all pass: the engine answers.
+func (s *Server) loraFits(a Adapter) error {
+	l := s.loraLaunched.Load()
+	if l == nil {
+		return nil
+	}
+	const remedy = "restart the worker with the adapter in OPOD_ADAPTERS (name, source and rank) so the engine is started for it"
+	if !l.slots {
+		return errAdapterNeedsRestart{fmt.Sprintf("adapter %q: this worker's engine was started without LoRA slots — no adapter was configured at start, so vLLM runs without --enable-lora and takes none at runtime; %s", a.Name, remedy)}
+	}
+	if a.Rank > l.maxRank {
+		return errAdapterNeedsRestart{fmt.Sprintf("adapter %q has rank %d, but this worker's engine was started with --max-lora-rank %d; vLLM fixes that at launch and refuses a larger adapter at load time; %s", a.Name, a.Rank, l.maxRank, remedy)}
+	}
+	return nil
 }
 
 // adapterState is the worker's record of what it holds.
@@ -137,6 +196,9 @@ func (s *Server) loadAdapter(ctx context.Context, base string, a Adapter) error 
 	}
 	if !adapterNameRe.MatchString(a.Name) || a.Source == "" {
 		return fmt.Errorf("adapter needs a lower-case name and a source")
+	}
+	if err := s.loraFits(a); err != nil {
+		return err
 	}
 	body, _ := json.Marshal(map[string]string{"lora_name": a.Name, "lora_path": a.Source})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.engineBase()+"/v1/load_lora_adapter", bytes.NewReader(body))
@@ -233,20 +295,34 @@ func (s *Server) logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[worker] "+format+"\n", args...)
 }
 
-// adaptersLoad — POST /v1/adapters/load {base, name, source}.
+// adaptersLoad — POST /v1/adapters/load {base, name, source, rank?}. rank is
+// the adapter's own r when the caller knows it (0 or absent = not stated):
+// the same field OPOD_ADAPTERS carries at start, so the live path can say
+// "this engine was started for rank 16" instead of relaying the engine's
+// refusal. 409 = the running engine cannot take it; a restart is needed.
 func (s *Server) adaptersLoad(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req struct {
 		Base   string `json:"base"`
 		Name   string `json:"name"`
 		Source string `json:"source"`
+		Rank   int    `json:"rank"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Base == "" {
 		http.Error(w, "base, name and source required", http.StatusBadRequest)
 		return
 	}
-	if err := s.loadAdapter(r.Context(), req.Base, Adapter{Name: req.Name, Source: req.Source}); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+	if req.Rank < 0 {
+		http.Error(w, "rank must not be negative", http.StatusBadRequest)
+		return
+	}
+	if err := s.loadAdapter(r.Context(), req.Base, Adapter{Name: req.Name, Source: req.Source, Rank: req.Rank}); err != nil {
+		code := http.StatusBadGateway
+		var restart errAdapterNeedsRestart
+		if errors.As(err, &restart) {
+			code = http.StatusConflict
+		}
+		http.Error(w, err.Error(), code)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
