@@ -541,3 +541,67 @@ func TestReplaceForNodeCarriesReleasedOnlyWhileCold(t *testing.T) {
 		t.Fatalf("the mark does not come back by itself: %q", got)
 	}
 }
+
+// NoteEngineReport stamps the FIRST report-less heartbeat, leaves the stamp
+// alone on the next ones, clears it on a report, and writes no other column —
+// a drain set meanwhile is not undone. A database from before the column
+// opens and reads as "reporting".
+func TestNoteEngineReport(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE nodes (id TEXT PRIMARY KEY, hostname TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, ram_gb INTEGER NOT NULL,
+			address TEXT NOT NULL DEFAULT '', worker_token TEXT NOT NULL DEFAULT '', bound_key_id TEXT NOT NULL DEFAULT '',
+			hardware_json TEXT NOT NULL, last_heartbeat INTEGER NOT NULL, state TEXT NOT NULL)`,
+		`INSERT INTO nodes(id, hostname, os, arch, ram_gb, hardware_json, last_heartbeat, state) VALUES('w','w','linux','amd64',8,'',1,'ready')`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("a database from before the column must open: %v", err)
+	}
+	defer st.Close()
+	get := func() Node {
+		t.Helper()
+		n, err := st.Nodes().Get(ctx, "w")
+		if err != nil || n == nil {
+			t.Fatalf("get: %v %v", n, err)
+		}
+		return *n
+	}
+	if !get().EngineSilentSince.IsZero() {
+		t.Fatal("a row from before the column reads as reporting")
+	}
+	first := time.Now().Add(-30 * time.Second).Truncate(time.Second)
+	if err := st.Nodes().NoteEngineReport(ctx, "w", false, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Nodes().SetState(ctx, "w", NodeStateDraining); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Nodes().NoteEngineReport(ctx, "w", false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := get(); !n.EngineSilentSince.Equal(first) || n.State != NodeStateDraining {
+		t.Fatalf("silent since %v (want the first stamp %v), state %q (want the drain kept)", n.EngineSilentSince, first, n.State)
+	}
+	if listed, _ := st.Nodes().List(ctx); len(listed) != 1 || !listed[0].EngineSilentSince.Equal(first) {
+		t.Fatalf("List reads the column too: %+v", listed)
+	}
+	if err := st.Nodes().NoteEngineReport(ctx, "w", true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := get(); !n.EngineSilentSince.IsZero() || n.State != NodeStateDraining {
+		t.Fatalf("after a report: %+v", n)
+	}
+}

@@ -184,7 +184,8 @@ func (s *Server) reconcileShardsOn(n store.Node) {
 // model), status "sleeping" while the engine sleeps. Residency changes are
 // recorded as model.loaded / model.unloaded.
 //
-// A heartbeat reports residency, not routability: a placement the leader
+// A heartbeat whose loaded_models is null carries no report and changes no
+// row (below). A heartbeat reports residency, not routability: a placement the leader
 // marked draining (Placements().SetStatus) stays draining for as long as the
 // worker keeps reporting the model (ReplaceForNode carries the mark), and
 // goes like any other row when the model leaves the report.
@@ -219,6 +220,36 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	// lands between that read and this write must not be undone by it.
 	if err := s.store.Nodes().Heartbeat(ctx, n.ID, time.Now(), n.BootID); err != nil {
 		return err
+	}
+	// A NULL loaded_models is "no report": the worker's engine did not answer
+	// it in time, so this heartbeat says the worker is alive and nothing about
+	// what it serves. The node's rows are left exactly as they are — statuses,
+	// the leader's draining and released marks, cold flags — because replacing
+	// them with nothing would delete the marks and the next real report would
+	// recreate the rows `ready`: one slow engine tick would put a draining
+	// source back in rotation. An EMPTY list still means "nothing is loaded"
+	// and clears the rows. A worker whose engine never answers again does not
+	// keep routable rows for ever: the row records since when
+	// (EngineSilentSince) and the one live rule takes the node out of rotation
+	// past its bound (store.Node.WhyNoNewWork), marks untouched.
+	reported := req.LoadedModels != nil
+	if reported != n.EngineSilentSince.IsZero() { // only a change is written
+		if err := s.store.Nodes().NoteEngineReport(ctx, n.ID, reported, time.Now()); err != nil {
+			s.log.Warn("engine report state not recorded", "node", n.ID, "err", err)
+		}
+	}
+	// The journal says when the silence took the node out of rotation, once,
+	// and when a report brought it back — not every slow tick.
+	if !reported {
+		if n.EngineSilent(s.heartbeatMaxAge(), time.Now()) {
+			if _, told := s.engineSilentTold.LoadOrStore(n.ID, struct{}{}); !told {
+				s.record("node.engine_silent", n.ID, map[string]any{"since": n.EngineSilentSince.UTC().Format(time.RFC3339)})
+			}
+		}
+		return nil
+	}
+	if _, told := s.engineSilentTold.LoadAndDelete(n.ID); told {
+		s.record("node.engine_reporting", n.ID, map[string]any{"silent_for_s": int(time.Since(n.EngineSilentSince).Seconds())})
 	}
 	status := "ready"
 	if req.Sleeping {

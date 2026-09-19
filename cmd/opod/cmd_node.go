@@ -31,7 +31,7 @@ func cmdNode(args []string) {
 			"opod node remove n_abc123 --yes      # skip the prompt (for scripts)",
 		},
 		notes: []string{
-			"`ls` shows the state the leader acts on: `lost` when a worker's heartbeats stopped, `draining` when you drained it.",
+			"`ls` shows the state the leader acts on: `lost` when a worker's heartbeats stopped, `engine-silent` when it heartbeats but its engine has not answered it for a minute, `draining` when you drained it.",
 			"drain, undrain and remove ask the running leader and fall back to the store only when none answers; each says which.",
 			"Add a new node: `opod token create --node` then on the worker run `opod join \"<url>?token=…\"` (quoted: `?` is a glob in zsh).",
 		},

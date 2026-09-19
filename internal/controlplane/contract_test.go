@@ -105,6 +105,8 @@ var contractFeatureFloor = []string{
 	"worker_engine",   // hardware_json.Engine
 	"resident_models", // heartbeat resident_models → cold placements
 	"model_move",      // POST /admin/v1/models/{id}/move
+	// loaded_models null = no report: no placement row changes
+	"heartbeat_no_report",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

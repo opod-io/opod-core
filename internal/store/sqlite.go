@@ -151,6 +151,11 @@ type Node struct {
 	// is a new incarnation under the same node id: whatever the leader
 	// recorded as running on the old one died with it.
 	BootID string
+	// EngineSilentSince is when this worker's heartbeats stopped carrying its
+	// engine's report (loaded_models null: the engine did not answer the
+	// worker); zero while they carry one. The worker is alive — it heartbeats
+	// — but nothing says what it serves any more; see Node.WhyNoNewWork.
+	EngineSilentSince time.Time
 }
 
 // Node states the leader writes. "lost" is derived from heartbeat age and
@@ -177,6 +182,9 @@ type NodeStore interface {
 	// is presented, and joining → ready. It never writes any other state, so
 	// a drain set between a heartbeat's read and its write is not lost.
 	Heartbeat(ctx context.Context, id string, at time.Time, bootID string) error
+	// NoteEngineReport records whether a heartbeat carried the engine's
+	// report (Node.EngineSilentSince). Nothing else is written.
+	NoteEngineReport(ctx context.Context, id string, reported bool, at time.Time) error
 }
 
 // Placement records that a given node currently hosts a given model.
@@ -579,6 +587,8 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		{table: "usage", column: "node_id", ddl: `ALTER TABLE usage ADD COLUMN node_id TEXT NOT NULL DEFAULT ''`},
 		// Installed but not in memory, as a worker's engine reported it. 0 =
 		// resident, which is what every row written before the column meant.
+		// Since when a worker's heartbeats carry no engine report. 0 = they do.
+		{table: "nodes", column: "engine_silent_since", ddl: `ALTER TABLE nodes ADD COLUMN engine_silent_since INTEGER NOT NULL DEFAULT 0`},
 		{table: "model_placements", column: "cold", ddl: `ALTER TABLE model_placements ADD COLUMN cold INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {

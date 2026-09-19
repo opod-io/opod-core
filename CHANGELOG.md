@@ -81,6 +81,13 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   heartbeating) behind the router, `/readyz`, the waking 503, `/loadz`, `/v1/models`, the shard pickers and
   `opod node ls`; the router applies it before revision groups, so a revision whose only worker is lost or
   cooling down gives its share to the others instead of dropping it on the local fallback
+- A heartbeat whose engine did not answer (`loaded_models: null`) is "no report", not "nothing loaded": it
+  advances the node's liveness and changes no placement row — it used to delete them all, the leader's
+  `draining` / `released` marks included, so one slow engine tick put a draining placement or the source of a
+  model move back in rotation. `[]` still clears the rows. A worker whose engine stays silent past the
+  heartbeat bound leaves rotation through the one live rule (`nodes.engine_silent_since`; state
+  `engine-silent` in `opod node ls`, a 503 that says so, events `node.engine_silent` / `node.engine_reporting`)
+  with its rows and marks untouched, and the first real report brings it back (feature `heartbeat_no_report`)
 - `opod model move <id> --from <node> --to <node>` (`POST /admin/v1/models/{id}/move`, feature `model_move`):
   another worker takes over a whole model by overlap — load on the target while the source serves, flip the
   router only when the target's heartbeat shows it serving, let in-flight requests on the source finish,

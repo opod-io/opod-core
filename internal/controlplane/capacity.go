@@ -29,11 +29,14 @@ type modelHolders struct {
 	serving  int // node takes new work, placement routable
 	draining int // an operator drained the node, or the leader is draining the placement
 	lost     int // heartbeats stopped
+	silent   int // heartbeating, but its engine stopped answering it (store.Node.EngineSilent)
 	asleep   int // resident, engine asleep: wakes on demand
 	other    int // loading, failed, a state this version does not serve from
 }
 
-func (h modelHolders) total() int { return h.serving + h.draining + h.lost + h.asleep + h.other }
+func (h modelHolders) total() int {
+	return h.serving + h.draining + h.lost + h.silent + h.asleep + h.other
+}
 
 // holdersOf counts the workers holding model. The leader's own "local" row is
 // not a worker: the local engine is judged by its health (unavailable).
@@ -61,6 +64,8 @@ func (s *Server) holdersOf(ctx context.Context, model string) modelHolders {
 				h.draining++
 			case !n.Alive(maxAge, now):
 				h.lost++
+			case n.EngineSilent(maxAge, now):
+				h.silent++
 			case !n.TakesNewWork(maxAge, now):
 				h.other++
 			case p.Status == "" || p.Status == "ready":
@@ -160,9 +165,11 @@ func (s *Server) gangReason(ctx context.Context, model string) string {
 			if sh.NodeID != "" && sh.NodeID != "local" {
 				h.lost++
 			}
+		case store.NodeStateEngineSilent:
+			h.silent++
 		}
 	}
-	if h.draining+h.lost == 0 {
+	if h.draining+h.lost+h.silent == 0 {
 		return fmt.Sprintf("the sharded model %s is not ready to serve yet; retry shortly", model)
 	}
 	return fmt.Sprintf("the sharded model %s cannot take new requests: a gang serves as one unit and %s; retry shortly",
@@ -171,7 +178,7 @@ func (s *Server) gangReason(ctx context.Context, model string) string {
 
 // reason is the 503 text for a model that workers hold and none can serve.
 func (h modelHolders) reason(model string) string {
-	if h.asleep > 0 && h.draining+h.lost+h.other == 0 {
+	if h.asleep > 0 && h.draining+h.lost+h.silent+h.other == 0 {
 		return wakingMessage
 	}
 	return fmt.Sprintf("no worker can take a new request for %s right now: %s; retry shortly",
@@ -186,6 +193,9 @@ func (h modelHolders) causes(unit string) []string {
 	}
 	if h.lost > 0 {
 		out = append(out, fmt.Sprintf("%d %s(s) stopped heartbeating — waiting for it to return or be replaced", h.lost, unit))
+	}
+	if h.silent > 0 {
+		out = append(out, fmt.Sprintf("%d %s(s) whose engine stopped answering — waiting for it to answer again or for the worker to be replaced", h.silent, unit))
 	}
 	if h.asleep > 0 {
 		out = append(out, fmt.Sprintf("%d %s(s) asleep — waking", h.asleep, unit))
