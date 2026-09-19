@@ -100,6 +100,11 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   driver says whether a server of it serves one model per process (vLLM, SGLang, llama.cpp) or several
   (Ollama, MLX) — so the leader can refuse a load that would silently stop another model, naming both
   (`scheduler.LoadWouldReplace`; a worker that did not say gets the blunt rule: refused if it serves anything)
+- **A worker that has just gone away costs no request while another serves the model.** Its placement row stays
+  fresh until its heartbeat ages out; a request picked for it could not connect and was answered 502, because the
+  walk went on to the next fallback MODEL, never to the next WORKER. An unreachable worker received nothing, so the
+  same model is picked again with that node set aside for this request (chat and embeddings); an engine's own
+  answer — a refusal included — is never replayed. Seen as one failed chat per worker move under a manager's rollout
 - `opod model add <id> --node …` no longer replaces what a worker serves in silence: every named worker is judged
   first (the rule `model move` already used), a load that would stop another model is refused with 409 naming both
   — before any worker is touched — and `--force` (`"force": true`) is how an operator says the replacement is meant

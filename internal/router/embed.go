@@ -69,7 +69,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 			attemptSpan.SetStatus(codes.Error, "pick failed")
 			attemptSpan.RecordError(err)
 			attemptSpan.End()
-			if i == 0 {
+			if i == 0 && primaryErr == nil { // a worker's own error, when there was one, says more than "none left"
 				primaryErr = err
 			}
 			continue
@@ -138,8 +138,15 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 		attemptSpan.SetStatus(codes.Error, "embed failed")
 		attemptSpan.RecordError(lastErr)
 		attemptSpan.End()
-		if i == 0 {
+		if i == 0 && primaryErr == nil {
 			primaryErr = lastErr
+		}
+		// The worker was unreachable and got nothing: the same model, another worker.
+		if next, again := r.tryNextWorker(ctx, nodeID, lastErr); again {
+			ctx = next
+			metrics.ObserveRouterFallback("embed", "next-worker")
+			i--
+			continue
 		}
 		// After the first candidate fails, classify the error and swap
 		// the rest of the chain for a typed list when one is configured
