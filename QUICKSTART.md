@@ -24,19 +24,19 @@ The fastest path from zero to your first local chat completion. **3 minutes** on
    ┌─────────────────────────────────────────────────┐
    │                                                 │
    │   ┌───────────┐  ┌────────────┐  ┌───────────┐  │
-   │   │  Cursor   │  │ Claude Code│  │   curl    │  │
-   │   │  Aider    │  │            │  │   SDKs    │  │
+   │   │  Cursor   │  │  Continue  │  │   curl    │  │
+   │   │  Aider    │  │    Zed     │  │   SDKs    │  │
    │   └─────┬─────┘  └─────┬──────┘  └─────┬─────┘  │
    │         └──────────────┼───────────────┘        │
    │                        │                        │
    │                        ▼                        │
    │           ┌──────────────────────────┐          │
-   │           │      OPOD  :8080        │          │
-   │           │   OpenAI + Anthropic     │          │
-   │           │   APIs · auth · quotas   │          │
-   │           │   audit log · admin UI   │          │
+   │           │      OPOD  :8080         │          │
+   │           │   OpenAI-compatible API  │          │
+   │           │   auth · keys · limits   │          │
+   │           │   usage + event streams  │          │
    │           └────────────┬─────────────┘          │
-   │                        │ (local pipe)           │
+   │                        │ (localhost HTTP)       │
    │                        ▼                        │
    │           ┌──────────────────────────┐          │
    │           │   Ollama  :11434         │          │
@@ -102,7 +102,6 @@ After step 3, Opod prints:
 
   Opod is ready.
 
-  Dashboard:  http://localhost:8080
   API:        http://localhost:8080/v1
   Health:     http://localhost:8080/healthz
 
@@ -110,15 +109,22 @@ After step 3, Opod prints:
     sk-orc-<admin key — printed once, keep it>
 
   Next steps:
-    →  Test in the browser:  http://localhost:8080
-    →  Wire up Claude Code:  opod connect claude-code
-    →  Wire up Cursor:       opod connect cursor
-    →  See all clients:      opod connect --list
+    →  Wire up Aider:           opod connect aider
+    →  Wire up Cursor:          opod connect cursor
+    →  See all clients:         opod connect --list
+    →  Mint another admin key:  opod token create ops --admin
+
+  Quick test from the shell:
+    curl http://localhost:8080/v1/chat/completions \
+      …
+
+  Network behavior on this node:
+    …
 
   Press Ctrl-C to stop.
 ```
 
-**Copy that admin key now.** You won't see it again. (It's also saved to `~/.opod/admin.key` for subsequent CLI commands like `opod connect` and `opod token`.)
+**Copy that admin key now.** It is also saved to `~/.opod/admin.key` — that is where `opod connect` reads it from, and a later `opod up` re-prints it from there. The database keeps only a hash, so if that file is gone the key cannot be recovered: mint another with `opod token create ops --admin`.
 
 ---
 
@@ -126,15 +132,17 @@ After step 3, Opod prints:
 
 ### A) Fastest — `opod connect <tool>`
 
-Prints copy-paste config for any of 19 supported tools, with your URL + token already substituted:
+Prints copy-paste config for any of 15 supported tools, with your URL + token already substituted:
 
 ```bash
-opod connect claude-code     # Anthropic-API tools
 opod connect cursor          # IDE settings
 opod connect aider           # CLI flags
+opod connect codex-cli       # OPENAI_BASE_URL / OPENAI_API_KEY env vars
 opod connect                 # no arg → interactive picker
-opod connect --list          # see all 19
+opod connect --list          # see all 15
 ```
+
+The roster: `cursor`, `aider`, `continue`, `zed`, `cline`, `openclaw`, `opencode`, `open-webui`, `open-notebook`, `goose`, `plandex`, `openhands`, `codex-cli`, `openai-sdk`, `curl`. Core speaks the OpenAI shape only (ADR-022), so a tool that only speaks the Anthropic Messages shape — Claude Code is one — is not on it; it needs a protocol shim in front of the gateway, which core does not ship.
 
 ### B) The console
 
@@ -157,18 +165,20 @@ You'll see JSON like:
 {"choices":[{"message":{"role":"assistant","content":"Hello! How can I help?"}}]}
 ```
 
-### D) Manual — Claude Code (if you can't run `opod connect`)
+### D) Manual — any OpenAI-shape tool (if you can't run `opod connect`)
 
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-<admin key — printed once, keep it>…
-export ANTHROPIC_MODEL=llama-3.2-1b      # tell Claude Code which local model to use
-claude
+export OPENAI_BASE_URL=http://localhost:8080/v1
+export OPENAI_API_KEY=sk-orc-<admin key — printed once, keep it>
+codex --model llama-3.2-1b "say hi"      # OpenAI's Codex CLI; the OpenAI SDKs read the same two variables
+
+# Aider takes flags instead:
+aider --openai-api-base http://localhost:8080/v1 \
+      --openai-api-key  sk-orc-<admin key — printed once, keep it> \
+      --model openai/llama-3.2-1b
 ```
 
-Claude Code now talks to your local Llama 1B instead of `api.anthropic.com`.
-
-> **Why `ANTHROPIC_MODEL`?** Without it Claude Code defaults to a `claude-*` model name. With no `ANTHROPIC_API_KEY` set, Opod won't proxy to real Anthropic, so the request would 404 against your local engine. Setting `ANTHROPIC_MODEL` to a local catalog id makes Claude Code request your local model.
+The tool now talks to your local Llama 1B instead of `api.openai.com`. Name a model you have installed (`opod model ls`), or `auto` for the default: a vendor model id such as `gpt-4o` is not something core can serve, and it does not proxy to a vendor.
 
 ### E) Vision (image input)
 
@@ -190,7 +200,7 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-Anthropic-shape (`/v1/messages` with `image` content blocks) works too. Vision routes through the Ollama path today; the engine driver pulls the image bytes from data URLs or http(s) URLs.
+Vision routes through the Ollama path today; the engine driver pulls the image bytes from data URLs or http(s) URLs. `/v1/chat/completions` is the only chat route — there is no `/v1/messages`.
 
 ### F) Embeddings
 
@@ -215,8 +225,20 @@ Once you've confirmed it works:
 opod token create hadi
 ```
 
-This creates a user-scope token for `hadi` (capped at 100k tokens/day) and prints a paste-into-Slack markdown card with config snippets for every supported client (Claude Code, Cursor, Aider, Continue, Zed, Cline, Qwen-Code, **Hermes Agent**, **OpenClaw**, **OpenCode**, **Open WebUI**, **Open Notebook**, **Goose**, **Plandex**, **OpenHands**, **Codex CLI**, OpenAI SDK, Anthropic SDK, curl). Your teammate copies the snippet for the tool they use → they're talking to your hardware.
+This creates a user-scope key for `hadi` and prints it **once**. Narrow it at creation if you like:
 
+```bash
+opod token create hadi --models qwen-coder-14b,qwen3-14b   # only these models (a trailing * is a glob)
+opod token create hadi --rpm 60 --tpm 100000 --ttl 30d     # rate limits + an expiry
+opod token ls                                              # ids, scopes, limits
+opod token revoke <id>                                     # when they leave
+```
+
+A key has no daily cap unless you give it one; `--rpm` / `--tpm` are the per-minute ceilings. Then print the snippet for the tool your teammate uses, with their key and the address they will reach you on, and send them that:
+
+```bash
+opod connect cursor --token <their key> --base-url http://<your-host>:8080
+```
 
 ---
 
@@ -235,7 +257,7 @@ Most common failures:
 | `command not found: opod` | The install dir isn't on your PATH. Run: `export PATH="$HOME/.local/bin:$PATH"` (and add it to `~/.zshrc` or `~/.bashrc` to make it permanent) |
 | `engine (ollama) at http://127.0.0.1:11434 is not reachable` | Start Ollama: `ollama serve &` (Linux: `sudo systemctl start ollama`) |
 | `502 Bad Gateway` with `llama-server binary not found` | The Homebrew `ollama` formula on Apple Silicon is broken. Fix: `brew uninstall ollama && brew install --cask ollama` |
-| `Port 8080 in use` | Another process is on it. Use a different port: `OPOD_LISTEN=:8090 opod up` (avoid `:8081` — that's the default worker port) |
+| `address already in use` on `:8080` (`opod doctor`: `listen port :8080 already in use`) | Another process is on it. Use a different port: `OPOD_LISTEN=:8090 opod up` (avoid `:8081` — that's the default worker port) |
 | `no admin key on disk` (running CLI) | `opod up` isn't running on this host. Start it first, then re-run the CLI command |
 
 More fixes in the [main README's troubleshooting table](README.md#troubleshooting-installation).
@@ -257,7 +279,7 @@ Same install command everywhere. The first machine becomes the **leader**, every
    │                 │ Router│ ───────────┼───────┼────► proxies requests to local       │
    │                 └───────┘            │       │       Ollama, token-auth'd)          │
    │                                      │       │                  │                   │
-   │  Admin UI  :8080/                    │       │                  ▼                   │
+   │  Admin API :8080/admin/v1            │       │                  ▼                   │
    │  CLI: opod node ls / model ls       │       │      Ollama :11434                   │
    │                                      │       │      (does the model serving)        │
    │  Local Ollama :11434                 │       │                                      │
@@ -267,7 +289,7 @@ Same install command everywhere. The first machine becomes the **leader**, every
    └──────────────────────────────────────┘       └───────────────────────────┼──────────┘
                   ▲                                                           │
                   │                                                           │
-                  └───────────── LAN / tailnet (e.g. WiFi, Tailscale) ────────┘
+                  └────────── plain HTTP over your LAN (or your own VPN) ─────┘
 ```
 
 ### 🖼️ Step-by-step (what happens when)
@@ -289,7 +311,7 @@ Same install command everywhere. The first machine becomes the **leader**, every
                                                   1. install Ollama
                                                   2. install Opod
                                                   3. opod join \
-                                                       http://leader:8080?token=...
+                                                      "http://leader:8080?token=..."
                                                      ✔ registered with leader
 
                                 ◄──── heartbeat every 5s ────
@@ -317,17 +339,17 @@ opod token create --node
 #   sk-orc-NodeJoin-ABcD1234…
 ```
 
-Note the leader's reachable address. On a LAN it's its LAN IP (e.g. `192.0.2.42`); on Tailscale, the tailnet hostname.
+Note the leader's reachable address. Joining is plain HTTP and Opod has no built-in mesh: the worker must reach `http://<leader>:8080`, and the leader must reach the worker back on `:8081`. On a LAN that is the leader's LAN IP (e.g. `192.0.2.42`). Over a VPN you run yourself, use the VPN address — and if the worker's default-route address is not the one the leader can dial, set `OPOD_ADVERTISE_ADDR=<ip>:8081` on the worker.
 
 ### Step 2 — on the new machine
 
 Install Opod + Ollama **the same way as above**, then instead of `opod up`:
 
 ```bash
-opod join http://192.0.2.42:8080?token=sk-orc-NodeJoin-ABcD1234…
+opod join "http://192.0.2.42:8080?token=sk-orc-NodeJoin-ABcD1234…"
 ```
 
-(Substitute the leader's address and the token you copied.)
+(Substitute the leader's address and the token you copied. Keep the quotes: `?` is a glob character in zsh.)
 
 ### Step 3 — install a model on the worker
 
@@ -347,9 +369,9 @@ opod node ls
 
 Any request the gateway gets for `qwen-coder-7b` is now routed automatically to the worker. If you install the **same** model on two workers, the leader load-balances between them.
 
-> ⚠️  Only do this on a trusted LAN or Tailscale — see [Security model](#-security-model-read-before-exposing-it) below.
+> ⚠️  Only do this on a network you trust (your LAN, or a VPN you run) — see [Security model](#-security-model-read-before-exposing-it) below.
 
-**Need to split one big model across multiple machines?** That's *sharding* — `opod shard create <model> <N>`. See the [sharded models section in the README](README.md).
+**Need to split one big model across multiple machines?** That's *sharding* — `opod shard create <model> <N>`. See the [sharded models section in the README](README.md#sharded-models-split-one-brain-across-multiple-machines).
 
 ---
 
@@ -364,7 +386,7 @@ opod model search           # list everything
 opod model search coder     # filter
 ```
 
-A summary table of the 41 catalog entries — see `opod model search` for the live list. ⭐ marks the current top picks.
+A summary of 41 of the 47 catalog entries — `opod model search` (or `opod catalog ls`) is the live list. ⭐ marks the current top picks.
 
 | Catalog id | What it's for | RAM | Engine name |
 |---|---|---|---|
@@ -377,7 +399,7 @@ A summary table of the 41 catalog entries — see `opod model search` for the li
 | `mimo-vl-7b` | small vision-language | 8 GB | `hf: XiaomiMiMo/MiMo-VL-7B-RL` (vLLM/MLX) |
 | `mimo-audio` | speech + audio understanding | 8 GB | `hf: XiaomiMiMo/MiMo-Audio-7B-Instruct` (vLLM/MLX) |
 | `deepseek-r1-8b` | reasoning ("thinking") | 12 GB | `ollama:deepseek-r1:8b` |
-| `lfm2.5-8b-a1b` ⭐ | best on-device edge MoE | 8 GB | `ollama:lfm2.5:8b-a1b` |
+| `lfm2.5-8b-a1b` ⭐ | best on-device edge MoE | 8 GB | `hf: LiquidAI/LFM2.5-8B-A1B` (llama.cpp/MLX/vLLM) |
 | `qwen3-8b` | general chat, balanced | 12 GB | `ollama:qwen3:8b` |
 | `glm-4-9b` | dense chat, 128K ctx, tool-calling | 12 GB | `ollama:glm4:9b` |
 | `qwen3-vl-8b` | vision + tools (charts, OCR, UI) | 10 GB | `ollama:qwen3-vl:8b` |
@@ -385,11 +407,11 @@ A summary table of the 41 catalog entries — see `opod model search` for the li
 | `gemma4-12b` | encoder-free multimodal | 12 GB | `ollama:gemma4:12b` |
 | `gemma4-e4b` | mobile/edge multimodal | 12 GB | `ollama:gemma4:e4b` |
 | `pixtral-12b` | Mistral vision-language | 16 GB | `hf: mistralai/Pixtral-12B-2409` (vLLM/MLX) |
-| `mellum2-12b` | JetBrains MoE coder (2.5B active) | 12 GB | `ollama:mellum2:12b` |
+| `mellum2-12b` | JetBrains MoE coder (2.5B active) | 12 GB | `hf: JetBrains/Mellum-2-12B-A2.5B-Thinking` (llama.cpp/MLX/vLLM) |
 | `mistral-nemo-12b` | 128K context chat | 12 GB | `ollama:mistral-nemo:12b` |
 | `qwen-coder-14b` | better code + agent | 16 GB | `ollama:qwen2.5-coder:14b` |
 | `qwen3-14b` | general chat, more capable | 16 GB | `ollama:qwen3:14b` |
-| `phi-4-14b` | strong reasoning per byte | 12 GB | `ollama:phi-4:14b` |
+| `phi-4-14b` | strong reasoning per byte | 12 GB | `ollama:phi4:14b` |
 | `gpt-oss-20b` ⭐ | OpenAI open-weight reasoning | 16 GB | `ollama:gpt-oss:20b` |
 | `qwen3.6-27b` ⭐ | top consumer pick (77% SWE-bench) | 24 GB | `ollama:qwen3.6:27b` |
 | `gemma4-26b` | MoE 4B-active, multimodal | 24 GB | `ollama:gemma4:26b` |
@@ -422,12 +444,11 @@ curl http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer sk-orc-..." \
   -d '{"model":"qwen-coder-14b","messages":[{"role":"user","content":"explain monads"}]}'
 
-# 3. or in Claude Code
-export ANTHROPIC_MODEL=qwen-coder-14b
-claude
+# 3. or from a tool — the snippet with that model already filled in
+opod connect aider --model qwen-coder-14b
 ```
 
-> 📖 **Full step-by-step per-model guide:** [MODELS.md](MODELS.md) — for *every* model in the catalog: system requirements, performance expectations on Mac/Linux, install + use snippets for curl / Cursor / Claude Code / SDKs, when to switch up.
+> 📖 **Full step-by-step per-model guide:** [MODELS.md](MODELS.md) — for *every* model in the catalog: system requirements, performance expectations on Mac/Linux, install + use snippets, when to switch up.
 
 ### Switching models without running out of RAM
 
@@ -499,63 +520,24 @@ Opod's default `llamacpp_endpoint` is `http://127.0.0.1:8089` — chosen to avoi
 
 ---
 
-## 🔌 Switch Claude Code back to real Anthropic
+## 🔌 Switch a tool back to its vendor
 
-You set three env vars to route Claude Code through Opod. The fastest way back:
-
-```bash
-opod disconnect claude-code
-```
-
-This prints the exact `unset` + `export` commands you need (works for every client `opod connect` supports — see `opod disconnect --list`). Paste what it prints, and you're back on `api.anthropic.com`.
-
-Manually, it's just unsetting the three env vars:
+`opod connect` only ever printed settings for you to paste; nothing on the Opod host needs to change. The fastest way back:
 
 ```bash
-unset ANTHROPIC_BASE_URL
-unset ANTHROPIC_AUTH_TOKEN
-unset ANTHROPIC_MODEL
+opod disconnect codex-cli      # or: aider, cursor, continue, … — `opod disconnect --list`
 ```
 
-Then in the same terminal, set your real Anthropic key:
+It prints the exact `unset` commands (or the GUI steps, for an editor) for that client and modifies nothing itself. For the env-var tools it comes down to:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-…
-claude
+unset OPENAI_BASE_URL          # Aider's variable is OPENAI_API_BASE
+export OPENAI_API_KEY=sk-…     # your own vendor key again
 ```
 
-Or just **open a fresh terminal** that never had the Opod vars exported — Claude Code defaults to `api.anthropic.com` when `ANTHROPIC_BASE_URL` isn't set.
+Or just **open a fresh terminal** that never had the Opod variables exported. If you had added the `export` lines to `~/.zshrc` or `~/.bashrc`, remove them there and `source` the file.
 
-### Make the switch permanent
-
-If you'd added those `export` lines to `~/.zshrc` or `~/.bashrc`, remove them:
-
-```bash
-# before:
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-...
-export ANTHROPIC_MODEL=llama-3.2-1b
-
-# after (remove all three, or just comment them out)
-```
-
-Then `source ~/.zshrc` (or open a new terminal).
-
-### Hybrid: keep Opod as your default, fall back to real Claude when needed
-
-This is the best-of-both pattern. Leave the three vars set, but configure Opod with your real Anthropic key:
-
-```bash
-# add to your shell rc:
-export ANTHROPIC_API_KEY=sk-ant-…    # real Anthropic key (for Opod to proxy)
-# (Opod vars stay as before)
-```
-
-Restart `opod up`. Now:
-- `claude --model llama-3.2-1b` → served by your local Ollama (free, private)
-- `claude --model claude-opus-4-7` → transparently proxied to real Anthropic by Opod, logged in the Usage tab, billed to *your* Anthropic account
-
-Same `claude` command, same key paste, you pick per-prompt.
+Core has no hybrid mode: it serves the models on your hardware and never forwards a request to a cloud vendor (ADR-022). To use both, keep two configurations in the tool — one pointing at Opod, one at the vendor.
 
 ---
 
@@ -602,14 +584,14 @@ If your binary lives in `/usr/local/bin/` (installed with sudo), `opod update` s
 
 ## 🔒 Security model (read before exposing it)
 
-Opod assumes a **trusted network** (LAN or [Tailscale](https://tailscale.com/)). Specifically:
+Opod assumes a **trusted network** — your LAN, or a VPN you run yourself ([Tailscale](https://tailscale.com/), WireGuard…). It ships no mesh of its own. Specifically:
 
 - **User API keys** (admin / user scope) are **sha256-hashed** in the database. The plaintext shown at creation time is the only way to use the key.
 - **Worker tokens** (the shared secret between leader and worker) are stored on the `nodes.worker_token` column. Control-plane traffic uses **HMAC-SHA256 signatures** so the token itself isn't transmitted on the wire after the initial join — the agent and leader both sign with the per-node token. The SQLite file still holds the secret, so a stolen DB still lets an attacker impersonate a worker; encrypt the DB at rest if you can't trust the host. Set `OPOD_REJECT_BEARER=1` on workers to refuse the bearer-fallback path entirely (HMAC-only).
-- **Worker HTTP servers** bind only to the mesh address (LAN / tailnet IP), never to `0.0.0.0`. Network reachability is the first line of defense.
-- The **embedded web UI** authenticates by pasted admin key (stored in browser `localStorage`).
+- **Worker HTTP servers** bind to the machine's LAN address (the one on its default route), or to `OPOD_ADVERTISE_ADDR` when you set it — and to all interfaces only if no address can be determined. Every worker route except `/healthz` is authenticated. Network reachability is still the first line of defense.
+- There is **no web UI** in core and `/` answers 404; every caller — CLI, tool, manager — authenticates with an API key.
 
-If you're not on a trusted LAN, still run the cluster **behind Tailscale** or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `OPOD_REJECT_BEARER=1` once every leader and worker is on a recent build.
+If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overlay you manage** (leader ↔ worker traffic is plain HTTP unless you give the leader a certificate with `OPOD_TLS_CERT` / `OPOD_TLS_KEY`) — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `OPOD_REJECT_BEARER=1` once every leader and worker is on a recent build.
 
 ### 🌐 Network behavior — every call Opod can make
 
