@@ -66,6 +66,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- `GET /v1/models` lists what can be answered for now: a model held only by drained or lost workers (or a
+  gang with a part on one) leaves the list; a model that is merely asleep — sleeping workers, a plan that
+  scales to zero — is listed, since a request for it is how it wakes
 - `/loadz` `workers` (and `reporting`) count only workers that can take a new request for the plan's model:
   a drained, lost, sleeping or still-loading worker is neither capacity nor pressure
 - One rule for "this worker takes new work" (`store.Node.TakesNewWork`: not drained, a serving state,
