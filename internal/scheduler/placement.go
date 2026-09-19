@@ -22,7 +22,7 @@ var ErrUnplaceable = errors.New("refused, nothing was changed")
 // DefaultHeartbeatMaxAge bounds a worker's heartbeat age when the router's
 // own check is off (router.heartbeat_max_age_seconds = 0) — the bound the
 // leader's liveness rule falls back to.
-const DefaultHeartbeatMaxAge = 60 * time.Second
+const DefaultHeartbeatMaxAge = store.DefaultHeartbeatMaxAge
 
 // WorkerFor is THE rule for "may new work be placed on this node row" — a
 // shard part, or a model pinned with `model add --node`. Every placer asks
@@ -40,15 +40,19 @@ func WorkerFor(n store.Node, maxAge time.Duration, now time.Time) (ok bool, why 
 	if maxAge <= 0 {
 		maxAge = DefaultHeartbeatMaxAge
 	}
-	switch {
-	case n.ID == "local":
+	if n.ID == "local" {
 		return false, "the leader's own row, not a worker"
-	case n.State != store.NodeStateReady:
+	}
+	// The leader-wide rule (store.Node.WhyNoNewWork: drained, not a serving
+	// state, heartbeats stopped) — the one the router routes by.
+	if why := n.WhyNoNewWork(maxAge, now); why != "" {
+		return false, why
+	}
+	if n.State != store.NodeStateReady {
 		return false, "state " + n.State
-	case n.Address == "":
+	}
+	if n.Address == "" {
 		return false, "no address"
-	case now.Sub(n.LastHeartbeat) > maxAge:
-		return false, fmt.Sprintf("last heartbeat %s ago", now.Sub(n.LastHeartbeat).Round(time.Second))
 	}
 	return true, ""
 }

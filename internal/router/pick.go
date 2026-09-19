@@ -53,37 +53,30 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		metrics.ObserveRouterPick("fallback-to-local", "no-workers")
 		return r.local, r.localNode, nil
 	}
-	// Draining workers leave the candidate list here, before roles, revision
-	// groups and load scores see them: a draining node gets no new request
-	// for any model, and a revision whose only worker drains is a revision
-	// with no worker (its share goes to the rest). What is in flight on the
+	// Workers that take no new request leave the candidate list HERE, before
+	// roles, revision groups and load scores see them — one filter, one rule
+	// (takesRequests: the store's TakesNewWork, an address, not in cooldown).
+	// So "live" means the same thing to every step below: a revision whose
+	// only worker is draining, lost or cooling down is a revision with no
+	// worker and its share goes to the rest, and the load-aware scorer never
+	// ranks a node the walk would have skipped. What is in flight on such a
 	// node is not touched — it finishes on the engine it started on.
-	workers = r.withoutDraining(ctx, workers)
+	workers, nodes := r.takingRequests(ctx, model, workers)
 	if len(workers) == 0 {
-		metrics.ObserveRouterPick("fallback-to-local", "all-workers-draining")
+		// Every holder is draining, lost or cooling down. Fall back to local —
+		// it will surface its own "model not loaded" error.
+		metrics.ObserveRouterPick("fallback-to-local", "all-workers-stale")
 		return r.local, r.localNode, nil
 	}
 	// Roles (roles.go): generation never lands on a prefill half while a
 	// decode half is alive.
-	roles := map[string]string{}
-	for _, w := range workers {
-		if n, err := r.store.Nodes().Get(ctx, w.NodeID); err == nil && n != nil {
-			roles[w.NodeID] = roleOf(n)
-		}
-	}
-	workers = decodeOnly(workers, func(id string) string { return roles[id] })
+	workers = decodeOnly(workers, func(id string) string { return roleOf(nodes[id]) })
 
 	// Revision weights (R15.17): when the policy splits traffic between plan
 	// revisions and more than one is serving, the group is chosen first and the
 	// load-aware ordering below then runs INSIDE it. A revision with no live
 	// worker is skipped, so a restarting canary pod never black-holes its share.
-	revisions := map[string]int{}
-	for _, w := range workers {
-		if n, err := r.store.Nodes().Get(ctx, w.NodeID); err == nil && n != nil {
-			revisions[w.NodeID] = revisionOf(n)
-		}
-	}
-	workers = r.pickRevisionGroup(workers, func(id string) int { return revisions[id] })
+	workers = r.pickRevisionGroup(workers, func(id string) int { return revisionOf(nodes[id]) })
 
 	// 3. Pick least-loaded worker. The snapshot we sort against is
 	//    consistent under RLock, but the actual inflight increment
@@ -131,56 +124,73 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		workers = preferNode(workers, stickyNode)
 	}
 
-	// Walk the sorted list: skip any worker whose heartbeat is stale
-	// before falling back to local. Without this, a request to a model
-	// that's still in the placements table for a dead node would wait
-	// for the engine call to time out.
-	for _, pick := range workers {
-		node, err := r.store.Nodes().Get(ctx, pick.NodeID)
-		if err != nil || node == nil || node.Address == "" {
-			metrics.ObserveRouterPick("worker", "error")
-			continue
+	// The list holds only workers that take requests (takingRequests above)
+	// and is never empty here (every step after it keeps at least one), in
+	// order: the first is the pick.
+	node := nodes[workers[0].NodeID]
+	eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)
+	// Record the sticky outcome only when a pin was actually consulted —
+	// stickyPick already emitted "miss"/"expired" for the no-pin and
+	// expired cases, so emitting again here (the old default "miss")
+	// double-counted every non-sticky request. When a pin existed we
+	// landed on it ("hit") or had to route elsewhere ("miss").
+	if stickyNode != "" {
+		if node.ID == stickyNode {
+			metrics.ObserveStickyOutcome("hit")
+		} else {
+			metrics.ObserveStickyOutcome("miss")
 		}
-		if r.heartbeatMaxAge > 0 && !node.LastHeartbeat.IsZero() &&
-			time.Since(node.LastHeartbeat) > r.heartbeatMaxAge {
-			metrics.ObserveRouterPick("worker", "stale-heartbeat")
-			if r.log != nil {
-				r.log.Warn("router skipping stale worker",
-					"node", pick.NodeID,
-					"model", model,
-					"last_heartbeat", node.LastHeartbeat,
-					"max_age", r.heartbeatMaxAge,
-				)
-			}
-			continue
-		}
-		if r.inCooldown(node.ID) {
-			metrics.ObserveRouterPick("worker", "cooldown")
-			continue
-		}
-		eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)
-		// Record the sticky outcome only when a pin was actually consulted —
-		// stickyPick already emitted "miss"/"expired" for the no-pin and
-		// expired cases, so emitting again here (the old default "miss")
-		// double-counted every non-sticky request. When a pin existed we
-		// landed on it ("hit") or had to route elsewhere ("miss").
-		if stickyNode != "" {
-			if node.ID == stickyNode {
-				metrics.ObserveStickyOutcome("hit")
-			} else {
-				metrics.ObserveStickyOutcome("miss")
-			}
-		}
-		// NB: the pin is refreshed on the caller's *success* path
-		// (Chat/Embed), not here at pick time — a node that's picked but then
-		// fails the engine call shouldn't be pinned for the next turn.
-		metrics.ObserveRouterPick("worker", "ok")
-		return eng, node.ID, nil
 	}
-	// All workers exhausted (all dead or stale). Fall back to local — it
-	// will surface its own "model not loaded" error.
-	metrics.ObserveRouterPick("fallback-to-local", "all-workers-stale")
-	return r.local, r.localNode, nil
+	// NB: the pin is refreshed on the caller's *success* path
+	// (Chat/Embed), not here at pick time — a node that's picked but then
+	// fails the engine call shouldn't be pinned for the next turn.
+	metrics.ObserveRouterPick("worker", "ok")
+	return eng, node.ID, nil
+}
+
+// takesRequests is the router's whole answer to "may a new request go to
+// this worker?": the leader-wide rule (store.Node.WhyNoNewWork — not drained,
+// a serving state, heartbeating within heartbeatMaxAge; 0 = no age rule),
+// plus the two things only a router knows: it needs an address to dial, and
+// it keeps a penalty box. why is the metric label of a refusal.
+func (r *Router) takesRequests(n *store.Node, now time.Time) (ok bool, why string) {
+	switch {
+	case n == nil || n.Address == "":
+		return false, "error"
+	case n.Draining():
+		return false, "draining"
+	case !n.TakesNewWork(r.heartbeatMaxAge, now):
+		return false, "stale-heartbeat"
+	case r.inCooldown(n.ID):
+		return false, "cooldown"
+	}
+	return true, ""
+}
+
+// takingRequests narrows placements to workers takesRequests accepts and
+// returns their node rows, read once for every later step of the pick.
+func (r *Router) takingRequests(ctx context.Context, model string, ps []store.Placement) ([]store.Placement, map[string]*store.Node) {
+	now := time.Now()
+	out := ps[:0:0]
+	nodes := make(map[string]*store.Node, len(ps))
+	for _, p := range ps {
+		n, err := r.store.Nodes().Get(ctx, p.NodeID)
+		if err != nil {
+			n = nil
+		}
+		ok, why := r.takesRequests(n, now)
+		if !ok {
+			metrics.ObserveRouterPick("worker", why)
+			if why == "stale-heartbeat" && r.log != nil {
+				r.log.Warn("router skipping stale worker", "node", p.NodeID, "model", model,
+					"last_heartbeat", n.LastHeartbeat, "max_age", r.heartbeatMaxAge)
+			}
+			continue
+		}
+		nodes[p.NodeID] = n
+		out = append(out, p)
+	}
+	return out, nodes
 }
 
 // shardCoordinator returns the llamacpp engine pointing at the coordinator
@@ -221,11 +231,11 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 }
 
 // shardGroupRoutable reports whether every part of a gang sits on a worker
-// that takes new work: not draining, and heartbeated within heartbeatMaxAge
-// (0 max age disables the heartbeat half — legacy behaviour). A gang is one
-// serving unit, so draining the node of any part takes the whole gang out
-// of rotation. Parts hosted by the leader itself ("local" / empty node id)
-// always pass.
+// that takes new work (store.Node.TakesNewWork: not drained, heartbeating
+// within heartbeatMaxAge — 0 disables the age half, the legacy behaviour). A
+// gang is one serving unit, so draining or losing the node of any part takes
+// the whole gang out of rotation. Parts hosted by the leader itself ("local"
+// / empty node id) always pass.
 func (r *Router) shardGroupRoutable(ctx context.Context, shards []store.Shard) bool {
 	now := time.Now()
 	for _, sh := range shards {
@@ -239,27 +249,11 @@ func (r *Router) shardGroupRoutable(ctx context.Context, shards []store.Shard) b
 			}
 			return false
 		}
-		if n.Draining() {
-			return false
-		}
-		if r.heartbeatMaxAge > 0 && now.Sub(n.LastHeartbeat) > r.heartbeatMaxAge {
+		if !n.TakesNewWork(r.heartbeatMaxAge, now) {
 			return false
 		}
 	}
 	return true
-}
-
-// withoutDraining drops the placements whose node an operator drained. A
-// node the store cannot return stays in: the walk in pick() reports it.
-func (r *Router) withoutDraining(ctx context.Context, ps []store.Placement) []store.Placement {
-	out := ps[:0:0]
-	for _, p := range ps {
-		if n, err := r.store.Nodes().Get(ctx, p.NodeID); err == nil && n != nil && n.Draining() {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 // InvalidateModel drops any cached engine for the given model. Called by

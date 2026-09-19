@@ -66,6 +66,10 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 - `opod shard create <model>` with no count picks the smallest number of equal parts that fits the live
   workers' free memory (never more than the workers or the model's layers) and prints why; a shape the
   caller names is sent untouched and `POST /admin/v1/shards/create` never picks
+- One rule for "this worker takes new work" (`store.Node.TakesNewWork`: not drained, a serving state,
+  heartbeating) behind the router, `/readyz`, the waking 503, `/loadz`, `/v1/models`, the shard pickers and
+  `opod node ls`; the router applies it before revision groups, so a revision whose only worker is lost or
+  cooling down gives its share to the others instead of dropping it on the local fallback
 - A placement the leader marks `draining` stays out of rotation across the worker's heartbeats (feature
   `placement_drain`) — it used to be rewritten to `ready` within 5 s; it ends when it is set back, when the
   model leaves the worker, or at a leader start
