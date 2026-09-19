@@ -74,8 +74,9 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
   `usage/stream` (cursor + replay + `boot`), shards (list, create, delete)
 - Every state-changing `/admin/v1` call is an `admin.call` lifecycle event (actor, status) — audit rides
   the stream; guardrail verdicts too
-- Surface switches for a managed leader: `OPOD_UI` · `OPOD_EGRESS` · `OPOD_CALLBACKS` · `OPOD_MANAGED`
-  (`TestSurfacesOff` proves the contract survives every switch)
+- Managed mode: `OPOD_MANAGED` (`TestSurfacesOff` walks the contract on a managed leader). The
+  `OPOD_UI` · `OPOD_EGRESS` · `OPOD_CALLBACKS` switches are retired — the surfaces they switched left
+  with ADR-022 — and are still accepted and ignored, in the environment and in `config.yaml`
 - Prometheus `/metrics`; OTLP traces (`observability.otlp_endpoint`)
 
 ## CLI

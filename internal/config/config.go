@@ -55,40 +55,38 @@ type Config struct {
 	Router              RouterConfig        `yaml:"router"`
 	Observability       ObservabilityConfig `yaml:"observability"`
 	Placement           PlacementConfig     `yaml:"placement"`
-	// Surfaces switches product surfaces off for a leader run by an external
-	// manager (ADR-022 / P11-2). Defaults keep every surface on for a
-	// standalone `opod up`; the switches never touch the request-path
-	// mechanisms or the stable admin surface (controlplane/contract.go).
+	// Surfaces says how this leader is run: standalone, or by an external
+	// manager (ADR-022 / P11-2). It never touches the request-path mechanisms
+	// or the stable admin surface (controlplane/contract.go).
 	Surfaces SurfacesConfig `yaml:"surfaces"`
 }
 
-// SurfacesConfig — each field has an env override a manager can set on the
-// process without a config file:
+// SurfacesConfig has one switch, with an env override a manager can set on
+// the process without a config file:
 //
-//	OPOD_UI              accepted for compatibility; core has no dashboard since ADR-022 ("/" is always 404)
-//	OPOD_EGRESS=off      never forward to a cloud vendor, whatever keys are in the env
-//	OPOD_CALLBACKS=off   no webhook / Langfuse / S3 sinks, no /admin/v1/callbacks
-//	OPOD_MANAGED=1       run by a manager: update check off, banner says so
+//	OPOD_MANAGED=1       run by a manager: the store is an in-memory cache
+//	                     unless OPOD_STORAGE_DSN names one, and the banner says so
+//
+// It used to carry `ui`, `egress` and `callbacks` as well (OPOD_UI,
+// OPOD_EGRESS, OPOD_CALLBACKS). The dashboard, vendor egress and callback
+// sinks they switched off all left this binary with ADR-022, so nothing was
+// left to gate — and a banner reading "egress on" described a binary that has
+// no egress. They are gone rather than kept as words. Compatibility is by
+// construction and held by tests: the YAML decode is not strict, so a
+// config.yaml that still carries `surfaces: {ui, egress, callbacks}` (every
+// file an older `opod` saved does) loads as before, and nothing reads or warns
+// about the three variables, so a process started with OPOD_UI=off behaves
+// exactly as one started without it.
 type SurfacesConfig struct {
-	UI        bool `yaml:"ui"`
-	Egress    bool `yaml:"egress"`
-	Callbacks bool `yaml:"callbacks"`
-	Managed   bool `yaml:"managed"`
+	Managed bool `yaml:"managed"`
 }
 
-// Summary is the one-line banner form: "ui off · egress off · callbacks off · managed".
+// Summary is the banner's one word for how this leader is run.
 func (s SurfacesConfig) Summary() string {
-	on := func(b bool) string {
-		if b {
-			return "on"
-		}
-		return "off"
-	}
-	out := "ui " + on(s.UI) + " · egress " + on(s.Egress) + " · callbacks " + on(s.Callbacks)
 	if s.Managed {
-		out += " · managed"
+		return "managed"
 	}
-	return out
+	return "standalone"
 }
 
 // offSwitch: "off", "0", "false", "no" (any case) mean off.
@@ -245,7 +243,6 @@ func Default() *Config {
 	return &Config{
 		Listen:      ":8080",
 		ExternalURL: "",
-		Surfaces:    SurfacesConfig{UI: true, Egress: true, Callbacks: true},
 		DataDir:     dataDir,
 		LogLevel:    "info",
 		CatalogDir:  "", // empty → use built-in catalog dir resolution
@@ -331,15 +328,6 @@ func (c *Config) Save(path string) error {
 }
 
 func applyEnv(c *Config) {
-	if v := os.Getenv("OPOD_UI"); v != "" {
-		c.Surfaces.UI = !offSwitch(v)
-	}
-	if v := os.Getenv("OPOD_EGRESS"); v != "" {
-		c.Surfaces.Egress = !offSwitch(v)
-	}
-	if v := os.Getenv("OPOD_CALLBACKS"); v != "" {
-		c.Surfaces.Callbacks = !offSwitch(v)
-	}
 	if v := os.Getenv("OPOD_MANAGED"); v != "" {
 		c.Surfaces.Managed = !offSwitch(v)
 	}

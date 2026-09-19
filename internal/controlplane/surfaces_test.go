@@ -15,14 +15,14 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-// contractedServer is a leader with every product surface switched off — the
-// shape an external manager runs (OPOD_UI=off OPOD_EGRESS=off
-// OPOD_PROTOCOLS=openai OPOD_CALLBACKS=off OPOD_MANAGED=1).
+// contractedServer is a leader the way an external manager runs one
+// (OPOD_MANAGED=1). The product surfaces this test asserts the absence of are
+// not switched off — they are not in the binary (ADR-022).
 func contractedServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Listen = ":0"
-	cfg.Surfaces = config.SurfacesConfig{UI: false, Egress: false, Callbacks: false, Managed: true}
+	cfg.Surfaces = config.SurfacesConfig{Managed: true}
 	st, err := store.OpenSQLite(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -39,8 +39,8 @@ func contractedServer(t *testing.T) (*Server, string) {
 	return NewServer(cfg, st, &deadEngine{&stubLeaderEngine{}}, nil, log, nil), plain
 }
 
-// TestSurfacesOff: the switches remove the product surfaces and nothing else —
-// the frozen contract (contract.go) is intact on a contracted leader.
+// TestSurfacesOff: a managed leader serves no product surface and the whole
+// frozen contract (contract.go).
 func TestSurfacesOff(t *testing.T) {
 	srv, key := contractedServer(t)
 	ts := httptest.NewServer(srv.routes())
@@ -113,10 +113,9 @@ func TestSurfacesOff(t *testing.T) {
 	}
 }
 
-// TestSurfacesDefaultsOn: a standalone `opod up` is unchanged.
-func TestSurfacesDefaultsOn(t *testing.T) {
-	cfg := config.Default()
-	if !cfg.Surfaces.UI || !cfg.Surfaces.Egress || !cfg.Surfaces.Callbacks || cfg.Surfaces.Managed {
-		t.Fatalf("defaults must keep every surface on: %+v", cfg.Surfaces)
+// TestStandaloneIsTheDefault: `opod up` with no configuration is not managed.
+func TestStandaloneIsTheDefault(t *testing.T) {
+	if cfg := config.Default(); cfg.Surfaces.Managed {
+		t.Fatalf("a default config must be standalone: %+v", cfg.Surfaces)
 	}
 }

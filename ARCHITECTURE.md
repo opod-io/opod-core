@@ -1156,14 +1156,20 @@ Two mechanisms a manager drives through this surface (2026-09-07):
   `sleeping` (not routable), `/readyz` answers `sleeping-workers`, requests get `503 waking`; an engine with
   no sleep mode answers `501 unsupported` and the manager parks the pod instead.
 
-## Surface switches (managed mode)
+## Managed mode
 
-A leader run by an external manager is essentials-only. `surfaces:` in the config (env overrides
-in brackets) switches product surfaces off without touching the request path or the stable admin
-contract: `ui` (`OPOD_UI`, accepted for compatibility — core has had no dashboard since ADR-022, `/`
-is always 404), `egress` (`OPOD_EGRESS=off`: never forward to a remote vendor whatever keys are in the
-environment), `callbacks` (`OPOD_CALLBACKS=off`: no sinks, no `/admin/v1/callbacks`) and
-`managed` (`OPOD_MANAGED=1`: update check off, in-memory store under a mounted plan, banner says so).
+A leader run by an external manager sets one switch: `surfaces.managed` (`OPOD_MANAGED=1`). The store
+becomes an in-memory, rebuildable cache unless `OPOD_STORAGE_DSN` names one (keys come from the auth
+snapshot, nodes from heartbeats, usage and events are pulled by cursor), and the startup banner reads
+`Mode: managed`. It never touches the request path or the stable admin contract; `TestSurfacesOff` walks
+the whole contract on a managed leader.
+
+There were three more — `ui`, `egress`, `callbacks` (`OPOD_UI`, `OPOD_EGRESS`, `OPOD_CALLBACKS`) — from
+the time core still carried a dashboard, vendor egress and callback sinks. Those left with ADR-022, so
+the switches gated nothing, and a standalone banner that read "egress on" described a binary with no
+egress. They were removed, compatibly: the YAML decode is not strict, so a `config.yaml` that still
+carries the three keys loads as before (every file an older binary saved has them), and no code reads or
+warns about the variables, so a process started with `OPOD_UI=off` behaves exactly like one started
+without it (`internal/config/surfaces_test.go`). A manager may stop rendering them whenever it likes.
 The request surface itself is fixed — OpenAI chat, embeddings, models — since the Anthropic/audio/rerank
-adapters and their `protocols` switch left on 2026-09-07 (ADR-022 step 4). Defaults keep everything on
-for a standalone `opod up`. `TestSurfacesOff` proves the stable admin surface is intact with every switch off.
+adapters and their `protocols` switch left on 2026-09-07 (ADR-022 step 4).
