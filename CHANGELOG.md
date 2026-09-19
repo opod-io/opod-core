@@ -54,7 +54,7 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
 ## Cluster
 
-- `opod up` (leader) / `opod join <leader>?token=` (worker); register + 5 s heartbeats with loaded
+- `opod up` (leader) / `opod join "<leader>?token=…"` (worker); register + 5 s heartbeats with loaded
   models, the engine load sample and the sleep state; HMAC-signed leader → worker calls
 - Router: same model on N workers → load-balance; different models → route by placement; a model bigger
   than any node → llama.cpp-RPC sharding (`opod shard create <model> [N] [--nodes …]`), the coordinator on a

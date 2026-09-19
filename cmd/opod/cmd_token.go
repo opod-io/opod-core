@@ -14,12 +14,12 @@ func cmdToken(args []string) {
 	help := helpSpec{
 		name:    "token",
 		summary: "manage API keys and node-join tokens",
-		usage:   "opod token <create [name] [--admin|--node] [--models a,b,…] | ls | edit <id> ... | expire <id> [--in D] | renew <id> --ttl D | budget <add|ls|rm> <id> ... | revoke <id>>",
+		usage:   "opod token <create [name] [--admin|--node] [--models a,b,…] | ls | edit <id> ... | expire <id> [--in D] | renew <id> --ttl D | revoke <id>>",
 		examples: []string{
 			"opod token create alice                            # user-scope key for dev `alice`",
 			"opod token create alice-admin --admin              # admin-scope key (can call /admin/v1/*)",
 			"opod token create alice --models qwen-coder-7b     # restrict to one model",
-			"opod token create bob   --models 'claude-*,gpt-*'  # vendor families via glob",
+			"opod token create bob   --models 'qwen3-*,llama-*' # model families via glob",
 			"opod token create alice --rpm 60 --tpm 100000      # per-minute ceilings",
 			"opod token create alice --ttl 7d                   # auto-expire in 7 days",
 			"opod token create alice --expires-at 2026-07-01    # absolute expiry date",
@@ -28,7 +28,7 @@ func cmdToken(args []string) {
 			"opod token renew  k_abc --ttl 30d                  # extend expiry by 30 days from now",
 			"opod token create --node                           # one-time join token for a new worker",
 			"opod token edit k_abc123 --add-model qwen3-14b     # extend the allowlist",
-			"opod token edit k_abc123 --remove-model gpt-4o     # tighten the allowlist",
+			"opod token edit k_abc123 --remove-model qwen3-30b  # tighten the allowlist",
 			"opod token edit k_abc123 --set-models a,b,c        # replace the allowlist",
 			"opod token edit k_abc123 --clear-models            # drop the allowlist (any model)",
 			"opod token edit k_abc123 --rpm 30 --tpm 50000      # set per-minute ceilings (0 = unlimited)",
@@ -37,7 +37,7 @@ func cmdToken(args []string) {
 		},
 		notes: []string{
 			"⚠️  --node tokens are the shared secret leader ↔ worker — only issue on a trusted network (LAN or Tailscale).",
-			"`--models` accepts a comma-separated list. Entries support a `*` suffix wildcard (`claude-*`).",
+			"`--models` accepts a comma-separated list. Entries support a `*` suffix wildcard (`qwen3-*`).",
 			"A key with no allowlist can call any model. An empty allowlist (`--set-models ''`) denies every model.",
 			"`--rpm` (requests/min) and `--tpm` (tokens/min) are in-memory leaky buckets; reset on leader restart. 0 = unlimited.",
 			"`--ttl` accepts Go-style durations (`30s`, `5m`, `2h`) plus `d` for days (`7d`). `--expires-at` is YYYY-MM-DD or RFC3339.",
@@ -68,7 +68,7 @@ func cmdToken(args []string) {
 				}
 			case "--models":
 				if i+1 >= len(args) {
-					die("--models requires a comma-separated list (e.g. --models qwen3-14b,claude-*)")
+					die("--models requires a comma-separated list (e.g. --models qwen3-14b,llama-*)")
 				}
 				models = parseModelList(args[i+1])
 				i++

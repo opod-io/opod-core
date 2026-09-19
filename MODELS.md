@@ -1,15 +1,15 @@
 # Models — the complete walkthrough
 
-Every model in Opod's catalog, with step-by-step install + use instructions for every common client (curl, Cursor / VS Code, Claude Code, OpenAI SDK, Anthropic SDK). Pick the row that matches your hardware, run the install, copy the snippet for your tool.
+Every model in Opod's catalog, with step-by-step install + use instructions for the common OpenAI-shape clients (curl, Cursor / VS Code, Aider, the OpenAI SDK). Pick the row that matches your hardware, run the install, copy the snippet for your tool.
 
 > **Tip:** the snippets below are written by hand for reference, but Opod can also generate them automatically with your URL + token already filled in:
 >
 > ```bash
-> opod connect claude-code        # or: cursor, aider, continue, zed, cline, qwen-code, openai-sdk, anthropic-sdk, curl
-> opod connect --list             # all 19 supported tools
+> opod connect aider              # or: cursor, continue, zed, cline, opencode, codex-cli, openai-sdk, curl, …
+> opod connect --list             # all 15 supported tools
 > ```
 >
-> Or click **Connect** in the dashboard (`http://localhost:8080`).
+> Core speaks the OpenAI shape only (ADR-022) and has no dashboard. A tool that only speaks the Anthropic Messages shape — Claude Code, the Anthropic SDK — needs a protocol shim in front of the gateway; core does not ship one.
 
 > For the catalog summary table see [QUICKSTART](QUICKSTART.md#-use-a-different-model-qwen-llama-deepseek). For "why those specific models?" see [README → Supported models](README.md#supported-models).
 
@@ -17,7 +17,7 @@ Every model in Opod's catalog, with step-by-step install + use instructions for 
 
 ## 🎯 Picker table — what to install
 
-Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **41 models** at last update (run `opod model search` for the live list, or `opod model search --sort=released` for newest-first).
+Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **47 models** at last update (run `opod model search` for the live list, or `opod model search --sort=released` for newest-first).
 
 | Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
 | ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |
@@ -94,7 +94,7 @@ The per-model walkthroughs below cover a curated subset with full install + clie
 
 ### Installing models that aren't in the catalog
 
-`opod model add` gives you three paths beyond the curated 41 entries:
+`opod model add` gives you three paths beyond the curated 47 entries:
 
 **1. Scheme prefixes** — one-liner; no YAML, no hardware-floor check:
 
@@ -104,8 +104,6 @@ opod model add hf:bartowski/Phi-3-mini-GGUF:Phi-3-mini-4k-instruct.Q4_K_M.gguf
 opod model add ollama:phi3:mini                # ollama engine only
 opod model add file:/abs/path/my-finetune.gguf # llama-server / MLX, pre-downloaded
 ```
-
-The dashboard's **Models** tab has the same input under "Add custom model".
 
 **2. `--from <my.yaml>`** — install from your own catalog YAML; copied into `~/.opod/catalog/` so it persists:
 
@@ -158,7 +156,7 @@ Paths 2 and 3 give you the same UX as a catalog entry — `opod model search my-
 
 **System requirements:** 2 GB RAM. Any laptop made in the last 5 years.
 
-**Best for:** First-run smoke test. "Does Opod work end-to-end?" Verifying the CLI / UI / Claude Code wiring. Quick latency benchmarks.
+**Best for:** First-run smoke test. "Does Opod work end-to-end?" Verifying the CLI and your tool's wiring. Quick latency benchmarks.
 
 **Not for:** Real coding work. Multi-turn agents. Anything where output quality matters.
 
@@ -189,11 +187,10 @@ curl http://localhost:8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-...
-export ANTHROPIC_MODEL=llama-3.2-1b
-claude
+# Aider — the lines `opod connect aider --model llama-3.2-1b` prints
+aider --openai-api-base http://localhost:8080/v1 \
+      --openai-api-key sk-orc-... \
+      --model openai/llama-3.2-1b
 ```
 
 ```python
@@ -241,11 +238,10 @@ curl http://localhost:8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-...
-export ANTHROPIC_MODEL=llama-3.2-3b
-claude
+# Aider — the lines `opod connect aider --model llama-3.2-3b` prints
+aider --openai-api-base http://localhost:8080/v1 \
+      --openai-api-key sk-orc-... \
+      --model openai/llama-3.2-3b
 ```
 
 **Switch up when:** you do real coding work — pick a `qwen-coder-*`. For better chat, jump to `qwen3-8b`.
@@ -299,11 +295,10 @@ curl :8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-...
-export ANTHROPIC_MODEL=qwen-coder-7b
-claude
+# Aider — the lines `opod connect aider --model qwen-coder-7b` prints
+aider --openai-api-base http://localhost:8080/v1 \
+      --openai-api-key sk-orc-... \
+      --model openai/qwen-coder-7b
 ```
 
 **Switch up when:** you start hitting "this completion is wrong" too often → try `qwen-coder-14b`.
@@ -316,7 +311,7 @@ claude
 
 **System requirements:** 16 GB RAM minimum, 24 GB recommended (leaves room for Chrome / your editor / Slack).
 
-**Best for:** Real coding work via Cursor / Claude Code / Aider. Multi-turn refactors. Agentic loops with tool use. Code review. Test generation.
+**Best for:** Real coding work via Cursor / Aider / Continue. Multi-turn refactors. Agentic loops with tool use. Code review. Test generation.
 
 **Not for:** Frontier reasoning tasks where you'd reach for o1 / R1 — use `deepseek-r1-8b` for those. Models bigger than 16 GB if you're tight on RAM.
 
@@ -340,24 +335,22 @@ curl :8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code — this is where it shines
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-...
-export ANTHROPIC_MODEL=qwen-coder-14b
-claude
-# Now claude can edit files, run bash, etc. — using your local model
+# Aider — the lines `opod connect aider --model qwen-coder-14b` prints
+aider --openai-api-base http://localhost:8080/v1 \
+      --openai-api-key sk-orc-... \
+      --model openai/qwen-coder-14b
 ```
 
 ```python
-# Anthropic SDK (works because Opod speaks Anthropic format too)
-from anthropic import Anthropic
-client = Anthropic(base_url="http://localhost:8080", api_key="sk-orc-...")
-resp = client.messages.create(
+# OpenAI SDK — the one protocol core serves
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="sk-orc-...")
+resp = client.chat.completions.create(
     model="qwen-coder-14b",
     max_tokens=2048,
     messages=[{"role": "user", "content": "explain CRDTs in 100 words"}],
 )
-print(resp.content[0].text)
+print(resp.choices[0].message.content)
 ```
 
 **Switch up when:** You have a 64 GB+ machine and want the strongest single-box coder → `qwen-coder-32b`. For frontier-tier you need multi-machine sharding.
@@ -370,7 +363,7 @@ print(resp.content[0].text)
 
 **System requirements:** 32 GB RAM minimum (will swap on smaller). 64 GB Mac Mini / MacBook Pro recommended.
 
-**Best for:** Heavy agentic coding (multi-hour Claude Code sessions). Complex refactors. Pull-request review. When the 14B isn't smart enough.
+**Best for:** Heavy agentic coding (multi-hour agent sessions in Aider, OpenHands, Goose…). Complex refactors. Pull-request review. When the 14B isn't smart enough.
 
 **Not for:** Tight-RAM machines. Latency-sensitive autocomplete (TTFT is noticeably higher).
 
@@ -388,11 +381,10 @@ opod model add qwen-coder-32b
 **Use it:**
 
 ```bash
-# Claude Code — best target for this size model
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=sk-orc-...
-export ANTHROPIC_MODEL=qwen-coder-32b
-claude
+# Aider — the lines `opod connect aider --model qwen-coder-32b` prints
+aider --openai-api-base http://localhost:8080/v1 \
+      --openai-api-key sk-orc-... \
+      --model openai/qwen-coder-32b
 ```
 
 **Switch up when:** You need bigger than 32 GB of model. That means sharding — see `llama-3.3-70b-sharded`.
@@ -424,8 +416,8 @@ curl :8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code
-export ANTHROPIC_MODEL=qwen3-8b
+# Aider (base URL + key as in the first walkthrough)
+aider --model openai/qwen3-8b
 ```
 
 ---
@@ -476,11 +468,11 @@ curl :8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code
-export ANTHROPIC_MODEL=deepseek-r1-8b
+# Aider (base URL + key as in the first walkthrough)
+aider --model openai/deepseek-r1-8b
 ```
 
-**Tip:** When a model emits `<think>` tags, most UIs (Claude Code, Cursor) show them as part of the response. If that's distracting, strip them client-side or use a non-reasoning model for that task.
+**Tip:** When a model emits `<think>` tags, most tools (Cursor, Aider) show them as part of the response. If that's distracting, strip them client-side or use a non-reasoning model for that task.
 
 ---
 
@@ -492,7 +484,7 @@ export ANTHROPIC_MODEL=deepseek-r1-8b
 
 **Best for:** When you need GPT-4 / Sonnet-tier quality and don't want to pay per token. Frontier coding agents. Complex reasoning chains. Long-context document analysis.
 
-**Not for:** Single-machine setups. Latency-sensitive use cases (network hops between shards add overhead). Use Claude Sonnet via fallback if you want this quality without the hardware.
+**Not for:** Single-machine setups. Latency-sensitive use cases (network hops between shards add overhead). Core has no vendor fallback: for this quality without the hardware, point that tool at a vendor directly.
 
 **Prereqs (one-time):**
 - `brew install llama.cpp` on the leader (provides `llama-server`)
@@ -526,9 +518,8 @@ curl :8080/v1/chat/completions \
 ```
 
 ```bash
-# Claude Code
-export ANTHROPIC_MODEL=llama-3.3-70b-sharded
-claude
+# Aider (base URL + key as in the first walkthrough)
+aider --model openai/llama-3.3-70b-sharded
 ```
 
 **Tear down (cleanly):**
@@ -608,10 +599,10 @@ curl :8080/v1/chat/completions \
   -d '{"model":"mistral-nemo:12b","messages":[…]}'
 ```
 
-Or add a custom catalog entry (so it shows up in `opod model search` + UI): drop a YAML file in `catalog/` matching the schema of the existing entries:
+Or add a custom catalog entry (so it shows up in `opod model search` and the interactive picker): drop a YAML file in `~/.opod/catalog/` (or `$OPOD_CATALOG_DIR`) matching the schema of the bundled entries (`opod catalog export <dir>` writes those out to read):
 
 ```yaml
-# catalog/my-model.yaml
+# ~/.opod/catalog/my-model.yaml
 id: my-model
 display_name: My Custom Model
 source:
@@ -627,24 +618,25 @@ hardware:
 tags: [chat]
 ```
 
-Restart `opod up` — your model now appears in `opod model search` and the web UI's catalog picker.
+Restart `opod up` — your model now appears in `opod model search`, `opod model info my-model` and the `opod model add` picker.
 
 ---
 
 ## Switching models on the fly
 
-For Claude Code:
+For Aider (any CLI tool that takes the model as a flag):
 
 ```bash
 # different sessions can use different models:
-ANTHROPIC_MODEL=llama-3.2-1b claude       # smoke test session
-ANTHROPIC_MODEL=qwen-coder-14b claude     # real work session
-ANTHROPIC_MODEL=claude-opus-4-7 claude    # falls back to real Anthropic (if fallback configured)
+aider --model openai/llama-3.2-1b         # smoke test session
+aider --model openai/qwen-coder-14b       # real work session
 ```
+
+A vendor model id (`gpt-4o`, `claude-…`) is not something core can serve: the request fails at your engine, which has no such model, and core never forwards to a vendor.
 
 For curl / SDKs: change the `model` field in each request body. The same Opod instance serves all of them.
 
-For Cursor / Continue: change the model id in the UI / config file and reload.
+For Cursor / Continue: change the model id in the editor's settings / config file and reload.
 
 ---
 

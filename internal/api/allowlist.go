@@ -23,7 +23,7 @@ import (
 //   - []string{}: deny every model — useful for hard-disabling a key
 //     without revoking it.
 //   - list: the request's `model` field must match one entry. Entries
-//     ending in `*` are glob prefixes (e.g. `claude-*` matches every
+//     ending in `*` are glob prefixes (e.g. `qwen3-*` matches every
 //     Claude model id).
 //
 // On a refusal the middleware returns HTTP 403 with code
@@ -91,7 +91,7 @@ func modelAllowedForKey(ctx context.Context, model string) bool {
 }
 
 // ModelAllowed reports whether `model` matches any entry in `allowed`.
-// An entry may be a literal id or a `*`-suffixed glob (e.g. `claude-*`).
+// An entry may be a literal id or a `*`-suffixed glob (e.g. `qwen3-*`).
 // A nil allowed slice means "no restriction" — the caller is expected
 // to short-circuit before calling, but we return true for safety.
 func ModelAllowed(allowed []string, model string) bool {

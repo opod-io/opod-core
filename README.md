@@ -366,7 +366,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 - Sleep tier: a worker's engine can drop its GPU working set and keep the process (vLLM sleep mode) — `POST /v1/model/sleep|resume` on the worker, proxied by the leader as `/admin/v1/nodes/{id}/sleep|resume`; a sleeping worker is resident but not routed to until resumed
 
-- One-command join — `opod join <leader-url>?token=…` registers a worker; heartbeats every 5 s carry its loaded models
+- One-command join — `opod join "<leader-url>?token=…"` registers a worker; heartbeats every 5 s carry its loaded models
 - Placement by residency — a worker serves what its engine has loaded (`opod model add <id> --node a,b` pulls and warms it there); the router prefers local, then the least-loaded worker
 - **Memory lifecycle** — admission control against live engine residency (a machine is never overcommitted), `opod model load --swap` with LRU evict-and-drain, `--pin` to protect a model, desired placements restored on restart, `opod down` releases engine memory by default, `--exclusive` for one-model-per-machine
 - Heterogeneous sharding via llama.cpp RPC for models larger than any single node — `opod shard create <model> <N>` orchestrates the coordinator + every rpc-server end-to-end
@@ -377,7 +377,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 ### Multi-tenancy
 
 - Per-user API keys with revocation, scopes (admin / user / node), and **TTL expiry** (`--ttl 7d`, `--expires-at 2026-07-01`, `opod token renew/expire`)
-- Daily token quotas per key with usage metering
+- Daily token quotas per key, enforced at the gateway from the usage log (429 once the day's tokens are spent). The CLI has no flag for it: set `quota_daily_tokens` when creating the key through `POST /admin/v1/tokens`; `0` = unlimited
 - **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
 - **Per-key model allowlist** — pin a key to specific model ids (or a family via a trailing-`*` glob such as `qwen3-*`); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Opod-Request-Id` correlation token (also embedded in audit rows for traceability)
@@ -591,7 +591,7 @@ Install **and** join a cluster in one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | \
-    sh -s -- join https://leader.local:8080?token=<TOKEN>
+    sh -s -- join "https://leader.local:8080?token=<TOKEN>"
 ```
 
 ### Upgrade / uninstall
@@ -755,7 +755,7 @@ These features are mentioned elsewhere in this README but have no YAML knob toda
 Workers run their own engine binary. To point a worker at a non-default endpoint, set env vars before `opod join`:
 
 ```bash
-OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 opod join http://leader:8080?token=...
+OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 opod join "http://leader:8080?token=..."
 ```
 
 ---
@@ -773,7 +773,7 @@ Idempotent. Re-running it shows status if already running.
 ### Add a node
 
 1. On the leader: `opod token create --node`
-2. On the new machine: `curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh -s -- join <leader-url>?token=<token>`
+2. On the new machine: `curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh -s -- join "<leader-url>?token=<token>"` (keep the quotes: `?` is a glob in zsh)
 
 The token is a node-scoped key (`sk-orc-<your-key>`): the shared secret between leader and worker, so mint it only on a network you trust and give it an expiry with `--ttl` if you like. The new node registers with the leader over HTTP, heartbeats every 5 s, and from then on signs its calls with a per-node HMAC. `opod join --gpu <index> --vram-budget <GB>` pins the worker to one GPU and a memory budget when several workers share a machine.
 
@@ -818,7 +818,7 @@ opod token create --node           # prints the worker join token
 # === on the worker machine ===
 brew install --cask ollama
 ollama serve &
-opod join http://<leader-host>:8080?token=<token>   # registers + starts worker HTTP server
+opod join "http://<leader-host>:8080?token=<token>" # registers + starts worker HTTP server
 opod model add qwen-coder-7b        # pulls on the worker's Ollama (reported back via heartbeat)
 
 # === back on the leader ===
@@ -1173,7 +1173,7 @@ opod up [--no-wizard] [--auto-pull=false] [--exclusive] [--unload-on-exit]
 opod down [--no-unload]          Stop the local node and release engine memory
                                   (--no-unload leaves models resident)
 opod status [--json]             Show local + cluster status
-opod join <url>?token=… [--gpu N] [--vram-budget GB]
+opod join "<url>?token=…" [--gpu N] [--vram-budget GB]
                                   Join an existing cluster as a worker (optionally
                                   pinned to one GPU and a memory budget)
 opod doctor                      Diagnose common problems
