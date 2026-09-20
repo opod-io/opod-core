@@ -244,14 +244,30 @@ type DesiredPlacementStore interface {
 	Delete(ctx context.Context, nodeID, modelID string) error
 }
 
+// DefaultGangID is the gang a part belongs to when nothing named one. It is
+// what every shard row written before gangs existed means, and what a bare
+// `opod shard create <model>` still produces — so a model with one gang reads
+// and behaves exactly as it did.
+const DefaultGangID = "g0"
+
 // Shard is one piece of a model that has been split across multiple nodes.
-// A sharded model has N "rpc" shards (one per node hosting a piece of the
-// model) plus exactly one "coordinator" shard (the node running
-// llama-server --rpc <list>). The router routes requests to the coordinator
-// only; the coordinator talks to the rpc shards internally.
+//
+// A model is split into one or more GANGS. A gang has N "rpc" shards (one per
+// node hosting a piece of the model) plus exactly one "coordinator" shard (the
+// node running llama-server --rpc <list>). The router routes a request to one
+// gang's coordinator; that coordinator talks only to its own gang's rpc shards.
+//
+// Several gangs of one model are independent copies of the same weights: each
+// serves whole requests by itself, so they are throughput, and the router picks
+// among their coordinators the way it picks among workers. Parts NEVER span
+// gangs — a coordinator that dialled another gang's rpc shard would split one
+// request across two copies of the same layers.
 type Shard struct {
-	ID         string
-	ModelID    string
+	ID      string
+	ModelID string
+	// GangID names which gang of ModelID this part belongs to. Always set on a
+	// stored row; Create fills the default when a caller leaves it empty.
+	GangID     string
 	Role       string // "coordinator" | "rpc"
 	NodeID     string
 	Address    string // host:port reachable by the coordinator (rpc) or by the leader (coordinator)
@@ -262,14 +278,33 @@ type Shard struct {
 	LastSeen   time.Time
 }
 
+// Gang is the gang this part belongs to, defaulted for a value built in memory
+// that never named one.
+func (s Shard) Gang() string {
+	if s.GangID == "" {
+		return DefaultGangID
+	}
+	return s.GangID
+}
+
 type ShardStore interface {
 	Create(ctx context.Context, s Shard) error
 	Get(ctx context.Context, id string) (*Shard, error)
+	// GetByModel returns every part of every gang of the model. Callers that
+	// reason about one gang — routing, liveness, teardown — want GetByGang or
+	// GangsOf instead: a set of parts spanning gangs answers no question about
+	// whether any single gang can serve.
 	GetByModel(ctx context.Context, modelID string) ([]Shard, error)
+	// GetByGang returns one gang's parts. "" means DefaultGangID.
+	GetByGang(ctx context.Context, modelID, gangID string) ([]Shard, error)
+	// GangsOf lists the model's gang ids, oldest gang first.
+	GangsOf(ctx context.Context, modelID string) ([]string, error)
 	UpdateStatus(ctx context.Context, id, status string) error
 	List(ctx context.Context) ([]Shard, error)
 	Delete(ctx context.Context, id string) error
 	DeleteByModel(ctx context.Context, modelID string) error
+	// DeleteByGang removes one gang, leaving the model's other gangs alone.
+	DeleteByGang(ctx context.Context, modelID, gangID string) error
 }
 
 // Usage records a single completed inference request.
@@ -488,6 +523,7 @@ CREATE TABLE IF NOT EXISTS desired_placements (
 CREATE TABLE IF NOT EXISTS shards (
     id          TEXT PRIMARY KEY,
     model_id    TEXT NOT NULL,
+    gang_id     TEXT NOT NULL DEFAULT 'g0',
     role        TEXT NOT NULL,
     node_id     TEXT NOT NULL,
     address     TEXT NOT NULL,
@@ -498,6 +534,7 @@ CREATE TABLE IF NOT EXISTS shards (
     last_seen   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_shards_model ON shards(model_id);
+CREATE INDEX IF NOT EXISTS idx_shards_gang ON shards(model_id, gang_id);
 
 CREATE TABLE IF NOT EXISTS usage (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -590,6 +627,11 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		// Since when a worker's heartbeats carry no engine report. 0 = they do.
 		{table: "nodes", column: "engine_silent_since", ddl: `ALTER TABLE nodes ADD COLUMN engine_silent_since INTEGER NOT NULL DEFAULT 0`},
 		{table: "model_placements", column: "cold", ddl: `ALTER TABLE model_placements ADD COLUMN cold INTEGER NOT NULL DEFAULT 0`},
+		// Which gang of the model this part belongs to. The DEFAULT fills every
+		// existing row with the default gang, which is what a model's only gang
+		// was before gangs had names — so a row always carries its gang and no
+		// reader has to know two spellings for one of them.
+		{table: "shards", column: "gang_id", ddl: `ALTER TABLE shards ADD COLUMN gang_id TEXT NOT NULL DEFAULT 'g0'`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)

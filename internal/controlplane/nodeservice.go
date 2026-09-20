@@ -159,9 +159,9 @@ func (s *Server) reincarnated(ctx context.Context, n store.Node, previous string
 			s.reconcileNodes.Store(n.ID, struct{}{})
 			return
 		}
-		for _, m := range removed {
-			s.log.Warn("shard group removed: its part died with the worker's previous incarnation", "model", m, "node", n.ID)
-			s.record("shard.stale", m, map[string]any{"node": n.ID, "reason": "worker process changed (boot id); the recorded part is gone"})
+		for _, g := range removed {
+			s.log.Warn("gang removed: its part died with the worker's previous incarnation", "model", g.Model, "gang", g.Gang, "node", n.ID)
+			s.record("shard.stale", g.Model, map[string]any{"node": n.ID, "gang": g.Gang, "reason": "worker process changed (boot id); the recorded part is gone"})
 		}
 	}()
 }
@@ -180,9 +180,9 @@ func (s *Server) reconcileShardsOn(n store.Node) {
 		s.reconcileNodes.Store(n.ID, struct{}{})
 		return
 	}
-	for _, m := range removed {
-		s.log.Warn("shard group removed: its part died with the worker's previous incarnation", "model", m, "node", n.ID)
-		s.record("shard.stale", m, map[string]any{"node": n.ID, "reason": "worker registered again; the recorded process is not running"})
+	for _, g := range removed {
+		s.log.Warn("gang removed: its part died with the worker's previous incarnation", "model", g.Model, "gang", g.Gang, "node", n.ID)
+		s.record("shard.stale", g.Model, map[string]any{"node": n.ID, "gang": g.Gang, "reason": "worker registered again; the recorded process is not running"})
 	}
 }
 

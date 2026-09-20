@@ -106,25 +106,29 @@ func liveShardStatus(sh store.Shard, alive map[string]bool) string {
 	return ShardStatusLost
 }
 
-// servableShardModels returns the model ids whose gang can serve right now:
-// a ready coordinator AND every part of that model (coordinator and rpc
-// backends) on an alive node. llama-server does not survive a lost rpc
-// backend, so one lost part takes the whole gang out of rotation.
+// servableShardModels returns the model ids that at least ONE gang can serve
+// right now: a ready coordinator AND every part of that gang on an alive node.
+// llama-server does not survive a lost rpc backend, so one lost part takes its
+// gang out of rotation.
+//
+// Judged per gang. A model with two gangs is servable while either one is
+// whole — asking this over the model's parts as one set meant a single lost
+// part hid a healthy gang that was serving requests at that moment, and a
+// ready coordinator in one gang vouched for a broken sibling.
 func servableShardModels(shards []store.Shard, alive map[string]bool) map[string]bool {
-	coordinatorReady := map[string]bool{}
-	partLost := map[string]bool{}
-	for _, sh := range shards {
-		if !shardAlive(sh, alive) {
-			partLost[sh.ModelID] = true
-		}
-		if sh.Role == "coordinator" && sh.Status == "ready" {
-			coordinatorReady[sh.ModelID] = true
-		}
-	}
 	out := map[string]bool{}
-	for model := range coordinatorReady {
-		if !partLost[model] {
-			out[model] = true
+	for key, parts := range store.GroupGangs(shards) {
+		coordinatorReady, partLost := false, false
+		for _, sh := range parts {
+			if !shardAlive(sh, alive) {
+				partLost = true
+			}
+			if sh.Role == "coordinator" && sh.Status == "ready" {
+				coordinatorReady = true
+			}
+		}
+		if coordinatorReady && !partLost {
+			out[key.Model] = true
 		}
 	}
 	return out

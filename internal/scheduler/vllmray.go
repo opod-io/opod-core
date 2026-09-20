@@ -12,7 +12,7 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, workers []store.Node, par Parallelism) error {
+func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, gangID string, workers []store.Node, par Parallelism) error {
 	if len(workers) < 1 {
 		return fmt.Errorf("vllm-ray sharding needs at least one worker")
 	}
@@ -38,7 +38,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	//    `ray start` daemonizes and exits, which the supervisor would read as a
 	//    crash). HealthPort lets the worker confirm the GCS port is listening.
 	headSpec := agent.ProcessSpec{
-		ID:      "ray-head-" + safeID(entry.ID),
+		ID:      gangShardID(entry.ID, gangID, "ray-head"),
 		Command: "/bin/sh",
 		Args: []string{"-lc", rayCommand(
 			"start", "--head",
@@ -70,7 +70,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	// Every rank is a shard row (role "rank") so /admin/v1/shards lists the
 	// whole gang and RemoveSharded stops every Ray daemon — a gang torn down
 	// by name must leave no process behind on a node it shared (D10).
-	headRow := store.Shard{ID: "s-" + safeID(entry.ID) + "-rank-0", ModelID: entry.ID, Role: "rank", NodeID: head.ID,
+	headRow := store.Shard{ID: gangShardID(entry.ID, gangID, "rank-0"), ModelID: entry.ID, GangID: gangID, Role: "rank", NodeID: head.ID,
 		Address: headHost + ":" + strconv.Itoa(gcsPort), ProcessID: headSpec.ID, Status: "ready", CreatedAt: time.Now(), LastSeen: time.Now()}
 	if err := o.Store.Shards().Create(ctx, headRow); err != nil {
 		_ = o.callWorkerStop(ctx, head, headSpec.ID)
@@ -86,7 +86,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 			continue
 		}
 		wSpec := agent.ProcessSpec{
-			ID:      "ray-worker-" + safeID(entry.ID) + "-" + safeID(w.ID),
+			ID:      gangShardID(entry.ID, gangID, "ray-worker-"+safeID(w.ID)),
 			Command: "/bin/sh",
 			Args: []string{"-lc", rayCommand(
 				"start",
@@ -109,7 +109,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 			return fmt.Errorf("join ray worker %s to head: %w", w.ID, err)
 		}
 		o.Log.Info("ray worker joined", "model", entry.ID, "node", w.ID, "head", headHost)
-		row := store.Shard{ID: fmt.Sprintf("s-%s-rank-%d", safeID(entry.ID), len(created)), ModelID: entry.ID, Role: "rank", NodeID: w.ID,
+		row := store.Shard{ID: gangShardID(entry.ID, gangID, fmt.Sprintf("rank-%d", len(created))), ModelID: entry.ID, GangID: gangID, Role: "rank", NodeID: w.ID,
 			Address: wHost, ProcessID: wSpec.ID, Status: "ready", CreatedAt: time.Now(), LastSeen: time.Now()}
 		if err := o.Store.Shards().Create(ctx, row); err != nil {
 			_ = o.callWorkerStop(ctx, w, wSpec.ID)
@@ -165,7 +165,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 			"--trust-remote-code --gpu-memory-utilization 0.85"+eager,
 		model, entry.ID, model, gpusPerNode, pp, headHost, vllmPort)
 	vllmSpec := agent.ProcessSpec{
-		ID:      "vllm-ray-" + safeID(entry.ID),
+		ID:      gangShardID(entry.ID, gangID, "vllm-ray"),
 		Command: "/bin/sh",
 		Args:    []string{"-lc", vllmCmd},
 		Env: mergeEnv(distEnv(headHost), map[string]string{
@@ -188,7 +188,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	// shardCoordinator() dials it (mirrors the llama.cpp coordinator; the endpoint
 	// is OpenAI-compatible either way).
 	coordRec := store.Shard{
-		ID: "s-" + safeID(entry.ID) + "-vllm-ray-coord", ModelID: entry.ID, Role: "coordinator",
+		ID: gangShardID(entry.ID, gangID, "vllm-ray-coord"), ModelID: entry.ID, GangID: gangID, Role: "coordinator",
 		NodeID: head.ID, Address: fmt.Sprintf("%s:%d", headHost, vllmPort),
 		ProcessID: vllmSpec.ID, Status: "ready", ConfigJSON: `{"engine":"vllm"}`, // the router picks the driver by it
 		CreatedAt: time.Now(), LastSeen: time.Now(),

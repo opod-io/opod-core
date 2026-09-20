@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod/internal/scheduler"
@@ -84,6 +85,27 @@ func (s *Server) deleteShards(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 	default:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "model_id": modelID})
+	}
+}
+
+// deleteGang removes ONE gang of a model. The model's other gangs keep
+// serving, and the router load-balances across whatever is left.
+func (s *Server) deleteGang(w http.ResponseWriter, r *http.Request) {
+	modelID, gangID := chi.URLParam(r, "model_id"), chi.URLParam(r, "gang_id")
+	if modelID == "" || gangID == "" {
+		writeJSONError(w, http.StatusBadRequest, "model_id and gang_id required")
+		return
+	}
+	err := s.RemoveGang(r.Context(), modelID, gangID)
+	switch {
+	case errors.Is(err, ErrNoOrchestrator):
+		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+	case err != nil && strings.Contains(err.Error(), "has no gang"):
+		writeJSONError(w, http.StatusNotFound, err.Error())
+	case err != nil:
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "model_id": modelID, "gang_id": gangID})
 	}
 }
 

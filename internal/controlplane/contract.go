@@ -59,6 +59,7 @@ var LeaderContract = []ContractRoute{
 	{Method: http.MethodGet, Path: "/admin/v1/shards"},
 	{Method: http.MethodPost, Path: "/admin/v1/shards/create"},
 	{Method: http.MethodDelete, Path: "/admin/v1/shards/{model_id}"},
+	{Method: http.MethodDelete, Path: "/admin/v1/shards/{model_id}/{gang_id}"},
 	{Method: http.MethodPost, Path: "/admin/v1/nodes/{id}/drain"},
 	{Method: http.MethodPost, Path: "/admin/v1/nodes/{id}/undrain"},
 	{Method: http.MethodPost, Path: "/admin/v1/models/{id}/move"},
@@ -96,10 +97,16 @@ func contractFeatures() map[string]bool {
 		"tls_listener":      true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
 		"pd_roles":          true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
-		"routing_load_aware":    true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
-		"worker_sleep":          true, // POST /admin/v1/nodes/{id}/sleep|resume → worker engine sleep mode; placements read "sleeping"; /readyz mode sleeping-workers // /loadz carries kv_used_pct / queue_depth / tokens_per_s / prefix_hit_pct from the workers' heartbeats
-		"policy_file":           true,
-		"shard_head":            true, // POST /admin/v1/shards/create accepts head: the coordinator is the named worker rank, never the leader (R15.14, D4)
+		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
+		"worker_sleep":       true, // POST /admin/v1/nodes/{id}/sleep|resume → worker engine sleep mode; placements read "sleeping"; /readyz mode sleeping-workers // /loadz carries kv_used_pct / queue_depth / tokens_per_s / prefix_hit_pct from the workers' heartbeats
+		"policy_file":        true,
+		"shard_head":         true, // POST /admin/v1/shards/create accepts head: the coordinator is the named worker rank, never the leader (R15.14, D4)
+		// Several gangs of one model under one leader (build item 6): create
+		// accepts gang, DELETE /shards/{model_id}/{gang_id} removes one, and the
+		// router load-balances across every gang whose coordinator is ready.
+		// Without it a caller must assume one gang per model — which is what
+		// every create did, replacing the previous one.
+		"shard_groups":          true,
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one

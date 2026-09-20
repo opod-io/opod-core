@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -173,11 +172,25 @@ func shardCountFor(entry models.Entry, shardCount int, nodeIDs []string) (int, e
 	return shardCount, nil
 }
 
-func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, shardCount int, nodeIDs []string, par Parallelism) error {
+// gangID names which gang of the model to build.
+//
+//	""          the model's default gang, AND every other gang of the model is
+//	            torn down first — what a bare `opod shard create <model>` has
+//	            always meant: one gang, replacing whatever was there.
+//	"g1", …     that gang alone. Other gangs keep serving, untouched.
+//
+// Several gangs of one model are independent copies of the same weights: each
+// answers whole requests by itself, and the router picks among their
+// coordinators. A part never spans gangs.
+func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, gangID string, shardCount int, nodeIDs []string, par Parallelism) error {
 	if !entry.Sharding.Required {
 		return fmt.Errorf("model %s is not configured for sharding", entry.ID)
 	}
-	shardCount, err := shardCountFor(entry, shardCount, nodeIDs)
+	gangID, replaceModel, err := resolveGang(gangID)
+	if err != nil {
+		return err
+	}
+	shardCount, err = shardCountFor(entry, shardCount, nodeIDs)
 	if err != nil {
 		return err
 	}
@@ -193,18 +206,19 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnplaceable, err)
 	}
-	// IDEMPOTENT REPLACE: tear down any prior shard for this model before
-	// (re)creating. Without this, re-running `shard create` (new --nodes, or after
-	// a worker was recreated with a fresh overlay IP) left the OLD coordinator /
-	// rpc-server rows in place — pointing at dead/old addresses — and the new
-	// create collided or silently no-op'd, so the model 502'd on a stale
-	// coordinator. A clean slate beats a stale one; best-effort teardown.
-	if existing, _ := o.Store.Shards().GetByModel(ctx, entry.ID); len(existing) > 0 {
-		o.Log.Info("replacing existing shard for model", "model", entry.ID, "prior_rows", len(existing))
-		if err := o.RemoveSharded(ctx, entry.ID); err != nil {
-			o.Log.Warn("prior shard teardown had errors (continuing with create)", "model", entry.ID, "err", err)
-		}
-	}
+	// IDEMPOTENT REPLACE: tear down the prior shard before (re)creating. Without
+	// this, re-running `shard create` (new --nodes, or after a worker was
+	// recreated with a fresh overlay IP) left the OLD coordinator / rpc-server
+	// rows in place — pointing at dead/old addresses — and the new create
+	// collided or silently no-op'd, so the model 502'd on a stale coordinator.
+	// A clean slate beats a stale one; best-effort teardown.
+	//
+	// What gets replaced depends on who asked. A bare create still replaces the
+	// whole model, because that is what it has always meant and a caller who
+	// names no gang is not thinking in gangs. A create that NAMES a gang
+	// replaces only that gang — the whole point of gangs is that the others
+	// keep serving through it.
+	o.replacePrior(ctx, entry.ID, gangID, replaceModel)
 	// Which placer chose the parts is worth a line: a control plane always
 	// names the nodes (its ledger decided); the leader's own picker is the
 	// standalone CLI's path, and two placers with two truths is what W8 warns of.
@@ -217,7 +231,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	// parallelism, NOT llama.cpp's rpc-server + coordinator. It skips all the
 	// GGUF machinery below. Selected by the catalog's sharding.engine.
 	if isVLLMRayBackend(entry.Sharding.Engine) {
-		return o.createShardedVLLMRay(ctx, entry, workers, par)
+		return o.createShardedVLLMRay(ctx, entry, gangID, workers, par)
 	}
 	// llama.cpp's RPC backend has NO tensor split — it only cuts layers. Silently
 	// ignoring --tp here would hand back a working-but-not-what-you-asked-for shard,
@@ -238,8 +252,21 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	// After a leader restart (fresh state) the previous convergence's
 	// rpc-servers / coordinator still run on the workers, and the create below
 	// collides with `process "s-…" already exists`. Sweep every registered
-	// worker for processes carrying this model's shard prefix and stop them.
-	o.stopOrphanShardProcs(ctx, entry)
+	// worker for processes carrying this shard prefix and stop them.
+	//
+	// Scoped to the gang being built, NOT the model: a sweep by model prefix
+	// would stop a sibling gang's parts, which are serving requests right now,
+	// on every node the two gangs share.
+	if replaceModel {
+		o.stopOrphanShardProcs(ctx, entry)
+	} else {
+		o.stopOrphanGangProcs(ctx, entry, gangID)
+	}
+
+	// One allocator for this whole create: ports it hands out are remembered,
+	// so two parts of this gang — or this gang and one already on the node —
+	// never get the same port.
+	ports := o.newPortAllocator(ctx)
 
 	rpcPortBase := entry.Sharding.RPCPortBase
 	if rpcPortBase == 0 {
@@ -282,8 +309,10 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	// itself on the one chosen host, so no rpc-servers at all.
 	if shardCount > 1 {
 		for i, w := range workers {
-			port := rpcPortBase + i
-			shardID := fmt.Sprintf("s-%s-rpc-%d", safeID(entry.ID), i)
+			// A port free on THIS node: two gangs of one model may share a
+			// worker, and rpcPortBase is a catalog scalar they both start from.
+			port := ports.take(w.ID, rpcPortBase+i)
+			shardID := gangShardID(entry.ID, gangID, fmt.Sprintf("rpc-%d", i))
 			wHost, _, sErr := net.SplitHostPort(w.Address)
 			if sErr != nil {
 				wHost = w.Address
@@ -326,7 +355,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 			endpoint := fmt.Sprintf("%s:%d", wHost, port)
 			rpcEndpoints = append(rpcEndpoints, endpoint)
 			rec := store.Shard{
-				ID: shardID, ModelID: entry.ID, Role: "rpc",
+				ID: shardID, ModelID: entry.ID, GangID: gangID, Role: "rpc",
 				NodeID: w.ID, Address: endpoint, ProcessID: shardID,
 				Status:    "ready",
 				CreatedAt: time.Now(), LastSeen: time.Now(),
@@ -361,15 +390,16 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	}
 
 	// Avoid port collisions with shards already running on the same host —
-	// two whole-model placements on one worker must not fight over :9001.
-	if free := o.pickCoordPort(ctx, coordHost.nodeID, coordPort); free != coordPort {
+	// two whole-model placements, or two gangs of one model, must not fight
+	// over :9001. The allocator also knows the rpc ports taken just above.
+	if free := ports.take(coordHost.nodeID, coordPort); free != coordPort {
 		o.Log.Info("coordinator port in use on host — bumped", "node", coordHost.nodeID, "want", coordPort, "using", free)
 		coordPort = free
 	}
 
 	// Launch the coordinator. Two branches: on the leader we use the local
 	// supervisor; on a worker we POST /v1/process/start exactly like rpc-server.
-	coordID := fmt.Sprintf("s-%s-coord", safeID(entry.ID))
+	coordID := gangShardID(entry.ID, gangID, "coord")
 	// llama-server exposes an UNAUTHENTICATED OpenAI-compatible API, so a
 	// worker-hosted coordinator binds the worker's advertised (mesh) address
 	// only — never every interface — mirroring the rpc-server binding above.
@@ -482,7 +512,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	}
 
 	coordRec := store.Shard{
-		ID: coordID, ModelID: entry.ID, Role: "coordinator",
+		ID: coordID, ModelID: entry.ID, GangID: gangID, Role: "coordinator",
 		NodeID: coordNodeID, Address: coordAddr,
 		ProcessID: coordID, Status: "ready",
 		CreatedAt: time.Now(), LastSeen: time.Now(),
@@ -631,25 +661,28 @@ func distEnv(host string) map[string]string {
 // — the R10.1 answer to a worker whose process changed (boot id): nothing
 // recorded on the previous process is running, so no process list is
 // consulted. Returns the models whose groups went.
-func (o *Orchestrator) RemoveShardsOn(ctx context.Context, nodeID string) (removed []string, err error) {
+func (o *Orchestrator) RemoveShardsOn(ctx context.Context, nodeID string) (removed []store.GangKey, err error) {
 	all, err := o.Store.Shards().List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	gone := map[string]bool{}
+	// Per GANG. A part lost on this node takes ITS gang down — the others are
+	// whole and serving, and tearing the model down would have stopped them
+	// for a fault they did not have.
+	gone := map[store.GangKey]bool{}
 	for _, s := range all {
 		if s.NodeID == nodeID {
-			gone[s.ModelID] = true
+			gone[store.GangKey{Model: s.ModelID, Gang: s.Gang()}] = true
 		}
 	}
-	for modelID := range gone {
-		if err := o.RemoveSharded(ctx, modelID); err != nil {
-			o.Log.Warn("stale shard removal failed", "model", modelID, "node", nodeID, "err", err)
+	for key := range gone {
+		if err := o.RemoveGang(ctx, key.Model, key.Gang); err != nil {
+			o.Log.Warn("stale gang removal failed", "model", key.Model, "gang", key.Gang, "node", nodeID, "err", err)
 			continue
 		}
-		removed = append(removed, modelID)
+		removed = append(removed, key)
 	}
-	sort.Strings(removed)
+	sortGangKeys(removed)
 	return removed, nil
 }
 
@@ -663,7 +696,7 @@ func (o *Orchestrator) RemoveShardsOn(ctx context.Context, nodeID string) (remov
 // the laptop cluster, 2026-09-14). Removing the group lets the manager (or
 // an operator) create it again on the parts that exist now. Best effort: a
 // worker that does not answer its process list is left alone until it does.
-func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (removed []string, err error) {
+func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (removed []store.GangKey, err error) {
 	all, err := o.Store.Shards().List(ctx)
 	if err != nil {
 		return nil, err
@@ -687,18 +720,21 @@ func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (remo
 			running[p.ID] = true
 		}
 	}
-	gone := map[string]bool{}
+	// Per GANG, for the same reason as RemoveShardsOn: a process that died on
+	// this worker belongs to one gang, and its siblings are still serving.
+	gone := map[store.GangKey]bool{}
 	for _, s := range mine {
 		if !running[s.ProcessID] {
-			gone[s.ModelID] = true
+			gone[store.GangKey{Model: s.ModelID, Gang: s.Gang()}] = true
 		}
 	}
-	for modelID := range gone {
-		if err := o.RemoveSharded(ctx, modelID); err != nil {
-			o.Log.Warn("stale shard removal failed", "model", modelID, "node", node.ID, "err", err)
+	for key := range gone {
+		if err := o.RemoveGang(ctx, key.Model, key.Gang); err != nil {
+			o.Log.Warn("stale gang removal failed", "model", key.Model, "gang", key.Gang, "node", node.ID, "err", err)
 			continue
 		}
-		removed = append(removed, modelID)
+		removed = append(removed, key)
 	}
+	sortGangKeys(removed)
 	return removed, nil
 }

@@ -20,7 +20,7 @@ func cmdShard(args []string) {
 	help := helpSpec{
 		name:    "shard",
 		summary: "orchestrate sharded models (one model split across N machines)",
-		usage:   "opod shard <ls | create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] | remove <model>>",
+		usage:   "opod shard <ls | create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID] | remove <model> [--gang ID]>",
 		examples: []string{
 			"opod shard create llama-3.3-70b-sharded            # no count: picked from the live workers' free memory",
 			"opod shard create llama-3.3-70b-sharded 2          # split across 2 auto-picked workers",
@@ -28,15 +28,18 @@ func cmdShard(args []string) {
 			"opod shard create llama-3.3-70b-sharded --nodes node-a  # N=1: whole model on one machine, no split",
 			"opod shard create mimo-7b-ray --nodes gpu-a,gpu-b --tp 2  # vLLM TENSOR-parallel across 2 machines",
 			"opod shard create mimo-7b-ray --nodes gpu-a,gpu-b --pp 2  # vLLM PIPELINE-parallel (the default)",
+			"opod shard create llama-3.3-70b-sharded --gang g1 --nodes gpu-c,gpu-d  # a SECOND gang: another copy that serves in parallel",
 			"opod shard ls",
 			"opod shard remove llama-3.3-70b-sharded            # prompts before tearing down",
 			"opod shard remove llama-3.3-70b-sharded --yes      # skip the prompt (for scripts)",
+			"opod shard remove llama-3.3-70b-sharded --gang g1  # one gang; the others keep serving",
 		},
 		notes: []string{
 			"Sharding uses llama.cpp's RPC backend. Every shard worker needs `rpc-server` on PATH.",
 			"The coordinator runs `llama-server` — by default on the highest-RAM worker (the leader only when there are no workers), so that machine needs `llama-server` on PATH. Override with OPOD_COORDINATOR_NODE=<node_id|local>.",
 			"The catalog entry must have `sharding.required: true` and a local GGUF path in `source.path`.",
 			"A shard count of 1 (or a single --nodes machine) runs the whole model on that host — no rpc-servers, just llama-server on the selected node (the coordinator override is ignored).",
+			"A model may have SEVERAL gangs — independent copies of the weights, each serving whole requests, which the leader load-balances across. `--gang <id>` names one: creating it leaves the model's other gangs serving, and removing it leaves the rest. Without --gang, create replaces every gang of the model and remove takes them all down.",
 			"With no count, --nodes, --tp or --pp, this command picks the shape itself: the smallest number of equal parts that fits the live workers' free memory (1 when the model fits one worker; never more parts than workers or than the model's layers) and prints what it picked and why. Any shape you name is sent untouched, and the admin API never picks — a body without a count means the catalog's default_shards.",
 		},
 	}
@@ -53,8 +56,9 @@ func cmdShard(args []string) {
 		rest, nodes := extractNodesFlag(args[1:])
 		rest, tp := extractIntFlag(rest, "tp")
 		rest, pp := extractIntFlag(rest, "pp")
+		rest, gang := extractStrFlag(rest, "gang")
 		if len(rest) < 1 {
-			die("usage: opod shard create <model> [shards] [--nodes a,b,c]")
+			die("usage: opod shard create <model> [shards] [--nodes a,b,c] [--gang ID]")
 		}
 		n := 0
 		if len(rest) >= 2 {
@@ -64,16 +68,21 @@ func cmdShard(args []string) {
 			}
 			n = parsed
 		}
-		shardCreate(rest[0], n, nodes, tp, pp)
+		shardCreate(rest[0], gang, n, nodes, tp, pp)
 	case "remove", "rm":
 		rest, yes := extractYesFlag(args[1:])
+		rest, gang := extractStrFlag(rest, "gang")
 		if len(rest) < 1 {
-			die("usage: opod shard remove <model> [--yes]")
+			die("usage: opod shard remove <model> [--gang ID] [--yes]")
 		}
-		if !yes && !confirm(fmt.Sprintf("Tear down sharded model %q? The coordinator + every rpc-server will be stopped. (y/N) ", rest[0])) {
+		what := fmt.Sprintf("Tear down sharded model %q? The coordinator + every rpc-server will be stopped.", rest[0])
+		if gang != "" {
+			what = fmt.Sprintf("Tear down gang %q of %q? Its coordinator + rpc-servers stop; the model's other gangs keep serving.", gang, rest[0])
+		}
+		if !yes && !confirm(what+" (y/N) ") {
 			die("aborted")
 		}
-		shardRemove(rest[0])
+		shardRemove(rest[0], gang)
 	default:
 		dieUnknownSubcommand("shard", args[0], []string{"ls", "create", "remove"})
 	}
@@ -91,10 +100,11 @@ func shardLs() {
 		fmt.Println("(no shards — create one with `opod shard create <model>`)")
 		return
 	}
-	fmt.Printf("%-32s %-14s %-12s %-22s %-10s\n", "MODEL", "ROLE", "NODE", "ADDRESS", "STATUS")
+	fmt.Printf("%-32s %-6s %-14s %-12s %-22s %-10s\n", "MODEL", "GANG", "ROLE", "NODE", "ADDRESS", "STATUS")
 	for _, s := range shards {
-		fmt.Printf("%-32s %-14s %-12s %-22s %-10s\n",
+		fmt.Printf("%-32s %-6s %-14s %-12s %-22s %-10s\n",
 			fmt.Sprint(s["ModelID"]),
+			gangOrDefault(s["GangID"]),
 			fmt.Sprint(s["Role"]),
 			fmt.Sprint(s["NodeID"]),
 			fmt.Sprint(s["Address"]),
@@ -196,7 +206,7 @@ func pickShardsFromStore(cfg *config.Config, model string) (scheduler.ShardPick,
 	return scheduler.PickShards(need, entry.Architecture.Layers, workers)
 }
 
-func shardCreate(model string, n int, nodes []string, tp, pp int) {
+func shardCreate(model, gang string, n int, nodes []string, tp, pp int) {
 	cfg := loadConfigOrExit()
 	n, nodes, why, err := shardShape(n, nodes, tp, pp, func() (scheduler.ShardPick, error) { return pickShardsFromStore(cfg, model) })
 	if err != nil {
@@ -210,7 +220,7 @@ func shardCreate(model string, n int, nodes []string, tp, pp int) {
 		}
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model_id": model, "shards": n, "nodes": nodes, "tp": tp, "pp": pp,
+		"model_id": model, "shards": n, "nodes": nodes, "tp": tp, "pp": pp, "gang": gang,
 	})
 	if tp > 1 {
 		note(os.Stdout, "tensor-parallel across machines (tp=%d): all-reduce twice per layer over the "+
@@ -230,12 +240,43 @@ func shardCreate(model string, n int, nodes []string, tp, pp int) {
 	ok(os.Stdout, "sharded model ready: %s", out["model_id"])
 }
 
-func shardRemove(model string) {
+func shardRemove(model, gang string) {
 	cfg := loadConfigOrExit()
-	note(os.Stdout, "removing sharded model %s…", model)
-	resp, err := adminCall(context.Background(), cfg, "DELETE", "/admin/v1/shards/"+url.PathEscape(model), nil)
+	path := "/admin/v1/shards/" + url.PathEscape(model)
+	what := model
+	if gang != "" {
+		path += "/" + url.PathEscape(gang)
+		what = model + " gang " + gang
+	}
+	note(os.Stdout, "removing %s…", what)
+	resp, err := adminCall(context.Background(), cfg, "DELETE", path, nil)
 	if err != nil {
 		die("%v: %s", err, string(resp))
 	}
-	ok(os.Stdout, "removed %s", model)
+	ok(os.Stdout, "removed %s", what)
+}
+
+// gangOrDefault prints a gang id, defaulting a row that carries none.
+func gangOrDefault(v any) string {
+	if s, _ := v.(string); s != "" {
+		return s
+	}
+	return "g0"
+}
+
+// extractStrFlag pulls an optional `--<name> V` (or `--<name>=V`) out of args.
+func extractStrFlag(args []string, name string) (rest []string, val string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--"+name && i+1 < len(args):
+			val = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--"+name+"="):
+			val = strings.TrimPrefix(a, "--"+name+"=")
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return rest, val
 }

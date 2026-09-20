@@ -141,32 +141,52 @@ func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
 	}
 }
 
-// pickCoordPort returns the first port >= want that no existing shard row on
-// the same host already occupies (other coordinators and rpc-servers alike).
-// Every catalog entry that omits coordinator_port shares the same default, so
-// without this a second model placed on the same host would fail to bind and
-// crashloop while its shard row reads "ready".
-func (o *Orchestrator) pickCoordPort(ctx context.Context, nodeID string, want int) int {
+// portAllocator hands out free TCP ports per node for the length of ONE create.
+//
+// Two things make a single "is this port taken?" lookup insufficient once a
+// model can have several gangs. First, a port is free or taken per NODE, and
+// two gangs of one model may share a node. Second — the part a per-call lookup
+// cannot get right — the ports chosen earlier in the same create are not in the
+// store yet, so each part would be told the same port was free. The allocator
+// reads the store once and then remembers what it has handed out.
+type portAllocator struct{ used map[string]map[int]bool }
+
+// newPortAllocator reads every shard row once and records the port each one
+// occupies, per node. A store it cannot read yields an empty allocator: the
+// caller then gets the port it asked for, which is the old behaviour and no
+// worse than refusing to place at all.
+func (o *Orchestrator) newPortAllocator(ctx context.Context) *portAllocator {
+	a := &portAllocator{used: map[string]map[int]bool{}}
 	existing, err := o.Store.Shards().List(ctx)
 	if err != nil {
-		o.Log.Warn("could not list shards for coordinator port allocation — using default", "err", err)
-		return want
+		o.Log.Warn("could not list shards for port allocation — ports may collide", "err", err)
+		return a
 	}
-	used := make(map[int]bool)
 	for _, s := range existing {
-		if s.NodeID != nodeID {
-			continue
-		}
 		if _, p, sErr := net.SplitHostPort(s.Address); sErr == nil {
 			if n, aErr := strconv.Atoi(p); aErr == nil {
-				used[n] = true
+				a.mark(s.NodeID, n)
 			}
 		}
 	}
+	return a
+}
+
+func (a *portAllocator) mark(nodeID string, port int) {
+	if a.used[nodeID] == nil {
+		a.used[nodeID] = map[int]bool{}
+	}
+	a.used[nodeID][port] = true
+}
+
+// take returns the first free port at or above want on this node, and records
+// it so the next caller in the same create cannot be given the same one.
+func (a *portAllocator) take(nodeID string, want int) int {
 	port := want
-	for used[port] {
+	for a.used[nodeID][port] {
 		port++
 	}
+	a.mark(nodeID, port)
 	return port
 }
 

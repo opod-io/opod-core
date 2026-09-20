@@ -241,7 +241,7 @@ func TestCreateShardedNeverPicksACount(t *testing.T) {
 		{n: 4, want: "need 4 ready workers, have 3"},
 		{n: 0, want: "need 5 ready workers, have 3"},
 	} {
-		err := o.CreateSharded(ctx, entry, c.n, nil, Parallelism{})
+		err := o.CreateSharded(ctx, entry, "", c.n, nil, Parallelism{})
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("count %d: got %v, want %q", c.n, err, c.want)
 		}

@@ -161,28 +161,42 @@ func WorkerMemoryFacts(ctx context.Context, st store.Store, cat []models.Entry, 
 
 	// Gangs: every part holds an equal share; a gang of one is the whole model
 	// on its coordinator's node.
-	parts, sharded := map[string][]string{}, map[string]bool{}
-	coordinator := map[string]string{}
+	//
+	// Accounted per GANG. Each gang is a full copy of the weights, so a model
+	// with two gangs really does occupy the model's size TWICE across the
+	// fleet. Summing a model's parts as one set divided one model's bytes over
+	// both gangs' nodes, so every node looked to hold half of what it does —
+	// and the picker sized the next gang against memory that was not free.
+	parts := map[store.GangKey][]string{}
+	coordinator := map[store.GangKey]string{}
 	for _, sh := range shards {
-		sharded[sh.ModelID] = true
+		k := store.GangKey{Model: sh.ModelID, Gang: sh.Gang()}
 		switch sh.Role {
 		case "coordinator":
-			coordinator[sh.ModelID] = sh.NodeID
+			coordinator[k] = sh.NodeID
 		default: // rpc | rank
-			parts[sh.ModelID] = append(parts[sh.ModelID], sh.NodeID)
+			parts[k] = append(parts[k], sh.NodeID)
 		}
 	}
+	gangs := map[store.GangKey]bool{}
+	sharded := map[string]bool{} // models that have at least one gang
+	for k := range parts {
+		gangs[k], sharded[k.Model] = true, true
+	}
+	for k := range coordinator {
+		gangs[k], sharded[k.Model] = true, true
+	}
 	resident := map[string]int64{}
-	for model := range sharded {
-		if model == replacing {
+	for k := range gangs {
+		if k.Model == replacing {
 			continue
 		}
-		holders := parts[model]
+		holders := parts[k]
 		if len(holders) == 0 {
-			holders = []string{coordinator[model]}
+			holders = []string{coordinator[k]}
 		}
 		for _, node := range holders {
-			resident[node] += need[model] / int64(len(holders))
+			resident[node] += need[k.Model] / int64(len(holders))
 		}
 	}
 

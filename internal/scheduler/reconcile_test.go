@@ -73,7 +73,7 @@ func TestReconcileNodeRemovesAGroupWhosePartDied(t *testing.T) {
 	seedGang(t, st, "n1")
 	o := &Orchestrator{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), HTTP: http.DefaultClient}
 	removed, err := o.ReconcileNode(ctx, node)
-	if err != nil || len(removed) != 1 || removed[0] != "m" {
+	if err != nil || len(removed) != 1 || removed[0].Model != "m" || removed[0].Gang != store.DefaultGangID {
 		t.Fatalf("removed %v err %v", removed, err)
 	}
 	rows, _ := st.Shards().GetByModel(ctx, "m")

@@ -21,9 +21,9 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// 0. Is this a SHARDED model? If yes, route to its coordinator (always
 	//    local today) via a llamacpp engine. The coordinator handles the
 	//    fan-out to rpc-server backends on workers internally.
-	if eng, ok := r.shardCoordinator(ctx, model); ok {
+	if eng, key, ok := r.shardCoordinator(ctx, model); ok {
 		metrics.ObserveRouterPick("shard", "ok")
-		return eng, "shard:" + model, nil
+		return eng, key, nil
 	}
 
 	// 1. Is the model on the local node?
@@ -217,41 +217,112 @@ func (r *Router) takingRequests(ctx context.Context, model string, ps []store.Pl
 	return out, nodes
 }
 
-// shardCoordinator returns the llamacpp engine pointing at the coordinator
-// of a sharded model, or (nil, false) if the model isn't sharded.
-func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.Engine, bool) {
+// shardCoordinator picks a gang of a sharded model and returns the engine
+// pointing at that gang's coordinator, plus the pseudo node id the caller
+// accounts the request under. (nil, "", false) if the model is not sharded or
+// no gang can serve.
+//
+// A model may have several gangs (build item 6). They are independent copies of
+// the same weights, each serving whole requests, so this is a PICK among them —
+// the same shape as picking among workers, and for the same reason: the least
+// loaded one should get the request.
+//
+// Every judgement here is made per gang and never over the union of a model's
+// parts. Over the union, one gang losing a part looked like the model losing a
+// part and took healthy siblings out with it, and one gang's ready coordinator
+// made a broken sibling look routable.
+func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.Engine, string, bool) {
 	shards, err := r.store.Shards().GetByModel(ctx, modelID)
 	if err != nil || len(shards) == 0 {
-		return nil, false
+		return nil, "", false
 	}
-	// One lost part takes the gang out: llama-server does not survive a
-	// dead rpc backend, so a coordinator on a live node with a stale
-	// sibling is not a route either (same rule as the leader's /readyz).
-	// Checked on every pick, before the cached engine: a gang that was
-	// routable on its first request can lose a worker, or have one drained,
-	// at any time after it.
-	if !r.shardGroupRoutable(ctx, shards) {
-		return nil, false
+	gangs := store.GroupGangs(shards)
+	ids := make([]string, 0, len(gangs))
+	for k := range gangs {
+		ids = append(ids, k.Gang)
 	}
-	cacheKey := "shard:" + modelID
-	r.mu.RLock()
-	eng, cached := r.remotes[cacheKey]
-	r.mu.RUnlock()
-	if cached {
-		return eng, true
+	sort.Strings(ids) // a stable order, so an unloaded fleet does not pick at random
+
+	type candidate struct {
+		gang  string
+		coord store.Shard
 	}
-	for _, s := range shards {
-		if s.Role == "coordinator" && s.Status == "ready" {
-			// Engine-neutral gangs (R4): the coordinator row says which driver
-			// fronts it (a vLLM Ray gang, or the llama.cpp RPC default).
-			eng := engines.MustNew(coordinatorEngine(s), "http://"+s.Address, "")
-			r.mu.Lock()
-			r.remotes[cacheKey] = eng
-			r.mu.Unlock()
-			return eng, true
+	var ready []candidate
+	for _, id := range ids {
+		parts := gangs[store.GangKey{Model: modelID, Gang: id}]
+		// One lost part takes ITS gang out: llama-server does not survive a
+		// dead rpc backend, so a coordinator on a live node with a stale
+		// sibling is not a route either (same rule as the leader's /readyz).
+		// Checked on every pick, before any cached engine: a gang that was
+		// routable on its first request can lose a worker, or have one
+		// drained, at any time after it.
+		if !r.shardGroupRoutable(ctx, parts) {
+			continue
+		}
+		for _, s := range parts {
+			if s.Role == "coordinator" && s.Status == "ready" {
+				ready = append(ready, candidate{gang: id, coord: s})
+				break
+			}
 		}
 	}
-	return nil, false
+	if len(ready) == 0 {
+		return nil, "", false
+	}
+
+	// Least loaded gang wins. A gang's load is what we have sent to it plus
+	// what its coordinator's node reports — the coordinator is where a
+	// request queues, so its node's signal is the gang's signal.
+	best := ready[0]
+	if len(ready) > 1 {
+		r.mu.RLock()
+		bestSat, bestScore := r.gangRank(best.gang, modelID, best.coord)
+		for _, c := range ready[1:] {
+			sat, score := r.gangRank(c.gang, modelID, c.coord)
+			if (bestSat && !sat) || (sat == bestSat && score < bestScore) {
+				best, bestSat, bestScore = c, sat, score
+			}
+		}
+		r.mu.RUnlock()
+	}
+
+	key := gangKey(modelID, best.gang)
+	r.mu.RLock()
+	eng, cached := r.remotes[key]
+	r.mu.RUnlock()
+	if cached {
+		return eng, key, true
+	}
+	// Engine-neutral gangs (R4): the coordinator row says which driver
+	// fronts it (a vLLM Ray gang, or the llama.cpp RPC default).
+	eng = engines.MustNew(coordinatorEngine(best.coord), "http://"+best.coord.Address, "")
+	r.mu.Lock()
+	r.remotes[key] = eng
+	r.mu.Unlock()
+	return eng, key, true
+}
+
+// gangKey is the pseudo node id a gang's requests are accounted under. It keeps
+// the "shard:" prefix, which is what exempts a gang from the per-node cooldown
+// machinery — a gang is not a worker and must not be benched like one.
+func gangKey(modelID, gangID string) string { return "shard:" + modelID + ":" + gangID }
+
+// gangRank scores one gang for the pick. Caller holds r.mu.
+func (r *Router) gangRank(gangID, modelID string, coord store.Shard) (saturated bool, score float64) {
+	score = float64(r.inflight[gangKey(modelID, gangID)])
+	if r.loadSource == nil || coord.NodeID == "" || coord.NodeID == "local" {
+		return false, score
+	}
+	sig, ok := r.loadSource(coord.NodeID)
+	if !ok {
+		return false, score
+	}
+	score += float64(sig.QueueDepth)
+	if r.kvWeight > 0 {
+		score += r.kvWeight * sig.KVUsedPct / 100
+	}
+	saturated = r.kvSaturationPct > 0 && sig.KVUsedPct >= float64(r.kvSaturationPct)
+	return saturated, score
 }
 
 // shardGroupRoutable reports whether every part of a gang sits on a worker
@@ -283,8 +354,16 @@ func (r *Router) shardGroupRoutable(ctx context.Context, shards []store.Shard) b
 // InvalidateModel drops any cached engine for the given model. Called by
 // the orchestrator when shards are torn down so the next request rebuilds.
 func (r *Router) InvalidateModel(modelID string) {
+	prefix := "shard:" + modelID + ":"
 	r.mu.Lock()
-	delete(r.remotes, "shard:"+modelID)
+	// Every gang of the model, not just one: a create or a teardown can add,
+	// move or remove any of them, and a cached engine for a gang that is gone
+	// would keep being dialled.
+	for key := range r.remotes {
+		if strings.HasPrefix(key, prefix) {
+			delete(r.remotes, key)
+		}
+	}
 	r.mu.Unlock()
 }
 

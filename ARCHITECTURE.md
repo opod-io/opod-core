@@ -285,7 +285,8 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 | `internal/scheduler/sharding.go` | Leader-side `Orchestrator.CreateSharded` / `RemoveSharded`. Picks workers, calls their process endpoints, launches the coordinator locally, persists shard rows. |
 | `internal/scheduler/llamacpp.go` | Single-node `EnsureLlamaServer` — `cmd_up` calls this when `engine.preferred=llamacpp` and nothing is listening on `llamacpp_endpoint`. Same `ProcessSpec` shape as the sharding coordinator, just without `--rpc`. |
 | `internal/engines/llamacpp/` | Driver that talks OpenAI-compat to a `llama-server` (single-node or RPC coordinator — driver doesn't care). Composes `engines/openaicompat` like vLLM/MLX. |
-| `internal/router/router.go` | `shardCoordinator()` short-circuits the normal placement lookup when a sharded model is requested — points the request at the coordinator's address. |
+| `internal/router/router.go` | `shardCoordinator()` short-circuits the normal placement lookup when a sharded model is requested — picks a gang and points the request at that gang's coordinator. |
+| `internal/scheduler/gangs.go` | Several gangs of one model: gang ids, per-gang part/process ids, per-gang teardown (`RemoveGang`) and the per-gang orphan sweep. |
 
 #### Flow: `opod shard create llama-3.3-70b-sharded 2`
 
@@ -316,6 +317,41 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
    Now the Router sees this placement; when a client requests the model,
    shardCoordinator() returns a llamacpp engine pointing at 127.0.0.1:9001.
 ```
+
+#### Several gangs of one model (feature `shard_groups`)
+
+A **gang** is one complete, serving copy of a sharded model: N rpc parts plus the one
+coordinator that fronts them. A model may have several, and they are independent — each
+answers whole requests by itself, so a second gang is **throughput**, not a bigger model.
+A part never spans gangs: a coordinator that dialled another gang's rpc part would split
+one request across two copies of the same layers.
+
+```
+  opod shard create llama-70b --nodes a,b            # gang g0 (the default)
+  opod shard create llama-70b --gang g1 --nodes c,d  # a second copy, g0 keeps serving
+  opod shard remove llama-70b --gang g1              # g0 is untouched
+
+  request → router picks the LEAST LOADED gang whose coordinator is ready
+              ├─ gang g0  coordinator on a  ── rpc part on b
+              └─ gang g1  coordinator on c  ── rpc part on d
+```
+
+Two rules make this safe, and both were wrong while a model could only have one gang:
+
+- **Every judgement is per gang, never over the union of a model's parts.** One gang losing
+  a part takes *that* gang out of rotation (`shardGroupRoutable` per gang); the others keep
+  serving. Asked over the union, one lost part hid a healthy copy, and one gang's ready
+  coordinator vouched for a broken sibling.
+- **Every id and port carries its gang.** Part ids are `s-<model>-<gang>-<role>`, so two
+  gangs cannot collide on the shards table's primary key; the orphan sweep matches one
+  gang's prefix, so making room for a new gang cannot stop a sibling that is serving; and
+  ports are allocated per node for the length of a create, because two gangs may share a
+  worker and `rpc_port_base` is one catalog scalar they both start from.
+
+A bare `shard create` still replaces every gang of the model — what it has always meant.
+`--gang <id>` is what opts into the second copy, and the control plane names one per gang
+it manages. `DELETE /admin/v1/shards/{model_id}/{gang_id}` removes one; the model keeps its
+placement while any gang is left.
 
 #### Picking the part count: a CLI default, never the API's
 
