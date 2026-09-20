@@ -12,12 +12,16 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, gangID string, workers []store.Node, par Parallelism) error {
+func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, gangID string, workers []store.Node, par Parallelism, ports *portAllocator) error {
 	if len(workers) < 1 {
 		return fmt.Errorf("vllm-ray sharding needs at least one worker")
 	}
 
-	const gcsPort = 6379
+	// Ray's ports are allocated per node, not fixed. A host can now carry parts
+	// of two gangs of one model (build item 6), and two Ray daemons on it would
+	// otherwise fight over the same GCS port and the same worker range — the
+	// second to start dies, and its gang never forms.
+	const gcsPortBase, rayWorkerPortBase, rayWorkerPortSpan = 6379, 10002, 100
 	// GPUs per part (build item 5): the control plane says how many devices
 	// each rank pod holds; Ray is told the same number, and the split below is
 	// checked against parts × devices.
@@ -32,6 +36,8 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	if headHost == "" {
 		return fmt.Errorf("ray head node %s has no advertised address", head.ID)
 	}
+	gcsPort := ports.take(head.ID, gcsPortBase)
+	headWorkerPort := ports.takeRange(head.ID, rayWorkerPortBase, rayWorkerPortSpan)
 
 	// 1. Ray HEAD on workers[0]. `--block` keeps the launching process alive and
 	//    tied to the cluster so the supervisor can monitor/restart it (a bare
@@ -53,7 +59,8 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 			"--port", strconv.Itoa(gcsPort),
 			"--ray-client-server-port", "10001",
 			"--dashboard-host", "0.0.0.0",
-			"--min-worker-port", "10002", "--max-worker-port", "10102",
+			"--min-worker-port", strconv.Itoa(headWorkerPort),
+			"--max-worker-port", strconv.Itoa(headWorkerPort+rayWorkerPortSpan),
 			"--block",
 		)},
 		Env:            distEnv(headHost),
@@ -79,21 +86,26 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	created = append(created, headRow)
 
 	// 2. Ray WORKERS join the head's GCS.
-	for _, w := range workers[1:] {
+	for rank, w := range workers[1:] {
 		wHost := hostOf(w.Address)
 		if wHost == "" {
 			o.Log.Warn("ray worker has no advertised address — skipping", "node", w.ID)
 			continue
 		}
+		// Keyed by RANK, never by node: a gang may put two parts on one host
+		// (build item 5, k parts per node), and a node-keyed id made the second
+		// part collide with the first on the same process id.
+		wPort := ports.takeRange(w.ID, rayWorkerPortBase, rayWorkerPortSpan)
 		wSpec := agent.ProcessSpec{
-			ID:      gangShardID(entry.ID, gangID, "ray-worker-"+safeID(w.ID)),
+			ID:      gangShardID(entry.ID, gangID, fmt.Sprintf("ray-worker-%d", rank+1)),
 			Command: "/bin/sh",
 			Args: []string{"-lc", rayCommand(
 				"start",
 				"--num-gpus", gpusPerRank, // see the head spec — autodetect cannot be trusted here
 				"--address", headHost+":"+strconv.Itoa(gcsPort),
 				"--node-ip-address", wHost,
-				"--min-worker-port", "10002", "--max-worker-port", "10102",
+				"--min-worker-port", strconv.Itoa(wPort),
+				"--max-worker-port", strconv.Itoa(wPort+rayWorkerPortSpan),
 				"--block",
 			)},
 			// The Ray daemon's env is inherited by the RayWorkerProc it spawns —

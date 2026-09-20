@@ -105,3 +105,51 @@ func TestGangKeysSeparateTwoCopiesOfOneModel(t *testing.T) {
 		}
 	}
 }
+
+// C4, k parts per node: a gang may put two parts on ONE host. The Ray worker's
+// process id used to be keyed by the NODE, so the second part on a host got the
+// same id as the first and its start collided with "process already exists".
+// llama.cpp never had this — its part ids are indexed by part.
+func TestRayWorkerIDsAreKeyedByRankNotNode(t *testing.T) {
+	// Two parts of one gang on the same host: rank 1 and rank 2.
+	a := gangShardID("m", "g0", "ray-worker-1")
+	b := gangShardID("m", "g0", "ray-worker-2")
+	if a == b {
+		t.Fatalf("two parts on one host must have distinct process ids, both are %q", a)
+	}
+	// And the two gangs of one model stay apart on the same host as well.
+	if gangShardID("m", "g0", "ray-worker-1") == gangShardID("m", "g1", "ray-worker-1") {
+		t.Fatal("two gangs' rank-1 workers must not share a process id")
+	}
+}
+
+// Ray takes a RANGE of ephemeral ports. Two Ray daemons on one host — two parts
+// of a gang, or parts of two gangs of one model — must never be handed
+// overlapping ranges: the second to start fails to bind and its gang never
+// forms. The ranges must also not overlap the GCS port taken on the same host.
+func TestPortAllocatorHandsOutDisjointRanges(t *testing.T) {
+	a := &portAllocator{used: map[string]map[int]bool{}}
+	first := a.takeRange("n1", 10002, 100)
+	second := a.takeRange("n1", 10002, 100)
+	if first == second {
+		t.Fatalf("two ranges on one node must differ, both start at %d", first)
+	}
+	if second <= first+100 {
+		t.Fatalf("ranges overlap: [%d,%d] and [%d,%d]", first, first+100, second, second+100)
+	}
+	// Every port of the first range is really held.
+	for p := first; p <= first+100; p++ {
+		if !a.used["n1"][p] {
+			t.Fatalf("port %d of the reserved range is not marked", p)
+		}
+	}
+	// A single take cannot land inside a reserved range.
+	single := a.take("n1", 10002)
+	if single >= first && single <= first+100 {
+		t.Fatalf("single take %d landed inside the reserved range [%d,%d]", single, first, first+100)
+	}
+	// Another node has its own port space.
+	if other := a.takeRange("n2", 10002, 100); other != 10002 {
+		t.Fatalf("another node's range is its own: got %d", other)
+	}
+}

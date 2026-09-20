@@ -190,6 +190,30 @@ func (a *portAllocator) take(nodeID string, want int) int {
 	return port
 }
 
+// takeRange reserves a contiguous block of span+1 ports on this node and
+// returns its first port. Ray wants a RANGE for the ephemeral ports its
+// workers open, and two Ray daemons on one host must not be handed overlapping
+// ones — the second to start fails to bind and its gang never forms.
+func (a *portAllocator) takeRange(nodeID string, want, span int) int {
+	base := want
+	for {
+		free := true
+		for p := base; p <= base+span; p++ {
+			if a.used[nodeID][p] {
+				free = false
+				base = p + 1 // skip past the taken port, never retry inside the block
+				break
+			}
+		}
+		if free {
+			for p := base; p <= base+span; p++ {
+				a.mark(nodeID, p)
+			}
+			return base
+		}
+	}
+}
+
 // coordinatorChoice describes who'll run the llama-server coordinator.
 type coordinatorChoice struct {
 	nodeID string      // "local" for leader, else node row id
