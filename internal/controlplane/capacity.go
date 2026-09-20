@@ -141,7 +141,21 @@ func (s *Server) modelServable(ctx context.Context, model string) bool {
 	return false
 }
 
-// gangReason: the model is sharded and its gang cannot serve.
+// gangReason: the model is sharded and no gang of it can serve.
+//
+// Judged PER GANG (store.GroupGangs), never over the model's parts as one set.
+// Counting flat across gangs reports a number no gang has — a two-part gang was
+// seen answering "3 part(s) stopped heartbeating", counting a sibling gang's
+// parts and the coordinator row — and it hides a healthy gang behind a broken
+// one. This is the same rule C2 applied to liveness, the shard picker and both
+// node-loss teardown paths.
+//
+// A gang with NO live part at all is not degraded, it is ABSENT: that is what a
+// gang parked at floor 0 looks like from here, and what the moment before a
+// wake looks like. Telling that caller "waiting for it to return or be
+// replaced" sends them looking for a human to fix a gang that is coming back by
+// itself, so absence answers with the waking text instead. Only a gang that
+// holds SOME of its parts is degraded, which is the case that wording is for.
 func (s *Server) gangReason(ctx context.Context, model string) string {
 	shards, err := s.store.Shards().GetByModel(ctx, model)
 	if err != nil || len(shards) == 0 {
@@ -156,24 +170,40 @@ func (s *Server) gangReason(ctx context.Context, model string) string {
 	for _, n := range nodes {
 		state[n.ID] = n.LiveState(maxAge, now)
 	}
-	var h modelHolders
-	for _, sh := range shards {
-		switch state[sh.NodeID] {
-		case "draining":
-			h.draining++
-		case NodeStateLost, "":
-			if sh.NodeID != "" && sh.NodeID != "local" {
-				h.lost++
+	// The gang closest to serving is the one whose story the caller needs: the
+	// others are not why this request cannot be taken.
+	var best modelHolders
+	var bestLive, gangs int
+	for _, parts := range store.GroupGangs(shards) {
+		var h modelHolders
+		for _, sh := range parts {
+			switch state[sh.NodeID] {
+			case "draining":
+				h.draining++
+			case NodeStateLost, "":
+				if sh.NodeID != "" && sh.NodeID != "local" {
+					h.lost++
+				}
+			case store.NodeStateEngineSilent:
+				h.silent++
+			default:
+				h.serving++
 			}
-		case store.NodeStateEngineSilent:
-			h.silent++
+		}
+		gangs++
+		if live := h.serving; gangs == 1 || live > bestLive {
+			best, bestLive = h, live
 		}
 	}
-	if h.draining+h.lost+h.silent == 0 {
+	if best.draining+best.lost+best.silent == 0 {
 		return fmt.Sprintf("the sharded model %s is not ready to serve yet; retry shortly", model)
 	}
+	if bestLive == 0 {
+		// No part of any gang is up: parked at floor 0, or on its way back.
+		return wakingMessage
+	}
 	return fmt.Sprintf("the sharded model %s cannot take new requests: a gang serves as one unit and %s; retry shortly",
-		model, strings.Join(h.causes("part"), ", "))
+		model, strings.Join(best.causes("part"), ", "))
 }
 
 // reason is the 503 text for a model that workers hold and none can serve.

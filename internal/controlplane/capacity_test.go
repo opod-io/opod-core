@@ -2,10 +2,15 @@ package controlplane
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/internal/store"
 )
 
 const soloChatBody = `{"model":"solo","messages":[{"role":"user","content":"hi"}]}`
@@ -87,5 +92,75 @@ func TestNothingHeldIsStillWaking(t *testing.T) {
 	resp, out := chat(t, ts, drainChatBody, "")
 	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" || !strings.Contains(out, "no workers are awake for this model — waking (scale-up in progress or floor is 0); retry shortly") {
 		t.Fatalf("scale from zero: %d %s", resp.StatusCode, out)
+	}
+}
+
+// A gang parked at floor 0 is ABSENT, not broken, and a gang's part count is
+// its own. Both halves were wrong on the design-partner cell (2026-09-20): a
+// two-part gang scaled to zero by the autoscaler answered "3 part(s) stopped
+// heartbeating — waiting for it to return or be replaced", which counts a
+// sibling gang's parts and sends the caller looking for a human to fix a gang
+// that is coming back by itself.
+func TestParkedGangIsWakingNotBroken(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Router.HeartbeatMaxAgeSeconds = 30
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(cfg, st, &deadEngine{&stubLeaderEngine{}}, nil, log, nil)
+
+	live, gone := time.Now(), time.Now().Add(-time.Hour)
+	node := func(id string, beat time.Time) {
+		if err := st.Nodes().Upsert(ctx, store.Node{ID: id, Hostname: id, State: "ready", LastHeartbeat: beat}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	part := func(id, gang, role, node string) {
+		if err := st.Shards().Create(ctx, store.Shard{ID: id, ModelID: "sharded", GangID: gang, Role: role,
+			NodeID: node, Address: node + ":50052", Status: "ready", CreatedAt: live, LastSeen: live}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One gang of two parts, both gone: the whole gang is parked.
+	node("n1", gone)
+	node("n2", gone)
+	part("c0", "g0", "coordinator", "n1")
+	part("p0", "g0", "rpc", "n2")
+
+	got := srv.gangReason(ctx, "sharded")
+	if got != wakingMessage {
+		t.Errorf("a parked gang must read as waking, got %q", got)
+	}
+	if strings.Contains(got, "stopped heartbeating") || strings.Contains(got, "be replaced") {
+		t.Error("a parked gang must not be described as one waiting for a human")
+	}
+
+	// A SECOND gang, also fully down, must not inflate the first's count —
+	// and must not turn an absence into a degradation.
+	node("n3", gone)
+	node("n4", gone)
+	part("c1", "g1", "coordinator", "n3")
+	part("p1", "g1", "rpc", "n4")
+	if got := srv.gangReason(ctx, "sharded"); got != wakingMessage {
+		t.Errorf("two parked gangs are still an absence, got %q", got)
+	}
+
+	// Now g1 holds its coordinator and has lost only its rpc part. THAT is a
+	// degraded gang, and the count is g1's own — never the four rows stored.
+	node("n3", live)
+	got = srv.gangReason(ctx, "sharded")
+	if !strings.Contains(got, "1 part(s) stopped heartbeating") {
+		t.Errorf("a degraded gang reports its OWN lost parts, got %q", got)
+	}
+	for _, wrong := range []string{"2 part(s)", "3 part(s)", "4 part(s)"} {
+		if strings.Contains(got, wrong) {
+			t.Errorf("part count crossed a gang boundary: %q contains %q", got, wrong)
+		}
 	}
 }

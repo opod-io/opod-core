@@ -60,10 +60,36 @@ func (l *loadStats) sum(ring *[60]int64, stamps *[60]int64, now time.Time) int64
 	return total
 }
 
+// ProbeHeader marks a request as a health probe rather than demand: served
+// exactly like any other, counted like none of them.
+//
+// /loadz exists to answer "how busy is this leader?", and an autoscaler acts on
+// the answer. A caller that asks the endpoint to prove it can serve — the
+// control plane's first-token proof, a synthetic canary, an uptime check — is
+// not a customer waiting for capacity, and counting it as one closes a loop the
+// product cannot afford: on the design-partner cell (2026-09-20) a gang parked
+// at floor 0 was woken 40 seconds later by the proof probe that the parking
+// itself had triggered, reloading a model on two GPUs for nobody. A probe also
+// leaves the idle clock alone, or nothing with a floor of 0 ever gets to idle.
+//
+// The leader cannot infer this: a probe is a well-formed request from a trusted
+// caller. So the caller says so, and only a caller that already holds a key can
+// (the header is read after auth).
+const ProbeHeader = "X-Opod-Probe"
+
+// isProbe reports whether r asked not to be counted as demand.
+func isProbe(r *http.Request) bool {
+	switch r.Header.Get(ProbeHeader) {
+	case "", "0", "false":
+		return false
+	}
+	return true
+}
+
 // trackLoad wraps the /v1 gateway routes.
 func (s *Server) trackLoad(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodPost || isProbe(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -152,20 +178,32 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 //
 // `workers` is capacity a reader can count on: workers that can take a NEW
 // request for the plan's model right now — the node takes new work
-// (store.Node.TakesNewWork: not drained, heartbeating) and holds a routable
-// placement of it (any model when no plan names one). A draining worker, a
-// lost one, one whose engine sleeps or is still loading is not counted, and
-// its pressure is not reported: `reporting` is the counted workers with a
-// fresh sample.
+// (store.Node.TakesNewWork: not drained, heartbeating) and either holds a
+// routable placement of it (any model when no plan names one) or a part of a
+// gang of it that can serve. A draining worker, a lost one, one whose engine
+// sleeps or is still loading is not counted, and its pressure is not reported:
+// `reporting` is the counted workers with a fresh sample.
+//
+// The gang half is not a refinement: a SHARDED endpoint has no placement rows
+// at all, so without it every number here stayed 0 while the endpoint answered
+// requests, and an autoscaler reading kv_used_pct or queue_depth for a gang was
+// reading a constant (found on the design-partner cell, 2026-09-20).
 func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, now time.Time) {
 	nodes, err := s.store.Nodes().List(ctx)
 	if err != nil {
 		return
 	}
+	gangNodes := map[string]bool{}
+	if shards, serr := s.store.Shards().List(ctx); serr == nil && len(shards) > 0 {
+		gangNodes = servableGangNodes(shards, s.routableNodes(ctx), out.PlanModel)
+	}
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum float64
 	for _, n := range nodes {
-		if n.ID == "local" || !n.TakesNewWork(maxAge, now) || !s.servesNow(ctx, n.ID, out.PlanModel) {
+		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
+			continue
+		}
+		if !gangNodes[n.ID] && !s.servesNow(ctx, n.ID, out.PlanModel) {
 			continue
 		}
 		out.Workers++
