@@ -9,7 +9,10 @@ package agent
 //	vLLM:      tp (tensor-parallel-size; auto = largest power of 2 ≤ GPUs),
 //	           gpu_memory_utilization (0.05–0.95; overrides the budget-derived value),
 //	           max_model_len, max_num_seqs, kv_cache_dtype, extra (raw args)
-//	llama.cpp: ctx (-c), ngl (--n-gpu-layers), parallel (-np), kv_cache_type (-ctk/-ctv), extra (raw args)
+//	llama.cpp: ctx (-c), ngl (--n-gpu-layers), parallel (-np), kv_cache_type (-ctk/-ctv),
+//	           tensor_split (--tensor-split: uneven shares per device), extra (raw args)
+//	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
+//	           the only way either engine holds a model across cards of different sizes)
 
 import (
 	"encoding/json"
@@ -96,6 +99,14 @@ func (f EngineFlags) vllmShellOverrides() (overrides string, extraArgs string) {
 			sh = append(sh, fmt.Sprintf("U=%.2f;", u))
 		}
 	}
+	if v, ok := f.get("pp_layer_partition"); ok && isSplitList(v) {
+		// vLLM reads the per-stage layer counts from the environment, not from
+		// a flag (VLLM_PP_LAYER_PARTITION="8,12,12,8"). Pipeline stages are the
+		// only way it can hold a model across cards of different sizes: tensor
+		// parallel gives every rank the same share, so the smallest card bounds
+		// the rest.
+		sh = append(sh, fmt.Sprintf("export VLLM_PP_LAYER_PARTITION=%s;", v))
+	}
 	var args []string
 	if n, ok := f.posInt("max_model_len", 512, 1<<22); ok {
 		args = append(args, "--max-model-len", strconv.Itoa(n))
@@ -127,10 +138,39 @@ func (f EngineFlags) llamaArgs() []string {
 	if v, ok := f.get("kv_cache_type"); ok && isToken(v) {
 		args = append(args, "-ctk", v, "-ctv", v)
 	}
+	// tensor_split: how much of the model each device holds, as llama.cpp's own
+	// proportions ("12,8" = three fifths on the first card, two on the second).
+	// Without it the split is equal, which wastes every card that is larger
+	// than the smallest — the reason a 16 GB and an 8 GB card cannot hold a
+	// model that would fit across them.
+	if v, ok := f.get("tensor_split"); ok && isSplitList(v) {
+		args = append(args, "--tensor-split", v)
+	}
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
 	}
 	return args
+}
+
+// isSplitList accepts a comma-separated list of non-negative numbers and
+// nothing else — "8,12,12,8", "12,8", "0.6,0.4". It is stricter than isToken
+// on purpose: these values go into a shell export and a CLI argument, and a
+// split is never anything but numbers and commas.
+func isSplitList(s string) bool {
+	if s == "" || len(s) > 256 {
+		return false
+	}
+	digits := false
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			digits = true
+		case r == ',' || r == '.':
+		default:
+			return false
+		}
+	}
+	return digits
 }
 
 // isToken accepts a bare CLI token (no shell metacharacters).
@@ -194,6 +234,12 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 		if u, err := strconv.ParseFloat(v, 64); err == nil && u >= 0.05 && u <= 0.95 {
 			sh = append(sh, fmt.Sprintf("U=%.2f;", u))
 		}
+	}
+	if v, ok := f.get("pp_layer_partition"); ok && isSplitList(v) {
+		// SGLANG_PP_LAYER_PARTITION, the same idea as vLLM's: upstream advises
+		// putting the larger share on the LATER stages, which reduces the time
+		// a stage spends waiting for the one before it.
+		sh = append(sh, fmt.Sprintf("export SGLANG_PP_LAYER_PARTITION=%s;", v))
 	}
 	var args []string
 	if n, ok := f.posInt("max_model_len", 512, 1<<22); ok {
