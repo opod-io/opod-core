@@ -26,11 +26,26 @@ type Config struct {
 	// file the leader's listener speaks TLS — the north side of an endpoint
 	// (ADR-005: TLS on the north side; a control plane mints one per
 	// endpoint). Empty = plain http, as before.
-	TLSCert    string `yaml:"tls_cert"`
-	TLSKey     string `yaml:"tls_key"`
-	DataDir    string `yaml:"data_dir"`
-	LogLevel   string `yaml:"log_level"`
-	CatalogDir string `yaml:"catalog_dir"`
+	TLSCert string `yaml:"tls_cert"`
+	TLSKey  string `yaml:"tls_key"`
+	// ProbeListen (OPOD_PROBE_LISTEN, e.g. ":8081") serves ONLY the
+	// unauthenticated probe endpoints — /healthz, /readyz, /loadz, /metrics —
+	// on a second listener that is always plain HTTP, whatever TLS the main
+	// one speaks.
+	//
+	// It exists because those endpoints are read by machines that are not
+	// clients of this leader: a Kubernetes probe, a scrape, an autoscaler
+	// deciding how many workers there should be. When the main listener
+	// serves a certificate minted per endpoint, every one of those readers
+	// has to be handed the CA — or, in practice, told to skip verification,
+	// which is how a scaling decision ends up resting on a disabled check.
+	// A separate plain port keeps the certificate meaningful on the side that
+	// carries prompts and keys, and asks nothing of the side that carries a
+	// number. Empty = off, and the probes stay on the main listener.
+	ProbeListen string `yaml:"probe_listen"`
+	DataDir     string `yaml:"data_dir"`
+	LogLevel    string `yaml:"log_level"`
+	CatalogDir  string `yaml:"catalog_dir"`
 	// MaxBodyBytes caps the request body size on the /v1/* API surface.
 	// 0 (default) uses the server's built-in 32 MiB ceiling. Env
 	// override: OPOD_MAX_BODY_BYTES.
@@ -341,6 +356,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPOD_TLS_KEY"); v != "" {
 		c.TLSKey = v
+	}
+	if v := os.Getenv("OPOD_PROBE_LISTEN"); v != "" {
+		c.ProbeListen = v
 	}
 	if v := os.Getenv("OPOD_DATA_DIR"); v != "" {
 		c.DataDir = v
