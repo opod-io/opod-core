@@ -243,16 +243,30 @@ func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.
 		o.Log.Warn("OPOD_COORDINATOR_NODE not in shard worker set — falling back to default", "want", override)
 	}
 
-	// Default policy: pick the highest-RAM worker; only fall back to the
-	// leader when there are no workers (single-machine sharding test).
+	// Default policy: pick the worker with the most of the memory that
+	// actually constrains a coordinator — its CARD, falling back to host RAM
+	// for a worker that reports no card (workerMemoryBytes). Only fall back to
+	// the leader when there are no workers (single-machine sharding test).
 	// Operators who want the leader can set OPOD_COORDINATOR_NODE=local.
+	//
+	// This used to compare host RAM, which is the wrong quantity and was
+	// silently wrong wherever hosts are alike and cards are not: on the
+	// design-partner cell (2026-09-20) two hosts both reported 31 GB of RAM
+	// behind a 46 GB card and an 8 GB card, so the tie fell to whichever came
+	// first and put the coordinator — which holds the KV cache — on the small
+	// card. llama.cpp then died on startup, "failed to allocate RPC0 buffer of
+	// size 4294967296 ... failed to allocate buffer for kv cache", and the gang
+	// never formed. A caller that names a head (the control plane always does,
+	// feature shard_head) never saw this; `opod shard create` without --head on
+	// a mixed pair always could.
 	if len(workers) == 0 {
 		return coordinatorChoice{nodeID: "local", local: true}
 	}
 	best := workers[0]
+	bestMem := workerMemoryBytes(best)
 	for _, w := range workers[1:] {
-		if w.RAMGB > best.RAMGB {
-			best = w
+		if m := workerMemoryBytes(w); m > bestMem {
+			best, bestMem = w, m
 		}
 	}
 	return coordinatorChoice{nodeID: best.ID, node: &best}
