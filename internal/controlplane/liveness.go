@@ -134,6 +134,44 @@ func servableShardModels(shards []store.Shard, alive map[string]bool) map[string
 	return out
 }
 
+// servableGangNodes: the nodes holding a part of a gang of model that can serve
+// right now — the same per-gang judgement as servableShardModels, kept as the
+// node set instead of the answer.
+//
+// A gang's parts are capacity, and they are the ONLY capacity a sharded
+// endpoint has: they hold the cards and they do the work. They hold no
+// placement row, though, because the router reaches them through the gang, so
+// anything that counts workers by their placements counts none of them (the
+// defect /loadz had: a serving two-part gang reported workers 0, and with it
+// kv_used_pct, queue_depth and tokens_per_s all 0 — three of the five signals
+// an autoscaler is given for that endpoint).
+func servableGangNodes(shards []store.Shard, alive map[string]bool, model string) map[string]bool {
+	out := map[string]bool{}
+	for key, parts := range store.GroupGangs(shards) {
+		if model != "" && key.Model != model {
+			continue
+		}
+		coordinatorReady, partLost := false, false
+		for _, sh := range parts {
+			if !shardAlive(sh, alive) {
+				partLost = true
+			}
+			if sh.Role == "coordinator" && sh.Status == "ready" {
+				coordinatorReady = true
+			}
+		}
+		if !coordinatorReady || partLost {
+			continue
+		}
+		for _, sh := range parts {
+			if sh.NodeID != "" && sh.NodeID != "local" {
+				out[sh.NodeID] = true
+			}
+		}
+	}
+	return out
+}
+
 // hasServableShardGroup reports whether any sharded model can serve now. A
 // gang with a part on a draining node is out with it — the router does not
 // send it new requests (router.shardGroupRoutable), so it is not capacity.
