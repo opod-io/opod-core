@@ -10,6 +10,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/opod-io/opod-sdk/nodeapi"
+
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
@@ -50,6 +52,12 @@ type HeartbeatRequest struct {
 	// (Ollama). nil = the worker did not say, and everything loaded is taken
 	// as resident; an empty list = nothing is in memory.
 	ResidentModels *[]string `json:"resident_models"`
+	// Engine (feature "engine_liveness") is what the worker's engine PROCESS is
+	// doing, as the worker sees it — the only party that can say. A pod can be
+	// Running while the engine inside it crash-loops, and to everything
+	// counting workers that pod is capacity. nil = an older worker, or one
+	// that launched no engine of ours: no statement, never "healthy".
+	Engine *nodeapi.EngineState `json:"engine"`
 }
 
 // Caller is who is calling: admin keys pass every binding; a node key owns
@@ -199,6 +207,9 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	}
 	if n.BoundKeyID != "" && !caller.Admin && caller.KeyID != n.BoundKeyID {
 		return ErrNodeBoundToOtherKey
+	}
+	if req.Engine != nil {
+		s.nodeEngine.Store(req.ID, nodeEngineSample{EngineState: *req.Engine, at: time.Now()})
 	}
 	if req.Load != nil {
 		s.nodeLoad.Store(req.ID, nodeLoadSample{EngineLoad: *req.Load, at: time.Now()})

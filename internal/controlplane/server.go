@@ -48,6 +48,11 @@ type Server struct {
 	openaiH   *api.Handler
 	load      loadStats
 	nodeLoad  sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
+	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
+	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
+	// crash-loops still heartbeats and still holds its card; this is where that
+	// is recorded, so /loadz can say how much of the reported capacity is real.
+	nodeEngine sync.Map
 	// reconcileNodes marks nodes that registered again (a new incarnation of
 	// a known id); their shard rows are checked against the worker's process
 	// list on the next heartbeat (nodeservice.go).

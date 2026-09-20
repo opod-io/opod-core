@@ -36,6 +36,7 @@ hold the leader's model:
 | `rpm_1m` | requests per minute | keeps one worker alive under a trickle |
 | `workers` / `reporting` | workers known / whose sample is under 30 s old | `reporting < workers` means the numbers are partial; prefer no decision over a wrong one |
 | `tokens_per_s`, `prefix_hit_pct` | throughput and prefix-cache hits | reporting, not scaling |
+| `engines_unhealthy` | how many of `workers` are holding a card while their engine is **not** serving — crash-looping or stopped | **subtract it before you believe `workers`.** Those workers heartbeat like any other; a reader that counts them as capacity scales out too late, or not at all. `engine_issue` carries the worst one's own last word |
 
 CPU and memory are **not** useful signals for a GPU worker and the leader does not publish them.
 
@@ -61,5 +62,5 @@ and auth files whatever happens to whatever is scaling it.
 | | What | Why |
 |---|---|---|
 | **Probe port** | `/loadz` on a plain-HTTP probe port, or a documented CA, so a scraper does not have to skip verification when the leader serves TLS with a per-endpoint self-signed certificate | a scaling decision should not depend on disabled certificate checks |
-| **Engine liveness in the heartbeat** | a worker whose engine is crash-looping still reports as a worker | a reader counting workers overstates capacity and scales out too late |
+
 | **Uneven split flags from the plan** | a pipeline layer partition, and a llama.cpp tensor split, settable per worker | lets one model use cards of different sizes instead of being limited by the smallest |
