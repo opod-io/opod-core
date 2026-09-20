@@ -36,6 +36,9 @@ system. Everything in that direction lives in a separate product and is not part
 | **Auto-rebalancing sharding** | `N` is the operator's today; pick it from worker count, model size and free VRAM | M |
 | **Mesh backends** | the interface is defined and the LAN backend ships; a `tsnet` (and later NetBird) backend lets workers join across networks | M |
 | **Live model migration** | move a loaded model between workers without a cold start | M |
+| **Probe port for `/loadz`** | serve the scaling signals on a plain-HTTP probe port (or document the CA) so a scraper need not skip certificate verification when the leader serves TLS — see `docs/SCALING-SIGNALS.md` | S |
+| **Engine liveness in the heartbeat** | a worker whose engine is crash-looping still reports as a worker, so anything counting workers overstates capacity | S |
+| **Uneven split flags** | a pipeline layer partition, and a llama.cpp tensor split, settable per worker from the plan — lets one model use cards of different sizes instead of being bounded by the smallest | M |
 
 ## Later
 
