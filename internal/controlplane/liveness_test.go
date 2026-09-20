@@ -190,3 +190,45 @@ func TestReadyzFollowsHeartbeats(t *testing.T) {
 		t.Fatalf("gang with one lost rpc part readyz = %d, want 503", code)
 	}
 }
+
+// A model with two gangs is servable while EITHER is whole. Asked over the
+// model's parts as one set, a single lost part hid a gang that was serving at
+// that moment — and a ready coordinator in one gang vouched for a broken one.
+func TestServableShardModelsJudgesEachGang(t *testing.T) {
+	part := func(model, gang, role, node, status string) store.Shard {
+		return store.Shard{ModelID: model, GangID: gang, Role: role, NodeID: node, Status: status}
+	}
+	alive := map[string]bool{"n1": true, "n2": true, "n3": true, "n4": false}
+
+	// g0 is whole; g1 has a part on a dead node.
+	got := servableShardModels([]store.Shard{
+		part("m", "g0", "coordinator", "n1", "ready"),
+		part("m", "g0", "rpc", "n2", "ready"),
+		part("m", "g1", "coordinator", "n3", "ready"),
+		part("m", "g1", "rpc", "n4", "ready"),
+	}, alive)
+	if !got["m"] {
+		t.Error("one whole gang makes the model servable, whatever happened to the other")
+	}
+
+	// Now BOTH gangs have lost a part: nothing can serve.
+	got = servableShardModels([]store.Shard{
+		part("m", "g0", "coordinator", "n1", "ready"),
+		part("m", "g0", "rpc", "n4", "ready"),
+		part("m", "g1", "coordinator", "n3", "ready"),
+		part("m", "g1", "rpc", "n4", "ready"),
+	}, alive)
+	if got["m"] {
+		t.Error("no gang is whole, so the model is not servable")
+	}
+
+	// A ready coordinator in g0 must not vouch for g1, whose coordinator is
+	// not ready and whose parts are fine.
+	got = servableShardModels([]store.Shard{
+		part("m", "g0", "coordinator", "n1", "starting"),
+		part("m", "g0", "rpc", "n2", "ready"),
+	}, alive)
+	if got["m"] {
+		t.Error("a gang with no READY coordinator cannot serve")
+	}
+}

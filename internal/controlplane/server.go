@@ -420,6 +420,7 @@ func (s *Server) routes() http.Handler {
 			r.Get("/shards/processes", s.listShardProcesses)
 			r.Post("/shards/create", s.createShards)
 			r.Delete("/shards/{model_id}", s.deleteShards)
+			r.Delete("/shards/{model_id}/{gang_id}", s.deleteGang)
 
 			// Config (read-only sanitized view)
 			// stable manager surface (contract.go): discovery of what this leader speaks

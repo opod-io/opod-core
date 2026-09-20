@@ -107,6 +107,8 @@ var contractFeatureFloor = []string{
 	"model_move",      // POST /admin/v1/models/{id}/move
 	// loaded_models null = no report: no placement row changes
 	"heartbeat_no_report",
+	// several gangs of one model, and DELETE of one of them
+	"shard_groups",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

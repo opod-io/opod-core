@@ -237,7 +237,7 @@ func modelAddEntry(entry *models.Entry, force bool) {
 	// Sharded model? Hand off to the shard orchestrator on the leader.
 	if entry.Sharding.Required {
 		note(os.Stdout, "%s requires sharding — delegating to `opod shard create`", entry.ID)
-		shardCreate(entry.ID, 0, nil, 0, 0)
+		shardCreate(entry.ID, "", 0, nil, 0, 0)
 		return
 	}
 

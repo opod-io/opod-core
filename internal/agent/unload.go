@@ -254,7 +254,30 @@ func writeUnload(w http.ResponseWriter, code int, body unloadModelResponse) {
 // on a worker for a sharded placement of the model ("s-<id>-rpc-0",
 // "s-<id>-coord", …). The leader builds the ids and the worker recognises
 // them, so the rule lives in one place.
+//
+// It matches EVERY gang of the model. A caller that means one gang wants
+// GangProcessPrefix — stopping by this prefix while another gang of the same
+// model runs on the node would take that gang's parts down with it.
 func ShardProcessPrefix(modelID string) string { return "s-" + SafeProcessID(modelID) + "-" }
+
+// GangProcessPrefix is the id prefix of one gang's helper processes:
+// "s-<model>-<gang>-rpc-0", "s-<model>-<gang>-coord", … Several gangs of one
+// model may share a worker, so every id a leader mints carries its gang.
+func GangProcessPrefix(modelID, gangID string) string {
+	return ShardProcessPrefix(modelID) + SafeProcessID(gangID) + "-"
+}
+
+// IsGangProcess reports whether procID is a part of this model's gang. Every
+// id a leader mints carries its gang, so this is a plain prefix test — and
+// validGangID keeps gang ids free of '-' so one gang's prefix can never be a
+// prefix of another's.
+func IsGangProcess(procID, modelID, gangID string) bool {
+	return strings.HasPrefix(procID, GangProcessPrefix(modelID, gangID))
+}
+
+// DefaultGangID mirrors store.DefaultGangID. The agent package must not import
+// the leader's store, and the two are pinned together by a test.
+const DefaultGangID = "g0"
 
 // SafeProcessID folds a model id into what a process id may contain: lower
 // case letters, digits and '-'; everything else becomes '-'.

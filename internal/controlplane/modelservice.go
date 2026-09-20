@@ -72,7 +72,7 @@ func (s *Server) AddModel(ctx context.Context, req AddModelRequest) (ModelOutcom
 		if s.orch == nil {
 			return ModelOutcome{}, ErrNoOrchestrator
 		}
-		if err := s.orch.CreateSharded(ctx, *entry, 0, nil, scheduler.Parallelism{}); err != nil {
+		if err := s.orch.CreateSharded(ctx, *entry, "", 0, nil, scheduler.Parallelism{}); err != nil {
 			return ModelOutcome{}, errors.Join(ErrUpstream, err)
 		}
 		s.router.InvalidateModel(req.ID)
@@ -213,6 +213,12 @@ type CreateShardsRequest struct {
 	// for a managed gang: D4 says the head is a WORKER rank, never the leader.
 	Head    string `json:"head,omitempty"`
 	Devices int    `json:"devices"` // optional: GPUs each named part holds (0 = 1; build item 5)
+	// Gang names which gang of the model this create builds (build item 6).
+	// "" means the model's default gang AND replaces every other gang — what a
+	// create has always meant, so an older caller is unchanged. A named gang
+	// replaces only itself, and the model's other gangs keep serving through
+	// the create; the router then load-balances across every ready coordinator.
+	Gang string `json:"gang,omitempty"`
 }
 
 // CreateShards builds the gang through the orchestrator. A failed create is
@@ -233,7 +239,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	if req.Head != "" {
 		s.orch.CoordinatorNode = req.Head
 	}
-	if err := s.orch.CreateSharded(ctx, *entry, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices}); err != nil {
+	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices}); err != nil {
 		if errors.Is(err, scheduler.ErrUnplaceable) {
 			// Refused before anything was touched: the gang this create would
 			// have replaced is still serving, and the cleanup below would
@@ -241,7 +247,14 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 			return err
 		}
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		if rmErr := s.orch.RemoveSharded(cleanCtx, req.ModelID); rmErr != nil {
+		// Clean up only what this create was building. A create of ONE gang
+		// that fails must not tear down the model's other gangs: they are
+		// serving, they were not touched, and the caller asked about one gang.
+		if req.Gang != "" {
+			if rmErr := s.orch.RemoveGang(cleanCtx, req.ModelID, req.Gang); rmErr != nil {
+				s.log.Error("shards/create cleanup failed", "model", req.ModelID, "gang", req.Gang, "err", rmErr)
+			}
+		} else if rmErr := s.orch.RemoveSharded(cleanCtx, req.ModelID); rmErr != nil {
 			s.log.Error("shards/create cleanup failed", "model", req.ModelID, "err", rmErr)
 		}
 		cancel()
@@ -253,7 +266,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	return nil
 }
 
-// RemoveShards tears the gang down.
+// RemoveShards tears down every gang of the model.
 func (s *Server) RemoveShards(ctx context.Context, modelID string) error {
 	if s.orch == nil {
 		return ErrNoOrchestrator
@@ -263,6 +276,21 @@ func (s *Server) RemoveShards(ctx context.Context, modelID string) error {
 	}
 	s.router.InvalidateModel(modelID)
 	s.record("shard.removed", modelID, nil)
+	return nil
+}
+
+// RemoveGang tears down ONE gang, leaving the model's other gangs serving.
+// Taking the last gang away leaves the model with no placement, exactly as
+// removing the whole shard does.
+func (s *Server) RemoveGang(ctx context.Context, modelID, gangID string) error {
+	if s.orch == nil {
+		return ErrNoOrchestrator
+	}
+	if err := s.orch.RemoveGang(ctx, modelID, gangID); err != nil {
+		return err
+	}
+	s.router.InvalidateModel(modelID)
+	s.record("shard.removed", modelID, map[string]any{"gang": gangID})
 	return nil
 }
 
