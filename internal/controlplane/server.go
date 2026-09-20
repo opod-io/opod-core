@@ -259,6 +259,8 @@ func (s *Server) Start(ctx context.Context) error {
 		scheme = "https"
 	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "scheme", scheme)
+	stopProbe := s.serveProbes(ctx)
+	defer stopProbe()
 	errCh := make(chan error, 1)
 	go func() {
 		if scheme == "https" {
@@ -511,3 +513,41 @@ func (s *Server) Addr() string {
 
 // TLS reports whether the listener speaks TLS.
 func (s *Server) TLS() bool { return s.cfg.TLSCert != "" && s.cfg.TLSKey != "" }
+
+// serveProbes runs the second listener: /healthz, /readyz, /loadz and /metrics,
+// always plain HTTP, when OPOD_PROBE_LISTEN names an address.
+//
+// Nothing authenticated is routed here and nothing here can reach the gateway
+// or /admin/v1 — the router is built from scratch rather than reusing the main
+// one, so a route added upstream cannot appear on this port by accident.
+// Returns a stop function; a listener that cannot bind is logged and skipped,
+// because a probe port is not a reason to refuse to serve.
+func (s *Server) serveProbes(ctx context.Context) func() {
+	addr := s.cfg.ProbeListen
+	if addr == "" {
+		return func() {}
+	}
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+	r.Get("/healthz", s.healthz)
+	r.Get("/readyz", s.readyz)
+	r.Get("/loadz", s.loadz)
+	r.Handle("/metrics", promhttp.Handler())
+	srv := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 30 * time.Second}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.log.Error("probe listener not started", "addr", addr, "err", err)
+		return func() {}
+	}
+	s.log.Info("probe listener", "addr", ln.Addr().String(), "scheme", "http", "routes", "/healthz /readyz /loadz /metrics")
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			s.log.Error("probe listener stopped", "err", err)
+		}
+	}()
+	return func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}
+}
