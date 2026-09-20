@@ -91,6 +91,7 @@ func contractFeatures() map[string]bool {
 		"load_signals":      true,
 		"lora":              true,
 		"boot_id":           true,
+		"engine_liveness":   true, // heartbeats carry what the worker's ENGINE PROCESS is doing (serving | starting | crash-looping | stopped); /loadz says how many workers are holding a card with a dead engine
 		"probe_port":        true, // OPOD_PROBE_LISTEN: /healthz, /readyz, /loadz and /metrics on a second, always-plain listener, so a scraper or an autoscaler reads a number without the listener's certificate
 		"tls_listener":      true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
 		"pd_roles":          true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)

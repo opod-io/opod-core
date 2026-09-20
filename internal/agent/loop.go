@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/opod-io/opod-sdk/nodeapi"
+
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 )
@@ -37,6 +39,13 @@ type Agent struct {
 	// worker was asked to load, so the leader's placements are keyed by the
 	// identity the plan named. Shared with the Server; nil is safe.
 	Aliases *Aliases
+	// Procs is the supervisor that launched this worker's engine, if one did.
+	// It is the ONLY party that can say what the engine process is doing: the
+	// leader sees a heartbeat, the platform sees a container that is running,
+	// and neither sees an engine that came up, failed and was relaunched four
+	// times. nil = nothing of ours launched an engine here, and the heartbeat
+	// says nothing about one rather than claiming health.
+	Procs *Supervisor
 
 	HTTP              *http.Client
 	HeartbeatInterval time.Duration
@@ -134,6 +143,13 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 			hb["sleeping"] = true
 		}
 		cancel()
+	}
+	// What the engine PROCESS is doing (feature "engine_liveness"). A worker
+	// whose engine crash-loops still heartbeats, still holds its card, and to
+	// anything counting workers is capacity — it is not, and this is where that
+	// gets said.
+	if st := engineState(a.Procs); st != nil {
+		hb["engine"] = st
 	}
 	// Load signals (build item 14) ride the same heartbeat; best-effort too.
 	if lr, ok := a.Engine.(engines.LoadReporter); ok && a.Engine != nil {
@@ -271,4 +287,60 @@ func mustJSON(v any) string {
 // engine's address. A timeout is NOT this: a hung engine may hold a model.
 func engineNotRunning(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
+// engineState summarises the supervisor's view of the engine process for the
+// heartbeat. nil = nothing of ours launched an engine here (a llama.cpp RPC
+// part, a worker whose engine is started by the platform), which is a
+// different thing from a healthy engine and is sent as nothing at all.
+func engineState(procs *Supervisor) *nodeapi.EngineState {
+	if procs == nil {
+		return nil
+	}
+	var worst *ProcessInfo
+	for _, p := range procs.List() {
+		if worst == nil || engineSeverity(p.Status) > engineSeverity(worst.Status) {
+			worst = p
+		}
+	}
+	if worst == nil {
+		return nil
+	}
+	st := &nodeapi.EngineState{Restarts: worst.Restarts, Since: worst.StartedAt.UTC().Format(time.RFC3339), Detail: worst.ExitErr}
+	switch worst.Status {
+	case "running":
+		st.State = nodeapi.EngineServing
+	case "starting":
+		st.State = nodeapi.EngineStarting
+	case "crashloop":
+		st.State = nodeapi.EngineCrashLooping
+	case "failed", "stopped":
+		st.State = nodeapi.EngineStopped
+	default:
+		return nil // a status this build does not know is no statement, not a verdict
+	}
+	// A process the supervisor restarted more than once is crash-looping in
+	// every sense that matters to a reader, even while the current attempt is
+	// up: capacity that keeps disappearing is not capacity.
+	if st.State == nodeapi.EngineServing && worst.Restarts > 1 {
+		st.State = nodeapi.EngineCrashLooping
+	}
+	return st
+}
+
+// engineSeverity orders process statuses so the worst one speaks for the
+// worker: one dead engine beside three healthy ones is what a reader needs.
+func engineSeverity(status string) int {
+	switch status {
+	case "crashloop":
+		return 4
+	case "failed":
+		return 3
+	case "stopped":
+		return 2
+	case "starting":
+		return 1
+	default:
+		return 0
+	}
 }

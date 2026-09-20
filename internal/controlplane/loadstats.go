@@ -12,6 +12,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/opod-io/opod-sdk/nodeapi"
+
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,6 +86,40 @@ type nodeLoadSample struct {
 	at time.Time
 }
 
+// nodeEngineSample is a worker's last word on its engine process, stamped when
+// it arrived (feature "engine_liveness"). Kept in memory beside the load
+// samples: it describes a process that is running right now, and a leader that
+// restarts learns it again within a heartbeat.
+type nodeEngineSample struct {
+	nodeapi.EngineState
+	at time.Time
+}
+
+// EnginesUnhealthy counts the workers whose engine is NOT serving — crash
+// looping, stopped, or stuck starting for longer than a model takes to load.
+// Those workers hold their cards and heartbeat like any other, so anything
+// counting workers counts them as capacity; they are not.
+func (s *Server) EnginesUnhealthy() (unhealthy int, worst string) {
+	s.nodeEngine.Range(func(_, v any) bool {
+		e := v.(nodeEngineSample)
+		if time.Since(e.at) > loadSampleMaxAge {
+			return true // stale: the worker stopped saying, which liveness handles
+		}
+		switch e.State {
+		case nodeapi.EngineCrashLooping, nodeapi.EngineStopped:
+			unhealthy++
+			if worst == "" || e.State == nodeapi.EngineCrashLooping {
+				worst = e.State
+				if e.Detail != "" {
+					worst += ": " + e.Detail
+				}
+			}
+		}
+		return true
+	})
+	return unhealthy, worst
+}
+
 // loadSampleMaxAge: a worker's sample older than this is not "reporting" —
 // a stuck engine must not hold a stale pressure number on /loadz.
 const loadSampleMaxAge = 30 * time.Second
@@ -102,6 +138,11 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 		TS:              now.Unix(),
 	}
 	s.aggregateWorkerLoad(r.Context(), &out, now)
+	// How much of the worker count above is actually serving (feature
+	// "engine_liveness"): a worker whose engine crash-loops heartbeats like any
+	// other and holds its card, and a scaler that believes the count scales out
+	// too late or not at all.
+	out.EnginesUnhealthy, out.EngineIssue = s.EnginesUnhealthy()
 	writeJSON(w, http.StatusOK, out)
 }
 
