@@ -12,7 +12,10 @@ package controlplane
 //   - the ADAPTER NAMES the plan declares (R15.15). "<model>:<name>" used to
 //     pass on its shape alone, so a typo reached the router, found no
 //     placement and came back as a routing failure. The plan knows the set, so
-//     an unknown suffix is refused here by name, listing what does exist.
+//     an unknown suffix is refused here by name, listing what does exist;
+//   - the GANGS it declares, so the leader can form one that is entirely
+//     absent without being asked (planheal.go, §13 item 3). The shape was in
+//     this file all along and was read past.
 //
 // SQLite stays the rebuildable cache; auth.yaml is the next file (TARGET).
 
@@ -31,7 +34,8 @@ type planFileState struct {
 	mu        sync.RWMutex
 	revision  int
 	modelID   string
-	adapters  []string // names the plan declares; empty = the plan states none
+	adapters  []string   // names the plan declares; empty = the plan states none
+	gangs     []planGang // the gangs the plan declares (planheal.go)
 	present   bool
 	zeroFloor bool // autoscale floor 0: all workers parked is a HEALTHY state
 }
@@ -89,6 +93,15 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 			Adapters []struct {
 				Name string `json:"name"`
 			} `json:"adapters"`
+			ShardGroups []struct {
+				ID          string     `json:"id"`
+				Parts       []struct{} `json:"parts"`
+				Parallelism struct {
+					Tensor   int `json:"tensor"`
+					Pipeline int `json:"pipeline"`
+				} `json:"parallelism"`
+				DevicesPerPart int `json:"devicesPerPart"`
+			} `json:"shardGroups"`
 		}
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			s.log.Warn("plan file unreadable — keeping last good plan", "path", path, "err", err)
@@ -103,7 +116,15 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 				names = append(names, a.Name)
 			}
 		}
-		s.plan.revision, s.plan.modelID, s.plan.adapters = doc.Revision, doc.Model.ID, names
+		gangs := make([]planGang, 0, len(doc.ShardGroups))
+		for _, g := range doc.ShardGroups {
+			if len(g.Parts) == 0 {
+				continue // a gang with no parts is not a gang to form
+			}
+			gangs = append(gangs, planGang{ID: g.ID, Parts: len(g.Parts),
+				TP: g.Parallelism.Tensor, PP: g.Parallelism.Pipeline, Devices: g.DevicesPerPart})
+		}
+		s.plan.revision, s.plan.modelID, s.plan.adapters, s.plan.gangs = doc.Revision, doc.Model.ID, names, gangs
 		s.plan.present = true
 		s.plan.zeroFloor = doc.Autoscale.Max > 0 && doc.Autoscale.Floor == 0
 		s.plan.mu.Unlock()

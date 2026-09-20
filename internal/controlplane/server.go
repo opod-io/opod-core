@@ -222,6 +222,10 @@ func (s *Server) liftStaleDrains(ctx context.Context) {
 func (s *Server) Start(ctx context.Context) error {
 	s.liftStaleDrains(ctx)
 	s.StartPlanWatcher(ctx)
+	// Heal within the plan (§13 item 3): form a gang the plan declares that
+	// has no parts at all. Nothing to heal within without a plan file, and
+	// gangSpecs is then empty, so this is a no-op for standalone `opod up`.
+	s.StartGangHealer(ctx)
 	s.StartAuthWatcher(ctx)
 	s.StartPolicyWatcher(ctx)
 	s.StartTrimmer(ctx)
