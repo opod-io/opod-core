@@ -227,11 +227,16 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	} else {
 		o.Log.Info("placer: leader (ready workers by RAM)", "model", entry.ID, "shards", shardCount)
 	}
+	// One allocator for this whole create: ports it hands out are remembered,
+	// so two parts of this gang — or this gang and one already on the node —
+	// never get the same port. Both backends draw from it.
+	ports := o.newPortAllocator(ctx)
+
 	// Backend fork: vLLM multi-node uses a Ray cluster + pipeline/tensor
 	// parallelism, NOT llama.cpp's rpc-server + coordinator. It skips all the
 	// GGUF machinery below. Selected by the catalog's sharding.engine.
 	if isVLLMRayBackend(entry.Sharding.Engine) {
-		return o.createShardedVLLMRay(ctx, entry, gangID, workers, par)
+		return o.createShardedVLLMRay(ctx, entry, gangID, workers, par, ports)
 	}
 	// llama.cpp's RPC backend has NO tensor split — it only cuts layers. Silently
 	// ignoring --tp here would hand back a working-but-not-what-you-asked-for shard,
@@ -262,11 +267,6 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	} else {
 		o.stopOrphanGangProcs(ctx, entry, gangID)
 	}
-
-	// One allocator for this whole create: ports it hands out are remembered,
-	// so two parts of this gang — or this gang and one already on the node —
-	// never get the same port.
-	ports := o.newPortAllocator(ctx)
 
 	rpcPortBase := entry.Sharding.RPCPortBase
 	if rpcPortBase == 0 {
