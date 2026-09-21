@@ -75,6 +75,25 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 		spend:  gateway.NewSpend(leaderURL, token),
 		id:     id,
 	}
+	// A door never receives a heartbeat, so the heartbeat-AGE rule is not a
+	// liveness rule for it — it is a clock on how long ago the LEADER last saw
+	// the worker, copied with the row. While the leader restarts (every rollout,
+	// every failover) the mirror cannot refresh, those copied timestamps age
+	// past the bound, and the door starts answering 503 for workers that are
+	// serving: measured on the design-partner cell, 2026-09-21 — a door kept
+	// serving for 18 requests after the leader was deleted and then refused 25.
+	//
+	// The authority on a worker's liveness is the brain, and it already travels
+	// with the row: the mirror copies the leader's DERIVED state (ready |
+	// draining | lost | engine-silent) and refuses to route to anything the
+	// leader has taken out. So a door obeys that and turns its own age rule off.
+	// What remains is fail-static by design (ADR-063): while the brain is
+	// unreachable a door goes on routing to the workers it knows, and a worker
+	// that has really gone fails the dispatch, which the router's next-worker
+	// walk and the 503 + Retry-After already handle. How stale the list is is
+	// published rather than hidden — /gatewayz carries registry_age_s.
+	s.router.SetHeartbeatMaxAge(0)
+
 	// Every push carries this door's own load, so the leader can publish the
 	// endpoint's total (GET /gatewayz on the leader) and a scaler for the doors
 	// reads the traffic instead of one door's uneven share of it.
