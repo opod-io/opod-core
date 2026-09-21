@@ -22,6 +22,8 @@ func TestAStaleRegistryKeepsWorkersAndAddsNone(t *testing.T) {
 	var body atomic.Value
 	var fail atomic.Bool
 	body.Store(`[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1}]`)
+	var shards atomic.Value
+	shards.Store(`[]`)
 	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fail.Load() {
 			http.Error(w, "leader down", http.StatusServiceUnavailable)
@@ -29,6 +31,14 @@ func TestAStaleRegistryKeepsWorkersAndAddsNone(t *testing.T) {
 		}
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		// Path-aware, because the mirror reads two surfaces: the registry and
+		// the gangs. A handler that answered the registry to every path let
+		// the node list decode as a shard list — every field zero but the id —
+		// and the door invented gang parts nobody had.
+		if r.URL.Path == "/admin/v1/shards" {
+			fmt.Fprint(w, shards.Load().(string))
 			return
 		}
 		fmt.Fprint(w, body.Load().(string))
@@ -112,7 +122,11 @@ func TestAStaleRegistryKeepsWorkersAndAddsNone(t *testing.T) {
 // keys are on the wire and only one can be decoded, so this pins which.
 func TestTheMirrorTakesTheLeadersDerivedState(t *testing.T) {
 	ctx := context.Background()
-	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/v1/shards" {
+			fmt.Fprint(w, `[]`)
+			return
+		}
 		// Stored "ready", derived "engine-silent": the brain has taken it out.
 		fmt.Fprint(w, `[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","State":"ready","state":"engine-silent","heartbeat_age_seconds":2}]`)
 	}))
@@ -129,5 +143,69 @@ func TestTheMirrorTakesTheLeadersDerivedState(t *testing.T) {
 	nodes, _ := st.Nodes().List(ctx)
 	if len(nodes) != 1 || nodes[0].State != "engine-silent" {
 		t.Fatalf("the derived state is what routing obeys: %+v", nodes)
+	}
+}
+
+// A door routes BY placement and, for a sharded endpoint, by shard row: the
+// machines alone are a list it cannot send one request to. Both follow the
+// leader exactly — what it stops listing leaves the door's view, because a
+// door still holding a placement the worker dropped fails every request it
+// sends there, and a coordinator address that moved is worse than none.
+func TestTheMirrorCarriesPlacementsAndGangs(t *testing.T) {
+	ctx := context.Background()
+	var nodes, shards atomic.Value
+	nodes.Store(`[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1,
+	               "placements":[{"NodeID":"n_a","ModelID":"qwen","Status":"ready"},{"NodeID":"n_a","ModelID":"llama","Status":"ready"}]}]`)
+	shards.Store(`[{"ID":"sh_1","ModelID":"big","GangID":"g1","Role":"coordinator","NodeID":"n_a","Address":"10.0.0.1:9000","Status":"ready"},
+	               {"ID":"sh_2","ModelID":"big","GangID":"g1","Role":"rpc","NodeID":"n_a","Address":"10.0.0.1:9001","Status":"ready"}]`)
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/v1/shards" {
+			fmt.Fprint(w, shards.Load().(string))
+			return
+		}
+		fmt.Fprint(w, nodes.Load().(string))
+	}))
+	defer leader.Close()
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := NewMirror(leader.URL, "tok", st)
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ps, _ := st.Placements().GetByNode(ctx, "n_a")
+	if len(ps) != 2 {
+		t.Fatalf("both resident models mirrored: %+v", ps)
+	}
+	if got, _ := st.Placements().GetByModel(ctx, "qwen"); len(got) != 1 {
+		t.Fatalf("a door must be able to find a holder by model: %+v", got)
+	}
+	shs, _ := st.Shards().List(ctx)
+	if len(shs) != 2 {
+		t.Fatalf("a gang's parts mirrored: %+v", shs)
+	}
+	coord, err := st.Shards().Get(ctx, "sh_1")
+	if err != nil || coord == nil || coord.Address != "10.0.0.1:9000" || coord.Gang() != "g1" {
+		t.Fatalf("the coordinator's address and gang are what the door streams to: %+v (%v)", coord, err)
+	}
+
+	// The worker unloads one model and the gang loses a part. Both must leave.
+	nodes.Store(`[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1,
+	               "placements":[{"NodeID":"n_a","ModelID":"qwen","Status":"ready"}]}]`)
+	shards.Store(`[{"ID":"sh_1","ModelID":"big","GangID":"g1","Role":"coordinator","NodeID":"n_a","Address":"10.0.0.1:9100","Status":"ready"}]`)
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Placements().GetByModel(ctx, "llama"); len(got) != 0 {
+		t.Errorf("a model the leader no longer lists on the worker must leave the door's view: %+v", got)
+	}
+	if shs, _ = st.Shards().List(ctx); len(shs) != 1 {
+		t.Errorf("a part the leader dropped must leave: %+v", shs)
+	}
+	coord, _ = st.Shards().Get(ctx, "sh_1")
+	if coord == nil || coord.Address != "10.0.0.1:9100" {
+		t.Errorf("a coordinator that moved is followed, not kept: %+v", coord)
 	}
 }

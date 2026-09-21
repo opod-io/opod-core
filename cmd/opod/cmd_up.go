@@ -30,10 +30,12 @@ func cmdUp(args []string) {
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (OPOD_UNLOAD_ON_EXIT=1 sets the default)")
 	exclusive := fs.Bool("exclusive", false,
 		"one resident model per machine: loading a model evicts every other non-pinned model first (OPOD_EXCLUSIVE=1 or placement.exclusive in config also set this)")
+	role := fs.String("role", "", "leader (default) or `gateway`. A gateway is an extra front door for one endpoint: it serves /v1 only — no /admin/v1, no join surface, no engine of its own — mirroring the leader's worker list and pushing its usage rows there (needs --leader / OPOD_LEADER_URL)")
+	leaderURL := fs.String("leader", "", "the leader a --role=gateway door mirrors and pushes to (http://host:8080); OPOD_LEADER_URL also sets it")
 	help := helpSpec{
 		name:    "up",
 		summary: "start the local node (becomes the cluster leader on first run)",
-		usage:   "opod up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive]",
+		usage:   "opod up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive] [--role gateway --leader <url>]",
 		flags:   fs,
 		examples: []string{
 			"opod up",
@@ -42,9 +44,11 @@ func cmdUp(args []string) {
 			"opod up --config ~/.opod/staging.yaml",
 			"opod up --auto-pull=false              # don't pre-pull the default model",
 			"opod up --no-wizard                    # skip the interactive 'install a starter?' prompt",
+			"opod up --role gateway --leader http://leader:8080   # an extra front door for the same endpoint",
 		},
 		notes: []string{
 			"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
+			"--role gateway serves the OpenAI routes and the probes only: the worker registry, the join tokens and the shard calls stay with the one leader, whose store is the single writer for usage. A door's quota decisions can lag the leader by up to 10s and it enforces a 1/N share of each key's rate limit (ADR-063).",
 			"When engine.preferred=llamacpp and no llama-server is listening on engine.llamacpp_endpoint, Opod auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
 		},
 	}
@@ -59,6 +63,16 @@ func cmdUp(args []string) {
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		die("config: %v", err)
+	}
+	// A flag beats the environment, as everywhere else in this CLI.
+	if *role != "" {
+		cfg.Env.Role = *role
+	}
+	if *leaderURL != "" {
+		cfg.Env.LeaderURL = *leaderURL
+	}
+	if cfg.Env.Role != "" && cfg.Env.Role != "leader" && cfg.Env.Role != "gateway" {
+		die("--role: %q is not a role (leader | gateway)", cfg.Env.Role)
 	}
 	log := newLogger(cfg)
 	// The leader's own records also go to an OTLP collector when one is named
@@ -183,11 +197,17 @@ func cmdUp(args []string) {
 		}
 		listCancel()
 	}
-	if !engineOK {
+	switch {
+	case cfg.Env.Role == "gateway":
+		// A door has no engine BY DESIGN: it routes to the leader's workers.
+		// Warning about a missing engine here would send an operator looking
+		// for a fault that is the configuration working.
+		note(os.Stdout, "role: gateway — serving /v1 for %s, no engine of its own", cfg.Env.LeaderURL)
+	case !engineOK:
 		warn(os.Stdout, "engine (%s) at %s is not reachable", eng.Name(), eng.Endpoint())
 		warn(os.Stdout, "  → %s", engineStartHint(eng.Name()))
 		warn(os.Stdout, "  then check `opod status`")
-	} else {
+	default:
 		ok(os.Stdout, "engine: %s at %s", eng.Name(), eng.Endpoint())
 		if *autoPull && cfg.Router.DefaultModel != "" && cfg.Router.PullDefaultModel {
 			if !*noWizard && firstRunWizard(cfg, cat, st, eng, caps) {
@@ -243,6 +263,14 @@ func cmdUp(args []string) {
 	//      load must not block the gateway from serving.
 	if engineOK {
 		go mgr.Restore(ctx)
+	}
+
+	// 11c. The gateway role: mirror the leader's registry, push usage, poll the
+	//      spend snapshot. It runs BEFORE Start so a door that cannot reach its
+	//      leader fails loudly here instead of serving 503s that read as an
+	//      outage of the endpoint (ADR-063).
+	if err := srv.StartGatewayRole(ctx); err != nil {
+		die("gateway: %v", err)
 	}
 
 	if err := srv.Start(ctx); err != nil {

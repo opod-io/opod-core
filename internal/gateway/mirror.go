@@ -45,6 +45,10 @@ type leaderNode struct {
 	// already taken out of rotation.
 	State               string `json:"state"`
 	HeartbeatAgeSeconds int64  `json:"heartbeat_age_seconds"`
+	// Placements is what the worker holds resident. A door routes BY placement:
+	// mirroring the machines without them gives a door a list it cannot send a
+	// single request to (every pick would find no holder and answer 503).
+	Placements []store.Placement `json:"placements"`
 }
 
 // Mirror keeps a gateway's local (in-memory) store looking like the leader's
@@ -122,13 +126,67 @@ func (m *Mirror) Sync(ctx context.Context) error {
 		if err := m.st.Nodes().Upsert(ctx, row); err != nil {
 			return fmt.Errorf("mirror node %s: %w", n.ID, err)
 		}
+		// ReplaceForNode, not Upsert: a model the leader no longer lists on this
+		// worker must LEAVE the door's view, or the door goes on routing to a
+		// worker that unloaded it and every one of those requests fails.
+		if err := m.st.Placements().ReplaceForNode(ctx, n.ID, n.Placements); err != nil {
+			return fmt.Errorf("mirror placements of %s: %w", n.ID, err)
+		}
 		m.mu.Lock()
 		m.known[n.ID] = true
 		m.mu.Unlock()
 	}
+	// Gangs: a SHARDED endpoint has no placement rows at all — its capacity is
+	// a coordinator plus its parts — so a door with no shard rows cannot route
+	// to a gang however fresh its node list is.
+	if adopt {
+		if err := m.syncShards(ctx); err != nil {
+			m.mu.Lock()
+			m.lastErr = err.Error()
+			m.mu.Unlock()
+			return err
+		}
+	}
 	m.mu.Lock()
 	m.lastOK, m.lastErr = m.now(), ""
 	m.mu.Unlock()
+	return nil
+}
+
+// syncShards makes the door's shard rows the leader's, exactly: parts the
+// leader no longer lists are removed, because a coordinator address that moved
+// is worse than none — the door would stream to a port nothing answers on.
+func (m *Mirror) syncShards(ctx context.Context) error {
+	rows, err := m.fetchShards(ctx)
+	if err != nil {
+		return err
+	}
+	local, err := m.st.Shards().List(ctx)
+	if err != nil {
+		return fmt.Errorf("mirror shards: local list: %w", err)
+	}
+	want := make(map[string]bool, len(rows))
+	for _, sh := range rows {
+		want[sh.ID] = true
+	}
+	for _, sh := range local {
+		if !want[sh.ID] {
+			if err := m.st.Shards().Delete(ctx, sh.ID); err != nil {
+				return fmt.Errorf("mirror shards: drop %s: %w", sh.ID, err)
+			}
+		}
+	}
+	// Replace rather than patch: Create is an INSERT and a part's address,
+	// status and process id all move over its life. Delete-then-create keeps
+	// the row equal to the leader's without a second write path.
+	for _, sh := range rows {
+		if err := m.st.Shards().Delete(ctx, sh.ID); err != nil {
+			return fmt.Errorf("mirror shards: replace %s: %w", sh.ID, err)
+		}
+		if err := m.st.Shards().Create(ctx, sh); err != nil {
+			return fmt.Errorf("mirror shards: %s: %w", sh.ID, err)
+		}
+	}
 	return nil
 }
 
@@ -147,6 +205,28 @@ func (m *Mirror) fetch(ctx context.Context) ([]leaderNode, error) {
 		return nil, fmt.Errorf("leader %s answered %s", m.leaderURL, resp.Status)
 	}
 	var out []leaderNode
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// fetchShards reads the leader's gang parts.
+func (m *Mirror) fetchShards(ctx context.Context) ([]store.Shard, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.leaderURL+"/admin/v1/shards", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	resp, err := m.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("leader %s answered %s for its shards", m.leaderURL, resp.Status)
+	}
+	var out []store.Shard
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}

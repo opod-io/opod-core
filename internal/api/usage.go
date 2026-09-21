@@ -120,6 +120,18 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		slog.Warn("usage: row not recorded", "model", model, "outcome", outcome, "err", err)
 	}
 
+	// A gateway replica's local row is its own view, not the record: hand the
+	// row to the door's pusher so the leader — the single writer — gets it
+	// (ADR-063). The request id is already unique per request and is what the
+	// leader dedups on, so a resend after a failed push cannot double-count.
+	if h.OnUsage != nil {
+		id := RequestIDFrom(ctx)
+		if id == "" {
+			id = newRequestID()
+		}
+		h.OnUsage(rec, id)
+	}
+
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
 	// upfront estimate; once the real usage is known we either refund
 	// (over-estimated) or deduct the delta (under-estimated). The
@@ -141,10 +153,36 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 // QuotaMiddleware enforces per-key daily token quotas. Keys with quota=0
 // are unlimited.
 func QuotaMiddleware(st store.Store) func(http.Handler) http.Handler {
+	return QuotaMiddlewareShared(st, nil)
+}
+
+// SpendSource answers "is this key over its daily quota" from a view WIDER than
+// this process's store. A gateway replica's own rows are a fraction of the
+// key's day (ADR-063): asked locally, every door would let the key through
+// until it had spent the whole quota at that one door. nil = a single writer,
+// where the local store IS the day.
+type SpendSource interface {
+	QuotaExceeded(apiKeyID string) (over bool, used, quota int64)
+}
+
+// QuotaMiddlewareShared is QuotaMiddleware with an optional wider spend view.
+func QuotaMiddlewareShared(st store.Store, spend SpendSource) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := auth.KeyFrom(r.Context())
 			if key == nil || key.QuotaDailyTokens <= 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if spend != nil {
+				// The snapshot is the authority on a door, stale or not: a door
+				// that fell back to its own store would enforce a quota N times
+				// too large, which is the bug this exists to avoid. How stale it
+				// may be is published (spend_lag_bound_s on /loadz).
+				if over, used, quota := spend.QuotaExceeded(key.ID); over {
+					writeQuotaExceeded(w, quota, used)
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}

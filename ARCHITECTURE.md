@@ -102,17 +102,18 @@ A control-plane DB outage does **not** kill in-flight requests — the router ke
 
 ## Process model
 
-One binary, four modes determined by subcommand:
+One binary, five modes determined by subcommand:
 
 | Mode | What runs in-process |
 |---|---|
 | `opod up` | **Leader**: HTTP gateway · Router · Control plane (`/admin/v1`) · embedded SQLite · local engine adapter. No UI: `/` answers 404 (ADR-022) |
+| `opod up --role gateway --leader <url>` | **Gateway (front door)**: the same HTTP gateway and Router, and nothing else. No `/admin/v1`, no join surface, no engine of its own: the worker registry, the join tokens, the gang calls and the plan revision belong to exactly ONE process. Its worker list (nodes, placements, gang parts) is mirrored from the leader every 10 s and a stale list keeps workers but adopts none; its usage rows are pushed to the leader — the single writer — and deduplicated there by a row id the door mints; its ceilings come from a spend snapshot it polls back, so a per-key daily quota may lag across doors by the published bound (10 s, in the snapshot and on `/gatewayz`) and a key's rate limit is a 1/N share rebalanced every 10 s off the doors the leader has actually heard from. Serves the probes (`/healthz`, `/readyz`, `/loadz`) plus `/gatewayz`, which is its staleness and backlog |
 | `opod join "<url>?token=…"` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `opod <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
 | `opod doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
 | `opod update` / `opod upgrade` | Hits `api.github.com/repos/opod-io/opod-core/releases/latest`, downloads the matching platform tarball, verifies SHA-256 against `checksums.txt`, atomically replaces the running binary. Restarts are user-driven (`opod down && opod up`). |
 
-The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/opod/main.go`.
+The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/opod/main.go`. A gateway is the leader's own code with the admin surface not mounted (`internal/controlplane/server.go` returns the router before the `/admin/v1` group) and three loops running in place of a registry it owns (`internal/gateway`).
 
 ### Process lifecycle
 

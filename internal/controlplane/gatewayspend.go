@@ -26,6 +26,7 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -102,6 +103,49 @@ func (g *gatewayFront) doors(now time.Time) (n int, names []string) {
 		return 1, nil
 	}
 	return len(names), names
+}
+
+// seenDoors is every door the leader has EVER heard from with the age of its
+// last push, live or not. doors() deliberately hides a door that went quiet
+// (a share of 1/N must not count a dead door); this is where it is still
+// visible, because "a door stopped pushing" is a fact an operator needs and
+// no other surface carries it.
+func (g *gatewayFront) seenDoors(now time.Time) []gatewayDoor {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]gatewayDoor, 0, len(g.lastSeen))
+	for gw, at := range g.lastSeen {
+		out = append(out, gatewayDoor{
+			Gateway:    gw,
+			LastPushS:  int(now.Sub(at).Seconds()),
+			Live:       now.Sub(at) <= gatewayLiveFor,
+			LastPushTS: at.Unix(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Gateway < out[j].Gateway })
+	return out
+}
+
+// gatewayDoor is one front door as the leader sees it.
+type gatewayDoor struct {
+	Gateway    string `json:"gateway"`
+	Live       bool   `json:"live"`
+	LastPushS  int    `json:"last_push_s"`
+	LastPushTS int64  `json:"last_push_ts"`
+}
+
+// listGateways answers GET /admin/v1/gateways.
+func (s *Server) listGateways(w http.ResponseWriter, _ *http.Request) {
+	now := time.Now()
+	live, _ := s.gateways.doors(now)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"doors":          live,
+		"live_for_s":     int(gatewayLiveFor.Seconds()),
+		"lag_bound_s":    spendLagBoundMS / 1000,
+		"gateways":       s.gateways.seenDoors(now),
+		"dedup_window":   dedupWindow,
+		"leader_is_door": true,
+	})
 }
 
 // pushUsageRequest is what a gateway sends. Each row carries the id the gateway

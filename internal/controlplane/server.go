@@ -53,7 +53,11 @@ type Server struct {
 	// has pushed usage lately, and the row ids already recorded so a retry does
 	// not bill twice.
 	gateways *gatewayFront
-	gangEng  sync.Map // coordinator shard id → gangCoordEngine: the driver is kept because tokens_per_s is a rate it holds between samples
+	// front is set when THIS process is a gateway (OPOD_ROLE=gateway): the
+	// mirror, the pusher and the spend poller it runs instead of owning a
+	// registry (T11.1). nil in a leader.
+	front   *gatewayLoops
+	gangEng sync.Map // coordinator shard id → gangCoordEngine: the driver is kept because tokens_per_s is a rate it holds between samples
 	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
 	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
 	// crash-loops still heartbeats and still holds its card; this is where that
@@ -174,6 +178,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		rateBuckets: buckets,
 		gateways:    newGatewayFront(),
 		bus:         events.New(),
+	}
+	// A door's usage rows belong to the leader's store, not its own (ADR-063).
+	if s.isGateway() {
+		openaiH.OnUsage = s.recordUsageForGateway
 	}
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
 	// policy snapshot switches the weights on.
@@ -313,6 +321,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return httpErr
 }
 
+// isGateway reports whether this process is a front door rather than the
+// brain. A door serves /v1 and the probe listener, mirrors the leader's
+// registry, pushes its usage there and enforces from the snapshot it polls.
+func (s *Server) isGateway() bool { return s.cfg.Env.Role == "gateway" }
+
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	// Recoverer first: a panic anywhere downstream is caught, and the
@@ -334,6 +347,16 @@ func (s *Server) routes() http.Handler {
 
 	// No dashboard in core (ADR-022): "/" is a 404. The product console lives in the control plane.
 
+	// A door says how far behind it is: /loadz is the SDK's typed shape and a
+	// door's staleness has no field there, so it gets its own unauthenticated
+	// probe route beside the others. It carries no key, no model and no
+	// customer data — ages, counters and the door's own name.
+	if s.isGateway() {
+		r.Get("/gatewayz", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, s.GatewayStatus())
+		})
+	}
+
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
 		// Load accounting first so /loadz sees every inference request,
@@ -350,20 +373,34 @@ func (s *Server) routes() http.Handler {
 		// RPM/TPM ceilings. Wired before the daily quota check so a
 		// runaway client gets the more-actionable 429 with Retry-After
 		// instead of the daily 429.
-		r.Use(api.RateLimitMiddleware(s.rateBuckets))
+		// On a DOOR both ceilings come from the leader's spend snapshot: its
+		// share of each key's rate (1/N, rebalanced every 10 s) and the key's
+		// day across every door. Enforcing either from this process's own
+		// store would sell the key N times what it bought (ADR-063).
+		r.Use(api.RateLimitMiddlewareShared(s.rateBuckets, s.shareSource()))
 		// Stamp a request id + standard rate-limit headers on every
 		// response so client SDKs see throttling status without
 		// special-casing Opod. Runs after RateLimitMiddleware so the
 		// remaining-* values include this request's deduction (the
 		// contract documented on ResponseHeadersMiddleware).
 		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
-		r.Use(api.QuotaMiddleware(s.store))
+		r.Use(api.QuotaMiddlewareShared(s.store, s.spendSource()))
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)
 		// OpenAI chat + embeddings are the whole protocol surface (ADR-022 step 4,
 		// 2026-09-07: Anthropic Messages, audio and rerank left core).
 	})
+
+	// A GATEWAY serves /v1 and nothing else (T11.1, ADR-063). The admin surface
+	// is the BRAIN's: the worker registry, the join tokens, the shard calls and
+	// the plan revision belong to exactly one process, and a door that exposed
+	// them would be a second place a worker could join or a gang be torn down.
+	// A door still serves the probe listener (/healthz, /readyz, /loadz) so
+	// Kubernetes can tell whether it is taking traffic.
+	if s.isGateway() {
+		return r
+	}
 
 	// Admin (admin-only)
 	r.Route("/admin/v1", func(r chi.Router) {
@@ -399,6 +436,9 @@ func (s *Server) routes() http.Handler {
 			// /admin/v1.
 			r.Post("/usage/push", s.pushUsage)
 			r.Get("/spend", s.spend)
+			// Who the leader has heard from: the control plane renders a door
+			// that stopped pushing, which no other surface would show.
+			r.Get("/gateways", s.listGateways)
 			r.Post("/nodes/{id}/sleep", s.sleepWorker)   // sleep tier (build item 13)
 			r.Post("/nodes/{id}/resume", s.resumeWorker) // wake it
 			r.Delete("/nodes/{id}", s.deleteNode)
