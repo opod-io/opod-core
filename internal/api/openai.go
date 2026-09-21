@@ -323,6 +323,11 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "worker_unreachable", msg)
 			return
 		}
+		if msg, gone := gangGone(router.NodeFrom(ctx), err); gone {
+			w.Header().Set("Retry-After", "10")
+			writeJSONError(w, http.StatusServiceUnavailable, "gang_unreachable", msg)
+			return
+		}
 		code, msg := classifyEngineError(h.Engine, err)
 		writeJSONError(w, http.StatusBadGateway, code, msg)
 		return
@@ -647,6 +652,28 @@ func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
 	hint := engineRestartHint(eng.Name())
 	return "engine_unreachable", fmt.Sprintf("%s at %s is not reachable (%v). %s",
 		eng.Name(), eng.Endpoint(), err, hint)
+}
+
+// gangGone is workerGone for a SHARDED model: the coordinator the router
+// picked could not be reached. A gang's requests are accounted under the
+// pseudo node id "shard:<model>[:<gang>]", which workerGone excludes on
+// purpose — a gang is not a worker and must not be benched like one — and the
+// exclusion also dropped it out of the honest answer, so it fell through to
+// classifyEngineError and the caller was told the LEADER's own engine was
+// unreachable, with a hint to start llama-server.
+//
+// Measured on the design-partner cell (2026-09-20) in the window right after a
+// park/wake: core re-formed the gang within the plan, vLLM was still loading
+// across the Ray cluster, and the caller got
+// `vllm at http://127.0.0.1:8000 is not reachable (… 10.42.1.72:9100 connect:
+// connection refused)` — two wrong things in one sentence, neither of them
+// something the caller can act on. It is a wake in progress: 503 +
+// Retry-After, in the gang's name.
+func gangGone(node string, err error) (string, bool) {
+	if !strings.HasPrefix(node, "shard:") || !errors.Is(err, engines.ErrUnreachable) {
+		return "", false
+	}
+	return fmt.Sprintf("the gang serving this model is not answering yet: its coordinator has been formed but may still be loading the model, or a part went away. Nothing else can take this request right now; retry shortly (%v)", err), true
 }
 
 // workerGone says whether a failed dispatch is "the worker the router picked
