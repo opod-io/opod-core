@@ -77,6 +77,19 @@ log() { printf '[entrypoint] %s\n' "$*" >&2; }
 if [ "$ROLE" = gateway ]; then
   : "${OPOD_LEADER_URL:?OPOD_LEADER_URL is required for a gateway (the leader whose registry it mirrors)}"
   export OPOD_LISTEN="${OPOD_LISTEN:-:8080}" OPOD_PULL_DEFAULT_MODEL=false
+  # Wait for the leader, exactly as a worker does. A door REFUSES to start
+  # without a registry — deliberately, so a misconfigured one fails loudly
+  # instead of answering 503 for every request — and in Kubernetes the leader's
+  # pod and its doors come up together, so without this wait every door of a
+  # fresh endpoint (and of every rollout, which replaces the leader) dies on
+  # `connection refused` and enters CrashLoopBackOff. Measured on the
+  # design-partner cell, 2026-09-21. The refusal then means what it should: no
+  # leader URL, no token, or a leader that never arrives.
+  for i in $(seq 1 120); do
+    curl -sf -m 3 ${OPOD_LEADER_CA:+--cacert "$OPOD_LEADER_CA"} "$OPOD_LEADER_URL/healthz" >/dev/null 2>&1 && break
+    [ $i -eq 120 ] && { log "gateway: leader $OPOD_LEADER_URL unreachable after 10m"; exit 1; }
+    sleep 5
+  done
   log "gateway: listen=$OPOD_LISTEN leader=$OPOD_LEADER_URL id=${OPOD_GATEWAY_ID:-$(hostname)}"
   exec opod up --config "$DATA/config.yaml" --no-wizard
 fi
