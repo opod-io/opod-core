@@ -1,12 +1,15 @@
 # Roadmap
 
-Last updated: 2026-09-18 · Apache-2.0, no usage limit · [Releases](https://github.com/opod-io/opod-core/releases) · milestone history: [docs/archive/TASKS-milestones-M0-M5.md](docs/archive/TASKS-milestones-M0-M5.md)
+Last updated: 2026-09-20 · Apache-2.0, no usage limit · [Releases](https://github.com/opod-io/opod-core/releases) · milestone history: [docs/archive/TASKS-milestones-M0-M5.md](docs/archive/TASKS-milestones-M0-M5.md)
 
 **What `opod` is.** A CLI-only inference runtime for open-weight models on machines you already have.
 One leader and any number of workers: `opod up` starts the leader (OpenAI-compatible gateway, router,
 auth, join tokens), `opod join <leader>` turns another machine into a worker. It serves models, splits
 one model across machines with llama.cpp RPC, and gets out of the way. No daemon phones home, no
 account, no usage ceiling.
+
+> This roadmap is for people outside the project: what the runtime does today and where it is going.
+> It is **not a task list** — nothing schedules work from here.
 
 **What `opod` is not, and will not become.** Not a dashboard, not a fleet manager, not a billing
 system. Everything in that direction lives in a separate product and is not part of this repo — see
@@ -25,6 +28,9 @@ system. Everything in that direction lives in a separate product and is not part
 | **Weights** | `opod fetch` — one exclusive, atomic, digest-checked pull per file, with a pinned Hub revision cached as `<repo>@<rev>` so two revisions coexist on a node. `opod fetch --snapshot <repo>[@rev]` does the same for a safetensors model — the file set vLLM or SGLang loads, each weight file checked against the Hub's digest — and a worker serves from a complete snapshot instead of pulling at launch. `opod cache ls|prune` deletes only files this binary fetched, never anything it did not. |
 | **Auth & limits** | per-key scopes, rpm / tpm / daily-token quotas, expiry, an audit log, and a usage stream with cursors. Plan and auth are watched files, so limits change at runtime without a restart. |
 | **Operations** | `opod doctor`, `opod node ls/show/drain/remove`, `opod model ls/ps/load/unload`, `--json` on every read command, shell completion, an interactive picker, a first-run wizard. Prometheus metrics, OTLP traces across all four drivers, the leader's own logs over OTLP beside stderr, reference Grafana dashboards. |
+| **Scaling signals** | `/loadz` carries in-flight, rpm, the 503 wake count, KV-cache use, queue depth, tokens/s and prefix hits, with a gang's parts counted as the capacity they are. `OPOD_PROBE_LISTEN` serves `/healthz`, `/readyz`, `/loadz` and `/metrics` on a second, always-plain listener, so a scraper or an autoscaler reads a number without the listener's certificate. A request marked `X-Opod-Probe` is served like any other and counted in none of it — a prover is not a customer. |
+| **Uneven splits** | `flags.tensor_split` (llama.cpp) and `flags.pp_layer_partition` (vLLM, SGLang) are declared per engine and validated, so one model can pool cards of different sizes instead of being bounded by the smallest. Several gangs of one model run under one leader, and the router picks the least loaded ready gang. |
+| **Self-healing** | a leader forms the gang its own mounted plan declares when that gang has no parts at all and free workers have registered — so a gang whose pods were restored by something outside the leader comes back without an admin call. |
 | **Packaging** | Homebrew, `.deb`, `.rpm`, `install.sh`, `linux/arm64` and `darwin/arm64` builds, and container images per engine × vendor, every upstream base pinned by digest (`images/build.sh refresh-bases` moves a pin, deliberately). |
 
 ---
@@ -36,8 +42,6 @@ system. Everything in that direction lives in a separate product and is not part
 | **Auto-rebalancing sharding** | `N` is the operator's today; pick it from worker count, model size and free VRAM | M |
 | **Mesh backends** | the interface is defined and the LAN backend ships; a `tsnet` (and later NetBird) backend lets workers join across networks | M |
 | **Live model migration** | move a loaded model between workers without a cold start | M |
-| **Probe port for `/loadz`** | serve the scaling signals on a plain-HTTP probe port (or document the CA) so a scraper need not skip certificate verification when the leader serves TLS — see `docs/SCALING-SIGNALS.md` | S |
-| **Uneven split flags** | a pipeline layer partition, and a llama.cpp tensor split, settable per worker from the plan — lets one model use cards of different sizes instead of being bounded by the smallest | M |
 
 ## Later
 
