@@ -64,10 +64,11 @@ func TestLoadzReadsGangPressureFromTheCoordinator(t *testing.T) {
 	// The head on n1 runs the coordinator; n2 holds an rpc part. Neither node
 	// reports an engine sample — which is the real situation, not a gap in
 	// the fixture.
-	for _, sh := range []store.Shard{
+	gang := []store.Shard{
 		{ID: "c", ModelID: "sharded", GangID: "g0", Role: "coordinator", NodeID: "n1", Address: strings.TrimPrefix(coord.URL, "http://"), Status: "ready", CreatedAt: now, LastSeen: now},
 		{ID: "p", ModelID: "sharded", GangID: "g0", Role: "rpc", NodeID: "n2", Address: "n2:50052", Status: "ready", CreatedAt: now, LastSeen: now},
-	} {
+	}
+	for _, sh := range gang {
 		if err := st.Shards().Create(ctx, sh); err != nil {
 			t.Fatal(err)
 		}
@@ -91,6 +92,21 @@ func TestLoadzReadsGangPressureFromTheCoordinator(t *testing.T) {
 	}
 	if out.TokensPerSec < 0 {
 		t.Errorf("tokens_per_s must not be negative: %v", out.TokensPerSec)
+	}
+
+	// The DRIVER is kept between scrapes, not rebuilt. tokens_per_s is a rate
+	// the driver holds between samples, so a fresh one per scrape reports 0 for
+	// ever — which is what the design-partner cell showed (2026-09-20): a gang
+	// under 16 concurrent requests, kv_used_pct rising, tokens_per_s flat 0.
+	eng1, _ := srv.gangEngine(gang[0])
+	eng2, _ := srv.gangEngine(gang[0])
+	if eng1 != eng2 {
+		t.Error("the coordinator's driver must be the same instance across scrapes, or its rate has no history")
+	}
+	moved := gang[0]
+	moved.Address = "10.0.0.9:9100"
+	if eng3, _ := srv.gangEngine(moved); eng3 == eng1 {
+		t.Error("a gang that re-formed at another address needs a new driver, not a client pointed at a pod that is gone")
 	}
 
 	// /loadz is unauthenticated and probe-grade: polling it faster must not
