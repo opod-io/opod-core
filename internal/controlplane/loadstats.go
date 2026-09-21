@@ -273,6 +273,28 @@ func (s *Server) gangCoordinators(ctx context.Context, model string) []store.Sha
 	return servableGangCoordinators(shards, s.routableNodes(ctx), model)
 }
 
+// gangCoordEngine is a coordinator's driver with the address it was built for:
+// a gang that re-formed elsewhere gets a new one rather than a client pointed
+// at a pod that is gone.
+type gangCoordEngine struct {
+	addr string
+	eng  engines.Engine
+}
+
+// gangEngine returns the driver for this coordinator, building it once. The
+// driver name comes from the row (router.CoordinatorEngine): vLLM and SGLang
+// coordinators expose their own metric names, llama.cpp another set.
+func (s *Server) gangEngine(coord store.Shard) (engines.Engine, bool) {
+	if v, ok := s.gangEng.Load(coord.ID); ok {
+		if ge := v.(gangCoordEngine); ge.addr == coord.Address {
+			return ge.eng, true
+		}
+	}
+	eng := engines.MustNew(router.CoordinatorEngine(coord), "http://"+coord.Address, "")
+	s.gangEng.Store(coord.ID, gangCoordEngine{addr: coord.Address, eng: eng})
+	return eng, true
+}
+
 // gangSampleTTL bounds how often a coordinator is scraped, whatever the rate
 // /loadz is polled at. It mirrors the worker heartbeat cadence (5 s), which is
 // how often a worker's own engine sample is refreshed, and sits well inside
@@ -297,7 +319,16 @@ func (s *Server) gangSample(ctx context.Context, coord store.Shard) (engines.Eng
 			return c.EngineLoad, true
 		}
 	}
-	eng := engines.MustNew(router.CoordinatorEngine(coord), "http://"+coord.Address, "")
+	// The driver is kept, not rebuilt. `tokens_per_s` is a RATE the driver
+	// holds between samples (genRate in the vLLM and llama.cpp drivers), so a
+	// fresh driver per scrape has no previous reading and reports 0 for ever —
+	// measured on the design-partner cell (2026-09-20): a gang under 16
+	// concurrent requests showed kv_used_pct rising and tokens_per_s flat 0.
+	// The router keeps its coordinator clients for the same reason.
+	eng, ok := s.gangEngine(coord)
+	if !ok {
+		return engines.EngineLoad{}, false
+	}
 	lr, ok := eng.(engines.LoadReporter)
 	if !ok {
 		return engines.EngineLoad{}, false
