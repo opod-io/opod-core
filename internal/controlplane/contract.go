@@ -121,7 +121,16 @@ func contractFeatures() map[string]bool {
 		// serves the per-key spend, the ceilings, this door's 1/N share of them
 		// and the lag bound a quota may drift by. Without it a manager must keep
 		// every request on one front door.
-		"gateway_spend":         true,
+		"gateway_spend": true,
+		// A worker says GOODBYE on its way out — a final heartbeat declaring its
+		// engine `stopped` — and the leader takes it out of rotation at once
+		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating
+		// through its grace period with its last good report, and every request
+		// in that window is routed into a dead engine and answered 502: an
+		// error a client cannot act on, where 503 + Retry-After is the truth.
+		// A manager reading this key knows a park window costs refusals a
+		// caller can retry, not failures.
+		"worker_goodbye":        true,
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one

@@ -94,6 +94,13 @@ type Router struct {
 	// rev splits traffic between plan revisions (R15.17). Zero value = off.
 	rev revisionRouting
 
+	// engineDown answers "has this worker said its engine is gone?" — the
+	// worker's own last word, which is the only word there is: the leader sees
+	// a heartbeat and Kubernetes sees a container that is Running (T11.2).
+	// Returns the reason, or "" for a worker that has said no such thing. nil
+	// (the default, and every unit test) = the check is off.
+	engineDown func(nodeID string) string
+
 	// FallbackResolver is optional. When set, Chat / Embed will retry the
 	// request against each fallback model in order on retriable errors
 	// (anything Engine.Chat returns synchronously). Set via
@@ -282,6 +289,26 @@ func (r *Router) SetHeartbeatMaxAge(d time.Duration) {
 	if d >= 0 {
 		r.heartbeatMaxAge = d
 	}
+}
+
+// SetEngineDown installs the "this worker's engine is gone" source (T11.2).
+// The leader sets it from the engine state each worker reports; nil disables
+// the check, which is what a router built without a leader gets.
+func (r *Router) SetEngineDown(f func(nodeID string) string) {
+	r.mu.Lock()
+	r.engineDown = f
+	r.mu.Unlock()
+}
+
+// engineDownWhy is the reason this worker cannot take work, or "".
+func (r *Router) engineDownWhy(nodeID string) string {
+	r.mu.RLock()
+	f := r.engineDown
+	r.mu.RUnlock()
+	if f == nil {
+		return ""
+	}
+	return f(nodeID)
 }
 
 // SetFallbackResolver wires a fallback chain provider into the router.

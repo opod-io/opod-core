@@ -163,6 +163,54 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 	return a.post(ctx, "/admin/v1/nodes/heartbeat", body)
 }
 
+// Goodbye is the worker's last heartbeat: it says the engine is STOPPED before
+// the process exits, so the leader takes this worker out of rotation NOW rather
+// than after the heartbeat bound (T11.2, ADR-065).
+//
+// It exists because of a window every park and every rolling update has: the
+// pod gets SIGTERM, the engine (or an RPC part) dies with it, and the worker
+// goes on heartbeating through the grace period with its last good report. For
+// those seconds the leader believes the capacity is there, routes a request
+// into a dead process, and answers the caller 502 — the one error class a
+// client cannot act on. Nobody but the worker can know; the leader sees a
+// heartbeat, and Kubernetes sees a container that is still Running.
+//
+// Best-effort and bounded: it runs on the way out, so a leader that does not
+// answer must not hold the process open. Failing it costs exactly what we had
+// before — the heartbeat bound.
+func (a *Agent) Goodbye(ctx context.Context) {
+	if a.HTTP == nil || a.NodeID == "" || a.LeaderURL == "" {
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"id":            a.NodeID,
+		"loaded_models": []string{}, // a definite report: nothing is loaded any more
+		"boot_id":       a.BootID,
+		"engine": nodeapi.EngineState{
+			State:  nodeapi.EngineStopped,
+			Since:  time.Now().UTC().Format(time.RFC3339),
+			Detail: "worker shutting down",
+		},
+	})
+	if err != nil {
+		return
+	}
+	// Its own short deadline, and detached from the context that is already
+	// cancelled — this is called BECAUSE the process was told to stop.
+	sayCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), goodbyeTimeout)
+	defer cancel()
+	if code, err := a.post(sayCtx, "/admin/v1/nodes/heartbeat", body); err != nil {
+		a.Log.Warn("goodbye not delivered — the leader will notice by the heartbeat bound instead",
+			"node", a.NodeID, "code", code, "err", err)
+		return
+	}
+	a.Log.Info("said goodbye to the leader", "node", a.NodeID)
+}
+
+// goodbyeTimeout is deliberately far inside a pod's default 30 s grace period:
+// a shutdown must not wait on a leader that is itself restarting.
+const goodbyeTimeout = 3 * time.Second
+
 // Loop blocks running register + periodic heartbeat until ctx is done.
 //
 // Status-code handling:
