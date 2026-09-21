@@ -347,15 +347,19 @@ func (s *Server) routes() http.Handler {
 
 	// No dashboard in core (ADR-022): "/" is a 404. The product console lives in the control plane.
 
-	// A door says how far behind it is: /loadz is the SDK's typed shape and a
-	// door's staleness has no field there, so it gets its own unauthenticated
-	// probe route beside the others. It carries no key, no model and no
-	// customer data — ages, counters and the door's own name.
-	if s.isGateway() {
-		r.Get("/gatewayz", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, http.StatusOK, s.GatewayStatus())
-		})
-	}
+	// /gatewayz is the front-door surface, and it says something different in
+	// each role — because the two processes know different things:
+	//
+	//   on a DOOR    how far behind it is and how big its backlog is (/loadz is
+	//                the SDK's typed shape and has no field for either);
+	//   on a LEADER  the doors it has heard from and the TOTAL they are
+	//                carrying, which is the number a scaler for the doors must
+	//                read: a single door sees only its share, and keep-alive
+	//                makes that share uneven.
+	//
+	// Unauthenticated like the other probes, and it carries no key, no model
+	// and no customer data — ages, counters and the doors' own names.
+	r.Get("/gatewayz", s.gatewayz)
 
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {

@@ -55,12 +55,58 @@ const dedupWindow = 20_000
 type gatewayFront struct {
 	mu       sync.Mutex
 	lastSeen map[string]time.Time // gateway id → last push
+	load     map[string]doorLoad  // gateway id → its own live load, from the same push
 	seen     map[string]struct{}  // row ids already recorded
 	order    []string             // insertion order, for the bounded window
 }
 
+// doorLoad is one door's own load as it last reported it. The leader keeps
+// these because the ENDPOINT's total is the sum and no single door has it —
+// a scaler for the doors would otherwise be reading one door's share of the
+// traffic and calling it the load.
+type doorLoad struct {
+	inFlight int64
+	rpm1m    int64
+	at       time.Time
+}
+
 func newGatewayFront() *gatewayFront {
-	return &gatewayFront{lastSeen: map[string]time.Time{}, seen: map[string]struct{}{}}
+	return &gatewayFront{lastSeen: map[string]time.Time{}, load: map[string]doorLoad{}, seen: map[string]struct{}{}}
+}
+
+// beat records that this door is alive and what it is carrying. It is called
+// once per push, INCLUDING a push with no rows: a door serving nothing is still
+// a door, and one that dropped out of the live set would make every other door
+// widen its share of a key's rate.
+func (g *gatewayFront) beat(gw string, inFlight, rpm1m int64, now time.Time) {
+	if gw == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.lastSeen[gw] = now
+	g.load[gw] = doorLoad{inFlight: inFlight, rpm1m: rpm1m, at: now}
+}
+
+// doorTotals sums what the live doors are carrying, and says how many reported.
+// A door heard from but with no sample counts as a door and not as a reporter,
+// the same distinction /loadz makes for workers.
+func (g *gatewayFront) doorTotals(now time.Time) (inFlight, rpm1m int64, reporting int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for gw, at := range g.lastSeen {
+		if now.Sub(at) > gatewayLiveFor {
+			continue
+		}
+		ld, ok := g.load[gw]
+		if !ok || now.Sub(ld.at) > gatewayLiveFor {
+			continue
+		}
+		inFlight += ld.inFlight
+		rpm1m += ld.rpm1m
+		reporting++
+	}
+	return inFlight, rpm1m, reporting
 }
 
 // note records a door and returns whether this row id is new.
@@ -166,6 +212,12 @@ type pushUsageRequest struct {
 		Outcome          string    `json:"outcome"`
 		NodeID           string    `json:"node_id"`
 	} `json:"rows"`
+	// InFlight and RPM1m are the DOOR's own live load at the moment of the
+	// push. The leader publishes the sum (GET /gatewayz) because that total is
+	// what a scaler for the doors must read: any single door sees only its
+	// share, and keep-alive makes that share uneven.
+	InFlight int64 `json:"in_flight"`
+	RPM1m    int64 `json:"rpm_1m"`
 }
 
 // pushUsage accepts usage rows a gateway recorded. Admin-keyed like every other
@@ -177,6 +229,9 @@ func (s *Server) pushUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// The door first, the rows second: an empty push is a heartbeat and must
+	// still count, and a door whose rows are all duplicates is no less alive.
+	s.gateways.beat(req.Gateway, req.InFlight, req.RPM1m, now)
 	accepted, duplicate := 0, 0
 	for _, row := range req.Rows {
 		if !s.gateways.note(req.Gateway, row.ID, now) {
