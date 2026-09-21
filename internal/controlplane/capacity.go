@@ -118,7 +118,11 @@ func (s *Server) modelServable(ctx context.Context, model string) bool {
 			if p.NodeID == "local" {
 				continue // the leader's own engine: judged by its health, below
 			}
-			if n, err := s.store.Nodes().Get(ctx, p.NodeID); err == nil && n != nil && n.TakesNewWork(maxAge, now) {
+			// The stored rule, and the worker's own word that its engine is
+			// gone (T11.2) — the router refuses such a worker, so counting it
+			// servable here would answer the caller 502 where it should have
+			// been 503 + Retry-After.
+			if n, err := s.store.Nodes().Get(ctx, p.NodeID); err == nil && n != nil && n.TakesNewWork(maxAge, now) && s.engineGoneWhy(p.NodeID) == "" {
 				return true
 			}
 		}

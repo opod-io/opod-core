@@ -123,9 +123,15 @@ type nodeEngineSample struct {
 }
 
 // EnginesUnhealthy counts the workers whose engine is NOT serving — crash
-// looping, stopped, or stuck starting for longer than a model takes to load.
-// Those workers hold their cards and heartbeat like any other, so anything
-// counting workers counts them as capacity; they are not.
+// looping or stopped. Those workers hold their cards and heartbeat like any
+// other, so anything counting workers counts them as capacity; they are not.
+//
+// Since T11.2 a worker that reported `stopped` is already out of the `workers`
+// count and out of rotation — the state is terminal and it is what a worker
+// sends on its way out. It is still counted HERE, because the fact this number
+// exists to carry is a card held by a process that is not serving, and that is
+// still true. A crash-looping one is counted in both: it may be up again by the
+// time the next request lands, so it keeps its place in rotation.
 func (s *Server) EnginesUnhealthy() (unhealthy int, worst string) {
 	s.nodeEngine.Range(func(_, v any) bool {
 		e := v.(nodeEngineSample)
@@ -145,6 +151,41 @@ func (s *Server) EnginesUnhealthy() (unhealthy int, worst string) {
 		return true
 	})
 	return unhealthy, worst
+}
+
+// engineGoneWhy is the reason a worker cannot take new work because of what it
+// SAID about its own engine, or "" when it has said no such thing (T11.2,
+// ADR-065).
+//
+// Only `stopped` counts, and the distinction is the whole decision:
+//
+//   - `stopped` is terminal by its own definition — "exited and not restarting;
+//     it will not come back without a change" — and it is what a worker sends on
+//     its way out (agent.Goodbye). Acting on it closes the window every park and
+//     every rolling update has, where a pod already killed its engine, keeps
+//     heartbeating through the grace period, and the leader routes a request
+//     into a dead process and answers 502: the one error class
+//     `capacity.go` says a client cannot act on.
+//   - `crash-looping` does NOT count. It is a report about capacity that keeps
+//     disappearing, not a statement that it is gone; the process may be up again
+//     by the time the next request lands, and taking it out of rotation on a
+//     report would flap an endpoint between serving and 503. It stays what it
+//     was: a number on /loadz and a word in an alert.
+//
+// A stale sample counts for nothing — the heartbeat rule owns silence (C6).
+func (s *Server) engineGoneWhy(nodeID string) string {
+	v, ok := s.nodeEngine.Load(nodeID)
+	if !ok {
+		return ""
+	}
+	e := v.(nodeEngineSample)
+	if time.Since(e.at) > loadSampleMaxAge || e.State != nodeapi.EngineStopped {
+		return ""
+	}
+	if e.Detail != "" {
+		return "engine stopped: " + e.Detail
+	}
+	return "engine stopped"
 }
 
 // loadSampleMaxAge: a worker's sample older than this is not "reporting" —
@@ -203,6 +244,12 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	var prefixSamples int
 	for _, n := range nodes {
 		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
+			continue
+		}
+		// A worker that said its engine is gone is not capacity a reader can
+		// count on, and the router will not send it a request either (T11.2).
+		// The card it still holds is reported below, as EnginesUnhealthy.
+		if s.engineGoneWhy(n.ID) != "" {
 			continue
 		}
 		if !gangNodes[n.ID] && !s.servesNow(ctx, n.ID, out.PlanModel) {

@@ -166,6 +166,12 @@ func (r *Router) takesRequests(n *store.Node, now time.Time) (ok bool, why strin
 		return false, "draining"
 	case !n.TakesNewWork(r.heartbeatMaxAge, now):
 		return false, "stale-heartbeat"
+	case r.engineDownWhy(n.ID) != "":
+		// The worker said its engine is gone — a pod being terminated keeps
+		// heartbeating through its grace period, and routing into it is a 502
+		// the caller cannot act on (T11.2). Only a statement the worker MADE
+		// counts here: silence is the heartbeat rule above.
+		return false, "engine-stopped"
 	case r.inCooldown(n.ID):
 		return false, "cooldown"
 	}

@@ -83,7 +83,12 @@ func (s *Server) routableNodes(ctx context.Context) map[string]bool {
 	}
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	for _, n := range nodes {
-		out[n.ID] = n.TakesNewWork(maxAge, now)
+		// The stored rule, plus the one thing only the worker can say: that its
+		// engine is gone (T11.2). A gang part whose pod is terminating still
+		// heartbeats through the grace period, so without this the gang reads
+		// servable for as long as the heartbeat bound and every request in that
+		// window is a 502.
+		out[n.ID] = n.TakesNewWork(maxAge, now) && s.engineGoneWhy(n.ID) == ""
 	}
 	return out
 }

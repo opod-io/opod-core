@@ -241,9 +241,13 @@ func cmdJoin(args []string) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Heartbeat loop
+	// Heartbeat loop. On the way out it says goodbye (T11.2): the engine dies
+	// with this process, and a leader that only learns it by silence goes on
+	// routing into a dead engine for the heartbeat bound — which is a 502 to a
+	// caller, the one error class a client cannot act on.
 	go func() {
 		defer wg.Done()
+		defer a.Goodbye(ctx)
 		if err := a.Loop(ctx); err != nil && err != context.Canceled {
 			log.Error("agent loop exited", "err", err)
 			cancel()

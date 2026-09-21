@@ -186,6 +186,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
 	// policy snapshot switches the weights on.
 	routed.SetLoadSource(s.loadSignal)
+	// A worker's own last word on its engine (T11.2): a pod being terminated
+	// heartbeats through its grace period with its last good report, and a
+	// request routed into that dead engine is a 502 the caller cannot act on.
+	routed.SetEngineDown(s.engineGoneWhy)
 	// GET /v1/models lists what can be answered for now, by the leader's
 	// liveness bound — plus the plan's model while the plan parks it by design.
 	openaiH.HeartbeatMaxAge = s.heartbeatMaxAge()
