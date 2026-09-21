@@ -36,7 +36,25 @@ const ShardStatusLost = "lost"
 // heartbeatMaxAge is the staleness bound for worker heartbeats. Config 0
 // (check disabled for routing) still needs a bound here; 60 s keeps the old
 // hasServingCapacity default.
+//
+// A GATEWAY has NO bound (0 = no age rule, store.Node.Alive). It receives no
+// heartbeat: the timestamps on its mirrored rows say when the LEADER last saw
+// each worker, and while the leader restarts — every rollout, every failover —
+// the mirror cannot refresh them, so they slide past any bound and the door
+// refuses workers that are serving. Measured on the design-partner cell
+// (2026-09-21): with the leader pod deleted a door served 18 requests and then
+// answered 503 to 25, which is the exact failure doors exist to prevent.
+//
+// What judges a worker on a door is the brain's own verdict, which travels with
+// the row (the mirror copies the leader's DERIVED state and a lost, draining or
+// engine-silent worker is out). The rest is fail-static by design (ADR-063):
+// while the brain is unreachable a door keeps routing to the workers it knows,
+// a worker that has really gone fails the dispatch, and how stale the list is
+// is published on /gatewayz rather than hidden.
 func (s *Server) heartbeatMaxAge() time.Duration {
+	if s.isGateway() {
+		return 0
+	}
 	return store.HeartbeatBound(s.cfg.Router.HeartbeatMaxAgeSeconds)
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -417,3 +418,84 @@ func TestTheLeaderPublishesWhatEveryDoorIsCarrying(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// A door never receives a heartbeat: the timestamps on its mirrored rows say
+// when the LEADER last saw each worker, not when the door did. So while the
+// leader restarts — every rollout, every failover — those copies age past the
+// heartbeat bound and the door starts refusing workers that are serving.
+//
+// Measured on the design-partner cell (2026-09-21): with the leader pod deleted,
+// a door served 18 requests and then answered 503 to 25 — the exact failure the
+// doors exist to prevent. The brain's DERIVED state travels with the row and is
+// the authority; the door's own age rule is not, so it is off.
+func TestADoorDoesNotAgeOutTheWorkersItWasToldAbout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// A leader that answers the registry once and then goes away, exactly as a
+	// restarting pod does.
+	var down atomic.Bool
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			http.Error(w, "leader restarting", http.StatusServiceUnavailable)
+			return
+		}
+		switch r.URL.Path {
+		case "/admin/v1/shards":
+			_, _ = w.Write([]byte(`[]`))
+		case "/admin/v1/spend":
+			_, _ = w.Write([]byte(`{"ts":0,"doors":1,"lag_bound_ms":10000,"keys":[]}`))
+		default:
+			// A worker the leader saw 20 seconds ago — inside its own bound,
+			// and the row it hands over carries that age.
+			_, _ = w.Write([]byte(`[{"ID":"w1","Hostname":"w1","Address":"10.0.0.9:8081","state":"ready","heartbeat_age_seconds":20,"WorkerToken":"sk-orc-w1"}]`))
+		}
+	}))
+	defer leader.Close()
+
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	// The control plane renders this on every endpoint; a door must not obey it.
+	cfg.Router.HeartbeatMaxAgeSeconds = 30
+	cfg.Env.Role = "gateway"
+	cfg.Env.LeaderURL = leader.URL
+	cfg.Env.GatewayID = "door-1"
+	cfg.Auth.AdminToken = "sk-orc-contract-test-admin"
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	door := NewServer(cfg, st, &stubLeaderEngine{}, nil, log, nil)
+	if err := door.StartGatewayRole(ctx); err != nil {
+		t.Fatalf("StartGatewayRole: %v", err)
+	}
+	if !door.routableNodes(ctx)["w1"] {
+		t.Fatal("the mirrored worker is routable while the leader answers")
+	}
+	// The leader goes away and the row ages: the door cannot refresh it, so the
+	// copied timestamp keeps sliding past the bound it was rendered with.
+	down.Store(true)
+	n, err := st.Nodes().Get(ctx, "w1")
+	if err != nil || n == nil {
+		t.Fatal(err)
+	}
+	n.LastHeartbeat = time.Now().Add(-10 * time.Minute)
+	if err := st.Nodes().Upsert(ctx, *n); err != nil {
+		t.Fatal(err)
+	}
+	if !door.routableNodes(ctx)["w1"] {
+		t.Error("a door refused a worker because its LEADER went quiet — the door's age rule must be off (ADR-063: fail-static)")
+	}
+	// What DOES take a worker out is the brain's own verdict, which travels
+	// with the row.
+	n.State = "draining"
+	if err := st.Nodes().Upsert(ctx, *n); err != nil {
+		t.Fatal(err)
+	}
+	if door.routableNodes(ctx)["w1"] {
+		t.Error("a door must obey the leader's derived state: a draining worker is out")
+	}
+}
