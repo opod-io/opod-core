@@ -17,8 +17,10 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod/internal/api"
@@ -73,6 +75,12 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 		spend:  gateway.NewSpend(leaderURL, token),
 		id:     id,
 	}
+	// Every push carries this door's own load, so the leader can publish the
+	// endpoint's total (GET /gatewayz on the leader) and a scaler for the doors
+	// reads the traffic instead of one door's uneven share of it.
+	s.front.push.SetLoad(func() (int64, int64) {
+		return atomic.LoadInt64(&s.load.inFlight), s.load.sum(&s.load.reqRing, &s.load.reqSec, time.Now())
+	})
 	// The first mirror is synchronous: a door that starts serving before it has
 	// a worker list answers 503 for its first seconds, and a rollout would read
 	// that as a door that never came up.
@@ -108,6 +116,47 @@ func (s *Server) recordUsageForGateway(u store.Usage, rowID string) {
 	// served since, so tell the enforcer immediately rather than waiting for
 	// the row to come back in a snapshot.
 	s.front.spend.Spent(u.APIKeyID, int64(u.PromptTokens+u.CompletionTokens))
+}
+
+// gatewayz answers GET /gatewayz in whichever role this process is.
+func (s *Server) gatewayz(w http.ResponseWriter, _ *http.Request) {
+	if st := s.GatewayStatus(); st != nil {
+		writeJSON(w, http.StatusOK, st)
+		return
+	}
+	now := time.Now()
+	inFlight, rpm, reporting := s.gateways.doorTotals(now)
+	live, _ := s.gateways.doors(now)
+	// The leader is a door too: it serves /v1 itself, and a total that left its
+	// own traffic out would under-read the endpoint by exactly one door's worth.
+	inFlight += atomic.LoadInt64(&s.load.inFlight)
+	rpm += s.load.sum(&s.load.reqRing, &s.load.reqSec, now)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"role": "leader",
+		// doors counts the leader's own front, so it is never 0 — and it is the
+		// same number the spend snapshot divides a key's rate by.
+		"doors":           live,
+		"doors_reporting": reporting + 1,
+		// The per-door averages are what an autoscaler compares against a
+		// target; the totals are for a human reading the page.
+		"doors_in_flight":    inFlight,
+		"doors_rpm_1m":       rpm,
+		"in_flight_per_door": ratePerDoor(inFlight, live),
+		"rpm_1m_per_door":    ratePerDoor(rpm, live),
+		"live_for_s":         int(gatewayLiveFor.Seconds()),
+		"spend_lag_bound_s":  spendLagBoundMS / 1000,
+		"gateways":           s.gateways.seenDoors(now),
+	})
+}
+
+// ratePerDoor is a total divided by the doors carrying it, rounded UP: a
+// scaler comparing a per-door average against a target must not be told 0.9
+// when a door is carrying one request.
+func ratePerDoor(total int64, doors int) int64 {
+	if doors <= 0 {
+		return total
+	}
+	return (total + int64(doors) - 1) / int64(doors)
 }
 
 // GatewayStatus is what a door reports about itself: the staleness a console

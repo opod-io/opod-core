@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -326,3 +327,93 @@ func post(t *testing.T, url, token, body string) ([]byte, int) {
 	b, _ := io.ReadAll(resp.Body)
 	return b, resp.StatusCode
 }
+
+// The number a scaler for the DOORS must read is the endpoint's total, and no
+// single door has it: keep-alive pins a client to one door, so any one door's
+// load is an uneven share of the traffic. The leader has every door's push, so
+// the leader is where the total is published — including its own front, which a
+// total that left it out would under-read by one door's worth.
+//
+// And an IDLE door must keep counting as a door. A push with no rows is a
+// heartbeat: without it a quiet door drops out of the live set after 45 s and
+// every other door widens its share of a key's rate — the wrong answer in the
+// customer's direction, on the quietest endpoints.
+func TestTheLeaderPublishesWhatEveryDoorIsCarrying(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Auth.RequireKeys = true
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	adminPlain, adminRec, err := auth.Generate("door", "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.APIKeys().Create(ctx, adminRec); err != nil {
+		t.Fatal(err)
+	}
+	leader := NewServer(cfg, st, &stubLeaderEngine{}, nil, log, nil)
+	leaderHTTP := httptest.NewServer(leader.routes())
+	defer leaderHTTP.Close()
+
+	// Two doors: one carrying traffic, one idle. The idle one sends a push with
+	// no rows at all.
+	push := func(gw string, inFlight, rpm int64, rows string) {
+		t.Helper()
+		body := `{"gateway":"` + gw + `","in_flight":` + itoa(inFlight) + `,"rpm_1m":` + itoa(rpm) + `,"rows":` + rows + `}`
+		if b, code := post(t, leaderHTTP.URL+"/admin/v1/usage/push", adminPlain, body); code != http.StatusOK {
+			t.Fatalf("push from %s: %d %s", gw, code, b)
+		}
+	}
+	push("door-busy", 6, 120, `[{"id":"r1","api_key_id":"k1","model":"m","prompt_tokens":10,"completion_tokens":5,"outcome":"ok"}]`)
+	push("door-idle", 0, 0, `[]`)
+
+	body, code := get(t, leaderHTTP.URL+"/gatewayz", "")
+	if code != http.StatusOK {
+		t.Fatalf("GET /gatewayz on a leader: %d %s", code, body)
+	}
+	var z struct {
+		Role           string `json:"role"`
+		Doors          int    `json:"doors"`
+		Reporting      int    `json:"doors_reporting"`
+		InFlight       int64  `json:"doors_in_flight"`
+		RPM            int64  `json:"doors_rpm_1m"`
+		InFlightPer    int64  `json:"in_flight_per_door"`
+		SpendLagBoundS int    `json:"spend_lag_bound_s"`
+	}
+	if err := json.Unmarshal(body, &z); err != nil {
+		t.Fatal(err)
+	}
+	if z.Role != "leader" {
+		t.Fatalf("the leader's /gatewayz is the fleet view: %s", body)
+	}
+	// Two doors plus the leader's own front.
+	if z.Doors != 2 || z.Reporting != 3 {
+		t.Errorf("an idle door still counts as a door: doors=%d reporting=%d body=%s", z.Doors, z.Reporting, body)
+	}
+	if z.InFlight != 6 || z.RPM != 120 {
+		t.Errorf("the total is the sum of the doors: in_flight=%d rpm=%d", z.InFlight, z.RPM)
+	}
+	// 6 in flight over 2 doors, rounded UP: a scaler comparing a per-door
+	// average against a target must never be told 0 while a door is busy.
+	if z.InFlightPer != 3 {
+		t.Errorf("per-door average rounds up: %d", z.InFlightPer)
+	}
+	if z.SpendLagBoundS != 10 {
+		t.Errorf("the published bound travels with the fleet view: %d", z.SpendLagBoundS)
+	}
+
+	// The idle door is in the spend snapshot's divisor too — that is the whole
+	// reason the heartbeat exists.
+	if n, names := leader.gateways.doors(time.Now()); n != 2 || len(names) != 2 {
+		t.Errorf("both doors divide a key's rate: %d %v", n, names)
+	}
+}
+
+func itoa(v int64) string { return strconv.FormatInt(v, 10) }

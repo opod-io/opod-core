@@ -63,11 +63,22 @@ type Pusher struct {
 	dropped int64
 	lastErr string
 	sent    int64
+	load    func() (inFlight, rpm1m int64)
 }
 
 func NewPusher(leaderURL, token, gatewayID string) *Pusher {
 	return &Pusher{leaderURL: leaderURL, token: token, gateway: gatewayID,
 		http: &http.Client{Timeout: 15 * time.Second}}
+}
+
+// SetLoad gives the pusher this door's own live load. Every push carries it, so
+// the LEADER can publish the endpoint's total across doors — the number a
+// scaler for the doors needs and that no single door has. nil = report nothing,
+// and the leader then counts the door as live without a load sample.
+func (p *Pusher) SetLoad(f func() (inFlight, rpm1m int64)) {
+	p.mu.Lock()
+	p.load = f
+	p.mu.Unlock()
 }
 
 // Add queues a row. It never blocks and never fails: recording usage must not
@@ -96,21 +107,30 @@ func (p *Pusher) Stats() (queued int, sent, dropped int64, lastErr string) {
 // Flush sends up to batch rows. Rows are removed only once the leader has
 // taken them: a failed push leaves them queued, and the leader deduplicates a
 // row it has already recorded, so a retry after an unseen response is safe.
+// A push with NO rows is a heartbeat, not a no-op: a door serving nothing must
+// still count as a door. Without it an idle door drops out of the leader's live
+// set after 45 s and every other door widens its share of a key's rate — the
+// wrong answer in the customer's direction, on the quietest endpoints.
 func (p *Pusher) Flush(ctx context.Context, batch int) error {
 	p.mu.Lock()
-	if len(p.queue) == 0 {
-		p.mu.Unlock()
-		return nil
-	}
 	n := min(batch, len(p.queue))
 	send := make([]Row, n)
 	copy(send, p.queue[:n])
+	var inFlight, rpm int64
+	if p.load != nil {
+		f := p.load
+		p.mu.Unlock()
+		inFlight, rpm = f()
+		p.mu.Lock()
+	}
 	p.mu.Unlock()
 
 	body, err := json.Marshal(struct {
-		Gateway string `json:"gateway"`
-		Rows    []Row  `json:"rows"`
-	}{Gateway: p.gateway, Rows: send})
+		Gateway  string `json:"gateway"`
+		Rows     []Row  `json:"rows"`
+		InFlight int64  `json:"in_flight"`
+		RPM1m    int64  `json:"rpm_1m"`
+	}{Gateway: p.gateway, Rows: send, InFlight: inFlight, RPM1m: rpm})
 	if err != nil {
 		return err
 	}
