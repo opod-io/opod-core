@@ -48,6 +48,7 @@ type Server struct {
 	openaiH   *api.Handler
 	load      loadStats
 	nodeLoad  sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
+	gangLoad  sync.Map // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
 	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
 	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
 	// crash-loops still heartbeats and still holds its card; this is where that

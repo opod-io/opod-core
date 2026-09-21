@@ -108,7 +108,13 @@ func contractFeatures() map[string]bool {
 		// router load-balances across every gang whose coordinator is ready.
 		// Without it a caller must assume one gang per model — which is what
 		// every create did, replacing the previous one.
-		"shard_groups":          true,
+		"shard_groups": true,
+		// A gang's pressure on /loadz comes from its coordinator — the process
+		// that holds the KV cache and the queue — because a gang's parts are
+		// rpc-servers that run no engine and send no sample. Without it a
+		// sharded endpoint's kv_used_pct and queue_depth are constants, so an
+		// autoscaler must not render a trigger on either of them.
+		"gang_load":             true,
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one

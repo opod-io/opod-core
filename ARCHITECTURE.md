@@ -1297,6 +1297,13 @@ Two mechanisms a manager drives through this surface (2026-09-07):
   mean prefix hits, `workers`, `reporting`); a sample older than 30 s stops reporting. `workers` counts only
   workers that can take a NEW request for the plan's model — the node takes new work (the one rule) and holds
   a routable placement of it — so a drained, lost, sleeping or still-loading worker is neither capacity nor pressure.
+  A **gang** is counted the same way through its parts, and its PRESSURE comes from one place (`gang_load`): a gang's parts
+  are rpc-servers — they hold weights and multiply matrices, run no engine, and have no queue, KV cache or notion of a
+  request — so the leader scrapes the gang's **coordinator**, the process that has all three, through the driver the
+  router dials it with. It is cached for the heartbeat cadence, because `/loadz` is unauthenticated and its poll rate must
+  not become the coordinator's scrape rate. One sample speaks for the whole gang, so `reporting` counts it once and the
+  mean prefix-hit rate is over samples, not workers. Before it, a sharded endpoint reported `kv_used_pct 0` and
+  `queue_depth 0` however loaded it was (measured on the design-partner cell, 2026-09-20).
 - **Worker unload** (`worker_unload`): `POST /v1/model/unload` on the worker — the driver's `Unload`, or a
   supervisor stop of the engine process the worker launched; `noop` when not resident, `409` for a shard part
   or a held adapter, `501 unsupported` when neither is possible. See "Live model move" under Scheduler.

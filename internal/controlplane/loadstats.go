@@ -21,6 +21,7 @@ import (
 	"github.com/opod-io/opod-sdk/adminapi"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod/internal/store"
 
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -199,6 +200,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	}
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum float64
+	var prefixSamples int
 	for _, n := range nodes {
 		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
 			continue
@@ -216,6 +218,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 			continue
 		}
 		out.Reporting++
+		prefixSamples++
 		if ld.KVUsedPct > out.KVUsedPct {
 			out.KVUsedPct = ld.KVUsedPct
 		}
@@ -223,9 +226,90 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		out.TokensPerSec += ld.TokensPerSec
 		prefixSum += ld.PrefixHitPct
 	}
-	if out.Reporting > 0 {
-		out.PrefixHitPct = prefixSum / float64(out.Reporting)
+	// A gang reports through its COORDINATOR, not its parts. The parts are
+	// rpc-servers: they hold weights and do matrix multiplication, they run no
+	// engine and have no queue, no KV cache and no notion of a request — so
+	// they send no engine sample and never will. The process that has all
+	// three is the coordinator, and it is not a registered worker's engine
+	// (it is the leader's own supervised process when the head is local, and a
+	// process the head worker was told to start when it is not), so nothing
+	// above sees it.
+	//
+	// Until this, `kv_used_pct`, `queue_depth` and `tokens_per_s` were 0 for a
+	// sharded endpoint however loaded it was — two of the five triggers the
+	// control plane renders for a gang could not fire, and the endpoint could
+	// only ever scale on in-flight, RPM and unavailability (measured on the
+	// design-partner cell, 2026-09-20).
+	for _, c := range s.gangCoordinators(ctx, out.PlanModel) {
+		ld, ok := s.gangSample(ctx, c)
+		if !ok {
+			continue
+		}
+		out.Reporting++
+		prefixSamples++
+		if ld.KVUsedPct > out.KVUsedPct {
+			out.KVUsedPct = ld.KVUsedPct
+		}
+		out.QueueDepth += ld.QueueDepth
+		out.TokensPerSec += ld.TokensPerSec
+		prefixSum += ld.PrefixHitPct
 	}
+	// The mean is over the SAMPLES, not the workers: one gang's sample speaks
+	// for every part of it, so dividing by the worker count would read a gang's
+	// prefix-cache hit rate as a fraction of itself.
+	if prefixSamples > 0 {
+		out.PrefixHitPct = prefixSum / float64(prefixSamples)
+	}
+}
+
+// gangCoordinators is the coordinator row of every gang of model that can
+// serve right now. Empty for an endpoint with no gangs, which is the common
+// case and costs one store read.
+func (s *Server) gangCoordinators(ctx context.Context, model string) []store.Shard {
+	shards, err := s.store.Shards().List(ctx)
+	if err != nil || len(shards) == 0 {
+		return nil
+	}
+	return servableGangCoordinators(shards, s.routableNodes(ctx), model)
+}
+
+// gangSampleTTL bounds how often a coordinator is scraped, whatever the rate
+// /loadz is polled at. It mirrors the worker heartbeat cadence (5 s), which is
+// how often a worker's own engine sample is refreshed, and sits well inside
+// loadSampleMaxAge so a cached sample is never a stale one. /loadz is
+// unauthenticated and probe-grade: without this, its poll rate would be the
+// coordinator's scrape rate.
+const gangSampleTTL = 5 * time.Second
+
+// gangSample scrapes one gang coordinator for its pressure, through the same
+// engine driver the router dials it with (the row records the driver name;
+// llama.cpp when it records none). Cached for gangSampleTTL.
+//
+// Best-effort by design, exactly like the worker path: a coordinator that is
+// slow, gone or built without metrics yields no sample, the gang stays counted
+// in `workers` — it IS serving — and `reporting` says its pressure is unknown.
+func (s *Server) gangSample(ctx context.Context, coord store.Shard) (engines.EngineLoad, bool) {
+	if coord.Address == "" {
+		return engines.EngineLoad{}, false
+	}
+	if v, ok := s.gangLoad.Load(coord.ID); ok {
+		if c := v.(nodeLoadSample); time.Since(c.at) < gangSampleTTL {
+			return c.EngineLoad, true
+		}
+	}
+	eng := engines.MustNew(router.CoordinatorEngine(coord), "http://"+coord.Address, "")
+	lr, ok := eng.(engines.LoadReporter)
+	if !ok {
+		return engines.EngineLoad{}, false
+	}
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	ld, err := lr.Load(sctx)
+	if err != nil {
+		return engines.EngineLoad{}, false
+	}
+	s.gangLoad.Store(coord.ID, nodeLoadSample{EngineLoad: ld, at: time.Now()})
+	return ld, true
 }
 
 // servesNow reports whether the node holds a routable placement of model
