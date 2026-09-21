@@ -114,7 +114,14 @@ func contractFeatures() map[string]bool {
 		// rpc-servers that run no engine and send no sample. Without it a
 		// sharded endpoint's kv_used_pct and queue_depth are constants, so an
 		// autoscaler must not render a trigger on either of them.
-		"gang_load":             true,
+		"gang_load": true,
+		// Gateway replicas, leader side (T11.1, ADR-063): POST
+		// /admin/v1/usage/push takes usage rows a copied front recorded,
+		// deduplicated by a row id the GATEWAY mints; GET /admin/v1/spend
+		// serves the per-key spend, the ceilings, this door's 1/N share of them
+		// and the lag bound a quota may drift by. Without it a manager must keep
+		// every request on one front door.
+		"gateway_spend":         true,
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one
