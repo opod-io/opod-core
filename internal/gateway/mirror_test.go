@@ -155,6 +155,7 @@ func TestTheMirrorCarriesPlacementsAndGangs(t *testing.T) {
 	ctx := context.Background()
 	var nodes, shards atomic.Value
 	nodes.Store(`[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1,
+	               "WorkerToken":"sk-orc-worker-a",
 	               "placements":[{"NodeID":"n_a","ModelID":"qwen","Status":"ready"},{"NodeID":"n_a","ModelID":"llama","Status":"ready"}]}]`)
 	shards.Store(`[{"ID":"sh_1","ModelID":"big","GangID":"g1","Role":"coordinator","NodeID":"n_a","Address":"10.0.0.1:9000","Status":"ready"},
 	               {"ID":"sh_2","ModelID":"big","GangID":"g1","Role":"rpc","NodeID":"n_a","Address":"10.0.0.1:9001","Status":"ready"}]`)
@@ -178,6 +179,14 @@ func TestTheMirrorCarriesPlacementsAndGangs(t *testing.T) {
 	ps, _ := st.Placements().GetByNode(ctx, "n_a")
 	if len(ps) != 2 {
 		t.Fatalf("both resident models mirrored: %+v", ps)
+	}
+	// The credential the worker minted at join: the leader keeps it on the row
+	// so it can call that worker back, and a door dispatches to the same
+	// workers. Without it the worker answered 401 and the door turned every
+	// dispatched request into a 502 — the first request a door ever dispatched,
+	// on the cell.
+	if n, _ := st.Nodes().Get(ctx, "n_a"); n == nil || n.WorkerToken != "sk-orc-worker-a" {
+		t.Fatalf("the worker's own token is mirrored, or a door cannot dial it: %+v", n)
 	}
 	if got, _ := st.Placements().GetByModel(ctx, "qwen"); len(got) != 1 {
 		t.Fatalf("a door must be able to find a holder by model: %+v", got)

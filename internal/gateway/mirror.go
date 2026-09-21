@@ -49,6 +49,20 @@ type leaderNode struct {
 	// mirroring the machines without them gives a door a list it cannot send a
 	// single request to (every pick would find no holder and answer 503).
 	Placements []store.Placement `json:"placements"`
+	// WorkerToken is the per-node credential the worker minted at join, which
+	// the leader keeps on the row precisely so it can CALL THAT WORKER BACK.
+	// A door dispatches to the same workers, so it needs the same credential:
+	// without it the worker answers every dispatched request `401
+	// Unauthorized` and the door turns it into a 502 (measured on the
+	// design-partner cell, 2026-09-21 — the first request a door ever
+	// dispatched).
+	//
+	// It is a secret on the wire, and it travels the way every other one does
+	// here: over the leader's admin surface, which is admin-keyed and
+	// in-cluster, to a process the control plane gave that admin token to. A
+	// door holds nothing it cannot rebuild from the leader (ADR-063), and this
+	// is rebuilt on every sync like the rest of the row.
+	WorkerToken string `json:"WorkerToken"`
 }
 
 // Mirror keeps a gateway's local (in-memory) store looking like the leader's
@@ -122,6 +136,7 @@ func (m *Mirror) Sync(ctx context.Context) error {
 		// The leader's DERIVED state is what routing must obey: a node it calls
 		// lost or engine-silent is out, whatever its stored row says.
 		row := store.Node{ID: n.ID, Hostname: n.Hostname, Address: n.Address, State: n.State,
+			WorkerToken:   n.WorkerToken,
 			LastHeartbeat: m.now().Add(-time.Duration(n.HeartbeatAgeSeconds) * time.Second)}
 		if err := m.st.Nodes().Upsert(ctx, row); err != nil {
 			return fmt.Errorf("mirror node %s: %w", n.ID, err)
