@@ -295,7 +295,7 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	}
 	// Engine-neutral gangs (R4): the coordinator row says which driver
 	// fronts it (a vLLM Ray gang, or the llama.cpp RPC default).
-	eng = engines.MustNew(coordinatorEngine(best.coord), "http://"+best.coord.Address, "")
+	eng = engines.MustNew(CoordinatorEngine(best.coord), "http://"+best.coord.Address, "")
 	r.mu.Lock()
 	r.remotes[key] = eng
 	r.mu.Unlock()
@@ -512,9 +512,11 @@ func startsWithScheme(s string) bool {
 // ensure interface satisfaction at compile time
 var _ engines.Engine = (*Router)(nil)
 
-// coordinatorEngine reads the driver name a shard coordinator row records in
-// its config ({"engine":"vllm"}); llama.cpp when it records none.
-func coordinatorEngine(s store.Shard) string {
+// CoordinatorEngine reads the driver name a shard coordinator row records in
+// its config ({"engine":"vllm"}); llama.cpp when it records none. Exported
+// because the leader samples that same process for its pressure
+// (controlplane/loadstats.go) and must dial it with the driver the router uses.
+func CoordinatorEngine(s store.Shard) string {
 	if s.ConfigJSON != "" {
 		var cfg struct {
 			Engine string `json:"engine"`

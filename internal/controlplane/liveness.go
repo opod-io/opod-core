@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/opod-io/opod/internal/store"
@@ -118,19 +119,52 @@ func liveShardStatus(sh store.Shard, alive map[string]bool) string {
 func servableShardModels(shards []store.Shard, alive map[string]bool) map[string]bool {
 	out := map[string]bool{}
 	for key, parts := range store.GroupGangs(shards) {
-		coordinatorReady, partLost := false, false
-		for _, sh := range parts {
-			if !shardAlive(sh, alive) {
-				partLost = true
-			}
-			if sh.Role == "coordinator" && sh.Status == "ready" {
-				coordinatorReady = true
-			}
-		}
-		if coordinatorReady && !partLost {
+		if _, ok := gangServable(parts, alive); ok {
 			out[key.Model] = true
 		}
 	}
+	return out
+}
+
+// gangServable is THE rule for "can this gang serve right now?", asked of one
+// gang's parts: its coordinator is ready and not one part is lost. It returns
+// the coordinator row because the callers that want more than a yes/no want
+// exactly that row — it is the process that holds the KV cache and answers
+// requests (loadstats.go), while the parts are rpc-servers.
+//
+// It is one function because it was three, written out per caller, and that is
+// how a gang came to be judged over the model's parts as one set in five
+// places (fixed 2026-09-20).
+func gangServable(parts []store.Shard, alive map[string]bool) (coord store.Shard, ok bool) {
+	found, partLost := false, false
+	for _, sh := range parts {
+		if !shardAlive(sh, alive) {
+			partLost = true
+		}
+		if sh.Role == "coordinator" && sh.Status == "ready" {
+			coord, found = sh, true
+		}
+	}
+	if !found || partLost {
+		return store.Shard{}, false
+	}
+	return coord, true
+}
+
+// servableGangCoordinators is the coordinator row of every gang of model that
+// can serve right now — the same per-gang judgement as servableShardModels,
+// kept as the rows the leader can dial.
+func servableGangCoordinators(shards []store.Shard, alive map[string]bool, model string) []store.Shard {
+	var out []store.Shard
+	for key, parts := range store.GroupGangs(shards) {
+		if model != "" && key.Model != model {
+			continue
+		}
+		if coord, ok := gangServable(parts, alive); ok {
+			out = append(out, coord)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -151,16 +185,7 @@ func servableGangNodes(shards []store.Shard, alive map[string]bool, model string
 		if model != "" && key.Model != model {
 			continue
 		}
-		coordinatorReady, partLost := false, false
-		for _, sh := range parts {
-			if !shardAlive(sh, alive) {
-				partLost = true
-			}
-			if sh.Role == "coordinator" && sh.Status == "ready" {
-				coordinatorReady = true
-			}
-		}
-		if !coordinatorReady || partLost {
+		if _, ok := gangServable(parts, alive); !ok {
 			continue
 		}
 		for _, sh := range parts {
