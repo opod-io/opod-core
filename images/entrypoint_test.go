@@ -92,13 +92,16 @@ func TestTheBaseImagesEnvironmentScriptIsSourced(t *testing.T) {
 
 // A GATEWAY holds no weights (T11.1): it routes to the leader's workers and
 // loads nothing, so nothing mounts a models volume for it — and the image root
-// is read-only. The entrypoint made the directory unconditionally, so every
-// door of the first cell run crash-looped on
-// `mkdir: cannot create directory '/data': Permission denied` (2026-09-21).
+// is read-only. Every door of the first cell run crash-looped, TWICE for the
+// same reason at two depths: the entrypoint made /data/models itself
+// (`mkdir: cannot create directory '/data': Permission denied`), and then core
+// made its CONFIGURED models directory, whatever the role. So the answer is not
+// "make none" — the container does not get that choice — it is "default to
+// somewhere the door can write" (2026-09-21).
 //
 // The script is run for real against a read-only /data, which is the condition
 // that produced the failure; asserting the shape of the `if` would not have.
-func TestAGatewayMakesNoModelsDirectory(t *testing.T) {
+func TestAGatewaysModelsDirectoryIsOneItCanMake(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("no bash")
@@ -114,26 +117,42 @@ func TestAGatewayMakesNoModelsDirectory(t *testing.T) {
 
 	// Up to the role branch only: the real thing would exec `opod up`.
 	script := `sed -n '1,/^log() {/p' entrypoint.sh | sed '$d' > "$TMP/head.sh"; bash "$TMP/head.sh" && echo PREPARED`
-	run := func(role string) (string, error) {
+	// models = "" leaves OPOD_MODELS_DIR unset, which is how a pod runs: the
+	// container decides the default, per role.
+	runRole := func(role, models string) (string, error) {
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Dir = "."
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TMP=" + root,
-			"OPOD_ROLE=" + role, "OPOD_DATA_DIR=" + data, "OPOD_MODELS_DIR=" + filepath.Join(ro, "models"),
+		env := []string{"PATH=" + os.Getenv("PATH"), "TMP=" + root,
+			"OPOD_ROLE=" + role, "OPOD_DATA_DIR=" + data,
 			"OPOD_CATALOG_DIR=" + filepath.Join(root, "catalog"), "HOME=" + data}
+		if models != "" {
+			env = append(env, "OPOD_MODELS_DIR="+models)
+		}
+		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 
-	out, err := run("gateway")
+	// A door's models directory must be one it CAN make: core creates its
+	// configured storage directory whatever the role, so "make none" is not a
+	// choice the container has — only "somewhere writable" is.
+	out, err := runRole("gateway", "")
 	if err != nil || !strings.Contains(out, "PREPARED") {
-		t.Fatalf("a gateway must prepare with no models directory: %v\n%s", err, out)
+		t.Fatalf("a gateway must prepare without touching the read-only path: %v\n%s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(ro, "models")); err == nil {
-		t.Error("a gateway made a models directory it will never read")
+		t.Error("a gateway made its models directory under the read-only path")
 	}
-	// The leader and the worker still need one, so the same read-only path is
-	// a failure for them — which is what says the two branches differ.
-	if out, err := run("leader"); err == nil && strings.Contains(out, "PREPARED") {
+	if _, err := os.Stat(filepath.Join(data, "models")); err != nil {
+		t.Errorf("a gateway's models directory must exist under its writable data dir (core makes the configured one): %v", err)
+	}
+	// An explicit OPOD_MODELS_DIR is still obeyed for a door: the container
+	// picks a DEFAULT, it does not override an operator.
+	if out, err := runRole("gateway", filepath.Join(ro, "models")); err == nil && strings.Contains(out, "PREPARED") {
+		t.Errorf("an explicit models dir is obeyed, so an unwritable one must fail: %s", out)
+	}
+	// And a leader's default is unchanged — the shared /data volume it is given.
+	if out, err := runRole("leader", filepath.Join(ro, "models")); err == nil && strings.Contains(out, "PREPARED") {
 		t.Errorf("a leader with an unwritable models dir must fail, not pass: %s", out)
 	}
 }

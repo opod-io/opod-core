@@ -32,18 +32,21 @@ base_env
 
 ROLE="${OPOD_ROLE:-leader}"
 DATA="${OPOD_DATA_DIR:-/var/lib/opod}"
-MODELS="${OPOD_MODELS_DIR:-/data/models}"
-CATALOG="${OPOD_CATALOG_DIR:-/usr/local/share/opod/catalog}"
 # A GATEWAY holds no weights: it routes to the leader's workers and loads
-# nothing (T11.1). So it gets no models directory — and MUST not try to make
-# one, because nothing mounts a volume there for it and the image root is
-# read-only: `mkdir: cannot create directory '/data': Permission denied`, on a
-# loop, was every door of the first cell run (2026-09-21).
+# nothing (T11.1). Nothing mounts a models volume for it, and the image root is
+# read-only, so the usual /data/models is a crash loop — it was every door of
+# the first cell run (2026-09-21): first here (`mkdir: cannot create directory
+# '/data': Permission denied`), then one layer deeper, because core creates its
+# CONFIGURED models directory whatever the role. So a door's (unused) models
+# directory lives under its writable data dir. The path is never read: what a
+# door needs is the registry it mirrors and the auth snapshot it is given.
 if [ "$ROLE" = gateway ]; then
-  mkdir -p "$DATA"
+  MODELS="${OPOD_MODELS_DIR:-$DATA/models}"
 else
-  mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
+  MODELS="${OPOD_MODELS_DIR:-/data/models}"
 fi
+CATALOG="${OPOD_CATALOG_DIR:-/usr/local/share/opod/catalog}"
+mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
 # The catalog is embedded in the binary (opod-sdk/catalog, R9.8); the file copy
 # this script reads repo/file from is exported once, so no image carries one.
 [ -d "$CATALOG" ] || opod catalog export "$CATALOG" >/dev/null 2>&1 || true
