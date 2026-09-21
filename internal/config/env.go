@@ -25,6 +25,12 @@ type Env struct {
 	PolicyFile       string `env:"OPOD_POLICY_FILE" side:"leader" doc:"the mounted policy snapshot: routing, logging, guardrails (default /etc/opod-auth/policy.json; \"off\" = no watcher)"`
 	CoordinatorNode  string `env:"OPOD_COORDINATOR_NODE" side:"leader" doc:"pin the llama.cpp RPC coordinator to a node id (\"local\" = the leader itself)"`
 	OTLPLogsEndpoint string `env:"OPOD_OTLP_LOGS_ENDPOINT" side:"leader" doc:"OTLP/HTTP collector for the leader's own log records (URL or host:port); stderr keeps working, the queue is bounded and never blocks. Empty = off"`
+	// gateway (T11.1, ADR-063) — a copied FRONT of a leader: it serves /v1 and
+	// nothing of /admin/v1, mirrors the leader's worker registry, pushes its
+	// usage rows there and enforces from the spend snapshot it polls back.
+	Role      string `env:"OPOD_ROLE" side:"leader" doc:"leader (default) | gateway. A gateway serves /v1 only: no join surface, no engine of its own, its worker list mirrored from the leader and its usage pushed there (T11.1)"`
+	LeaderURL string `env:"OPOD_LEADER_URL" side:"leader" doc:"the leader a GATEWAY mirrors and pushes to (http://host:8080); required when OPOD_ROLE=gateway"`
+	GatewayID string `env:"OPOD_GATEWAY_ID" side:"leader" doc:"this door's name in the leader's door count, which sets each key's 1/N rate share; unset = the hostname"`
 	// worker
 	Accelerator   string `env:"OPOD_ACCELERATOR" side:"worker" doc:"the vendor the manager placed the worker on (nvidia | amd | intel | tt | none); unset = what the worker detects"`
 	EngineFlags   string `env:"OPOD_ENGINE_FLAGS" side:"worker" doc:"JSON map of engine flags from the plan (tp, max_model_len, ctx, ngl, …)"`

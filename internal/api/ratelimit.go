@@ -271,6 +271,23 @@ func (s *BucketStore) sweepLocked(now time.Time) {
 // Reconciliation between estimate and actual completion tokens is
 // handled in recordUsage (best-effort refund / deduct).
 func RateLimitMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
+	return RateLimitMiddlewareShared(buckets, nil)
+}
+
+// ShareSource narrows a key's per-minute ceilings to THIS process's share of
+// them. A gateway replica is one of N front doors for the same endpoint
+// (ADR-063): each enforcing the whole RPM would sell the key N times its rate,
+// so a door enforces the share the leader published. A share of 0 means the
+// source has nothing to say about that key yet — the middleware then keeps the
+// key's own limits, which is N times too generous but still a ceiling; falling
+// open entirely on a snapshot that has not arrived is not a choice we make.
+type ShareSource interface {
+	Share(apiKeyID string) (rpm, tpm int)
+}
+
+// RateLimitMiddlewareShared is RateLimitMiddleware with an optional share
+// source. nil = a single door, where the key's limits ARE this process's.
+func RateLimitMiddlewareShared(buckets *BucketStore, share ShareSource) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := auth.KeyFrom(r.Context())
@@ -278,7 +295,18 @@ func RateLimitMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			rpm, tpm := buckets.For(key.ID, key.RPMLimit, key.TPMLimit)
+			rpmLimit, tpmLimit := key.RPMLimit, key.TPMLimit
+			if share != nil {
+				if sr, st := share.Share(key.ID); sr > 0 || st > 0 {
+					if sr > 0 {
+						rpmLimit = sr
+					}
+					if st > 0 {
+						tpmLimit = st
+					}
+				}
+			}
+			rpm, tpm := buckets.For(key.ID, rpmLimit, tpmLimit)
 
 			if r.Method != http.MethodPost {
 				next.ServeHTTP(w, r)
@@ -301,7 +329,7 @@ func RateLimitMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
 
 			if ok, retry := rpm.Take(1); !ok {
 				setRateLimitHeaders(w, key, rpm, tpm)
-				writeRateLimited(w, retry, "rpm", key.RPMLimit)
+				writeRateLimited(w, retry, "rpm", rpmLimit)
 				return
 			}
 			if ok, retry := tpm.Take(float64(estimate)); !ok {
@@ -309,7 +337,7 @@ func RateLimitMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
 				// for a request we never admitted.
 				rpm.Refund(1)
 				setRateLimitHeaders(w, key, rpm, tpm)
-				writeRateLimited(w, retry, "tpm", key.TPMLimit)
+				writeRateLimited(w, retry, "tpm", tpmLimit)
 				return
 			}
 			next.ServeHTTP(w, r)

@@ -31,6 +31,13 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		State               string     `json:"state"`
 		HeartbeatAgeSeconds int64      `json:"heartbeat_age_seconds"`
 		CooldownUntil       *time.Time `json:"cooldown_until,omitempty"`
+		// Placements is what this worker has RESIDENT, in the shape the
+		// placement rows hold. It is here for the gateway replicas (T11.1,
+		// ADR-063): a door routes by placement, so a registry without them is
+		// a list of machines a door cannot send a single request to. Omitted
+		// when the node holds nothing, so the shape a pre-gateway client reads
+		// is unchanged.
+		Placements []store.Placement `json:"placements,omitempty"`
 	}
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	out := make([]nodeView, 0, len(nodes))
@@ -45,6 +52,9 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		}
 		if t := s.router.CooldownUntil(n.ID); !t.IsZero() {
 			v.CooldownUntil = &t
+		}
+		if ps, perr := s.store.Placements().GetByNode(r.Context(), n.ID); perr == nil && len(ps) > 0 {
+			v.Placements = ps
 		}
 		out = append(out, v)
 	}

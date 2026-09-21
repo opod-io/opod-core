@@ -41,6 +41,11 @@ type Handler struct {
 	// awake — a plan whose floor is zero: a request for one gets the waking
 	// 503 + Retry-After, which is how it wakes, so it stays listed. nil = none.
 	WakesByDesign func() []string
+	// OnUsage sees every usage row after it is recorded locally, with the id
+	// that makes it unique across processes. A gateway replica uses it to
+	// queue the row for the push to the leader, which is the single writer
+	// (ADR-063); nil on a leader, where the local row IS the record.
+	OnUsage func(rec store.Usage, rowID string)
 
 	policy atomic.Pointer[Policy] // request-path policy, swapped by the owner (see policy.go)
 }
