@@ -1304,6 +1304,19 @@ Two mechanisms a manager drives through this surface (2026-09-07):
   not become the coordinator's scrape rate. One sample speaks for the whole gang, so `reporting` counts it once and the
   mean prefix-hit rate is over samples, not workers. Before it, a sharded endpoint reported `kv_used_pct 0` and
   `queue_depth 0` however loaded it was (measured on the design-partner cell, 2026-09-20).
+- **Gateway spend** (`gateway_spend`, T11.1 slice 1, ADR-063): the leader is one BRAIN behind several front DOORS.
+  `POST /admin/v1/usage/push` takes usage rows a copied front recorded — at-least-once, deduplicated by a row id the
+  **gateway** mints, because only the gateway knows two pushes are the same request, and a retry after a response it
+  never saw must not bill twice. `GET /admin/v1/spend` serves what each key has spent in the current daily window, its
+  ceilings, **this door's share of them** and the lag bound. The share matters more than it looks: a flat 1/N hands a
+  keep-alive client — pinned to one door — a fraction of the rate it was sold, so the snapshot carries the ceiling AND
+  the share, computed from the doors the leader has actually heard from (45 s of silence and a door stops counting,
+  deliberately longer than the 10 s rebalance so one missed push does not make every other door overshoot). A share
+  never rounds to 0, an unlimited key acquires no share, and with no gateway at all there is one door — the leader's
+  own — which keeps the whole ceiling. **The 10 s bound a per-key quota may lag by is published in the snapshot
+  itself** rather than left in our documentation. The dedup window is in memory on purpose: it guards a gateway's
+  retry, which happens in seconds, and a leader restart that re-accepted a row shows as a duplicate in the usage
+  export rather than as a silent double charge.
 - **Worker unload** (`worker_unload`): `POST /v1/model/unload` on the worker — the driver's `Unload`, or a
   supervisor stop of the engine process the worker launched; `noop` when not resident, `409` for a shard part
   or a held adapter, `501 unsupported` when neither is possible. See "Live model move" under Scheduler.

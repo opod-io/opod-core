@@ -49,7 +49,11 @@ type Server struct {
 	load      loadStats
 	nodeLoad  sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
 	gangLoad  sync.Map // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
-	gangEng   sync.Map // coordinator shard id → gangCoordEngine: the driver is kept because tokens_per_s is a rate it holds between samples
+	// gateways is the leader's view of its front doors (T11.1, ADR-063): who
+	// has pushed usage lately, and the row ids already recorded so a retry does
+	// not bill twice.
+	gateways *gatewayFront
+	gangEng  sync.Map // coordinator shard id → gangCoordEngine: the driver is kept because tokens_per_s is a rate it holds between samples
 	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
 	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
 	// crash-loops still heartbeats and still holds its card; this is where that
@@ -168,6 +172,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		orch:        orch,
 		openaiH:     openaiH,
 		rateBuckets: buckets,
+		gateways:    newGatewayFront(),
 		bus:         events.New(),
 	}
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
@@ -389,6 +394,11 @@ func (s *Server) routes() http.Handler {
 			r.Get("/nodes", s.listNodes)
 			r.Post("/nodes/{id}/drain", s.drainNode)
 			r.Post("/nodes/{id}/undrain", s.undrainNode)
+			// Gateway replicas, leader side (T11.1, ADR-063): usage is pushed
+			// here, spend is polled back. Both admin-keyed like the rest of
+			// /admin/v1.
+			r.Post("/usage/push", s.pushUsage)
+			r.Get("/spend", s.spend)
 			r.Post("/nodes/{id}/sleep", s.sleepWorker)   // sleep tier (build item 13)
 			r.Post("/nodes/{id}/resume", s.resumeWorker) // wake it
 			r.Delete("/nodes/{id}", s.deleteNode)
