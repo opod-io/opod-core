@@ -89,3 +89,51 @@ func TestTheBaseImagesEnvironmentScriptIsSourced(t *testing.T) {
 		t.Fatalf("a record naming a script the image lacks must stop the start, by name; got %q (%v)", got, err)
 	}
 }
+
+// A GATEWAY holds no weights (T11.1): it routes to the leader's workers and
+// loads nothing, so nothing mounts a models volume for it — and the image root
+// is read-only. The entrypoint made the directory unconditionally, so every
+// door of the first cell run crash-looped on
+// `mkdir: cannot create directory '/data': Permission denied` (2026-09-21).
+//
+// The script is run for real against a read-only /data, which is the condition
+// that produced the failure; asserting the shape of the `if` would not have.
+func TestAGatewayMakesNoModelsDirectory(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	root := t.TempDir()
+	data := filepath.Join(root, "var")
+	// A directory nothing may create under: /data's stand-in.
+	ro := filepath.Join(root, "ro")
+	if err := os.MkdirAll(ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+
+	// Up to the role branch only: the real thing would exec `opod up`.
+	script := `sed -n '1,/^log() {/p' entrypoint.sh | sed '$d' > "$TMP/head.sh"; bash "$TMP/head.sh" && echo PREPARED`
+	run := func(role string) (string, error) {
+		cmd := exec.Command(bash, "-c", script)
+		cmd.Dir = "."
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TMP=" + root,
+			"OPOD_ROLE=" + role, "OPOD_DATA_DIR=" + data, "OPOD_MODELS_DIR=" + filepath.Join(ro, "models"),
+			"OPOD_CATALOG_DIR=" + filepath.Join(root, "catalog"), "HOME=" + data}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	out, err := run("gateway")
+	if err != nil || !strings.Contains(out, "PREPARED") {
+		t.Fatalf("a gateway must prepare with no models directory: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(ro, "models")); err == nil {
+		t.Error("a gateway made a models directory it will never read")
+	}
+	// The leader and the worker still need one, so the same read-only path is
+	// a failure for them — which is what says the two branches differ.
+	if out, err := run("leader"); err == nil && strings.Contains(out, "PREPARED") {
+		t.Errorf("a leader with an unwritable models dir must fail, not pass: %s", out)
+	}
+}

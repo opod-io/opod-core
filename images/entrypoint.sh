@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # opod container entrypoint — one image, two roles. Env contract (set by the opod control
 # plane's executor, or by hand):
-#   OPOD_ROLE=leader|worker
+#   OPOD_ROLE=leader|gateway|worker
 #   leader:  OPOD_LISTEN, OPOD_JOIN_TOKEN, OPOD_REQUIRE_KEYS, OPOD_PULL_DEFAULT_MODEL, OPOD_ENGINE (all optional)
+#   gateway: OPOD_LEADER_URL (required), OPOD_ADMIN_TOKEN (required — the registry and spend reads are
+#            admin-keyed), OPOD_GATEWAY_ID (defaults to the hostname), OPOD_LISTEN (optional)
 #   worker:  OPOD_LEADER_URL (required), OPOD_JOIN_TOKEN (required), OPOD_ENGINE=llamacpp|vllm|sglang,
 #            OPOD_LOAD_MODEL=<catalog id> (+ OPOD_LOAD_REPO / OPOD_LOAD_FILE overrides), OPOD_MODELS_DIR,
 #            OPOD_ENGINE_FLAGS (json), POD_IP / POD_NAME (Kubernetes downward API)
@@ -32,7 +34,16 @@ ROLE="${OPOD_ROLE:-leader}"
 DATA="${OPOD_DATA_DIR:-/var/lib/opod}"
 MODELS="${OPOD_MODELS_DIR:-/data/models}"
 CATALOG="${OPOD_CATALOG_DIR:-/usr/local/share/opod/catalog}"
-mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
+# A GATEWAY holds no weights: it routes to the leader's workers and loads
+# nothing (T11.1). So it gets no models directory — and MUST not try to make
+# one, because nothing mounts a volume there for it and the image root is
+# read-only: `mkdir: cannot create directory '/data': Permission denied`, on a
+# loop, was every door of the first cell run (2026-09-21).
+if [ "$ROLE" = gateway ]; then
+  mkdir -p "$DATA"
+else
+  mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
+fi
 # The catalog is embedded in the binary (opod-sdk/catalog, R9.8); the file copy
 # this script reads repo/file from is exported once, so no image carries one.
 [ -d "$CATALOG" ] || opod catalog export "$CATALOG" >/dev/null 2>&1 || true
@@ -54,6 +65,18 @@ YAML
 done
 
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
+
+# A DOOR is `opod up` with the role set: it serves /v1, mirrors the leader's
+# registry, pushes its usage there and enforces from the spend snapshot
+# (T11.1, ADR-063). Same command as a leader — core reads OPOD_ROLE and
+# OPOD_LEADER_URL — but it is refused early and loudly without the leader it
+# belongs to, so the variable is required here rather than discovered inside.
+if [ "$ROLE" = gateway ]; then
+  : "${OPOD_LEADER_URL:?OPOD_LEADER_URL is required for a gateway (the leader whose registry it mirrors)}"
+  export OPOD_LISTEN="${OPOD_LISTEN:-:8080}" OPOD_PULL_DEFAULT_MODEL=false
+  log "gateway: listen=$OPOD_LISTEN leader=$OPOD_LEADER_URL id=${OPOD_GATEWAY_ID:-$(hostname)}"
+  exec opod up --config "$DATA/config.yaml" --no-wizard
+fi
 
 if [ "$ROLE" = leader ]; then
   export OPOD_LISTEN="${OPOD_LISTEN:-:8080}" OPOD_PULL_DEFAULT_MODEL="${OPOD_PULL_DEFAULT_MODEL:-false}"
