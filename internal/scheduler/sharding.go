@@ -433,13 +433,6 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 				"node", coordHost.nodeID, "path", coordModelPath)
 		}
 	}
-	// `--rpc` only when there are actual rpc shards; a 1-shard model is a
-	// plain whole-model llama-server.
-	coordArgs := []string{
-		"-m", coordModelPath,
-		"--port", strconv.Itoa(coordPort),
-		"--host", coordHostBind,
-	}
 	if len(rpcEndpoints) > 0 {
 		// Every rpc backend must be dialable BEFORE we launch the coordinator.
 		// llama-server does not treat an unreachable backend as fatal: it logs
@@ -455,8 +448,8 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 				"refusing to start a coordinator that would abort on them "+
 				"(check the rpc-server on those nodes)", strings.Join(bad, ", "))
 		}
-		coordArgs = append(coordArgs, "--rpc", strings.Join(rpcEndpoints, ","))
 	}
+	coordArgs := coordinatorArgs(coordModelPath, coordPort, coordHostBind, rpcEndpoints)
 	coordSpec := agent.ProcessSpec{
 		ID:      coordID,
 		Command: "llama-server",
@@ -737,4 +730,31 @@ func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (remo
 	}
 	sortGangKeys(removed)
 	return removed, nil
+}
+
+// coordinatorArgs is the llama-server command line for a gang's coordinator.
+// Pure, so the flags can be asserted without a supervisor or a worker.
+//
+// `--rpc` only when there are actual rpc shards: a 1-shard model is a plain
+// whole-model llama-server.
+//
+// `--metrics` is not optional. The coordinator is the only process in a gang
+// that HAS pressure — it holds the KV cache, it queues requests, it samples —
+// and the leader reads it there for /loadz (feature "gang_load",
+// controlplane/loadstats.go). Without the flag llama-server serves no
+// /metrics, so the scrape finds nothing and a SERVING gang reports
+// kv_used_pct 0 and queue_depth 0 with nothing to say why. The worker passes
+// the same flag for the engine it launches (agent/server.go); the coordinator
+// had been missed, and it is the one that matters for a gang.
+func coordinatorArgs(modelPath string, port int, host string, rpcEndpoints []string) []string {
+	args := []string{
+		"-m", modelPath,
+		"--port", strconv.Itoa(port),
+		"--host", host,
+		"--metrics",
+	}
+	if len(rpcEndpoints) > 0 {
+		args = append(args, "--rpc", strings.Join(rpcEndpoints, ","))
+	}
+	return args
 }
