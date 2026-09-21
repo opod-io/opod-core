@@ -68,30 +68,50 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "router-only"})
 		return
 	}
-	// A scale-to-zero endpoint (plan autoscale floor 0) with everything
-	// parked is healthy by design: the pod must be Ready so the Deployment
-	// converges; requests still get the honest 503 waking from dispatch.
-	if s.plan.sleepsByDesign() {
+	// A sharded model has no placement rows — its serving unit is the
+	// gang: a ready coordinator whose every part is on an alive node. This is
+	// asked BEFORE the plan's floor because a gang that is serving is serving:
+	// with floor 0 the parked branch below used to answer first, so a sharded
+	// endpoint answering requests reported itself parked (seen on the
+	// design-partner cell, 2026-09-20).
+	if s.hasServableShardGroup(r.Context()) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "sleeping"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "shard-coordinator"})
 		return
 	}
 	// Sleep tier: every live worker sleeps (engine working set dropped,
 	// process kept). The endpoint is healthy and wakes on demand — requests
-	// get the honest 503 waking meanwhile, like scale-to-zero.
+	// get the honest 503 waking meanwhile, like scale-to-zero. Asked before
+	// the floor for the same reason: a worker whose engine sleeps is asleep
+	// on purpose, not a worker on its way up.
 	if s.hasSleepingPlacement(r.Context()) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "sleeping-workers"})
 		return
 	}
-	// A sharded model has no placement rows — its serving unit is the
-	// gang: a ready coordinator whose every part is on an alive node.
-	if s.hasServableShardGroup(r.Context()) {
+	// A scale-to-zero endpoint (plan autoscale floor 0) with everything
+	// parked is healthy by design: the pod must be Ready so the Deployment
+	// converges; requests still get the honest 503 waking from dispatch.
+	//
+	// PARKED and AWAKE-BUT-NOT-SERVING are not the same state, and only the
+	// first is by design. During the failed gang park/wake run on the
+	// design-partner cell (2026-09-20) both parts were Running and registered,
+	// the gang could not form and never would have, and this branch answered
+	// `sleeping` — so Kubernetes, the console and an operator all read a
+	// healthy parked endpoint. The status stays `ready` either way ON PURPOSE:
+	// taking the leader out of the Service is what would turn the honest
+	// "503 waking, Retry-After" into a connection error, and the waking
+	// request is the very thing that brings the workers back.
+	if s.plan.sleepsByDesign() {
+		mode := "sleeping"
+		if s.hasAwakeWorkers(r.Context()) {
+			mode = "waking"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "shard-coordinator"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": mode})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

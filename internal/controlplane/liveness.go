@@ -183,6 +183,40 @@ func (s *Server) hasServableShardGroup(ctx context.Context) bool {
 	return len(servableShardModels(shards, s.routableNodes(ctx))) > 0
 }
 
+// hasAwakeWorkers reports whether ANY registered worker is up and takes new
+// work — whatever it is doing with it. It is deliberately the weakest question
+// the leader can ask about its fleet: not "can we serve" (hasServingCapacity)
+// and not "is there a ready row" (hasLivePlacement), only "is something
+// running out there".
+//
+// It exists to split the two states a floor-0 plan folds together (readyz):
+// PARKED, where the workers are gone and zero capacity is the plan, and
+// AWAKE-BUT-NOT-SERVING, where the pods are back and registered and the model
+// or the gang has not come up. The second is a wake in progress — or a wake
+// that failed and will never finish — and reporting it as the first hides it.
+//
+// One heartbeat bound of slack, by construction: a worker that has just been
+// parked keeps heartbeating through its termination grace period, so the
+// window right after a park reads `waking`. Both states answer 200, so the
+// cost is a label, and the honest reading of that window is that the endpoint
+// is neither parked yet nor able to serve.
+func (s *Server) hasAwakeWorkers(ctx context.Context) bool {
+	nodes, err := s.store.Nodes().List(ctx)
+	if err != nil {
+		return false
+	}
+	maxAge, now := s.heartbeatMaxAge(), time.Now()
+	for _, n := range nodes {
+		if n.ID == "local" {
+			continue
+		}
+		if n.TakesNewWork(maxAge, now) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasLivePlacement reports whether any alive non-local worker the router
 // would choose has a ready placement — the router-only readiness condition.
 // A draining worker is alive but takes no new request, so it does not count:
