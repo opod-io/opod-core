@@ -739,6 +739,7 @@ placement:                            # memory lifecycle for this node's local e
 | `OPOD_OTLP_LOGS_ENDPOINT` | the leader's own log records over OTLP/HTTP to a collector (URL or bare `host:port`; no YAML equivalent). stderr keeps working; the queue is bounded and never blocks. Empty = off |
 | `OPOD_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
 | `OPOD_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader supports HMAC node auth (any current release). |
+| `OPOD_LOAD_MODEL` | the catalog id a worker loads once its engine answers, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE` overriding the catalog's source. The worker does it itself, in-process — a container image does not have to call the worker's API to start it serving. |
 | `OPOD_LATENCY_P95_SECONDS` | `router.latency_fallback_p95_seconds` — when primary p95 exceeds this, prefer a faster fallback. 0 = disabled (default) |
 | `OPOD_EXCLUSIVE` | `placement.exclusive` (truthy `1/true`) — one resident model per machine |
 | `OPOD_PLACEMENT_DRAIN_TIMEOUT_SECONDS` | `placement.drain_timeout_seconds` — eviction drain bound (default 30) |

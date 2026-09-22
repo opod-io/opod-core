@@ -180,6 +180,22 @@ func MustNew(name, endpoint, apiKey string) Engine {
 	return eng
 }
 
+// NodeSigned is a driver whose upstream is an opod WORKER rather than a plain
+// OpenAI server. A worker authenticates the caller as the NODE — an HMAC over
+// the method and path, keyed by the worker token (internal/auth) — so a leader
+// that merely put the token in an `Authorization: Bearer` header is refused by
+// a worker configured HMAC-only (OPOD_REJECT_BEARER=1). Every other
+// leader→worker call signs; the request path went through this client and did
+// not, which made the switch unusable for inference as well as for the load
+// (found on the design-partner cell, 2026-09-21).
+//
+// The driver still sends the bearer header for one transition release, exactly
+// as the scheduler's calls do: a worker's auth() prefers the signature
+// whenever it is present.
+type NodeSigned interface {
+	SignAsNode(nodeID, token string)
+}
+
 // StartHint returns the driver's operator hint for starting the engine, or
 // a generic line for unknown engines.
 func StartHint(name string) string {

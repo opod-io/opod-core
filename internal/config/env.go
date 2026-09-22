@@ -44,6 +44,13 @@ type Env struct {
 	LeaderCA      string `env:"OPOD_LEADER_CA" side:"worker" doc:"PEM certificate the worker trusts for a TLS leader (exactly that one)"`
 	VRAMBudgetGB  string `env:"OPOD_VRAM_BUDGET_GB" side:"worker" doc:"the slice of the card this worker may use (shared placement); read by the engine launch"`
 	GPUIndex      string `env:"OPOD_GPU_INDEX" side:"worker" doc:"the device index the worker was pinned to (informational; the engine sees CUDA_VISIBLE_DEVICES & co)"`
+	// T10.7: the model a worker exists to serve. The worker loads it itself,
+	// once its engine answers (agent.SelfLoad) — it used to be the container
+	// entrypoint POSTing the worker's own API with a bearer token, the one
+	// caller that could not sign HMAC.
+	LoadModel string `env:"OPOD_LOAD_MODEL" side:"worker" doc:"the catalog id this worker loads once its engine answers; repo and file come from the catalog"`
+	LoadRepo  string `env:"OPOD_LOAD_REPO" side:"worker" doc:"override the catalog's repo for that load"`
+	LoadFile  string `env:"OPOD_LOAD_FILE" side:"worker" doc:"override the catalog's file (the GGUF within the repo) for that load"`
 	// both
 	CatalogDir      string `env:"OPOD_CATALOG_DIR" side:"both" doc:"a catalog directory that overrides the bundled entries (beaten only by ~/.opod/catalog)"`
 	CatalogPubKey   string `env:"OPOD_CATALOG_PUBKEY" side:"both" doc:"a minisign public key (the base64 line, or a file holding one): a catalog file in a directory that has a <file>.minisig beside it must verify against it, and a signature that does not is always a refusal. The embedded catalog is never checked. Empty = signatures are ignored"`

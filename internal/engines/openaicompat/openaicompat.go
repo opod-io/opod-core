@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 )
 
@@ -57,6 +58,17 @@ func NewClient(driver, endpoint string, auth func(*http.Request)) Client {
 		BaseURL: strings.TrimRight(endpoint, "/"),
 		HTTP:    streamingHTTPClient(),
 		Auth:    auth,
+	}
+}
+
+// SignAsNode makes every request authenticate as an opod node: the HMAC
+// signature the worker prefers, plus the bearer header for one transition
+// release (engines.NodeSigned). It replaces whatever Auth the driver was built
+// with, because a worker's token is the key, not an upstream API key.
+func (c *Client) SignAsNode(nodeID, token string) {
+	c.Auth = func(req *http.Request) {
+		req.Header.Set("Authorization", "Bearer "+token) // transition; the signature is the real auth
+		auth.SignRequest(req, nodeID, token)
 	}
 }
 

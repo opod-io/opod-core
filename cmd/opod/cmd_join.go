@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/agent"
+	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/mesh"
 
@@ -228,6 +229,7 @@ func cmdJoin(args []string) {
 		// R15.16: the version this worker serves, pinned by the manager.
 		ModelRevision: env.ModelRevision,
 		ModelSHA256:   env.ModelSHA256,
+		Log:           log,
 	}
 	defer sup.StopAll()
 
@@ -240,6 +242,16 @@ func cmdJoin(args []string) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+
+	// T10.7: the model this worker exists to serve (OPOD_LOAD_MODEL), loaded
+	// by the worker itself once its engine answers. The container entrypoint
+	// used to do it with `curl -H "Authorization: Bearer $OPOD_JOIN_TOKEN"`
+	// against this process's own API — the one caller of /v1/model/load that
+	// could not sign HMAC, because a shell cannot, which is what made
+	// OPOD_REJECT_BEARER=1 unusable. Nothing about the load needed HTTP.
+	if req, ok := selfLoadRequest(cfg, srv); ok {
+		go srv.SelfLoad(ctx, req)
+	}
 
 	// Heartbeat loop. On the way out it says goodbye (T11.2): the engine dies
 	// with this process, and a leader that only learns it by silence goes on
@@ -265,6 +277,33 @@ func cmdJoin(args []string) {
 
 	wg.Wait()
 	ok(os.Stdout, "worker shutdown complete")
+}
+
+// selfLoadRequest is the load OPOD_LOAD_MODEL asks for: the catalog entry's
+// repo and file unless the manager overrode them (OPOD_LOAD_REPO /
+// OPOD_LOAD_FILE), and by path when the whole file is already cached and the
+// version is not pinned (Server.LoadBody). A catalog the worker cannot read is
+// a warning, not a refusal: with a repo and a file given it does not need one,
+// and without them the leader can still place a model on this worker.
+func selfLoadRequest(cfg *config.Config, srv *agent.Server) (agent.LoadRequest, bool) {
+	id := strings.TrimSpace(cfg.Env.LoadModel)
+	if id == "" {
+		return agent.LoadRequest{}, false
+	}
+	repo, file := strings.TrimSpace(cfg.Env.LoadRepo), strings.TrimSpace(cfg.Env.LoadFile)
+	if repo == "" {
+		entries, err := loadCatalog(cfg)
+		if err != nil {
+			warn(os.Stdout, "OPOD_LOAD_MODEL=%s: catalog unreadable (%v) — loading by id alone", id, err)
+		}
+		for _, e := range entries {
+			if e.ID == id {
+				repo, file = e.Source.Repo, e.Source.File
+				break
+			}
+		}
+	}
+	return srv.LoadBody(id, repo, file), true
 }
 
 func parseJoinTarget(raw string) (leader, token string, err error) {

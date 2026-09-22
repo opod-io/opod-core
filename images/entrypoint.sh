@@ -137,41 +137,16 @@ log "worker: joining $OPOD_LEADER_URL engine=$ENGINE advertise=${OPOD_ADVERTISE_
 opod join "$OPOD_LEADER_URL?token=$OPOD_JOIN_TOKEN" &
 JOIN_PID=$!
 
-# load_body <id> <repo> <file> <models dir> — the body of the worker's own /v1/model/load.
-# An UNPINNED model takes the whole file already at the top of the node cache, by path: no second
-# download. A PINNED one (OPOD_MODEL_REVISION and/or OPOD_MODEL_SHA256) never does: a file that merely
-# has the same NAME is not the version that was asked for, and loading it by path skipped the
-# revision directory AND the digest check — a node that had ever served the model unpinned then
-# served those bytes under every pinned version. The agent fetches a pinned file into
-# <models>/<repo>@<revision>/ itself, verifies it, and reuses it when it is already there.
-load_body() {
-  if [ -z "${OPOD_MODEL_REVISION:-}" ] && [ -z "${OPOD_MODEL_SHA256:-}" ] && [ -n "$3" ] && [ -f "$4/$3" ]; then
-    printf '{"id":"%s","path":"%s"}' "$1" "$4/$3"
-  else
-    printf '{"id":"%s","repo":"%s","file":"%s"}' "$1" "$2" "$3"
-  fi
-}
+# The model this worker exists to serve (OPOD_LOAD_MODEL, with
+# OPOD_LOAD_REPO / OPOD_LOAD_FILE overriding the catalog) is loaded by `opod
+# join` itself, once its engine answers — see agent.SelfLoad (T10.7). This
+# script used to do it, by POSTing the worker's OWN /v1/model/load with
+# `Authorization: Bearer $OPOD_JOIN_TOKEN`: the one caller of that API that
+# could not sign HMAC, because a shell cannot, which is what made
+# OPOD_REJECT_BEARER=1 unusable — the worker registered and then refused its
+# own load five times over (measured on the design-partner cell, 2026-09-21).
+# Nothing about a worker loading its own model needed HTTP or a token.
 
-# Warm-load the endpoint's model through the worker's own agent API (same path the leader uses).
-if [ -n "${OPOD_LOAD_MODEL:-}" ]; then
-  for i in $(seq 1 60); do
-    code=$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://${POD_IP:-127.0.0.1}:8081/healthz || true)
-    [ "$code" != 000 ] && break; sleep 2
-  done
-  REPO="${OPOD_LOAD_REPO:-}"; FILE="${OPOD_LOAD_FILE:-}"
-  if [ -z "$REPO" ] && [ -f "$CATALOG/$OPOD_LOAD_MODEL.yaml" ]; then
-    REPO=$(awk '/^ *repo:/{print $2; exit}' "$CATALOG/$OPOD_LOAD_MODEL.yaml")
-    FILE=$(awk '/^ *file:/{print $2; exit}' "$CATALOG/$OPOD_LOAD_MODEL.yaml")
-  fi
-  body=$(load_body "$OPOD_LOAD_MODEL" "$REPO" "$FILE" "$MODELS")
-  log "load: $body"
-  for i in $(seq 1 5); do
-    out=$(curl -s -m 900 -X POST http://${POD_IP:-127.0.0.1}:8081/v1/model/load -H "Authorization: Bearer $OPOD_JOIN_TOKEN" -H 'Content-Type: application/json' -d "$body" || true)
-    log "load response: $out"
-    echo "$out" | grep -q '"status":"ready"' && break
-    sleep 10
-  done
-fi
 # The worker is the join process; a vendor engine started above dies with the
 # container. Reporting the engine's exit is what turns "pod running, nothing
 # served" into a restart the supervisor can act on.
