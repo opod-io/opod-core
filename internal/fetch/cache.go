@@ -256,6 +256,15 @@ type PruneResult struct {
 	Kept       int      `json:"kept"`
 	Skipped    []string `json:"skipped,omitempty"` // files not ours, named so the operator sees why nothing happened
 	DryRun     bool     `json:"dryRun"`
+	// TotalBytes / FreeBytes are the volume holding the cache, as the prune
+	// measured it where it ran. A manager reads them instead of inferring the
+	// numbers from a node probe that may not have run — on a node whose disk is
+	// full, the probe is the first thing the kubelet stops admitting, so the one
+	// node whose free space matters reported none (2026-09-21). 0 = statfs
+	// failed, and VolumeErr says so.
+	TotalBytes int64  `json:"totalBytes,omitempty"`
+	FreeBytes  int64  `json:"freeBytes,omitempty"`
+	VolumeErr  string `json:"volumeErr,omitempty"`
 }
 
 // keepSet answers "does the keep list name this entry?" (PruneRequest.Keep).
@@ -305,6 +314,11 @@ func (ks keepSet) has(e Entry) bool {
 // every one of its files' locks, or stays whole.
 func Prune(req PruneRequest) (PruneResult, error) {
 	res := PruneResult{Removed: []Entry{}, DryRun: req.DryRun}
+	if total, free, err := volumeBytes(req.Dir); err == nil {
+		res.TotalBytes, res.FreeBytes = int64(total), int64(free)
+	} else {
+		res.VolumeErr = err.Error()
+	}
 	entries, err := List(req.Dir)
 	if err != nil {
 		return res, err

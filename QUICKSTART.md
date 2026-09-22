@@ -591,7 +591,7 @@ Opod assumes a **trusted network** — your LAN, or a VPN you run yourself ([Tai
 - **Worker HTTP servers** bind to the machine's LAN address (the one on its default route), or to `OPOD_ADVERTISE_ADDR` when you set it — and to all interfaces only if no address can be determined. Every worker route except `/healthz` is authenticated. Network reachability is still the first line of defense.
 - There is **no web UI** in core and `/` answers 404; every caller — CLI, tool, manager — authenticates with an API key.
 
-If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overlay you manage** (leader ↔ worker traffic is plain HTTP unless you give the leader a certificate with `OPOD_TLS_CERT` / `OPOD_TLS_KEY`) — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `OPOD_REJECT_BEARER=1` once every leader and worker is on a recent build.
+If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overlay you manage** (leader ↔ worker traffic is plain HTTP unless you give the leader a certificate with `OPOD_TLS_CERT` / `OPOD_TLS_KEY`) — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `OPOD_REJECT_BEARER=1` once every leader and worker is on a recent build. A worker also loads the model it was started for (`OPOD_LOAD_MODEL`) in-process rather than over its own API, so nothing on a worker needs the bearer path to start serving.
 
 ### 🌐 Network behavior — every call Opod can make
 

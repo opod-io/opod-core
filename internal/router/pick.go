@@ -436,7 +436,15 @@ func (r *Router) getOrCreateRemote(nodeID, address, token string) engines.Engine
 		endpoint = "http://" + endpoint
 	}
 	// Remote opod workers speak the OpenAI wire; the vllm driver is that client.
+	// A worker is not a plain OpenAI server, though: it authenticates the leader
+	// as the NODE, so the client signs every request rather than sending the
+	// token as a bearer (engines.NodeSigned). Without that a worker configured
+	// HMAC-only answers 401 to inference — every other leader→worker call
+	// signed, and the request path did not.
 	eng := engines.MustNew("vllm", endpoint, token)
+	if signer, ok := eng.(engines.NodeSigned); ok {
+		signer.SignAsNode(nodeID, token)
+	}
 	r.remotes[nodeID] = eng
 	return eng
 }

@@ -61,6 +61,9 @@ type Server struct {
 	SleepMode    bool   // OPOD_SLEEP_MODE: vLLM starts with sleep mode on
 	HFToken      string // HF_TOKEN for the worker's own pulls
 	HFEndpoint   string // HF_ENDPOINT ("" = the public Hub)
+	// Log is where the worker's own load (SelfLoad) reports; nil = slog's
+	// default. The HTTP surface answers its caller and needs none.
+	Log *slog.Logger
 	// ModelRevision / ModelSHA256 pin the model VERSION this worker serves
 	// (R15.16): the Hub revision to fetch and the digest the file must hash to.
 	// Empty revision = "main", which moves between pulls; a manager that cares
@@ -402,35 +405,63 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 	}
 }
 
-// modelLoad makes THIS worker pull a model into its own engine and warm-load
-// it (when the engine supports warm loading). It's the leader-side placement
-// primitive: the leader's orchestrator POSTs here so a non-sharded model can be
-// pinned to a specific worker. Once resident, the worker reports the model in
-// its next heartbeat and the leader reconciles the placement — so this endpoint
-// only needs to make the model resident, not touch any store.
-//
-// The leader sends the model's catalog source fields (not a pre-resolved name)
-// so the worker resolves the engine-native name against ITS OWN engine — correct
-// for a heterogeneous fleet where the worker's engine differs from the leader's.
-// Primitive fields (rather than models.Entry) keep this package free of an
-// import cycle (models imports agent).
+// LoadRequest is one model load: the body of the worker's own
+// /v1/model/load, and the same thing a worker asks of ITSELF when its manager
+// named a model in the environment (SelfLoad, selfload.go).
+type LoadRequest struct {
+	ID         string `json:"id"`
+	OllamaName string `json:"ollama_name"`
+	Repo       string `json:"repo"`
+	File       string `json:"file"` // GGUF file inside the repo (multi-file repos)
+	Path       string `json:"path"`
+	Pin        bool   `json:"pin"`
+}
+
+// ErrLoadBadRequest is the one load failure that is the caller's fault (400);
+// every other one is the engine's or the fetch's (502).
+var ErrLoadBadRequest = errors.New("bad load request")
+
 func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	var req struct {
-		ID         string `json:"id"`
-		OllamaName string `json:"ollama_name"`
-		Repo       string `json:"repo"`
-		File       string `json:"file"` // GGUF file inside the repo (multi-file repos)
-		Path       string `json:"path"`
-		Pin        bool   `json:"pin"`
-	}
+	var req LoadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.ID == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
+	name, err := s.LoadModel(r.Context(), req)
+	if err != nil {
+		code := http.StatusBadGateway
+		if errors.Is(err, ErrLoadBadRequest) {
+			code = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), code)
 		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "model": name})
+}
+
+// LoadModel makes THIS worker pull a model into its own engine and warm-load
+// it (when the engine supports warm loading), returning the engine-native name
+// it is resident under. It is the whole of the load: the alias note, the pull,
+// the per-engine launch for the engines that have no persistent server, and
+// the warm load for the engines that do. Both callers go through here — the
+// HTTP route above (the leader-side placement primitive: the leader's
+// orchestrator POSTs so a non-sharded model can be pinned to a specific
+// worker) and SelfLoad (the worker's own manager named the model in its
+// environment) — so there is one load path and not two that drift. Once
+// resident, the worker reports the model in its next heartbeat and the leader
+// reconciles the placement: a load only has to make the model resident, and
+// touches no store.
+//
+// The caller sends the model's catalog source fields (not a pre-resolved name)
+// so the worker resolves the engine-native name against ITS OWN engine —
+// correct for a heterogeneous fleet where the worker's engine differs from the
+// leader's. Primitive fields (rather than models.Entry) keep this package free
+// of an import cycle (models imports agent).
+func (s *Server) LoadModel(ctx context.Context, req LoadRequest) (string, error) {
+	if req.ID == "" {
+		return "", fmt.Errorf("%w: id required", ErrLoadBadRequest)
 	}
 	name := engines.NativeName(s.Engine.Name(), engines.Source{
 		ID: req.ID, OllamaName: req.OllamaName, Repo: req.Repo, Path: req.Path,
@@ -441,9 +472,8 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 
 	// Pull weights (may take minutes; for llama-server/vLLM the driver Pull is
 	// a no-op and the model is fetched at engine launch / load).
-	if err := s.Engine.Pull(r.Context(), name, nil); err != nil {
-		http.Error(w, "pull: "+err.Error(), http.StatusBadGateway)
-		return
+	if err := s.Engine.Pull(ctx, name, nil); err != nil {
+		return "", fmt.Errorf("pull: %w", err)
 	}
 	// vLLM has NO persistent server and its driver never starts one — the model
 	// only becomes resident once `vllm serve <model>` is running. Launch it here
@@ -453,8 +483,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	// ready, then the heartbeat reports the model and the leader reconciles.
 	if strings.HasPrefix(s.Engine.Name(), "vllm") {
 		if err := s.launchVLLM(name, req.ID); err != nil {
-			http.Error(w, "vllm serve: "+err.Error(), http.StatusBadGateway)
-			return
+			return "", fmt.Errorf("vllm serve: %w", err)
 		}
 		s.noteLaunch("vllm-serve", req.ID, name)
 		if s.AdaptersErr == nil && len(s.Adapters) > 0 {
@@ -466,8 +495,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	// reason — the port binds only after the weights are loaded.
 	if strings.HasPrefix(s.Engine.Name(), "sglang") {
 		if err := s.launchSGLang(name, req.ID); err != nil {
-			http.Error(w, "sglang launch_server: "+err.Error(), http.StatusBadGateway)
-			return
+			return "", fmt.Errorf("sglang launch_server: %w", err)
 		}
 		s.noteLaunch("sglang-serve", req.ID, name)
 	}
@@ -477,8 +505,7 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	// so `model add --node a,b,c` would otherwise leave nothing serving.
 	if strings.HasPrefix(s.Engine.Name(), "llamacpp") || strings.HasPrefix(s.Engine.Name(), "llama-cpp") {
 		if err := s.launchLlamaServer(name, req.Repo, req.File, req.Path, req.ID); err != nil {
-			http.Error(w, "llama-server: "+err.Error(), http.StatusBadGateway)
-			return
+			return "", fmt.Errorf("llama-server: %w", err)
 		}
 		s.noteLaunch("llama-server", req.ID, name)
 	}
@@ -486,13 +513,11 @@ func (s *Server) modelLoad(w http.ResponseWriter, r *http.Request) {
 	// (vLLM/MLX/llama-server) don't implement Loader — the Pull above is enough
 	// and they become resident on first use; treat that as success.
 	if l, ok := s.Engine.(engines.Loader); ok {
-		if err := l.Load(r.Context(), name, req.Pin); err != nil && !errors.Is(err, engines.ErrUnloadNotSupported) {
-			http.Error(w, "load: "+err.Error(), http.StatusBadGateway)
-			return
+		if err := l.Load(ctx, name, req.Pin); err != nil && !errors.Is(err, engines.ErrUnloadNotSupported) {
+			return "", fmt.Errorf("load: %w", err)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "model": name})
+	return name, nil
 }
 
 // launchVLLM (re)starts `vllm serve <model>` on the host:port the vLLM driver

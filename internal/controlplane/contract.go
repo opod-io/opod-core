@@ -95,9 +95,16 @@ func contractFeatures() map[string]bool {
 		"engine_liveness":   true, // heartbeats carry what the worker's ENGINE PROCESS is doing (serving | starting | crash-looping | stopped); /loadz says how many workers are holding a card with a dead engine
 		"plan_heal_gangs":   true, // the leader forms a gang its plan declares when that gang has no parts at all and free workers have registered — so a gang whose parts were restored by something outside the leader comes back without an admin call (§13 item 3)
 		"probe_header":      true, // a request carrying X-Opod-Probe is served like any other but counted like none: not in in_flight, rpm_1m, unavailable_1m or the idle clock, so a prover cannot move the number an autoscaler reads
-		"probe_port":        true, // OPOD_PROBE_LISTEN: /healthz, /readyz, /loadz and /metrics on a second, always-plain listener, so a scraper or an autoscaler reads a number without the listener's certificate
-		"tls_listener":      true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
-		"pd_roles":          true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
+		// The worker loads the model it was started for itself (T10.7):
+		// OPOD_LOAD_MODEL / _REPO / _FILE are read by `opod join`, which waits
+		// for its engine and loads in-process. Without this key the container
+		// image did it with `curl -H "Authorization: Bearer …"` against the
+		// worker's own API, so a manager must not set OPOD_REJECT_BEARER on a
+		// binary that lacks it: the worker would refuse its own load.
+		"self_load":    true,
+		"probe_port":   true, // OPOD_PROBE_LISTEN: /healthz, /readyz, /loadz and /metrics on a second, always-plain listener, so a scraper or an autoscaler reads a number without the listener's certificate
+		"tls_listener": true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
+		"pd_roles":     true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"worker_sleep":       true, // POST /admin/v1/nodes/{id}/sleep|resume → worker engine sleep mode; placements read "sleeping"; /readyz mode sleeping-workers // /loadz carries kv_used_pct / queue_depth / tokens_per_s / prefix_hit_pct from the workers' heartbeats

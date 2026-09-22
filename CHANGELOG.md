@@ -5,6 +5,31 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
+## 2026-09-21 — a worker loads its own model, the request path signs, and a prune says where it stood
+
+- **`opod cache prune --json` reports the cache volume it measured** (`totalBytes`, `freeBytes`, or `volumeErr` when
+  statfs failed). A manager that had to infer those numbers from a node probe reported 0 for the one node where they
+  matter: on a node whose disk is full the probe is the first pod a kubelet stops admitting, so the node that had run
+  out of space reported no space at all. The prune is standing on the filesystem, so it answers.
+
+### Auth: nothing on a worker uses a bearer
+
+- **The leader signs its request-path calls to a worker** (`engines.NodeSigned`, implemented by the shared
+  OpenAI-wire client). The router dialled a worker with the worker token in an `Authorization: Bearer` header and no
+  signature, so a worker configured HMAC-only (`OPOD_REJECT_BEARER=1`) answered
+  `401 unauthorized (HMAC required; bearer disabled)` to every completion — while every other leader→worker call
+  already signed. The bearer header still travels for one transition release, as it does everywhere else.
+- **The model a worker exists to serve is loaded in-process** (`OPOD_LOAD_MODEL`, with `OPOD_LOAD_REPO` /
+  `OPOD_LOAD_FILE` overriding the catalog's source). `opod join` waits for the engine to answer and then calls the
+  same load the HTTP route calls (`agent.LoadModel`, one path for both), retrying a load the engine is not ready
+  for and leaving the worker heartbeating if it never takes — a registered worker with no model is a state a
+  manager can act on; a dead container is not.
+- **Why it matters beyond tidiness:** the container entrypoint used to do this by POSTing the worker's OWN
+  `/v1/model/load` with `Authorization: Bearer $OPOD_JOIN_TOKEN`. That made it the one caller of a worker's API that
+  could not sign HMAC — a shell cannot — so `OPOD_REJECT_BEARER=1`, the switch that closes the transition auth path,
+  could never be turned on: the worker registered and then refused its own load. Nothing on a worker needs the bearer
+  path to start serving now.
+
 ## 2026-09-19 — router log
 
 - **"router skipping stale worker" is logged once per stale episode, not once per request.** A worker whose process is
