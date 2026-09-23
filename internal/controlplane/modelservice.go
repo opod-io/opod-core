@@ -246,6 +246,13 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 			// take it down for a request that changed nothing.
 			return err
 		}
+		if errors.Is(err, scheduler.ErrCreateInFlight) {
+			// Same reason, and it matters more: the parts being built right
+			// now belong to the create that holds the guard. Cleaning up here
+			// would tear down ITS work — which is the very cycle the guard
+			// exists to end.
+			return err
+		}
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		// Clean up only what this create was building. A create of ONE gang
 		// that fails must not tear down the model's other gangs: they are

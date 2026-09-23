@@ -112,6 +112,23 @@ spec() {
   esac
 }
 
+# families <image-name> — the GPU architecture generations that image's compiled
+# code was built for, read from images/images.yaml, which is where they are
+# DECLARED. It is stamped on the image as a label so an orchestrator can refuse
+# a Radeon card an Instinct build (or an Arc A-series card an Xe2-only build)
+# at plan time instead of discovering it as a kernel fault at first token.
+#
+# Reading the manifest rather than repeating the list here is the point: the
+# four-place drift rule already covers images.yaml, and a copy in this file
+# would be a fifth place to forget.
+families() {
+  awk -v want="  - name: $1" '
+    $0 == want { inimg = 1; next }
+    inimg && /^  - name: / { exit }
+    inimg && /^    families: / { sub(/^    families: \[/, ""); sub(/\]$/, ""); gsub(/ /, ""); print; exit }
+  ' images/images.yaml
+}
+
 push=0 multi=0 dry=0 tag="" images=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -228,6 +245,8 @@ build_one() {
         --label "org.opencontainers.image.revision=$sha"
         --label "org.opencontainers.image.licenses=Apache-2.0"
         -t "$REG/$name:$t")
+  local fams; fams=$(families "$name")
+  [ -n "$fams" ] && args+=(--label "io.opod.gpu.families=$fams")
   [ "$base" != "-" ] && args+=(--build-arg "BASE=$base")
   case "$img" in llamacpp-*) args+=(--build-arg "LLAMA_RELEASE=$LLAMA_RELEASE") ;; esac
   local rv; rv=$(rpc_vendor_of "$img")

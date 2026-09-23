@@ -83,6 +83,41 @@ func (n Node) WhyNoNewWork(maxAge time.Duration, now time.Time) string {
 	return ""
 }
 
+// WhyNoPartWork is WhyNoNewWork for a node that holds a GANG PART which is not
+// the gang's head: "" when the part is still a reason to route to its gang,
+// else why not.
+//
+// It differs in one rule, and the difference is the whole point. A gang whose
+// engine is ONE distributed process — SGLang's launcher, vLLM over Ray — serves
+// its API from rank 0 alone; the other ranks run the same binary, hold their
+// share of the layers and answer no HTTP at all. So their worker's engine probe
+// can never succeed, `EngineSilentSince` is set within a minute of the gang
+// forming, and the engine-silence rule then declares a perfectly healthy part
+// unable to take work — which takes the WHOLE gang out of rotation.
+//
+// Measured on the design-partner cell, 2026-09-22: a two-machine SGLang gang
+// formed, answered the control plane's own probe in 713 ms, and was 502 by the
+// next request. Judging a non-head part on an engine it was never meant to run
+// is the defect; a part is judged on whether its WORKER is there, which is what
+// a gang actually needs from it. The head keeps the full rule — that one really
+// must serve.
+func (n Node) WhyNoPartWork(maxAge time.Duration, now time.Time) string {
+	switch n.State {
+	case NodeStateReady, NodeStateJoining, "":
+	default: // draining, or a state this version does not serve from
+		return "state " + n.State
+	}
+	if !n.Alive(maxAge, now) {
+		return fmt.Sprintf("last heartbeat %s ago", now.Sub(n.LastHeartbeat).Round(time.Second))
+	}
+	return ""
+}
+
+// TakesPartWork is WhyNoPartWork as a yes or no.
+func (n Node) TakesPartWork(maxAge time.Duration, now time.Time) bool {
+	return n.WhyNoPartWork(maxAge, now) == ""
+}
+
 // TakesNewWork is WhyNoNewWork as a yes or no.
 func (n Node) TakesNewWork(maxAge time.Duration, now time.Time) bool {
 	return n.WhyNoNewWork(maxAge, now) == ""

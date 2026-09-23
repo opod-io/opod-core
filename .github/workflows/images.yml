@@ -233,7 +233,14 @@ jobs:
       # Everything below addresses the index digest, never a tag: a tag can be
       # moved, a digest cannot, and the digest is what the chart and ADR-017
       # pin. A customer verifies exactly what they pulled.
+      # Pinned to the v2 LAYOUT on purpose (T5.8): cosign v3 attaches the
+      # signature as an OCI referrer bundle instead of a `sha256-<hex>.sig` tag.
+      # The control plane reads both now, but every image published before that
+      # change carries the v2 layout, so the bump is a deliberate step with a
+      # re-publish behind it — not something a floating action version does for us.
       - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
       - name: sign (keyless, Sigstore) + verify
         # A tag build MUST be signed — that is the release artifact (S3). A manual
         # dispatch must not be reported as failed because Sigstore's public log is

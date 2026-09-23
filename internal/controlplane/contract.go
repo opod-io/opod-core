@@ -116,6 +116,15 @@ func contractFeatures() map[string]bool {
 		// Without it a caller must assume one gang per model — which is what
 		// every create did, replacing the previous one.
 		"shard_groups": true,
+		// SGLang gangs (T8.10): a catalog entry with sharding.engine=sglang is
+		// split by SGLang's OWN distributed launcher — one process per rank,
+		// one rendezvous address, rank 0 serving the group's API — rather than
+		// by llama.cpp's rpc parts or a Ray cluster. `tp` is the tensor width
+		// over the WHOLE gang and `pp` its pipeline stages. Without this key a
+		// manager must assume SGLang cannot be split at all, which is what the
+		// control plane refused with before ADR-068 dropped the rule that made
+		// SGLang's native shape illegal.
+		"shard_sglang": true,
 		// A gang's pressure on /loadz comes from its coordinator — the process
 		// that holds the KV cache and the queue — because a gang's parts are
 		// rpc-servers that run no engine and send no sample. Without it a

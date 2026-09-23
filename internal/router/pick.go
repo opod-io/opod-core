@@ -350,7 +350,20 @@ func (r *Router) shardGroupRoutable(ctx context.Context, shards []store.Shard) b
 			}
 			return false
 		}
-		if !n.TakesNewWork(r.heartbeatMaxAge, now) {
+		// The HEAD is judged in full — it is the process this router dials, so
+		// an engine that stopped answering its own worker is exactly the news.
+		// Every other part is judged on whether its worker is THERE: a gang
+		// whose engine is one distributed process serves from rank 0 alone, so
+		// the other ranks' engine probes can never succeed, and the full rule
+		// took a healthy gang out of rotation about a minute after it formed
+		// (store.Node.WhyNoPartWork; measured on the design-partner cell,
+		// 2026-09-22). A part whose node went silent or was drained still stops
+		// the gang, which is the rule that matters here.
+		ok := n.TakesPartWork(r.heartbeatMaxAge, now)
+		if sh.Role == "coordinator" {
+			ok = n.TakesNewWork(r.heartbeatMaxAge, now)
+		}
+		if !ok {
 			return false
 		}
 	}

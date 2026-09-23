@@ -18,12 +18,14 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opod-io/opod/internal/agent"
@@ -56,7 +58,55 @@ type Orchestrator struct {
 	// (router.heartbeat_max_age_seconds, set by `opod up`); 0 = DefaultHeartbeatMaxAge.
 	HeartbeatMaxAge time.Duration
 
-	moves moveGuard // one move at a time per model and per node (move.go)
+	moves moveGuard   // one move at a time per model and per node (move.go)
+	forms createGuard // one gang create at a time per model (below)
+}
+
+// createGuard keeps two creates of one model's gangs from running at once.
+//
+// Every create begins by tearing down what it replaces (replacePrior), and a
+// create that names no gang replaces the whole model. So a second create
+// arriving while the first is still starting processes does not queue behind
+// it — it STOPS the first one's rpc-servers and coordinator as "orphans of a
+// previous leader", and the first then fails polling a process that is gone.
+// Neither finishes, and the next attempt does the same thing to the next.
+//
+// Measured on the design-partner cell (2026-09-21): a control plane retrying a
+// create and this leader's own heal-within-plan loop formed exactly that cycle
+// on a two-part gang. It ran for twelve minutes without once forming the gang,
+// and every attempt looked healthy in isolation.
+//
+// Keyed by the model, not the gang: a bare create replaces every gang of it.
+type createGuard struct {
+	mu   sync.Mutex
+	busy map[string]string // model id → what holds it
+}
+
+// ErrCreateInFlight says a create for this model's gangs is already running.
+// It is not a failure of the plan — the caller should let the running one
+// finish and look again, which is what both the control plane's reconcile and
+// the leader's own heal loop do on their next pass.
+var ErrCreateInFlight = errors.New("a create for this model's gangs is already running")
+
+func (g *createGuard) claim(model, gang string) (release func(), err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.busy == nil {
+		g.busy = map[string]string{}
+	}
+	if holder, taken := g.busy[model]; taken {
+		return nil, fmt.Errorf("%w (%s); its parts would be torn down as this one's — wait for it to end", ErrCreateInFlight, holder)
+	}
+	what := "gang " + gang
+	if gang == "" {
+		what = "the whole model"
+	}
+	g.busy[model] = what
+	return func() {
+		g.mu.Lock()
+		delete(g.busy, model)
+		g.mu.Unlock()
+	}, nil
 }
 
 // weightsHTTP is WeightsHTTP, or its default for an Orchestrator built as a
@@ -194,6 +244,13 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	if err != nil {
 		return err
 	}
+	// One create of this model's gangs at a time (createGuard): a second one
+	// would tear down this one's parts before they are on record.
+	release, err := o.forms.claim(entry.ID, gangID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	// Workers first: a create that cannot be placed refuses here, with the
 	// numbers, before the gang it would have replaced is torn down and before
 	// any process starts. Both backends build on this one list.
@@ -232,18 +289,18 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	// never get the same port. Both backends draw from it.
 	ports := o.newPortAllocator(ctx)
 
-	// Backend fork: vLLM multi-node uses a Ray cluster + pipeline/tensor
-	// parallelism, NOT llama.cpp's rpc-server + coordinator. It skips all the
-	// GGUF machinery below. Selected by the catalog's sharding.engine.
-	if isVLLMRayBackend(entry.Sharding.Engine) {
-		return o.createShardedVLLMRay(ctx, entry, gangID, workers, par, ports)
+	// Backend fork, chosen by the catalog's sharding.engine: everything below
+	// this point is llama.cpp's rpc-server + coordinator, and an engine that
+	// brings its own multi-node scheme skips all of it.
+	if backend := o.gangBackend(entry.Sharding.Engine); backend != nil {
+		return backend(ctx, entry, gangID, workers, par, ports)
 	}
 	// llama.cpp's RPC backend has NO tensor split — it only cuts layers. Silently
 	// ignoring --tp here would hand back a working-but-not-what-you-asked-for shard,
 	// which is exactly the class of quiet lie we are trying to eliminate.
 	if par.TP > 1 {
 		return fmt.Errorf("tp=%d: llama.cpp RPC sharding is layer-wise only and has no tensor split "+
-			"(tensor-parallel needs the vLLM backend — set sharding.engine=vllm in the catalog)", par.TP)
+			"(tensor-parallel needs a backend that has one — set sharding.engine=vllm or sharding.engine=sglang in the catalog)", par.TP)
 	}
 
 	// source.type=huggingface entries resolve their path via auto-download
@@ -585,6 +642,28 @@ func (o *Orchestrator) RemoveSharded(ctx context.Context, modelID string) error 
 		o.Log.Warn("placement delete failed", "err", err)
 	}
 	_ = o.Store.Models().Delete(ctx, modelID)
+	return nil
+}
+
+// gangBuilder is what a backend does: stand up one complete serving copy of a
+// model across the chosen workers.
+type gangBuilder func(ctx context.Context, entry models.Entry, gangID string, workers []store.Node, par Parallelism, ports *portAllocator) error
+
+// gangBackend is the whole of how an engine chooses its multi-node scheme.
+// nil means llama.cpp's RPC parts — the default, and the only one that needs
+// the GGUF machinery in CreateSharded.
+//
+// Every engine that reaches here has already been judged by whoever asked: a
+// manager refuses a gang for an engine with no backend at plan time, and the
+// CLI's own error below says which engines have one. This function only maps
+// the name.
+func (o *Orchestrator) gangBackend(engine string) gangBuilder {
+	switch {
+	case isVLLMRayBackend(engine):
+		return o.createShardedVLLMRay
+	case isSGLangBackend(engine):
+		return o.createShardedSGLang
+	}
 	return nil
 }
 
