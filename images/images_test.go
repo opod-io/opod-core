@@ -107,9 +107,13 @@ func TestRecommend(t *testing.T) {
 		skipped []string // substrings, one per Skipped row, in order
 	}{
 		{
+			// The ORDER is the assertion: proven images first, manifest order within
+			// each group. AMD moved up on 2026-09-21 because the ROCm vLLM image had
+			// served on a Radeon host two days earlier and its row still said
+			// `proven: false` — the rule did not change, the data was wrong.
 			name:  "safetensors goes to vLLM, proven hardware first, one pick per vendor",
 			entry: catalog.Entry{ID: "m", Source: hf, RecommendedEngines: []string{"vllm"}},
-			picks: []string{"opod-worker-vllm-nvidia", "opod-worker-vllm-tt", "opod-worker-vllm-amd", "opod-worker-vllm-intel"},
+			picks: []string{"opod-worker-vllm-nvidia", "opod-worker-vllm-amd", "opod-worker-vllm-tt", "opod-worker-vllm-intel"},
 			all:   4,
 		},
 		{

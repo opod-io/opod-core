@@ -625,15 +625,11 @@ func (s *Server) vllmCmdline(model, servedName, host string, port int) (string, 
 	if la := vllmLoRAArgs(len(adapters), MaxAdapterRank(adapters)); la != "" {
 		flagArgs = strings.TrimSpace(flagArgs + " " + la)
 	}
-	cmdline := fmt.Sprintf(
-		"N=$(nvidia-smi -L 2>/dev/null | grep -c GPU); "+
-			"[ \"$N\" -ge 1 ] || N=$(ls /dev/dri/renderD* 2>/dev/null | wc -l); "+
-			"[ \"$N\" -ge 1 ] || N=1; "+
-			"TP=1; while [ $((TP*2)) -le \"$N\" ]; do TP=$((TP*2)); done; "+
-			"U=0.85; B=\"${OPOD_VRAM_BUDGET_GB:-0}\"; "+
-			"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); "+
-			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
-			"%s "+
+	// MemFractionShell is CONCATENATED, never part of the format: it contains an
+	// awk `printf "%.2f"`, which Sprintf would read as a verb of its own and
+	// shift every argument after it.
+	cmdline := gpuCountShell + MemFractionShell("0.85") + fmt.Sprintf(
+		"%s "+
 			"exec vllm serve '%s' %s --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
 		flagOverrides, source, revArgs, servedName, model, host, port, flagArgs, s.sleepModeArgs())
@@ -770,15 +766,8 @@ func (s *Server) sglangCmdline(model, servedName, host string, port int) (string
 		servedName = model
 	}
 	flagOverrides, flagArgs := s.EngineFlags.sglangShellOverrides()
-	cmdline := fmt.Sprintf(
-		"N=$(nvidia-smi -L 2>/dev/null | grep -c GPU); "+
-			"[ \"$N\" -ge 1 ] || N=$(ls /dev/dri/renderD* 2>/dev/null | wc -l); "+
-			"[ \"$N\" -ge 1 ] || N=1; "+
-			"TP=1; while [ $((TP*2)) -le \"$N\" ]; do TP=$((TP*2)); done; "+
-			"U=0.85; B=\"${OPOD_VRAM_BUDGET_GB:-0}\"; "+
-			"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); "+
-			"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%%.2f\", u}'); fi; "+
-			"%s "+
+	cmdline := gpuCountShell + MemFractionShell("0.85") + fmt.Sprintf(
+		"%s "+
 			"exec python3 -m sglang.launch_server --model-path '%s' %s --served-model-name '%s' --host %s --port %d "+
 			"--trust-remote-code --mem-fraction-static \"$U\" --tp-size \"$TP\" %s",
 		flagOverrides, source, revArgs, servedName, host, port, flagArgs)

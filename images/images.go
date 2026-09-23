@@ -54,9 +54,23 @@ type Image struct {
 	Gang       string   `yaml:"gang,omitempty"     json:"gang,omitempty"`
 	Proven     bool     `yaml:"proven"             json:"proven"`
 	Hardware   string   `yaml:"hardware,omitempty" json:"hardware,omitempty"`
-	Requires   []string `yaml:"requires,omitempty" json:"requires,omitempty"`
-	Summary    string   `yaml:"summary"            json:"summary"`
-	Notes      []string `yaml:"notes,omitempty"    json:"notes,omitempty"`
+	// Families are the GPU architecture generations this image's compiled code
+	// was built for, as tokens ("amd:rdna3", "nvidia:turing,nvidia:ampere,...").
+	// They are the machine-readable half of Hardware, and they exist because
+	// (engine, vendor) cannot say it: upstream's ROCm vLLM ships an RDNA build
+	// and a CDNA build and neither runs the other's kernels, SGLang's ROCm build
+	// targets Instinct only, and vLLM's XPU build is Xe2/Xe3 while an Arc
+	// A-series card is Xe-HPG. An orchestrator reads the same tokens off the
+	// image's `io.opod.gpu.families` LABEL, so this file and the Dockerfile must
+	// agree — a drift test checks it.
+	//
+	// Empty means the image says nothing, which every reader must treat as
+	// unknown rather than as "no families": that is what lets the field be added
+	// to one image at a time.
+	Families []string `yaml:"families,omitempty" json:"families,omitempty"`
+	Requires []string `yaml:"requires,omitempty" json:"requires,omitempty"`
+	Summary  string   `yaml:"summary"            json:"summary"`
+	Notes    []string `yaml:"notes,omitempty"    json:"notes,omitempty"`
 }
 
 // Loads reports whether the image's engine loads the given weight format.

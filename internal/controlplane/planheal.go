@@ -38,9 +38,11 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod/internal/scheduler"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -115,6 +117,12 @@ func (s *Server) healGangs(ctx context.Context, absent map[string]time.Time) {
 		"model", model, "gang", id, "parts", g.Parts, "free_workers", free)
 	req := CreateShardsRequest{ModelID: model, Shards: g.Parts, Gang: g.ID, TP: g.TP, PP: g.PP, Devices: g.Devices}
 	if err := s.CreateShards(ctx, req); err != nil {
+		if errors.Is(err, scheduler.ErrCreateInFlight) {
+			// Somebody is already forming it — a control plane doing its job,
+			// which this loop exists to stand in for, not to race.
+			s.log.Info("a create is already forming this gang — leaving it to finish", "model", model, "gang", id)
+			return
+		}
 		s.log.Warn("heal within the plan failed — will try again", "model", model, "gang", id, "err", err)
 		return
 	}

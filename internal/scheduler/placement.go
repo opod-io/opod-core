@@ -131,7 +131,14 @@ func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
 			} else if node, err := o.Store.Nodes().Get(ctx, s.NodeID); err == nil && node != nil {
 				_ = o.callWorkerStop(ctx, *node, s.ProcessID)
 			}
-		case "rpc":
+		// "rank" as well as "rpc": every backend that names its parts ranks —
+		// vLLM's Ray daemons and SGLang's launcher processes — had them left
+		// RUNNING by a half-failed create, because this switch was written when
+		// "rpc" was the only kind of part there was. Everywhere else that stops a
+		// gang (stopGangProcesses, the node-loss teardown) was widened for ranks;
+		// this one was missed, so the rollback that exists to leave nothing behind
+		// left a whole cluster behind.
+		case "rpc", "rank":
 			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
 			if err == nil && node != nil {
 				_ = o.callWorkerStop(ctx, *node, s.ProcessID)

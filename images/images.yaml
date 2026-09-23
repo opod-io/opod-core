@@ -41,6 +41,7 @@ images:
     gang: rpc
     proven: true
     hardware: NVIDIA GPUs (CUDA)
+    families: [nvidia:turing, nvidia:ampere, nvidia:ada, nvidia:hopper, nvidia:blackwell]
     requires:
       - NVIDIA driver and the NVIDIA container runtime on the node
     summary: llama.cpp on CUDA. GGUF models, whole on one card or split across nodes as RPC parts.
@@ -56,6 +57,7 @@ images:
     gang: rpc
     proven: false
     hardware: AMD Radeon (gfx1030, gfx1100-1102, gfx1150-1151, gfx1200-1201) and Instinct (gfx908, gfx90a, gfx942)
+    families: [amd:rdna2, amd:rdna3]
     requires:
       - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
     summary: llama.cpp on ROCm. GGUF models, whole on one card or split across nodes as RPC parts.
@@ -73,6 +75,7 @@ images:
     gang: rpc
     proven: true
     hardware: Intel Arc A770 / Arc Pro B60 (SYCL, oneAPI; served on an Arc A770)
+    families: [intel:xe-hpg, intel:xe2]
     requires:
       - i915 or xe driver on the node; /dev/dri passed to the container
     summary: llama.cpp on SYCL. GGUF models, whole on one card or split across nodes as RPC parts.
@@ -105,6 +108,7 @@ images:
     gang: ray
     proven: true
     hardware: NVIDIA GPUs (CUDA)
+    families: [nvidia:turing, nvidia:ampere, nvidia:ada, nvidia:hopper, nvidia:blackwell]
     requires:
       - NVIDIA driver and the NVIDIA container runtime on the node
     summary: vLLM on CUDA. Safetensors models from a Hugging Face repo; tensor parallel inside a node, Ray across nodes.
@@ -117,13 +121,15 @@ images:
     dockerfile: images/worker-vllm/Dockerfile
     base: rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0
     weights: [safetensors]
-    proven: false
+    proven: true   # served on a Radeon RDNA3 host 2026-09-19 (one card; tensor parallel across two faults - see notes)
     hardware: AMD Radeon / Radeon Pro (gfx11xx). Instinct needs a different build - see notes
+    families: [amd:rdna2, amd:rdna3]
     requires:
       - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
     summary: vLLM on ROCm. Safetensors models from a Hugging Face repo.
     notes:
       - One build per GPU family - the published image is the RDNA build. Instinct MI2xx/MI3xx needs the _cdna_ base (rebuild with VLLM_AMD_BASE=); neither runs the other's kernels.
+      - 'Single card: served 2026-09-19. Two cards with tensor parallel: peer-to-peer between consumer Radeon cards faults, and with P2P disabled the collective returns bad data - the endpoint served noise. That is the machine, not this image.'
 
   - name: opod-worker-vllm-intel
     role: worker
@@ -135,6 +141,7 @@ images:
     weights: [safetensors]
     proven: false
     hardware: Intel Xe2 / Xe3 GPUs (Arc B-series, Arc Pro B60) and Data Center GPU Max (XPU) - NOT Arc A-series
+    families: [intel:xe2, intel:xe-hpc]
     requires:
       - i915 or xe driver on the node; /dev/dri passed to the container
       - an Xe2 or newer GPU - upstream's XPU attention kernels refuse older silicon
@@ -154,6 +161,7 @@ images:
     weights: [safetensors]
     proven: true
     hardware: Tenstorrent Wormhole / Blackhole (served on a Blackhole p150b)
+    families: [tt:blackhole, tt:wormhole]
     requires:
       - tt-kmd loaded on the node
       - /dev/hugepages-1G mounted
@@ -170,13 +178,15 @@ images:
     dockerfile: images/worker-sglang/Dockerfile
     base: lmsysorg/sglang:v0.5.2-cu126
     weights: [safetensors]
-    proven: false
+    proven: true
     hardware: NVIDIA GPUs (CUDA)
+    families: [nvidia:turing, nvidia:ampere, nvidia:ada, nvidia:hopper, nvidia:blackwell]
     requires:
       - NVIDIA driver and the NVIDIA container runtime on the node
     summary: SGLang on CUDA. Safetensors models from a Hugging Face repo, one node per endpoint.
     notes:
       - One node only - core has no multi-node path for SGLang.
+      - Served on an NVIDIA card 2026-09-19; the row had said proven false until 2026-09-21.
 
   - name: opod-worker-sglang-amd
     role: worker
@@ -188,6 +198,7 @@ images:
     weights: [safetensors]
     proven: false
     hardware: AMD Instinct MI200 / MI300 only
+    families: [amd:cdna]
     requires:
       - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
     summary: SGLang on ROCm. Safetensors models from a Hugging Face repo, one node per endpoint.
