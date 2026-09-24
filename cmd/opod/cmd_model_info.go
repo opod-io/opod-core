@@ -176,6 +176,12 @@ func modelInfo(id string, asJSON bool) {
 		source = "file: " + entry.Source.Path
 	}
 	fmt.Printf("  %sSource%s         %s\n", bold, reset, source)
+	// The page for those exact weights. A repo string is a name, not somewhere
+	// you can go and look — and for a GGUF the FILE is what says which
+	// quantization is served, which the model id never does.
+	if u := sourceURL(entry); u != "" {
+		fmt.Printf("  %sURL%s            %s%s%s\n", bold, reset, dim, u, reset)
+	}
 
 	// Size
 	if entry.SizeBytes > 0 {
@@ -283,4 +289,28 @@ func max2(n int) int {
 		return 2
 	}
 	return n
+}
+
+// sourceURL is the upstream page for a catalog entry's weights, or "" for a
+// source that has no addressable page (a file staged on the node, or a source
+// this build does not know — a guessed link is worse than none).
+func sourceURL(entry *models.Entry) string {
+	switch entry.Source.Type {
+	case "huggingface":
+		if entry.Source.Repo == "" {
+			return ""
+		}
+		u := "https://huggingface.co/" + entry.Source.Repo
+		if entry.Source.File != "" {
+			return u + "/blob/main/" + entry.Source.File
+		}
+		return u
+	case "ollama":
+		if entry.Source.OllamaName == "" {
+			return ""
+		}
+		// ollama's library page keys on the name before the tag
+		return "https://ollama.com/library/" + strings.SplitN(entry.Source.OllamaName, ":", 2)[0]
+	}
+	return ""
 }
