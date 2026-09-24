@@ -136,7 +136,8 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		cur, ok := byID[id]
 		if !ok {
 			rec := store.APIKey{ID: id, Hash: sk.Hash, Name: sk.Name, Scope: scope, RPMLimit: sk.RPMLimit, TPMLimit: sk.TPMLimit,
-				AllowedModels: sk.AllowedModels, CreatedAt: time.Now(), ExpiresAt: exp}
+				QuotaDailyTokens: sk.QuotaDailyTokens,
+				AllowedModels:    sk.AllowedModels, CreatedAt: time.Now(), ExpiresAt: exp}
 			if err := keys.Create(ctx, rec); err != nil {
 				s.log.Warn("auth snapshot: create key", "id", id, "err", err)
 				continue
@@ -150,6 +151,15 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		}
 		if cur.RPMLimit != sk.RPMLimit || cur.TPMLimit != sk.TPMLimit {
 			if err := keys.UpdateRateLimits(ctx, id, sk.RPMLimit, sk.TPMLimit); err == nil {
+				updated++
+			}
+		}
+		// The key's daily ceiling, for the same reason the rate limits are
+		// here: the manager owns it and this file is how it arrives. Without
+		// this line a managed key was minted with quota 0 and QuotaMiddleware
+		// let every request through, whatever the control plane had set.
+		if cur.QuotaDailyTokens != sk.QuotaDailyTokens {
+			if err := keys.UpdateDailyQuota(ctx, id, sk.QuotaDailyTokens); err == nil {
 				updated++
 			}
 		}

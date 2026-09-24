@@ -29,6 +29,7 @@ func (f *fakeKeyStore) Revoke(context.Context, string) error                    
 func (f *fakeKeyStore) UpdateAllowedModels(context.Context, string, []string) error { return nil }
 func (f *fakeKeyStore) UpdateRateLimits(context.Context, string, int, int) error    { return nil }
 func (f *fakeKeyStore) UpdateExpiresAt(context.Context, string, time.Time) error    { return nil }
+func (f *fakeKeyStore) UpdateDailyQuota(context.Context, string, int64) error       { return nil }
 
 func TestMiddleware_ExpiredKeyReturns401KeyExpired(t *testing.T) {
 	expired := &store.APIKey{
