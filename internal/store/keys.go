@@ -150,6 +150,21 @@ func (s *sqliteAPIKeys) UpdateRateLimits(ctx context.Context, id string, rpm, tp
 	return nil
 }
 
+func (s *sqliteAPIKeys) UpdateDailyQuota(ctx context.Context, id string, quota int64) error {
+	if quota < 0 {
+		return fmt.Errorf("quota must be >= 0 (0 = no quota)")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET quota_daily_tokens = ? WHERE id = ?`, quota, id)
+	if err != nil {
+		return fmt.Errorf("update daily quota: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("api_key %s not found", id)
+	}
+	return nil
+}
+
 func (s *sqliteAPIKeys) UpdateAllowedModels(ctx context.Context, id string, allowed []string) error {
 	encoded, err := marshalAllowed(allowed)
 	if err != nil {

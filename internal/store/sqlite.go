@@ -104,6 +104,11 @@ type APIKeyStore interface {
 	// expiry ("never expires"); a past time effectively expires the
 	// key immediately.
 	UpdateExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
+	// UpdateDailyQuota replaces the key's daily token ceiling. 0 means
+	// "no quota", which is what QuotaMiddleware reads as unlimited. It
+	// exists for the same reason UpdateRateLimits does: a managed key's
+	// ceiling is edited by whoever minted it, not by the key's holder.
+	UpdateDailyQuota(ctx context.Context, id string, quota int64) error
 }
 
 type Model struct {
