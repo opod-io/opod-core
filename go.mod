@@ -63,9 +63,3 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
-
-// TEMPORARY, and the only thing standing between this tree and a clean build for
-// anyone else: the worker-certificate policy fields (R9.6, ADR-073) are committed
-// in the SDK but not TAGGED yet, so `v0.2.5` does not exist on the module proxy.
-// Delete this line the moment the tag is pushed — nothing else has to change.
-replace github.com/opod-io/opod-sdk => ../opod-sdk
