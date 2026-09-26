@@ -42,6 +42,8 @@ type Env struct {
 	AdvertiseAddr string `env:"OPOD_ADVERTISE_ADDR" side:"worker" doc:"the host:port the leader should dial (overlay / multi-NIC hosts)"`
 	NodeID        string `env:"OPOD_NODE_ID" side:"worker" doc:"a stable node id across restarts (else node.yaml, else random)"`
 	LeaderCA      string `env:"OPOD_LEADER_CA" side:"worker" doc:"PEM certificate the worker trusts for a TLS leader (exactly that one)"`
+	NodeCert      string `env:"OPOD_NODE_CERT" side:"worker" doc:"PEM client certificate this worker presents to its leader; its SPIFFE SAN spiffe://<domain>/opod/node/<id> IS the worker's identity (R9.6). Needs OPOD_NODE_KEY"`
+	NodeKey       string `env:"OPOD_NODE_KEY" side:"worker" doc:"the private key for OPOD_NODE_CERT"`
 	VRAMBudgetGB  string `env:"OPOD_VRAM_BUDGET_GB" side:"worker" doc:"the slice of the card this worker may use (shared placement); read by the engine launch"`
 	GPUIndex      string `env:"OPOD_GPU_INDEX" side:"worker" doc:"the device index the worker was pinned to (informational; the engine sees CUDA_VISIBLE_DEVICES & co)"`
 	// T10.7: the model a worker exists to serve. The worker loads it itself,

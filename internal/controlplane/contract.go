@@ -101,8 +101,17 @@ func contractFeatures() map[string]bool {
 		// image did it with `curl -H "Authorization: Bearer …"` against the
 		// worker's own API, so a manager must not set OPOD_REJECT_BEARER on a
 		// binary that lacks it: the worker would refuse its own load.
-		"self_load":    true,
-		"probe_port":   true, // OPOD_PROBE_LISTEN: /healthz, /readyz, /loadz and /metrics on a second, always-plain listener, so a scraper or an autoscaler reads a number without the listener's certificate
+		"self_load":  true,
+		"probe_port": true, // OPOD_PROBE_LISTEN: /healthz, /readyz, /loadz and /metrics on a second, always-plain listener, so a scraper or an autoscaler reads a number without the listener's certificate
+		// A worker may be identified by a CLIENT CERTIFICATE on the join path
+		// instead of by the join token it holds (R9.6, ADR-005's P1): the
+		// leader reads the node id from the certificate's SPIFFE URI SAN, a
+		// certificate that names another node is refused, and a revoked serial
+		// is refused too. The mode (off | allow | require), the CA and the
+		// revoked list are in the auth snapshot, so all three change on a
+		// serving leader. Without this key a manager must assume the join token
+		// is the only worker identity, which it was.
+		"mtls":         true,
 		"tls_listener": true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
 		"pd_roles":     true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)

@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -286,13 +287,45 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.cfg.TLSCert != "" && s.cfg.TLSKey != "" {
 		scheme = "https"
 	}
+	// Node mTLS (R9.6): the handshake ASKS for a client certificate and verifies
+	// it if one is offered, and the requirement lives on the two node routes
+	// instead. One listener serves the gateway as well as the join surface, so
+	// demanding a certificate here would refuse every prompt in the fleet in
+	// order to secure a join. The CA comes from the watched auth snapshot and is
+	// read per handshake through GetConfigForClient, so rotating it does not
+	// restart a leader that is serving.
+	if scheme == "https" {
+		// The keypair is loaded HERE rather than left to ServeTLS, because
+		// GetConfigForClient replaces the whole config for a handshake: a
+		// returned config that carries only the client-CA pool would have no
+		// server certificate to present, and every connection would fail. So
+		// the base config owns the certificate and each handshake gets a clone
+		// of it with the pool of the moment.
+		crt, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
+		if err != nil {
+			return fmt.Errorf("tls certificate: %w", err)
+		}
+		base := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{crt}}
+		base.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			pol := s.nodeMTLS()
+			if pol.ClientCAs() == nil {
+				return nil, nil // no CA in the snapshot: no client certificate is asked for
+			}
+			c := base.Clone()
+			c.GetConfigForClient = nil // the clone must not recurse
+			c.ClientCAs = pol.ClientCAs()
+			c.ClientAuth = tls.VerifyClientCertIfGiven
+			return c, nil
+		}
+		s.http.TLSConfig = base
+	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "scheme", scheme)
 	stopProbe := s.serveProbes(ctx)
 	defer stopProbe()
 	errCh := make(chan error, 1)
 	go func() {
 		if scheme == "https" {
-			errCh <- s.http.ServeTLS(ln, s.cfg.TLSCert, s.cfg.TLSKey)
+			errCh <- s.http.ServeTLS(ln, "", "") // the certificate is in TLSConfig, loaded above
 			return
 		}
 		errCh <- s.http.Serve(ln)
@@ -420,6 +453,11 @@ func (s *Server) routes() http.Handler {
 		// local admin key, or a node token): requireKeys only gates the
 		// gateway. Before P12-3 the keyless dev shortcut left /admin/v1 open
 		// on every managed leader whose endpoint had keys optional.
+		// The join path's certificate gate (R9.6), BEFORE the key middleware:
+		// a verified worker certificate is the credential, and in `require` a
+		// join without one is refused whatever token it carries. Dormant while
+		// the auth snapshot says off, which is the default.
+		r.Use(s.nodeCertGate)
 		r.Use(auth.MiddlewareFn(s.store.APIKeys(), func() bool { return true }))
 		r.Use(s.auditMiddleware)
 

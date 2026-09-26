@@ -184,8 +184,11 @@ func cmdJoin(args []string) {
 	aliases := &agent.Aliases{}
 
 	// The leader may speak TLS with a certificate the control plane minted
-	// (OPOD_LEADER_CA names it); the client trusts exactly that.
-	leaderClient, err := agent.NewLeaderClient(env.LeaderCA, 10*time.Second)
+	// (OPOD_LEADER_CA names it); the client trusts exactly that. And with
+	// OPOD_NODE_CERT/KEY this worker presents its OWN certificate, which is what
+	// identifies it to a leader running node mTLS (R9.6) — the join token stays
+	// the credential everywhere else.
+	leaderClient, err := agent.NewLeaderClientWithIdentity(env.LeaderCA, env.NodeCert, env.NodeKey, 10*time.Second)
 	if err != nil {
 		die("%v", err)
 	}
