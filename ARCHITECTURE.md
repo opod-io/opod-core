@@ -13,6 +13,7 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
 - [Goals and non-goals](#goals-and-non-goals)
 - [Big picture](#big-picture)
 - [Process model](#process-model)
+- [Cross-node routing](#cross-node-routing-the-v03-core)
 - [Control plane internals](#control-plane-internals)
 - [Agent internals](#agent-internals)
 - [Mesh networking](#mesh-networking)
@@ -32,6 +33,8 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
 - [Build from source](#build-from-source)
 - [Getting started as a contributor](#getting-started-as-a-contributor)
 - [How to extend Opod](#how-to-extend-opod)
+- [Stable admin surface (v1)](#stable-admin-surface-v1)
+- [Managed mode](#managed-mode)
 
 ---
 
@@ -102,7 +105,7 @@ A control-plane DB outage does **not** kill in-flight requests — the router ke
 
 ## Process model
 
-One binary, five modes determined by subcommand:
+One binary, six modes determined by subcommand (and by `--role` on `opod up`):
 
 | Mode | What runs in-process |
 |---|---|
@@ -228,13 +231,19 @@ no control plane to tell it, falls back to what it can detect.
 
 ### Worker HTTP server (`internal/agent/server.go`)
 
-Each worker runs a thin OpenAI-compatible HTTP server bound to the address it reported at registration time. The server has three routes:
+Each worker runs a thin HTTP server bound to the address it reported at registration time. `GET /healthz` is the only unauthenticated route; every other one is signed (below). The whole surface, as registered in `agent.Server.Start`:
 
 | Route | Behavior |
 |---|---|
-| `GET /healthz` | Calls `Engine.Health(ctx)`; returns 200 if the local engine is reachable. |
+| `GET /healthz` | Calls `Engine.Health(ctx)`; returns 200 if the local engine is reachable. No auth. |
 | `GET /v1/models` | Calls `Engine.List(ctx)` and emits the OpenAI `{"object":"list","data":[…]}` shape. |
 | `POST /v1/chat/completions` | Decodes the OpenAI request, calls `Engine.Chat(ctx, req)`, re-emits as SSE (stream=true) or aggregated JSON (stream=false). |
+| `POST /v1/embeddings` | The same for the embedding shape — the leader talks to a worker over the OpenAI wire, not only for chat. |
+| `POST /v1/model/load` · `/unload` | Pull + load a model on this worker, or let it go (`worker_unload`: the engine's unload, or a stop of the engine process the worker launched). |
+| `POST /v1/model/sleep` · `/resume` | Sleep tier (`worker_sleep`): the engine drops its GPU working set and keeps the process; `501 unsupported` on an engine without one. |
+| `GET /v1/adapters` · `POST /v1/adapters/load` · `/unload` | LoRA variants held, loaded and dropped at runtime (`lora`), served as `<base>:<name>`. |
+| `POST /v1/process/start` · `/stop` · `/list` · `/get` · `/logs` | The supervisor, which is how a gang's parts (an `rpc-server`, a Ray daemon, an `sglang.launch_server` rank) are launched and watched. `/get` is the readiness poll for the `202` from `/start`. |
+| `HEAD /v1/process/file` · `POST /v1/process/upload` | The GGUF fan-out: does this file exist with a matching sha256, and stream it up if not. |
 
 Auth is HMAC-based: the leader and agent both sign requests with the per-node worker_token, set at registration. Signature header `X-Opod-Auth: v=1,id=<nodeID>,ts=<unix>,sig=<hex>` carries an HMAC-SHA256 of `v1\n<METHOD>\n<PATH>\n<ts>` keyed by the token. Receiver re-derives and constant-time compares; ts must be within ±5 minutes (replay window). The bearer fallback (`Authorization: Bearer <worker_token>`) is still accepted for one transition release; set `OPOD_REJECT_BEARER=1` on workers to refuse it. Every caller of a worker's API signs: the leader's scheduler, the GGUF distribution, the adapter loader, and **the request path** — the router's client to a worker is the vLLM driver under `engines.NodeSigned`, which signs as the node rather than sending the token as a bearer (until 2026-09-21 it did the latter, so an HMAC-only worker answered `401` to every completion). The worker's own start-up load does not call the API at all.
 
@@ -390,12 +399,49 @@ placement while any gang is left.
 - If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the caller (the CLI, or whoever called `/admin/v1/shards/create`).
 - If a shard process crashes *after* CreateSharded returns, the supervisor auto-restarts it up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s; capped at 30s for any longer chain). After 5 the process enters `crashloop` state and stays there — the admin must intervene. Both `rpc-server` (per-shard) and the `llama-server` coordinator are restart-enabled; the policy is set on the `agent.ProcessSpec` at launch time in `internal/scheduler/sharding.go`. Explicit `Stop()` suppresses any pending restart.
 
-#### Out of scope for v0.4
+#### Where the coordinator runs
 
-- The coordinator (`llama-server`) is placed on the highest-RAM host in the shard set — by default the strongest worker, not the leader. Override with `OPOD_COORDINATOR_NODE=<node_id>` (or `local` to force leader). When the coordinator runs on a worker it's launched via the same `/v1/process/start` endpoint used for `rpc-server`, and the leader's router dials it at `<worker-address>:<coord_port>`. Single-machine sharding still pins the coordinator to the local supervisor.
-- **Automatic GGUF download + distribution** fully closes M5-T12. For catalog entries with `source.type: huggingface` + `source.file:`, `CreateSharded` first downloads the GGUF from `huggingface.co/<repo>/resolve/main/<file>` into `storage.models_dir` on the leader (skipped if already present, partial→rename atomicity). Then for both `huggingface` and `file` types, fans the local file out to every shard host via `/v1/process/file` HEAD + `/v1/process/upload` POST (sha256-verified, skipped if the worker already has the file). No more manual `wget` to leader or `scp` to workers — `opod shard create <id>` is sufficient.
+The coordinator (`llama-server`) holds the KV cache and does the layer aggregation across the rpc parts, so
+it is placed on the worker with the most of **the memory that constrains it — its CARD**
+(`scheduler.workerMemoryBytes`, falling back to host RAM for a worker that reports no accelerator), and only
+on the leader when the shard set has no workers at all. It used to compare host RAM, which is the wrong
+quantity and was silently wrong wherever hosts are alike and cards are not: on the design-partner cell
+(2026-09-20) two hosts both reported 31 GB of RAM behind a 46 GB card and an 8 GB card, the tie fell to
+whichever came first, and llama.cpp died allocating a 4 GiB KV buffer on the small one.
+
+Two ways to name it instead: `POST /admin/v1/shards/create` takes a **`head`** (feature `shard_head`, R15.14
+— the coordinator is that worker's rank, which is what the control plane always sends), and
+`OPOD_COORDINATOR_NODE=<node_id>` pins it for this leader (`local` forces the leader itself). When the
+coordinator runs on a worker it is launched through the same `/v1/process/start` the rpc parts use and the
+router dials it at `<worker-address>:<coord_port>`. A one-part gang runs the whole model on that worker with
+no rpc parts at all, and the coordinator override is ignored.
+
+#### Still out of scope (and one row that is not)
+- **Automatic GGUF download + distribution** is built (it is listed here because it closed M5-T12). For catalog entries with `source.type: huggingface` + `source.file:`, `CreateSharded` first fetches the GGUF into `storage.models_dir` on the leader through `internal/fetch` (lock, temp sibling, digest, marker; skipped if already present). Then for both `huggingface` and `file` types it fans the local file out to every shard host via `/v1/process/file` HEAD + `/v1/process/upload` POST (sha256-verified, skipped if the worker already has the file). No manual `wget` to the leader or `scp` to the workers — `opod shard create <id>` is sufficient.
 - Live shard migration / rebalancing. (Moving a whole, unsharded model between workers is built — "Live model move" under Scheduler; a gang is rebuilt, not moved.)
 - Dynamic shard count change.
+
+#### Three gang backends, chosen by the catalog's `sharding.engine`
+
+A gang is formed by one of three schemes, and the catalog entry picks it
+(`Orchestrator.gangBackend`, `internal/scheduler/sharding.go`):
+
+| `sharding.engine` | Scheme | What runs on each machine |
+|---|---|---|
+| `llamacpp` (default, and what an entry with no `engine` gets) | llama.cpp **RPC parts** — layer-split | an `rpc-server` per part, plus one coordinator `llama-server --rpc` that fronts them. No tensor split: `tp > 1` is refused here, naming the backends that have one |
+| `vllm` | a **Ray cluster** the engine then discovers | a Ray daemon per part; `vllm serve … --distributed-executor-backend ray --tensor-parallel-size <TP> --pipeline-parallel-size <PP>` on the head (`vllmray.go`) |
+| `sglang` (`sglang-native`) | SGLang's **own distributed launcher** (feature `shard_sglang`, T8.10) | the same `python -m sglang.launch_server` on every machine with `--dist-init-addr <rank0>` / `--nnodes` / `--node-rank`, `--tp-size` over the WHOLE gang and `--pp-size` for stages; **rank 0 serves the group's API and is the coordinator row** (`sglang.go`) |
+
+`Parallelism.resolve` is shared: `TP × PP` must equal parts × devices-per-rank, `TP` must be a multiple of
+the devices inside one part, and the zero value means "tensor parallel inside a machine, pipeline across
+them". A `TP` wider than one machine is **allowed and logged loudly** rather than refused — ADR-068 dropped
+the rule that a tensor group never crosses a fabric, because SGLang's native scheme *is* that shape and the
+honest answer is to say what it costs (every all-reduce of every token on the wire) instead of having no
+multi-node path for the engine at all. Pipeline is still the cheap shape on ordinary networking.
+
+No bundled catalog entry sets `sharding.engine: sglang` yet — the SGLang gang is reached through an override
+entry (`~/.opod/catalog`, `$OPOD_CATALOG_DIR`) or a control-plane plan. `images.yaml`'s `gang` column knows
+only `rpc` and `ray`, so an SGLang image's row says nothing there.
 
 #### Experimental: vLLM + Ray backend (true tensor / pipeline parallelism)
 
@@ -451,32 +497,33 @@ intra-node, not cross-machine sharding.)
 
    All state above lives in SQLite via the `store` package.
    Eventing between leader and agents is direct HTTP (heartbeats POST to
-   the leader's admin API). `internal/events` is an in-process pub/sub
+   the leader's admin API). `internal/events` is an in-process pub/sub that
+   backs /admin/v1/events, events/stream and usage/stream; nothing else
    leaves the leader process.
 ```
 
 ### Subsystem responsibilities
 
 - **HTTP server** — request routing, TLS termination, middleware stack
-- **API adapter** — translates OpenAI requests to the internal `InferenceRequest`; translates responses back
-- **Admin API** — node management, model management, token issuance, usage queries
+- **API adapter** — decodes an OpenAI request into `engines.ChatRequest` (see § Internal request shape for what it deliberately does not carry); re-emits the engine's stream as SSE or an aggregated body
+- **Admin API** — node management, model management, token issuance, and the cursor'd event + usage *streams* (query/aggregate APIs left with ADR-022 — a consumer summarises)
 - **Auth** — API key validation (scope-gated routes), token issuance, HMAC verification for worker traffic
 - **Router** — given a request, pick a target node + engine endpoint
-- **Scheduler** — sharded-model orchestration, single-node `llama-server` bootstrap, GGUF download + distribution
+- **Scheduler** — gang orchestration on all three backends, the part-count picker, single-node `llama-server` bootstrap, GGUF download + distribution, live model move, runtime LoRA adapters
 - **Node registry** — current cluster state, heartbeat tracking
 - **Model registry** — what models exist (catalog), where they live (placement), what state they're in
 - **Model puller** — download GGUFs from HuggingFace, delegate `ollama:` sources to the engine's own pull, use `file:` sources as-is
 
 ### Implemented examples (the pattern in production)
 
-As of 2026-06-05 the onboarding-and-sharing endpoints follow this pattern strictly — use them as references when writing new ones:
+The rule is that a mutating operation lives in `internal/control/` and the CLI and the admin API are two callers of it. The connect/disconnect pair is the reference:
 
-| CLI command | `internal/control/` function | Admin endpoint (in `internal/controlplane/`) |
+| CLI command | `internal/control/` function | Admin endpoint |
 |---|---|---|
-| `opod connect <client>` | `control.ConnectSnippet()` + `control.Clients()` | `POST /admin/v1/connect/snippet`, `GET /admin/v1/connect/clients` (in `admin_connect.go`) |
-| `opod disconnect <client>` | `control.DisconnectSnippet()` | (no HTTP endpoint — purely local string lookup; the reversal text is static per client) |
+| `opod connect <client>` | `control.ConnectSnippet()` + `control.Clients()` | none — the snippet is rendered locally, and the console is the control plane's (ADR-022). The `/admin/v1/connect/*` routes core briefly served left with the dashboard |
+| `opod disconnect <client>` | `control.DisconnectSnippet()` | none — a static reversal text per client |
 
-`internal/control/snippets/*.tmpl` are `go:embed`-ed templates — adding a new supported client is a one-file change. Existing CLI/admin pairs (model add, token create, node drain, etc.) still duplicate logic and will move into `internal/control/` as part of the rest of M4-T20.
+`internal/control/snippets/*.tmpl` are `go:embed`-ed templates, one per client (15 today) — adding a supported client is a one-file change plus a row in `control.clients`. Other CLI/admin pairs (model add, token create, node drain) still hold their logic in `cmd/opod` and `internal/controlplane` respectively; moving them behind `internal/control/` is unfinished work, not a claim this document makes.
 
 ---
 
@@ -561,15 +608,27 @@ Only `lan` ships today; the backend is not yet configurable.
 ### Tables
 
 ```
-nodes               (id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state, …)
+nodes               (id, hostname, os, arch, ram_gb, address, worker_token, bound_key_id, hardware_json,
+                     last_heartbeat, state, boot_id, engine_silent_since)
 models              (id, catalog_id, source, status, size_bytes, installed_at)
-model_placements    (node_id, model_id, status, last_seen)
+model_placements    (node_id, model_id, status, last_seen, cold)
 desired_placements  (node_id, model_id, priority, pinned, created_at)
-shards              (id, model_id, role, node_id, address, process_id, status, …)
-api_keys            (id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, revoked, …)
+shards              (id, model_id, gang_id, role, node_id, address, process_id, status, config_json,
+                     created_at, last_seen)
+api_keys            (id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit,
+                     allowed_models, expires_at, created_at, revoked)
+usage               (id, ts, api_key_id, user_id, model, protocol, prompt_tokens, completion_tokens,
+                     latency_ms, outcome, cost_usd, node_id, ttft_ms)
+event_log           (id, ts, type, subject, data)
 cache               (key, namespace, value, expires_at)
 audit_log           (id, ts, actor, action, target, metadata_json)
 ```
+
+`usage.cost_usd` is a column that is always 0 — rating and showback are out of the product (ADR-003); it is kept
+so a reader of the SDK's `UsageData` does not break, and goes in the next breaking release. The columns added
+after the first schema (`bound_key_id`, `boot_id`, `engine_silent_since`, `cold`, `gang_id`, `ttft_ms`,
+`node_id`, the per-key limits and expiry) arrive through the idempotent column migrations in
+`runColumnMigrations`, so an older database is upgraded in place at open time.
 
 ### Postgres (planned — not implemented)
 
@@ -589,7 +648,7 @@ A GGUF is one file (`opod fetch <repo> <file>`). A safetensors model is a direct
 
 ### OpenAI adapter (`internal/api/openai.go`)
 
-- Parses `/v1/chat/completions` request into `InferenceRequest`
+- Parses a `/v1/chat/completions` request into `engines.ChatRequest` (see § Internal request shape)
 - Streams tokens back as SSE `data: {...}\n\n`
 
 ### Other protocol shapes
@@ -598,22 +657,43 @@ None. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR
 
 ### Internal request shape
 
+There is no `InferenceRequest` type. The adapter decodes the body into an unexported
+`chatRequest` (`internal/api/openai.go`) and converts it to the engine-agnostic
+`engines.ChatRequest`, which every driver takes (`internal/engines/types.go`):
+
 ```go
-type InferenceRequest struct {
-    Model        string
-    Messages     []Message
-    System       string
-    Tools        []Tool
-    Stream       bool
-    MaxTokens    int
-    Temperature  *float32
-    TopP         *float32
-    Stop         []string
-    UserID       string
-    SessionID    string  // for sticky routing
-    // ...
+type ChatRequest struct {
+    Model       string
+    Messages    []Message   // Role, Content, Images []string
+    System      string
+    Temperature *float32
+    TopP        *float32
+    MaxTokens   *int
+    Stop        []string
+    Stream      bool
 }
 ```
+
+**What the narrow struct means, stated plainly:** a field that is not on `chatRequest` is
+dropped by `json.Unmarshal` before anything downstream can see it. So `tools` /
+`function_call` and `response_format` (JSON-schema structured output) **do not reach the
+engine today**, and the stream reader only decodes `choices[].delta.content` — no
+`tool_calls` come back either. Measured against a stub engine: a request carrying both
+leaves the leader as `{model, messages, stream, stream_options, temperature}`, and when the
+engine answers with a `tool_calls` delta the client receives `content: ""` with
+`finish_reason: "tool_calls"` — the reason survives (it is `StreamEvent.Reason`) while the
+payload has nowhere to live. That is the worst shape: a client is told a tool was called and
+given no call. Neither is a translation bug to fix in a driver; carrying them means widening
+`chatRequest`, `engines.ChatRequest`, `StreamEvent` and every driver together. A catalog entry's `capabilities: [chat, tools]` describes the model, not this
+gateway.
+
+Routing overrides travel in their own namespaced bag rather than as top-level fields:
+`opod.{fallbacks, num_retries, retry_backoff_ms, hedge, sort, cache.namespace}`, each
+mirrored by an `X-Opod-*` header for clients that can only set headers (body wins on
+conflict). `user` is read for accounting and the sticky pin.
+
+Sticky routing is keyed by `(user_id, model)` from the request context — there is no
+`SessionID` field and no session header (see § Sticky sessions).
 
 LiteLLM is used as a reference for edge cases in protocol translation but we don't ship it; we hand-write the adapters in Go for control and zero-dep deployment.
 
@@ -621,27 +701,22 @@ LiteLLM is used as a reference for edge cases in protocol translation but we don
 
 ## Router
 
-Given an authenticated `InferenceRequest`, the router decides:
+Given an authenticated `engines.ChatRequest`, the router decides, in this order (`internal/router/pick.go`):
 
-2. Is `model` `auto`? Apply heuristics:
-   - Short prompt with code shape → coder pool
-   - Long agentic context with tools → flagship pool
-   - Vision input → vision pool
-   - Embedding request → embedding pool
-3. Otherwise look up `model` in the registry → get list of nodes serving it.
-4. Apply scoring per candidate node:
-   - Free queue slots (higher = better)
-   - Sticky-session match by `SessionID` (huge bonus for KV reuse)
-   - Recent latency (lower = better)
-   - Network distance (same site = better)
-5. Pick winner; open HTTP/SSE connection to its local engine.
-6. Stream response back through gateway, accumulating token counts.
+1. Is the model **sharded**? Route to a gang's coordinator (`shardCoordinator`, the least loaded ready gang) and stop.
+2. Is `model` empty or `auto`? `auto` is **this leader's default model** — `router.default_model`, resolved before the router is asked (`internal/api/openai.go`, `controlplane/dispatch.go`). There are no pools and no prompt heuristics: the vendor routing chain that used to read the request left core with ADR-022.
+3. Is the model on the **local** node? Serve it there — lowest latency, no hop.
+4. Otherwise take the model's placement rows and filter them **once** through the one live rule (`takingRequests`: takes new work, has an address, not in cooldown), then drop workers this request already found unreachable, then prefill/decode roles, then the revision group a weighted split assigned the request to.
+5. Rank what is left by **load** (`loadRank`: in-flight + queue depth + `kvWeight` × KV use from the heartbeats; a saturated worker goes to the back), then let **prefix affinity** and a **sticky pin** nudge one worker to the front.
+6. Open the HTTP/SSE connection to that worker's engine, stream back through the gateway and account the tokens; a transport failure before the first byte re-picks the next worker (`nextworker.go`), and a retriable failure walks the catalog `fallback:` chain.
+
+Recent latency is used, but not as a per-node score: it feeds the p95 check that reorders the *fallback chain* (`router.latency_fallback_p95_seconds`, `internal/router/latency.go`). Network distance and queue-slot accounting are not implemented — there is no topology input in core.
 
 ### Sticky sessions
 
-- `SessionID` derived from `userID + first message hash` or explicit header `X-Session-Id`
-- Bound to a node for `session_ttl_s` (default 600s)
-- Soft binding: if the node is overloaded, router will move the session and absorb the cache miss
+- The pin is keyed by **`(user_id, model)`** — the authenticated key's user id from the request context (`internal/router/sticky.go`). There is no `X-Session-Id` header and no `SessionID` derivation; an unauthenticated request (dev mode, `require_keys: false`) is never pinned.
+- Bound to the worker that last served that tuple for `router.sticky_session_ttl_seconds` (`OPOD_STICKY_SESSION_TTL_SECONDS`). **0 — the default — disables it**; the legacy `router.sticky_sessions` boolean is parsed and superseded.
+- Soft binding: the pin only reorders the candidates the load scorer already accepted, so a saturated or drained worker loses it and the cache miss is absorbed. `model=auto` is never pinned.
 
 ### Catalog fallback chain (failure-based retry)
 
@@ -676,7 +751,7 @@ The router uses this list **only on failure** — not for load-balancing or capa
 - Each substitution is recorded in `audit_log` with `actor=router`, `action=fallback`, `details={"from":"qwen3.6-27b","to":"qwen3-14b","reason":"503"}`.
 - The leader's stderr also logs each fallback hit for live observability.
 
-**Why failure-based, not policy-based**:
+**Why failure-based, not policy-based**: a chain that fires on policy is a second placer. Which model *should* serve a request is the operator's decision, expressed by what is installed and by the key's allowlist; the router's job is to not fail a request it could still answer. (The one exception is measured, not guessed: `router.latency_fallback_p95_seconds` lets a faster candidate be tried first when the primary's rolling p95 is over the threshold.)
 
 **Implementation**: `internal/router/router.go` resolves `[primary, ...fallback]` from the catalog, then walks the chain in order on each retriable error (`Chat()` and `Embed()` both do this). The chain length is whatever the catalog YAML declares — keep it short (≤ 3 usually) so a single bad request can't cascade through your whole catalog. See `internal/router/router_fallback_test.go` for the test coverage.
 
@@ -684,9 +759,29 @@ The router uses this list **only on failure** — not for load-balancing or capa
 
 ## Scheduler
 
-Runs on the leader. What ships today in `internal/scheduler` is the **sharding orchestrator** (`sharding.go`, described above), the single-node `llama-server` bootstrap (`llamacpp.go`), and GGUF download + distribution (`hf_download.go`, `gguf_distribute.go`). Workers install their own models via `opod model add`; the leader does not push placements.
+Runs on the leader. What ships today in `internal/scheduler`:
 
-The general placement/drain/replication scheduler below is **planned — not implemented**. Goals:
+| File(s) | What it does |
+|---|---|
+| `sharding.go` · `placement.go` · `gangs.go` · `parallelism.go` | gang orchestration and teardown, part + coordinator placement, several gangs per model, the `TP × PP` resolver |
+| `vllmray.go` · `sglang.go` | the other two gang backends (§ Three gang backends) |
+| `autoshard.go` | the part-count picker — the only place that reads live per-worker free memory |
+| `llamacpp.go` | the single-node `llama-server` bootstrap |
+| `hf_download.go` · `gguf_distribute.go` | leader-side weight pull (through `internal/fetch`) and sha256-verified fan-out to the part hosts |
+| `move.go` | live model move by overlap (§ Live model move) |
+| `adapters.go` | load / drop a LoRA on every worker holding the base |
+| `workerclient.go` · `workerengine.go` | the signed client for a worker's API, and what engine a worker registered |
+
+**Who decides what a worker holds.** Mostly the worker: it serves what its own engine has
+loaded, and a bare `opod model add <id>` installs on the machine it is run on. The leader
+does push, in exactly these cases: `opod model add <id> --node a,b` (pull + warm there),
+`model move`, `/admin/v1/models/{id}/load|unload`, the adapter routes, gang formation, and
+`planheal` re-forming a gang its mounted plan declares (`internal/controlplane/planheal.go`,
+feature `plan_heal_gangs`). `desired_placements` is what makes a load survive a restart.
+What the leader does *not* do is decide **on its own** that capacity should change — no
+replica is added, nothing is rebalanced.
+
+The general replication / rebalancing scheduler below is **planned — not implemented**. Goals:
 
 1. Every requested model is loaded on at least 1 node it fits on.
 2. Highly-used models get replicas to handle load.
@@ -778,8 +873,8 @@ start hint. `internal/engines/all` blank-imports every driver and is what `cmd/o
 build imports only the drivers it ships (the `database/sql` driver model). Nothing outside those
 packages names a concrete driver type: construct with `engines.New(name, endpoint)` /
 `engines.NewWithAuth(...)`, resolve names with `engines.NativeName` / `engines.CatalogID`.
-OpenAI-wire engines (vLLM, MLX-LM, llama-server, Tenstorrent) embed `engines/openaicompat.Client`
-and add only what differs. The interface (from `internal/engines/types.go`):
+OpenAI-wire engines (vLLM, SGLang, MLX-LM, llama-server, and Tenstorrent's vLLM build through the vLLM
+driver's `tt` aliases) embed `engines/openaicompat.Client` and add only what differs. The interface (from `internal/engines/types.go`):
 
 ```go
 type Engine interface {
@@ -801,10 +896,16 @@ type Engine interface {
 
 ### Implemented drivers
 
-- **Ollama** — easiest dev backend. Driver shells out to `ollama` CLI for pulls; talks to its HTTP API.
-- **vLLM** — for NVIDIA. Driver runs the official Docker image or local install with the right `--model`, `--tensor-parallel-size`, `--max-model-len` flags.
-- **MLX-LM** — for Apple Silicon. Driver runs `mlx_lm.server` in a managed subprocess.
-- **llama.cpp** — universal fallback. Driver runs `llama-server` with the right `-m`, `-c`, `--rpc` flags.
+Five, all linked by `internal/engines/all`. `GET /admin/v1/capabilities` reports them as data (feature
+`engines`): canonical id, accepted aliases, and the catalog source field each pulls by.
+
+| Driver | id (aliases) | Notes |
+|---|---|---|
+| **Ollama** | `ollama` | Easiest dev backend, and the only one that keeps several models installed and loads one on request. Driver shells out to the `ollama` CLI for pulls; talks to its HTTP API. Default `engine.preferred`. |
+| **vLLM** | `vllm` (`tt-openai`, `tenstorrent`, `tt`) | NVIDIA, ROCm and XPU builds, and Tenstorrent's tt-metal server — the wire is identical, so the aliases exist instead of a second driver. The worker launches `vllm serve` with `--tensor-parallel-size`, `--max-model-len`, `--gpu-memory-utilization` from the plan. |
+| **SGLang** | `sglang` (`sgl`) | The worker launches `python -m sglang.launch_server`; `engine.sglang_endpoint` / `OPOD_SGLANG_ENDPOINT` default `http://127.0.0.1:30000`. Its own multi-node launcher is a gang backend (below). No sleep mode. |
+| **MLX-LM** | `mlx` (`mlx-lm`) | Apple Silicon. Driver runs `mlx_lm.server` in a managed subprocess. |
+| **llama.cpp** | `llamacpp` (`llama-cpp`, `llamacpp-rpc`) | Universal fallback. Driver runs `llama-server` with `-m`, `-c`, `--n-gpu-layers`, `--metrics` and — for a gang — `--rpc`. |
 
 ### Adding a new engine
 
@@ -867,7 +968,7 @@ A catalog entry decides which weights are pulled and how an engine is launched, 
 
 Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `file`. CLI shorthand: `hf:owner/repo[:file.gguf]`, `ollama:name[:tag]`, `file:/abs/path/x.gguf`. There is no `https://`, `s3://`, or `minio://` support.
 
-- `huggingface` sources (GGUFs for sharding) are a single streaming GET from `huggingface.co/<repo>/resolve/main/<file>` into `storage.models_dir`, written to a `.partial` file and renamed on success; skipped if already present (`internal/scheduler/hf_download.go`). Resume of interrupted transfers is planned — not implemented; today an interrupted download starts over.
+- `huggingface` sources (GGUFs for sharding) are pulled through `internal/fetch` (`internal/scheduler/hf_download.go` is the leader-side caller): one exclusive lock per file, a temp sibling renamed into place once the byte count matches, the sha256 checked when one is known, and a `<file>.opod` marker so `opod cache prune` may reclaim it. A pinned revision lands in `<models_dir>/<repo-slug>@<rev>/`. Already-present files are skipped. **Resume of an interrupted transfer is not implemented** — no `Range` request is made, so an interrupted download starts over.
 - `file` sources are used in place — Opod just verifies the path exists
 - Shard fan-out copies the leader's GGUF to workers via `/v1/process/file` + `/v1/process/upload`, sha256-verified and skipped when the worker already has the file
 
@@ -894,7 +995,8 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
 ### Bootstrap and worker auth
 
 - **Admin key bootstrap**: the first `opod up` generates an `admin`-scope key, prints it once to the operator, and saves the plaintext to `~/.opod/admin.key` (mode 0600) so subsequent local CLI calls work without copy-paste.
-- **Worker auth**: leader ↔ worker requests are signed with HMAC-SHA256 over `v1\n<METHOD>\n<PATH>\n<ts>` keyed by the per-node worker token (`internal/auth/hmac.go`), with constant-time comparison and a ±5-minute replay window. Bearer fallback is accepted for one transition release.
+- **Worker auth**: leader ↔ worker requests are signed with HMAC-SHA256 over `v1\n<METHOD>\n<PATH>\n<ts>` keyed by the per-node worker token (`internal/auth/hmac.go`), with constant-time comparison and a ±5-minute replay window. Bearer fallback is accepted for one transition release; `OPOD_REJECT_BEARER=1` on a worker closes it, and since 2026-09-21 every caller of a worker's API in this binary signs, the request path included, so the switch is usable.
+- **Worker identity by certificate** (optional, feature `mtls`): `OPOD_NODE_CERT` + `OPOD_NODE_KEY` on the worker, and `nodeMtls` (`off` | `allow` | `require`) + `nodeCertCa` + `revokedCerts` in the leader's auth snapshot. The node id comes from the verified chain's SPIFFE URI SAN `spiffe://<domain>/opod/node/<id>` — never from a common name, and never from the leaf the client merely offered. `require` gates the two join routes only. See § Worker HTTP server for why.
 
 ### Authorization model
 
@@ -913,16 +1015,28 @@ Key series:
 
 - `opod_requests_total{model,protocol,outcome}` — counter
 - `opod_request_duration_seconds{model,protocol,outcome}` — histogram
+- `opod_time_to_first_token_seconds{model}` — histogram (streamed answers only)
 - `opod_request_tokens_total{model,direction}` — counter
 - `opod_model_loaded{model,node}` — gauge
 - `opod_node_up{node,hostname}` — gauge
 
-Router subsystem (added in the observability pass):
+Router subsystem:
 
 - `opod_router_picks_total{path,outcome}` — counter. `path` is one of `local|worker|shard|fallback-to-local`; `outcome` is `ok|error|store-error|no-workers|stale-heartbeat|all-workers-stale`.
 - `opod_router_inflight{node}` — gauge. Mirrors the router's per-node in-flight request count.
 - `opod_router_fallback_total{op,reason}` — counter. `op` is `chat|embed`; `reason` is `primary-error|latency-reorder|cap-exhausted`.
 - `opod_router_attempt_duration_seconds{model,outcome}` — histogram.
+- `opod_router_cooldowns_active` — gauge. Workers in the circuit breaker's penalty box.
+- `opod_router_sticky_hits_total{outcome}` — counter. `hit|miss|expired` for the `(user_id, model)` pin.
+- `opod_router_hedge_total{outcome}` — counter, for the opt-in hedged pick.
+
+Cache and hooks:
+
+- `opod_cache_hits_total{path}` / `opod_cache_misses_total{path}` — the response cache, per endpoint path.
+- `opod_guardrail_action_total{name,action}` — a policy-file guardrail's verdicts (`allow|block|rewrite|flag`).
+- `opod_callback_sent_total` / `opod_callback_queue_depth` are **declared but never incremented** — the
+  callback sinks left with ADR-022 and the declarations are the last thing to remove. Do not build a panel
+  on them.
 
 ### Traces
 
@@ -972,8 +1086,11 @@ All three bind to whichever Prometheus data source you pick at import time via t
 
 ### Network
 
-- Mesh = plain HTTP on a trusted LAN today. Inter-node requests are authenticated (HMAC-signed) but not encrypted by Opod — run Tailscale/WireGuard at the host level, or keep the fleet on one trusted network. Embedded tsnet (WireGuard in-process) is planned — not implemented.
-- The gateway serves plain HTTP; there is no built-in TLS termination. Put a reverse proxy (Caddy, nginx) in front if you expose it beyond the LAN.
+- Mesh = plain HTTP on a trusted LAN by default. Inter-node requests are authenticated (HMAC-signed) but not encrypted by Opod — run Tailscale/WireGuard at the host level, or keep the fleet on one trusted network. Embedded tsnet (WireGuard in-process) is planned — not implemented.
+- **The leader's own listener can speak TLS** (feature `tls_listener`): with `OPOD_TLS_CERT` + `OPOD_TLS_KEY` (`tls_cert` / `tls_key`) the one listener serves the gateway, `/admin/v1`, the probes and the join path over HTTPS — ADR-005's "TLS on the north side", and how a control plane mints a certificate per endpoint. A worker trusts exactly that certificate through `OPOD_LEADER_CA`. A reverse proxy (Caddy, nginx) is still a fine alternative, and is what you want for a public name and rotation you already run.
+- `OPOD_PROBE_LISTEN` (feature `probe_port`) serves `/healthz`, `/readyz`, `/loadz` and `/metrics` on a **second, always-plain** listener, so a scraper or an autoscaler reads a number without being handed the leader's CA — and nobody ends up skipping verification to get a scaling signal. Nothing authenticated is routed there and the router is built from scratch, so a new `/admin/v1` route cannot appear on that port by accident.
+- **A worker's identity may be a client certificate** rather than the join token it holds (feature `mtls`): `OPOD_NODE_CERT` / `OPOD_NODE_KEY`, node id read from the SPIFFE URI SAN, mode and CA and revoked serials in the watched auth snapshot. See § Authentication and authorization.
+- Leader → worker is HMAC, always, TLS or not.
 - Workers must be reachable from the leader on their reported `host:port`.
 
 ### Auth
@@ -994,7 +1111,8 @@ All three bind to whichever Prometheus data source you pick at import time via t
 |---|---|
 | Compromised worker reads other workers' state | Workers have no admin scope; leader↔worker requests are HMAC-signed per node |
 | Leaked user key | One-click revoke; quota caps blast radius |
-| Mesh traffic sniffed on host network | Out of scope today (trusted-LAN assumption) — run WireGuard/Tailscale at the host level; embedded tsnet is planned |
+| Mesh traffic sniffed on host network | North side: give the leader a certificate (`OPOD_TLS_CERT`/`_KEY`, feature `tls_listener`) and its workers the CA (`OPOD_LEADER_CA`). Leader → worker is HMAC-signed but **not encrypted** — that leg is still the trusted-LAN assumption; run WireGuard/Tailscale at the host level, embedded tsnet is planned |
+| A leaked join token registers as any node | `mtls` (R9.6): a worker certificate NAMES its node in a SPIFFE SAN, a revoked serial is refused, and `nodeMtls: require` in the auth snapshot makes a tokenless certificate the only way to join. Off by default |
 | Compromised leader | Treat leader as trust root; rotate admin keys periodically |
 | Jailbroken local model | Optional gateway-level moderation hook |
 | Supply chain (downloaded weights) | SHA256 verification against catalog or HF |
@@ -1045,8 +1163,9 @@ opod/
 ├── README.md                  # user docs
 ├── QUICKSTART.md              # 3-min new user landing page
 ├── ARCHITECTURE.md            # this file
-├── ROADMAP.md                 # what ships, what is next, what is out of scope
-├── ROADMAP.md                 # scope decisions (incl. explicitly-killed features)
+├── ROADMAP.md                 # what ships, what is next, what is deliberately out of scope
+├── CHANGELOG.md               # the feature inventory by area, newest notes on top
+├── MODELS.md                  # per-model walkthroughs + the picker table
 ├── LICENSE                    # Apache 2.0
 ├── SECURITY.md
 ├── CODE_OF_CONDUCT.md
@@ -1062,24 +1181,32 @@ opod/
 │   ├── main.go                # dispatch + top-level help
 │   ├── help.go                # helpSpec / showHelp / dieHelp / wantsHelp
 │   ├── common.go              # adminCall + readLocalAdminKey + shared helpers
-│   ├── cmd_{up,down,status,join,doctor,version}.go
-│   ├── cmd_{node,model,shard,token,usage,audit,config}.go
-│   └── …
+│   ├── cmd_{up,down,status,join,doctor,version,update,completion}.go
+│   ├── cmd_{node,model,shard,token,config,catalog,fetch,cache,image}.go
+│   ├── cmd_{connect,disconnect}.go
+│   └── …   (no cmd_usage.go / cmd_audit.go — the query APIs left with ADR-022)
 │
 ├── internal/
-│   ├── controlplane/          # leader HTTP server + admin API + middlewares
+│   ├── controlplane/          # leader HTTP server + admin API + middlewares + plan/auth/policy watchers
+│   ├── gateway/               # the front-door role (`--role gateway`): registry mirror, usage push, spend poll
 │   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
-│   ├── router/                # model → node dispatch, least-loaded, shard coordinator
-│   ├── scheduler/             # sharding orchestrator + llama-server bootstrap + GGUF download/distribute
+│   ├── api/                   # the OpenAI protocol adapter + rate limit / quota / allowlist middleware
+│   ├── router/                # model → node dispatch, load-aware pick, gangs, revisions, sticky, hedge
+│   ├── scheduler/             # gang orchestration (rpc / ray / sglang) + llama-server bootstrap + GGUF distribute + model move
 │   ├── mesh/                  # mesh.go — LAN backend (tsnet planned)
-│   ├── engines/               # contract (types, errors, registry) + ollama/ vllm/ mlx/ llamacpp/ driver pkgs + openaicompat/ + all/ + enginetest/
-│   ├── models/                # catalog parser (incl. ShardingSpec), auto-pick
-│   ├── store/                 # SQLite backend (api_keys / models / nodes / placements / shards / usage / audit)
-│   ├── auth/                  # API keys (sha256) + scope middleware + HMAC worker auth
-│   ├── control/               # mutating ops shared by CLI + admin API
+│   ├── engines/               # contract (types, errors, registry) + ollama/ vllm/ sglang/ mlx/ llamacpp/ driver pkgs + openaicompat/ + all/ + enginetest/
+│   ├── models/                # catalog parser (incl. ShardingSpec), trust (minisign), auto-pick
+│   ├── fetch/                 # every Hub pull: lock, temp sibling, digest, marker, snapshots, cache ls/prune
+│   ├── store/                 # SQLite backend (api_keys / models / nodes / placements / shards / usage / events / audit)
+│   ├── events/                # in-process pub/sub behind the SSE + typed streams
+│   ├── auth/                  # API keys (sha256) + scope middleware + HMAC worker auth + node certificates
+│   ├── control/               # mutating ops shared by CLI + admin API (connect/disconnect, bootstrap)
 │   ├── cache/                 # response cache (memory + SQLite drivers)
 │   ├── lifecycle/             # local-engine memory lifecycle (load/evict/pin)
-│   ├── config/                # YAML + env loader
+│   ├── guardrails/            # the webhook hook interface a policy-file rule drives
+│   ├── httpsafe/              # SSRF guard for outbound hook clients (block_private_targets)
+│   ├── update/                # `opod update`: release lookup, checksum, atomic binary swap
+│   ├── config/                # YAML + env loader (config.go) + the process-environment contract (env.go)
 │   └── metrics/               # Prometheus declarations
 │
 ├── images/                    # one Dockerfile dir per image + build.sh (local lane) + entrypoint.sh
@@ -1195,8 +1322,10 @@ The Makefile is intentionally tiny — every target maps to a single `go` invoca
 |---|---|
 | `make build` (default) | `go build -trimpath -o opod ./cmd/opod` |
 | `make test` | `go test ./...` |
-| `make lint` | `go vet ./...` (plus `.golangci.yml` rules when you run `golangci-lint` separately) |
+| `make lint` | `go vet ./...`, then `golangci-lint run ./...` with this repo's `.golangci.yml` when the binary is on PATH or in `GOPATH/bin` (CI always runs it) |
+| `make fmt-check` | fails when any file is not `gofmt -s` clean, and prints the list |
 | `make check` | lint + test + build, in that order. **This is what every PR must pass.** |
+| `make integration` | `fmt-check` + lint + test + build, then a binary smoke (`version`, `help`, `connect --list`, `model search`) and the drift tests. The pre-push check, ~10 s warm |
 | `make run` | `make build && ./opod up` |
 | `make tidy` | `go mod tidy` |
 | `make clean` | remove the `opod` binary and `data/`, `.opod/` working dirs |
@@ -1211,10 +1340,12 @@ Start with these files in order. Each top-of-file comment explains what the pack
 2. `cmd/opod/cmd_*.go` — one file per CLI subcommand (no file over 400 lines); each parses flags, calls a package and prints: model install/search → `internal/models` (`Install`, `Search`, `PersistUserCatalogEntry`), boot steps → `internal/control/bootstrap.go`, self-update → `internal/update`
 3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
 4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
+5. `internal/controlplane/contract.go` — the frozen `/admin/v1` surface, the feature keys and the environment contract: what an external manager may rely on
+6. `internal/config/env.go` — every environment variable a manager may set, as a table with the side that reads it
 7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule: the CLI and the admin API are two callers of one function)
-8. `internal/router/router.go` — picks the backing engine per request (local → remote → fallback)
-9. `internal/scheduler/sharding.go` — orchestrates sharded models (rpc-server + coordinator)
-10. `internal/engines/types.go` — `Engine` interface; `registry.go` — `Register`/`New`/`NativeName`/`CatalogID`; `internal/engines/{ollama,vllm,mlx,llamacpp}/` are the drivers; `all/` links them
+8. `internal/router/pick.go` — picks the backing engine per request (gang → local → live workers → fallback); `router.go` is the entry point and the fallback walk
+9. `internal/scheduler/sharding.go` — orchestrates gangs (`vllmray.go` and `sglang.go` are the other two backends)
+10. `internal/engines/types.go` — `Engine` interface; `registry.go` — `Register`/`New`/`NativeName`/`CatalogID`; `internal/engines/{ollama,vllm,sglang,mlx,llamacpp}/` are the drivers; `all/` links them
 11. `internal/agent/loop.go` — worker register + heartbeat loop; `internal/agent/server.go` is the worker HTTP server
 12. `internal/store/sqlite.go` — schema, migrations, query helpers
 
@@ -1259,8 +1390,13 @@ Start with these files in order. Each top-of-file comment explains what the pack
 
 ### Add a new client protocol
 
+> Read this first: **core serves one protocol** (ADR-022). A second wire shape belongs in a shim in front of
+> the gateway, not in this binary. The steps below are for a shape that is genuinely part of the OpenAI
+> surface (say `/v1/completions`, which is listed as planned).
+
 1. Read `internal/api/openai.go` as the simplest example.
-3. Wire the routes in `internal/controlplane/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern).
+2. Translate to and from the engine-agnostic `engines.ChatRequest` / `StreamEvent` — never engine-specific shapes, or every driver has to learn the new protocol.
+3. Wire the routes in `internal/controlplane/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern; the middleware chain above it is what enforces keys, allowlist, rate limits and quota).
 4. Document in [README.md → Supported clients](README.md#supported-clients) and in [README.md → API reference](README.md#api-reference).
 
 ### Add a new mesh backend
@@ -1285,14 +1421,30 @@ Add `catalog/<id>.yaml` in `opod-io/opod-sdk` (embedded into the binary; an oper
 
 ## Stable admin surface (v1)
 
-`internal/controlplane/contract.go` freezes the routes an external manager may rely on
-(probes incl. `/loadz`, the two gateway routes, the worker join/heartbeat pair, and the `/admin/v1`
-manager routes: `version`, `capabilities`, `nodes`, `nodes/{id}/sleep|resume`, `models`,
-`models/{id}/load`, `healthcheck`, `events/stream`, `usage/stream`, `shards` list/create/delete). The
-list is additive-only: `GET /admin/v1/capabilities` serves it together with feature flags
-(`events_stream usage_stream loadz shards plan_file auth_file router_only_ready vram_budget stream_boot
-policy_file load_signals worker_sleep`), and `TestLeaderContract` walks the real router so a change that
-drops one of these routes fails `go test`. Everything else under `/admin/v1` may change between releases.
+`internal/controlplane/contract.go` freezes the routes an external manager may rely on. As of 2026-09-26 the
+list is:
+
+- **probes** — `GET /healthz`, `/readyz`, `/loadz`, `/metrics`
+- **gateway** — `GET /v1/models`, `POST /v1/chat/completions`
+- **worker protocol** — `POST /admin/v1/nodes/register`, `POST /admin/v1/nodes/heartbeat`
+- **manager** — `GET /admin/v1/version`, `/capabilities`, `/nodes`, `/models`, `/shards`,
+  `/events/stream`, `/usage/stream`; `POST /admin/v1/nodes/{id}/sleep|resume|drain|undrain`,
+  `/models/{id}/load`, `/models/{id}/move`, `/adapters`, `/healthcheck`, `/shards/create`;
+  `DELETE /admin/v1/adapters/{name}`, `/shards/{model_id}`, `/shards/{model_id}/{gang_id}`
+
+The list is additive-only — a route on it is never removed, renamed or given another method, and its
+response shape only gains fields. `GET /admin/v1/capabilities` serves it together with the **45 feature
+keys** a manager may probe for instead of sniffing behaviour, and `TestLeaderContract` walks the real router
+so a change that drops one of these routes fails `go test`. Everything else under `/admin/v1` — and
+`GET /gatewayz`, which is deliberately not frozen — may change between releases.
+
+Rather than restate the key list here and let it rot, read it: `curl -s -H "Authorization: Bearer $KEY"
+localhost:8080/admin/v1/capabilities | jq .features`. Each key is commented at its declaration with what it
+promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `policy_file`,
+`events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`,
+`engine_liveness`, `worker_goodbye`, `worker_sleep`, `node_drain`, `placement_drain`, `model_move`,
+`shards`, `shard_head`, `shard_groups`, `shard_sglang`, `plan_heal_gangs`, `gateway_spend`, `mtls`,
+`tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.
 
 The wire types of this surface — `Load`, the usage and lifecycle stream batches, the auth and policy
 snapshot documents, `Route`/`Version`/`Capabilities` — live in the SDK module

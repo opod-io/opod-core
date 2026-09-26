@@ -5,7 +5,160 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
-## 2026-09-21 — a worker loads its own model, the request path signs, and a prune says where it stood
+## 2026-09-26 — a worker's identity can be a certificate (R9.6)
+
+- **A worker may be identified by a CLIENT CERTIFICATE instead of the join token it holds** (feature `mtls`,
+  ADR-005's P1). With `OPOD_NODE_CERT` + `OPOD_NODE_KEY` the agent presents a keypair on its calls to the
+  leader, and the leader reads the node id out of the certificate's **SPIFFE URI SAN**
+  `spiffe://<trust domain>/opod/node/<id>` — the one SAN shape an identity is read from, because a common
+  name is free text an operator's PKI hands out for other reasons and reading an id from it would make every
+  certificate that CA ever signed a worker identity. Three properties a token cannot state: a worker joins
+  with **no shared secret at all**; the certificate **names** the node, so one that says another id cannot
+  register or heartbeat as it; and a **revoked** certificate is refused although the CA signed it.
+- The mode (`off` | `allow` | `require`), the CA and the revoked serials come from the **auth snapshot the
+  leader already watches** (`nodeMtls`, `nodeCertCa`, `revokedCerts`), not from its environment, so a fleet
+  moves one endpoint at a time and back again without restarting a leader that is serving. Anything
+  unrecognised is **off**, never `require` — a typo in a policy file must not lock a fleet out of its own
+  leaders — and a mode asked for with no usable CA stays off and says so.
+- `require` reaches the **two join routes only**. One listener serves the gateway as well, so the handshake
+  asks for a certificate and verifies it if given rather than demanding one from every client; a manager's
+  admin calls, which carry a token and no certificate, are untouched (a test holds that). The identity is
+  read from the **verified chain**, never from the leaf the client offered. HMAC stays the GA path and the
+  only path leader → worker, and with the snapshot silent nothing here is reachable.
+- Requires `opod-sdk v0.2.5` (the worker-certificate policy fields, ADR-073).
+
+## 2026-09-24 — a managed key's daily quota, and where a model's weights come from
+
+- **A key a control plane mints now arrives with its daily quota.** The leader has enforced a per-key daily
+  token ceiling since before the auth snapshot existed and `QuotaMiddleware` was right the whole time — the
+  number simply never arrived: `applyAuthSnapshot` built the key record with the rate limits and the
+  allowlist and **not** the quota, and had no update branch for it either, so every managed key landed with
+  `quota_daily_tokens = 0`, which the middleware reads as unlimited. It is carried on create and followed on
+  edit (`UpdateDailyQuota`), with `0` meaning "no quota" so a ceiling can be lifted as well as raised. Why no
+  test caught it: every other quota test set the field on a **locally** minted record and asserted the
+  refusal — the path a customer's key actually takes was never walked. Field
+  `SnapshotKey.QuotaDailyTokens`, `opod-sdk v0.2.4`.
+- **`opod model info` prints the page for those exact weights.** A repo string is a name, not somewhere you
+  can go and look, and for a GGUF the FILE is what says which quantization is served. `info` now prints the
+  upstream URL beside the source: the Hugging Face blob for a repo + file, the repo page without one, the
+  ollama library page for an ollama name. A source with no addressable page — a file staged on the node, or
+  one this build does not know — prints nothing, because a guessed link is worse than none.
+
+## 2026-09-22 — an SGLang gang, and image families as data
+
+- **SGLang's native multi-node scheme is a third gang backend** (feature `shard_sglang`), beside llama.cpp's
+  RPC parts and vLLM's Ray cluster: one `sglang.launch_server` per rank, one rendezvous address
+  (`--dist-init-addr` / `--nnodes` / `--node-rank`), `--tp-size` over the WHOLE gang, `--pp-size` for stages,
+  and **rank 0 serving the group's API** as the coordinator the router dials. It is the simplest of the three
+  because nothing sits between the engine and the machines. Run on the design-partner cell: a one-part gang
+  serves real text; the two-machine pipeline forms, answers 200 with correct token accounting and returns
+  noise — cause not isolated, not claimed. It exists because ADR-068 dropped the rule that a tensor group
+  never crosses a machine: SGLang's native shape *is* that shape, so the product now says what it costs
+  (every all-reduce of every token on the wire) instead of having no multi-node path for the engine at all.
+- **An image carries the GPU architecture families it was built for, as data** (`families:` in
+  `images.yaml`, and the same tokens on the image's `io.opod.gpu.families` label, held together by a drift
+  test) — upstream's ROCm vLLM ships an RDNA build and a CDNA build and neither runs the other's kernels,
+  SGLang's ROCm build is Instinct-only, and vLLM's XPU build is Xe2/Xe3 while an Arc A-series card is
+  Xe-HPG. `(engine, vendor)` cannot say any of that, so a build that cannot run on a node's silicon is
+  refused at plan time instead of faulting on the first token.
+- **One create per model holds at a time.** Every create begins by tearing down what it replaces, so two
+  creators — a control plane retrying, and this binary's own heal-within-plan loop — were stopping each
+  other's parts as "orphans of a previous leader": measured on the cell, twelve minutes without once forming
+  a two-part gang, every attempt healthy in isolation. A second create now gets `ErrCreateInFlight` and waits
+  for the running one.
+- Also: a gang part is routed by **its own rank** (a part on a host that holds two of them is no longer the
+  other's), a worker says where it stood when a prune removes a file, and the agent reads its memory fraction
+  from the engine rather than assuming.
+
+## 2026-09-21 — front doors, a worker's goodbye, several gangs, and a prune that says where it stood
+
+### Front doors: one brain, several gateways (feature `gateway_spend`, ADR-063)
+
+- **`opod up --role gateway --leader <url>`** runs a copy of the gateway for an endpoint that already has a
+  leader. A door serves `/v1` and the probes and **nothing of `/admin/v1`**: the worker registry, the join
+  tokens, the gang calls and the plan revision belong to exactly one process, and a door that exposed them
+  would be a second place a worker could join or a gang be torn down. Its worker list (nodes, placements,
+  gang parts) is **mirrored** from the leader every 10 s — a stale list keeps workers but adopts none — and
+  it runs no engine of its own.
+- **Usage has one writer.** A door pushes its rows to `POST /admin/v1/usage/push`, at least once,
+  deduplicated by a row id the **door** mints (only the door knows two pushes are the same request, and a
+  retry after a response it never saw must not bill twice). Every push doubles as a heartbeat carrying the
+  door's own load, so an idle door still counts as a door.
+- **Ceilings come back from the leader.** `GET /admin/v1/spend` serves what each key has spent in the current
+  daily window, its limits, **this door's 1/N share** of them and the lag bound. The share matters more than
+  it looks: a flat 1/N hands a keep-alive client — pinned to one door — a fraction of the rate it was sold,
+  so the snapshot carries the ceiling *and* the share, computed from the doors the leader has actually heard
+  from. A per-key daily quota may therefore lag across doors by a **published** bound (10 s, in the snapshot
+  and on `/gatewayz`) rather than by an undocumented one.
+- **`GET /gatewayz`** says something different in each role, because the two processes know different things:
+  on a **door**, how stale its registry is and how big its backlog is; on the **leader**, the doors it has
+  heard from and the **total** they are carrying — the only aggregate a scaler for the doors can honestly
+  read, since keep-alive makes one door's share uneven.
+- Proven on the design-partner cell, and it cost six defects that no unit test could have held, because each
+  is a property of a pod, an image or a restart: the image entrypoint knew only leader and worker · core made
+  its configured models directory whatever the role · a door refused to start while its leader was still
+  coming up (so, every rollout) · the mirror dropped the worker's join token, giving `401` inside and a `502`
+  outside on the first dispatch · **a door aged out the workers it had been told about when the LEADER went
+  quiet** — the exact failure doors exist to prevent — so a door now turns its own heartbeat-age rule off and
+  publishes how stale its list is instead · and the doors rolled with `MaxSurge 1` beside required
+  anti-affinity, which cannot converge.
+
+### A worker says goodbye (feature `worker_goodbye`, ADR-065)
+
+- A worker sends **one final heartbeat** on its way out, declaring its engine `stopped`. Every park and every
+  rolling update had a window: the pod gets SIGTERM, the engine — or an RPC part — dies with it, and the
+  worker goes on heartbeating through the grace period with its last good report. For those seconds the
+  leader believed the capacity was there, picked the dead part and answered **502**. Only the worker can know:
+  the leader sees a heartbeat, Kubernetes sees a container that is still Running. A fresh `stopped` takes the
+  worker out of the pick, out of `modelServable`, out of `routableNodes` (so a gang's servability follows) and
+  out of `/loadz`'s worker count, while `engines_unhealthy` still counts it — the card it holds is still held.
+  `crash-looping` does **not** take a worker out: the process may be up again by the next request, and
+  flapping an endpoint on a report is worse. Best-effort and bounded at 3 s; a lost goodbye costs exactly what
+  we had before, the heartbeat bound.
+
+### Several gangs of one model (feature `shard_groups`)
+
+- A **gang** is one complete serving copy — N parts plus the coordinator that fronts them — and a model may
+  now have several. They are independent: a second gang is **throughput**, not a bigger model, and a part
+  never spans gangs. `opod shard create <model> --gang g1` names one, `opod shard remove <model> --gang g1`
+  and `DELETE /admin/v1/shards/{model_id}/{gang_id}` remove one, and the router picks the **least loaded gang
+  whose coordinator is ready**. A bare create still replaces every gang of the model — what it has always
+  meant. Two rules make it safe, and both were wrong while a model could only have one gang: every judgement
+  is **per gang** (asked over the union, one lost part hid a healthy copy and one ready coordinator vouched
+  for a broken sibling), and every id and port **carries its gang** (ports are allocated per node for the
+  length of a create, because two gangs may share a worker).
+- **`/readyz` tells a parked gang from an awake one that cannot form**: with no worker at all the endpoint is
+  `sleeping` — parked on purpose, and the pod must stay Ready so its Deployment converges — while with workers
+  registered and nothing able to serve it is `waking`. Both are 200. The floor-0 branch used to be asked
+  first and answer `sleeping` for both, so a gang that was serving reported itself parked and a gang whose
+  parts could never form reported a healthy parked endpoint.
+- **A gang's pressure comes from its coordinator** (feature `gang_load`). A gang's parts are rpc-servers:
+  they hold weights and multiply matrices, run no engine, and have no queue, KV cache or notion of a request.
+  So the leader scrapes the **coordinator** — the process that has all three — through the driver the router
+  dials it with, cached for the heartbeat cadence. Before it, a sharded endpoint reported `kv_used_pct 0` and
+  `queue_depth 0` however loaded it was.
+- **A leader can form the gang its own plan declares** (feature `plan_heal_gangs`): when a gang in the
+  mounted plan has no parts at all and free workers have registered, the leader forms it without an admin
+  call — so a gang whose pods were restored by something outside the leader comes back by itself.
+- **A gang that cannot be reached is not the leader's engine failing.** An unreachable coordinator — formed
+  but still loading across the gang, or missing a part — answers `503 gang_unreachable` + `Retry-After`
+  naming the gang. It used to fall through to the leader's own engine error ("vllm at 127.0.0.1:8000 is not
+  reachable", with a hint to start it), which described neither what failed nor anything the caller could do.
+- **The coordinator goes on the biggest card, not the biggest host.** Host RAM is the wrong quantity and was
+  silently wrong wherever hosts are alike and cards are not: two hosts both reporting 31 GB of RAM behind a
+  46 GB card and an 8 GB card, the tie falling to whichever came first, and llama.cpp dying on startup
+  allocating a 4 GiB KV buffer on the small one.
+- **A probe is not a customer** (feature `probe_header`): a request carrying `X-Opod-Probe` is served like any
+  other and counted in none of `in_flight`, `rpm_1m`, `unavailable_1m` or the idle clock — the control plane's
+  own proof probe was waking gangs the autoscaler had just parked.
+- **The probes can have their own port** (feature `probe_port`): `OPOD_PROBE_LISTEN` serves `/healthz`,
+  `/readyz`, `/loadz` and `/metrics` on a second, **always-plain** listener, whatever TLS the main one speaks,
+  so a scraper or an autoscaler reads a number without being handed a per-endpoint CA — which is how a
+  scaling decision ends up resting on a disabled certificate check. Nothing authenticated is routed there.
+- **An uneven layer split**, so cards of different sizes can hold one model instead of being bounded by the
+  smallest, with the coordinator on the biggest card.
+
+### Everything else that day
 
 - **`opod cache prune --json` reports the cache volume it measured** (`totalBytes`, `freeBytes`, or `volumeErr` when
   statfs failed). A manager that had to infer those numbers from a node probe reported 0 for the one node where they
@@ -69,8 +222,10 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
 - OpenAI-compatible `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`; SSE streaming with
   client-disconnect handling (bounded drain, no goroutine leaks)
-- Engine drivers: **Ollama**, **vLLM**, **MLX-LM**, **llama.cpp** (single node and RPC); `llama-server` and
-  `vllm serve` are launched by the worker for a placement; engine endpoints and keys per engine via env
+- Engine drivers: **Ollama**, **vLLM** (incl. Tenstorrent's tt-metal build through its `tt` aliases),
+  **SGLang**, **MLX-LM**, **llama.cpp** (single node and RPC); `llama-server`, `vllm serve` and
+  `sglang.launch_server` are launched by the worker for a placement; engine endpoints and keys per engine via
+  env; `GET /admin/v1/capabilities` lists the linked drivers as data (feature `engines`)
 - Hardware auto-detection (mac + linux + NVIDIA) and a default model auto-pick
 - Per-key API keys with rpm / tpm / daily-token quotas, model allowlists, expiry; OpenAI-style
   `X-RateLimit-*` headers; keys as hashes in a watched `auth.json` when a manager mounts one
@@ -214,9 +369,12 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 ## Manager surface
 
 - Frozen, additive-only `/admin/v1` contract (`contract.go`, `GET /admin/v1/version|capabilities`,
-  `TestLeaderContract`): probes, the two gateway routes, worker register/heartbeat, nodes (list, drain,
-  delete, sleep, resume), models (list, add, delete, load), healthcheck, `events/stream` and
-  `usage/stream` (cursor + replay + `boot`), shards (list, create, delete)
+  `TestLeaderContract`): the probes incl. `/metrics`, the two gateway routes, worker register/heartbeat,
+  nodes (list, drain, undrain, sleep, resume, delete), models (list, load, move), adapters (load, drop),
+  healthcheck, `events/stream` and `usage/stream` (cursor + replay + `boot`), shards (list, create, delete a
+  model's gangs, delete one gang) — and **45 feature keys** beside it, which is what a manager should probe
+  instead of sniffing behaviour. `GET /gatewayz`, `POST /admin/v1/usage/push` and `GET /admin/v1/spend` are
+  shipped but deliberately **not** frozen yet
 - Every state-changing `/admin/v1` call is an `admin.call` lifecycle event (actor, status) — audit rides
   the stream; guardrail verdicts too
 - Managed mode: `OPOD_MANAGED` (`TestSurfacesOff` walks the contract on a managed leader). The
@@ -226,10 +384,13 @@ the last section. For what is next, [ROADMAP.md](ROADMAP.md).
 
 ## CLI
 
-- `opod up|down|join|status`, `opod node ls|show|drain|remove`, `opod model add|load|unload|rm|ls|ps|search|info`,
-  `opod shard create|ls|remove`, `opod token create|ls|revoke|edit`, `opod connect|disconnect <client>`
-  (copy-paste snippets for OpenAI-shape tools), `opod update`, `opod config show` (secrets redacted)
-- Interactive pickers, `--json` everywhere, `NO_COLOR`
+- `opod up|down|join|status|doctor|version|update|completion`, `opod node ls|show|drain|undrain|remove`,
+  `opod model add|load|unload|move|rm|ls|ps|search|info`, `opod shard create|ls|remove`,
+  `opod catalog ls|export`, `opod fetch [--snapshot]`, `opod cache ls|prune`,
+  `opod image ls|show|recommend`, `opod token create|ls|edit|renew|expire|revoke`,
+  `opod connect|disconnect <client>` (copy-paste snippets for 15 OpenAI-shape tools), `opod config show`
+  (secrets redacted) `|path|edit`
+- Interactive pickers, `--json` everywhere, `NO_COLOR`, a "did you mean" on a mistyped verb
 
 ## Release and ops
 

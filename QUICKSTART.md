@@ -386,7 +386,7 @@ opod model search           # list everything
 opod model search coder     # filter
 ```
 
-A summary of 41 of the 47 catalog entries — `opod model search` (or `opod catalog ls`) is the live list. ⭐ marks the current top picks.
+A summary of 41 of the 47 catalog entries — `opod model search` (or `opod catalog ls`) is the live list. ⭐ marks the current top picks. The six not listed are variants and test fixtures rather than different models: `llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf` and `mimo-7b-ray` (the one entry that uses the vLLM + Ray gang backend, labelled TEST).
 
 | Catalog id | What it's for | RAM | Engine name |
 |---|---|---|---|
@@ -483,7 +483,7 @@ curl :8080/v1/chat/completions -H "Authorization: Bearer sk-orc-..." \
 
 This works because Opod's router falls through to the engine when no catalog entry matches the requested model id.
 
-### Use a different engine entirely (vLLM, MLX-LM, llama.cpp)
+### Use a different engine entirely (vLLM, SGLang, MLX-LM, llama.cpp)
 
 Edit `~/.opod/config.yaml`:
 
@@ -493,7 +493,11 @@ engine:
   vllm_endpoint: http://gpu-host:8000   # where your vLLM is running
 ```
 
-Or via env: `OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://gpu:8000 opod up`. The router doesn't care which engine serves the request — it just routes by model name.
+Or via env: `OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://gpu:8000 opod up`. The five engine names are
+`ollama`, `vllm`, `sglang`, `mlx` and `llamacpp` (each driver's aliases work too — `sgl`, `tt`, `mlx-lm`,
+`llama-cpp`), and each has its own endpoint setting (`engine.sglang_endpoint` defaults to
+`http://127.0.0.1:30000`). The router doesn't care which engine serves the request — it just routes by model
+name.
 
 **Want bare-metal speed on weak hardware?** Use `llama.cpp` directly — lower RAM and cold-start latency than Ollama, and Opod auto-launches `llama-server` for you so it's still one command:
 
@@ -560,7 +564,7 @@ Other options:
 
 ```bash
 opod update --check              # see if there's a new version, don't install
-opod update --version v1.11.0    # pin a specific version (see github.com/opod-io/opod-core/releases)
+opod update --version v0.1.0     # pin a specific version (see github.com/opod-io/opod-core/releases)
 opod update --force              # reinstall even if already on the latest
 opod upgrade                     # alias of `update`
 ```
@@ -591,11 +595,11 @@ Opod assumes a **trusted network** — your LAN, or a VPN you run yourself ([Tai
 - **Worker HTTP servers** bind to the machine's LAN address (the one on its default route), or to `OPOD_ADVERTISE_ADDR` when you set it — and to all interfaces only if no address can be determined. Every worker route except `/healthz` is authenticated. Network reachability is still the first line of defense.
 - There is **no web UI** in core and `/` answers 404; every caller — CLI, tool, manager — authenticates with an API key.
 
-If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overlay you manage** (leader ↔ worker traffic is plain HTTP unless you give the leader a certificate with `OPOD_TLS_CERT` / `OPOD_TLS_KEY`) — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `OPOD_REJECT_BEARER=1` once every leader and worker is on a recent build. A worker also loads the model it was started for (`OPOD_LOAD_MODEL`) in-process rather than over its own API, so nothing on a worker needs the bearer path to start serving.
+If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overlay you manage**. Give the leader a certificate with `OPOD_TLS_CERT` / `OPOD_TLS_KEY` and its workers `OPOD_LEADER_CA` and the *north* side is encrypted (`OPOD_PROBE_LISTEN` then keeps `/healthz`, `/readyz`, `/loadz` and `/metrics` on a plain port so a scraper needs no CA); leader → worker stays plain HTTP, HMAC-signed. A worker can also be identified by a **client certificate** instead of the join token it holds (`OPOD_NODE_CERT` / `OPOD_NODE_KEY`, node id read from its SPIFFE SAN), which a manager turns on per endpoint in the auth snapshot — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `OPOD_REJECT_BEARER=1` once every leader and worker is on a recent build. A worker also loads the model it was started for (`OPOD_LOAD_MODEL`) in-process rather than over its own API, so nothing on a worker needs the bearer path to start serving.
 
 ### 🌐 Network behavior — every call Opod can make
 
-Opod prints this same list at startup as the "Network behavior on this node" banner. **Telemetry is off — Opod never reports installs, usage, errors, or any data to opod.io or any analytics endpoint.** The only calls below the gateway makes are operator-configured.
+`opod up` prints the part of this that is configured on this node — tracing, log export and "Telemetry: none" — as the "Network behavior on this node" banner; the table below is the complete set. **Telemetry is off — Opod never reports installs, usage, errors, or any data to opod.io or any analytics endpoint.** The only calls below the gateway makes are operator-configured.
 
 | Direction | When | Disable |
 |---|---|---|
@@ -605,7 +609,7 @@ Opod prints this same list at startup as the "Network behavior on this node" ban
 | → `github.com/opod-io/opod-core/releases/latest` | Only when you run `opod update` / `opod update --check`. Anonymous; no Opod-specific identifier sent. **Never at `opod up`.** | Don't run `opod update`. |
 | → OTLP collector (traces) | If `OPOD_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector. | Unset `OPOD_OTLP_ENDPOINT`. |
 | → OTLP collector (logs) | If `OPOD_OTLP_LOGS_ENDPOINT` is set. This process's log records, beside stderr, to your own collector. | Unset `OPOD_OTLP_LOGS_ENDPOINT`. |
-| → guardrail webhook URL(s) | Every `/v1/chat/completions` if `observability.guardrails:` is configured. **Synchronous on the request path**; the gateway waits for the answer. | Remove the entry from `config.yaml`. |
+| → guardrail webhook URL(s) | Every `/v1/chat/completions` if a guardrail rule is present in the **policy snapshot** a manager mounts (`OPOD_POLICY_FILE`, default `/etc/opod-auth/policy.json`) — there is no `config.yaml` key for it. **Synchronous on the request path**; the gateway waits for the answer. | Remove the rule from the policy file, or run with `OPOD_POLICY_FILE=off`. |
 
 That is the whole list. Opod does not forward requests to any cloud model vendor, holds no vendor API keys, and has no usage callbacks; with no OTLP endpoint and no guardrail configured, `opod up` makes **zero** outbound calls beyond the engines and nodes you chose.
 

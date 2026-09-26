@@ -183,9 +183,9 @@ images:
     families: [nvidia:turing, nvidia:ampere, nvidia:ada, nvidia:hopper, nvidia:blackwell]
     requires:
       - NVIDIA driver and the NVIDIA container runtime on the node
-    summary: SGLang on CUDA. Safetensors models from a Hugging Face repo, one node per endpoint.
+    summary: SGLang on CUDA. Safetensors models from a Hugging Face repo; multi-node gangs via SGLang's own launcher.
     notes:
-      - One node only - core has no multi-node path for SGLang.
+      - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
       - Served on an NVIDIA card 2026-09-19; the row had said proven false until 2026-09-21.
 
   - name: opod-worker-sglang-amd
@@ -201,8 +201,8 @@ images:
     families: [amd:cdna]
     requires:
       - amdgpu driver on the node; /dev/kfd and /dev/dri passed to the container
-    summary: SGLang on ROCm. Safetensors models from a Hugging Face repo, one node per endpoint.
+    summary: SGLang on ROCm (Instinct only). Safetensors models from a Hugging Face repo; multi-node gangs via SGLang's own launcher.
     notes:
       - Instinct only - upstream has no RDNA build, so a Radeon card serves through llama.cpp or vLLM instead. MI350 needs the -mi35x base (rebuild with SGLANG_AMD_BASE=).
       - 'Confirmed on a Radeon RX 7900 XTX 2026-09-19: the worker joins, SGLang starts and its scheduler dies with "HIP error: invalid device function" - no kernel in the image is compiled for RDNA.'
-      - One node only - core has no multi-node path for SGLang.
+      - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.

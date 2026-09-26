@@ -15,9 +15,10 @@ Closes #
 
 - [ ] Bug fix (non-breaking, restores intended behavior)
 - [ ] New feature (non-breaking, adds a capability)
-- [ ] Breaking change (requires config / API / catalog migration)
+- [ ] Breaking change (requires config / API / schema migration)
+<!-- Catalog entries are NOT in this repo: model YAMLs live in opod-io/opod-sdk and are
+     embedded into the binary. A catalog change is a PR there, not here. -->
 - [ ] Docs only (README / ARCHITECTURE / MODELS / QUICKSTART / site)
-- [ ] Catalog entry (new or updated YAML in `catalog/`)
 - [ ] Refactor (no functional change)
 - [ ] Tooling / CI
 
@@ -26,10 +27,10 @@ Closes #
 - [ ] One change per PR — no drive-by edits in unrelated files
 - [ ] `make check` (or `go vet ./... && go test ./...`) passes locally
 - [ ] Added or updated tests where behavior changed
-- [ ] Updated docs in the same PR — `README.md`, `QUICKSTART.md`, `MODELS.md`, `ARCHITECTURE.md`, `internal/ui/index.html`, or CLI `--help` as applicable
+- [ ] Updated docs in the same PR — `README.md`, `QUICKSTART.md`, `MODELS.md`, `ARCHITECTURE.md`, `CHANGELOG.md`, or CLI `--help` as applicable
 - [ ] If a new CLI command: added it to `cmd/opod/main.go` help + `opod <cmd> --help` examples
-- [ ] If a new catalog entry: verified the source actually exists (Ollama tag pulls, HF repo loads, or GGUF URL is real)
-- [ ] PR title follows the convention from existing commits (e.g. `feat: ...`, `fix: ...`, `catalog: ...`, `docs: ...`)
+- [ ] If a new container image: the row exists in all four of `images/build.sh`, `.github/workflows/images.yml`, `images/images.yaml` and `images/README.md` (`make integration` checks this)
+- [ ] PR title follows the convention from existing commits (e.g. `feat: ...`, `fix: ...`, `docs: ...`, `images: ...`)
 - [ ] No secrets, API keys, or tokens committed
 
 ## How to test
@@ -45,14 +46,14 @@ For an API change:
   curl http://localhost:8080/v1/... -d '{...}'
   ↳ expected response: ...
 
-For a catalog entry:
-  OPOD_CATALOG_DIR=./catalog go run ./cmd/opod model info <id>
-  ↳ should show the new entry with correct size and capabilities
+For a local catalog override:
+  OPOD_CATALOG_DIR=/tmp/mycatalog go run ./cmd/opod model info <id>
+  ↳ should show the entry with correct size and capabilities
 -->
 
-## Screenshots / output
+## Output
 
-<!-- For UI changes: before/after screenshots. For CLI: paste terminal output. -->
+<!-- Paste the terminal output — core is CLI-only, there is no UI to screenshot. -->
 
 ## Notes for reviewers
 

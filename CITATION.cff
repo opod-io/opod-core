@@ -2,14 +2,16 @@ cff-version: 1.2.0
 message: "If you use Opod in academic work or a published project, please cite it as below."
 title: "Opod: a self-hosted LLM gateway for multi-machine inference clusters"
 abstract: |
-  Opod is a Go-binary control plane that turns a fleet of Macs and Linux
-  boxes into a private inference cluster behind a single OpenAI- and
-  Anthropic-compatible endpoint. It ships a per-user API key system with
-  daily quotas and a full audit log, multi-node routing with sharding via
-  llama.cpp-RPC, transparent fallback to paid Claude / GPT / Bedrock /
-  Vertex, an embedded admin dashboard, and Prometheus + OTLP
-  observability. The runtime is engine-agnostic — Ollama, vLLM, MLX-LM,
-  and llama.cpp drivers ship out of the box.
+  Opod is a CLI-only Go binary that turns a fleet of Macs and Linux boxes
+  into a private inference cluster behind a single OpenAI-compatible
+  endpoint. It ships a per-user API key system with scopes, rpm/tpm and
+  daily-token quotas, expiry and an audit log; multi-node routing that
+  picks a worker per request by load; sharding of one model across
+  machines on three backends (llama.cpp RPC, vLLM + Ray, and SGLang's own
+  distributed launcher); and Prometheus metrics with OpenTelemetry traces.
+  Nothing leaves the operator's network: there is no vendor egress and no
+  telemetry. The runtime is engine-agnostic — Ollama, vLLM, SGLang,
+  MLX-LM and llama.cpp drivers ship out of the box.
 type: software
 authors:
   - given-names: Hadi
@@ -24,13 +26,12 @@ keywords:
   - ai-gateway
   - inference
   - openai-compatible
-  - anthropic
   - local-llm
   - ollama
   - vllm
+  - sglang
   - mlx
   - llama-cpp
-  - claude-code
   - cursor
   - multi-tenant
   - golang

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Opod auto-releases from `main` on every `feat:` / `fix:` commit (current stream: v1.x). Security fixes ship on `main` and land in the next auto-cut release. Older releases are not patched — upgrade with `opod update`.
+Opod auto-releases from `main` on every `feat:` / `fix:` commit; core is pre-1.0 (the in-tree stamp is `0.x`, and the published tags are what [Releases](https://github.com/opod-io/opod-core/releases) lists). Security fixes ship on `main` and land in the next auto-cut release. Older releases are not patched — upgrade with `opod update`.
 
 | Version | Supported |
 |---------|-----------|
@@ -41,7 +41,7 @@ In scope:
 
 Out of scope:
 
-- Upstream inference engines (vLLM, Ollama, MLX-LM, llama.cpp) — report to those projects
+- Upstream inference engines (Ollama, vLLM, SGLang, MLX-LM, llama.cpp) — report to those projects
 - Self-hosted deployments of Opod that have been modified
 - Hypothetical issues without a reproduction
 

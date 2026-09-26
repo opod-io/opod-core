@@ -6,8 +6,10 @@ tooling — can decide how many workers should exist. This document is the contr
 
 ## `GET /loadz`
 
-Unauthenticated, probe-grade, on the leader's API port. One JSON object, aggregated over the workers that
-hold the leader's model:
+Unauthenticated, probe-grade, on the leader's API port — and, when `OPOD_PROBE_LISTEN` is set, on a second
+always-plain port beside `/healthz`, `/readyz` and `/metrics` (see *The probe port* below). One JSON object,
+aggregated over the workers that hold the leader's model. The typed shape is
+`github.com/opod-io/opod-sdk/adminapi.Load`; read that rather than this example when you write a client:
 
 ```json
 {
@@ -23,6 +25,10 @@ hold the leader's model:
   "last_request_unix": 1758300000,
   "workers": 3,
   "reporting": 3,
+  "ttft_p50_ms": 180,
+  "ttft_p95_ms": 640,
+  "engines_unhealthy": 0,
+  "engine_issue": "",
   "ts": 1758300001
 }
 ```
@@ -36,9 +42,56 @@ hold the leader's model:
 | `rpm_1m` | requests per minute | keeps one worker alive under a trickle |
 | `workers` / `reporting` | workers known / whose sample is under 30 s old | `reporting < workers` means the numbers are partial; prefer no decision over a wrong one |
 | `tokens_per_s`, `prefix_hit_pct` | throughput and prefix-cache hits | reporting, not scaling |
+| `ttft_p50_ms`, `ttft_p95_ms` | time to the first usable token over the last minute, **streamed answers only** | the number a user feels. Omitted, or zero, means *not measured* — never "instant". A good secondary target beside `queue_depth` |
 | `engines_unhealthy` | how many of `workers` are holding a card while their engine is **not** serving — crash-looping or stopped | **subtract it before you believe `workers`.** Those workers heartbeat like any other; a reader that counts them as capacity scales out too late, or not at all. `engine_issue` carries the worst one's own last word |
 
 CPU and memory are **not** useful signals for a GPU worker and the leader does not publish them.
+
+### A sharded endpoint
+
+A gang's parts are rpc-servers: they hold weights and multiply matrices, but run no engine and have no queue,
+KV cache or notion of a request. So `kv_used_pct`, `queue_depth`, `tokens_per_s` and `prefix_hit_pct` for a
+sharded model come from the gang's **coordinator** — the one process that has all three — scraped through the
+driver the router dials it with and cached for the heartbeat cadence (feature `gang_load`). One sample speaks
+for the whole gang: `reporting` counts it once. Before this, a sharded endpoint reported `kv_used_pct 0` and
+`queue_depth 0` however loaded it was. `workers` still counts a gang through its parts, as the capacity they
+are.
+
+### A prover is not a customer
+
+A reader that sends its own request to check the endpoint is alive would move the very numbers it is reading —
+and, on an endpoint scaled to zero, wake what the scaler had just parked. Mark such a request
+**`X-Opod-Probe: 1`** (feature `probe_header`): it is served like any other request and counted in none of
+`in_flight`, `rpm_1m`, `unavailable_1m` or the idle clock.
+
+### The probe port
+
+`OPOD_PROBE_LISTEN=:8081` (or `probe_listen` in `config.yaml`) serves `/healthz`, `/readyz`, `/loadz` and
+`/metrics` on a second listener that is **always plain HTTP**, whatever TLS the main one speaks — feature
+`probe_port`. It exists because these endpoints are read by machines that are not clients of the endpoint: a
+Kubernetes probe, a scrape, a scaler. When the main listener serves a certificate minted per endpoint, every
+one of those readers has to be handed the CA — or, in practice, told to skip verification, which is how a
+scaling decision ends up resting on a disabled check. Nothing authenticated is routed to that port and its
+router is built from scratch, so a new `/admin/v1` route cannot appear there by accident.
+
+### Scaling the front doors — `GET /gatewayz`
+
+An endpoint may have several **front doors** (`opod up --role gateway`), and a scaler for the doors must not
+read one door's share of the traffic: keep-alive pins a client to one door, so that share is uneven. The
+leader publishes the aggregate instead — also unauthenticated, and carrying no key, model or prompt data:
+
+| Field | Meaning |
+|---|---|
+| `doors` / `doors_reporting` | doors the leader counts (its own front included, so never 0) / how many have pushed inside the liveness window |
+| `doors_in_flight`, `doors_rpm_1m` | the endpoint's totals across the doors |
+| `in_flight_per_door`, `rpm_1m_per_door` | the totals divided by the doors, rounded **up** — this is what to compare against a per-door target |
+| `live_for_s` | how long a silent door still counts (deliberately longer than the 10 s rebalance, so one missed push does not make every other door overshoot) |
+| `spend_lag_bound_s` | how far a per-key daily quota may lag across doors |
+| `gateways` | the doors the leader has heard from, by name, with their age — which is how a door that stopped pushing is visible at all |
+
+On a **door**, the same path answers that door's own view: how stale its mirrored worker registry is
+(`registry_age_s`) and how big its push backlog is. A door is a copy of the front, not a second brain: it
+never serves `/admin/v1`.
 
 ### Rules for a reader
 
@@ -59,8 +112,9 @@ and auth files whatever happens to whatever is scaling it.
 
 ## Owed (not shipped)
 
-| | What | Why |
-|---|---|---|
-| **Probe port** | `/loadz` on a plain-HTTP probe port, or a documented CA, so a scraper does not have to skip verification when the leader serves TLS with a per-endpoint self-signed certificate | a scaling decision should not depend on disabled certificate checks |
+Nothing on this page is owed any more — the two rows that used to be here, the **probe port** and the
+**uneven split flags from the plan** (`flags.tensor_split` for llama.cpp, `flags.pp_layer_partition` for vLLM
+and SGLang), both shipped and are documented above and in [ROADMAP.md](../ROADMAP.md#shipped).
 
-| **Uneven split flags from the plan** | a pipeline layer partition, and a llama.cpp tensor split, settable per worker | lets one model use cards of different sizes instead of being limited by the smallest |
+What a reader should still not expect from this endpoint: a decision. The leader publishes numbers and routes
+across the workers it has; it never creates or removes one.

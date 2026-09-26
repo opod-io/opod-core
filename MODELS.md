@@ -17,7 +17,7 @@ Every model in Opod's catalog, with step-by-step install + use instructions for 
 
 ## 🎯 Picker table — what to install
 
-Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **47 models** at last update (run `opod model search` for the live list, or `opod model search --sort=released` for newest-first).
+Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **47 models** (run `opod model search` for the live list, or `opod model search --sort=released` for newest-first).
 
 | Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
 | ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |
@@ -27,7 +27,7 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 | `moondream3`                   | 1.2 GB | 4 GB    |  ●   |      |           |   ●    |       |          | BSL-1.1 \*  | Tiny vision-language, runs on Pi       |
 | `llama-3.2-3b` ⭐               | 2.0 GB | 4 GB    |  ●   |      |           |        |       |          | Llama 3.2 \* | Edge default                           |
 | **Small — 8-16 GB box**        |        |         |      |      |           |        |       |          |             |                                        |
-| `mimo-7b`                      | 4.5 GB | 8 GB    |  ●   |      |    ●●     |        |       |          | Apache-2.0  | Xiaomi reasoning-focused 7B            |
+| `mimo-7b`                      | 16 GB  | 8 GB    |  ●   |      |    ●●     |        |       |          | Apache-2.0  | Xiaomi reasoning-focused 7B. bf16 safetensors, 14.6 GiB measured — the RAM floor is the catalog's; give it ~16 GB |
 | `qwen-coder-7b`                | 4.7 GB | 8 GB    |  ●   |  ●   |           |        |       |          | Apache-2.0  | FIM-capable, older                     |
 | `mimo-vl-7b`                   | 4.8 GB | 8 GB    |  ●   |      |           |   ●    |       |          | Apache-2.0  | Small vision-language                  |
 | `mimo-audio`                   | 4.8 GB | 8 GB    |  ●   |      |           |        |   ●   |          | Apache-2.0  | Speech + audio understanding           |
@@ -68,7 +68,7 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 | `glm-5.2-sharded`              | 460 GB | 480 GB  |  ●●  |  ●●● |    ●●     |        |       |   ●●●    | MIT         | Successor to 5.1, 1M context           |
 | `kimi-k2.6-sharded`            | 500 GB | 512 GB  |  ●●  |  ●●● |    ●●     |        |       |    ●●    | Mod. MIT    | #1 open coding benchmarks              |
 
-**Legend** — • basic / ● good / ●● strong / ●●● best-in-tier · ⭐ recommended starting point · \* restricted license — these 12 entries carry the `restricted-license` catalog tag (extra terms beyond Apache/MIT-style permissive; same amber badge the dashboard shows). `opod model search restricted-license` lists them; `opod model info <id>` links the license text.
+**Legend** — • basic / ● good / ●● strong / ●●● best-in-tier · ⭐ recommended starting point · \* restricted license — the 12 starred rows above carry the `restricted-license` catalog tag (extra terms beyond Apache/MIT-style permissive). The full catalog has **15**: the three not listed in this table are the `llama-3.1-8b`, `llama-3.2-3b-gguf` and `llama-3.2-3b-sharded` variants. `opod model search restricted-license` lists them — note it searches the *merged* catalog, so an older export left in `~/.opod/catalog/` can shadow an embedded entry's tags and undercount; `opod catalog ls` reads the embedded set alone. `opod model info <id>` links the license text.
 
 > Sizes assume Q4_K_M (Ollama's default). Sharded entries assume Q4 baseline; unsloth's 2-bit dynamic GGUFs cut them roughly in half.
 
@@ -139,15 +139,15 @@ Paths 2 and 3 give you the same UX as a catalog entry — `opod model search my-
 
 ## Table of contents (curated walkthroughs)
 
-- [`llama-3.2-1b`](#llama-3-2-1b--smallest-smoke-test) — smallest, smoke test
-- [`llama-3.2-3b`](#llama-3-2-3b--small-fast-chat) — small fast chat
+- [`llama-3.2-1b`](#llama-32-1b--smallest-smoke-test) — smallest, smoke test
+- [`llama-3.2-3b`](#llama-32-3b--small-fast-chat) — small fast chat
 - [`qwen-coder-7b`](#qwen-coder-7b--coding-baseline) — coding baseline
-- [`qwen-coder-14b`](#qwen-coder-14b--general-purpose-coder) — general-purpose coder ⭐
+- [`qwen-coder-14b`](#qwen-coder-14b--general-purpose-coder-) — general-purpose coder ⭐
 - [`qwen-coder-32b`](#qwen-coder-32b--laptop-frontier-coder) — laptop frontier coder
 - [`qwen3-8b`](#qwen3-8b--general-chat-balanced) — general chat, balanced
 - [`qwen3-14b`](#qwen3-14b--general-chat-capable) — general chat, more capable
 - [`deepseek-r1-8b`](#deepseek-r1-8b--reasoning-thinking) — reasoning
-- [`llama-3.3-70b-sharded`](#llama-3-3-70b-sharded--frontier-multi-machine) — frontier, multi-machine
+- [`llama-3.3-70b-sharded`](#llama-33-70b-sharded--frontier-multi-machine) — frontier, multi-machine
 - [`nomic-embed-text`](#nomic-embed-text--embeddings-for-rag) — embeddings for RAG
 
 ---
@@ -489,10 +489,10 @@ aider --model openai/deepseek-r1-8b
 **Not for:** Single-machine setups. Latency-sensitive use cases (network hops between shards add overhead). Core has no vendor fallback: for this quality without the hardware, point that tool at a vendor directly.
 
 **Prereqs (one-time):**
-- `brew install llama.cpp` on the leader (provides `llama-server`)
-- `rpc-server` on PATH on every worker — currently needs a source build of llama.cpp (the Homebrew bottle doesn't include it)
-- Catalog entry with `sharding.required: true` and a local GGUF path (`catalog/llama-3.3-70b-sharded.yaml` already configured)
-- Place the model GGUF at `/var/lib/opod/models/llama-3.3-70b-q4_k_m.gguf` (or update the YAML's `source.path`)
+- `llama-server` on PATH on whichever machine runs the **coordinator** — by default the part host with the most **GPU** memory, not the leader, so install llama.cpp there (`brew install llama.cpp`, or your distro's build)
+- `rpc-server` on PATH on every worker that hosts a part — needs a source build of llama.cpp with `-DGGML_RPC=ON` (the Homebrew bottle doesn't include it). The `opod-worker-llamacpp-*` container images carry the pair already
+- The catalog entry, which lives in [`opod-io/opod-sdk/catalog/llama-3.3-70b-sharded.yaml`](https://github.com/opod-io/opod-sdk) and is embedded in the binary — already `sharding.required: true`, `source.type: file`
+- That entry is a `file:` source, so place the GGUF at `/var/lib/opod/models/llama-3.3-70b-q4_k_m.gguf` yourself (or override `source.path` in `~/.opod/catalog/`). An entry with a `huggingface` source + `file:` is downloaded by the leader and fanned out for you
 - At least 2 workers joined and `ready` (`opod node ls`)
 
 **Install (orchestrates the whole thing):**
@@ -502,12 +502,19 @@ aider --model openai/deepseek-r1-8b
 opod shard create llama-3.3-70b-sharded 2
 
 # what Opod does:
-# 1. picks the 2 workers with the most free RAM
+# 1. picks 2 part hosts (descending registered RAM, among workers that can take a part)
 # 2. POSTs /v1/process/start to each → launches `rpc-server -p 50052`
 # 3. waits for both rpc-servers to be TCP-reachable
-# 4. on the leader, launches `llama-server -m <gguf> --rpc w1:50052,w2:50052 --port 9001`
-# 5. persists shard rows + a placements row pointing at the local coordinator
-# 6. Router routes any request for `llama-3.3-70b-sharded` to the coordinator
+# 4. picks the COORDINATOR host — the part host with the most GPU memory (host RAM only
+#    for a worker with no card), or the one named by --head / OPOD_COORDINATOR_NODE; the
+#    leader only when the set has no workers — and launches there:
+#    `llama-server -m <gguf> --rpc w1:50052,w2:50052 --port 9001 --metrics`
+# 5. persists shard rows + a placements row pointing the model at that coordinator
+# 6. Router routes any request for `llama-3.3-70b-sharded` to that gang's coordinator
+
+# Omit the count and Opod picks it: the smallest number of equal parts that fits the live
+# workers' free memory, printed with the reason. `--gang <id>` adds a SECOND serving copy
+# (throughput, not a bigger model) and the router picks the least loaded ready gang.
 ```
 
 **Use it:**
@@ -527,12 +534,17 @@ aider --model openai/llama-3.3-70b-sharded
 **Tear down (cleanly):**
 
 ```bash
-opod shard remove llama-3.3-70b-sharded
-# stops the coordinator on the leader + every rpc-server on every worker
+opod shard remove llama-3.3-70b-sharded            # prompts first; --yes for scripts
+# stops the coordinator wherever it runs + every rpc-server on every part host
 # removes shard rows + placements
+opod shard remove llama-3.3-70b-sharded --gang g1  # one gang; the others keep serving
 ```
 
-**Switch up when:** You need bigger than 70B (DeepSeek-V3 671B MoE, Qwen3-Coder-480B) — those need more nodes and more RAM. v0.5 will support auto-scaling shard counts.
+**Switch up when:** You need bigger than 70B — the catalog already has `glm-4.6-sharded`,
+`glm-5.1-sharded`, `glm-5.2-sharded`, `kimi-k2.6-sharded`, `nemotron-3-ultra-sharded` and
+`deepseek-v4-flash-sharded` for that, and they need more nodes and more memory. The part
+*count* is already picked for you when you omit it; changing a **live** gang's shape, or
+replacing a lost part's machine, still means a rebuild (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -656,15 +668,22 @@ For Cursor / Continue: change the model id in the editor's settings / config fil
 
 ---
 
-## Roadmap (planned models in upcoming versions)
+## Not in the catalog yet
 
-These have docs and references in the repo but no catalog YAMLs yet. Coming with v0.5+:
+Most of what this section used to list has shipped. Already curated, with hardware specs:
+**GLM-4.6** (`glm-4.6-sharded`), **Kimi K2** (`kimi-k2.6-sharded`), **Qwen3-Coder-30B-A3B**
+(`qwen3-coder-30b`), and vision across `qwen3-vl-8b`, `qwen3-vl-32b`, `pixtral-12b`,
+`moondream3`, `mimo-vl-7b`, `llama-4-scout` and the whole Gemma 4 family. Embeddings are live
+(`nomic-embed-text` on `/v1/embeddings`).
 
-- **Llama 3.3 70B** (non-sharded, for boxes with 48+ GB single-machine)
-- **DeepSeek V3 / R1 671B MoE** (frontier, sharded across many nodes)
-- **Qwen3-72B Instruct** + **Qwen3-Coder-30B-A3B**
-- **GLM-4.6**, **Kimi K2**
-- **Vision models** (Qwen2.5-VL, Llama 3.2 Vision)
-- **Embeddings** (BGE-M3) + **Whisper** (transcription)
+Still without a curated entry — these work today via `opod model add hf:owner/repo`, they just
+carry no RAM floor, license badge or engine hints:
 
-If you have a specific model you want in the curated catalog: open an issue at https://github.com/opod-io/opod-core/issues with the Ollama tag / HF repo + your hardware target, and we'll add a YAML.
+- **Llama 3.3 70B, non-sharded** for a single box with 48+ GB (the catalog has the sharded entry only)
+- **DeepSeek V3 / R1 671B MoE** and other very large sharded shapes — Qwen3-235B, MiniMax-M2.7, MiMo-V2
+- **BGE-M3** as a second embedding option
+- **Whisper / transcription** — no catalog entry *and* no route: core serves no `/v1/audio/*` (ADR-022). A model that only transcribes has nowhere to land yet
+
+If you want one curated: open an issue at https://github.com/opod-io/opod-core/issues with the
+Ollama tag / HF repo + your hardware target. Catalog entries themselves live in
+[`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk), so that is where the YAML PR goes.

@@ -5,7 +5,7 @@
 ## What it does
 
 - OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, streaming) for any OpenAI SDK or tool: Codex CLI, Aider, Continue, Open WebUI, curl.
-- Endpoint = one leader + its workers + one model identity. Engines: vLLM and llama.cpp in the control plane; core also drives Ollama and MLX-LM.
+- Endpoint = one leader + its workers + one model identity. Engines: vLLM, SGLang and llama.cpp in the control plane; core drives those three plus Ollama and MLX-LM.
 - Per-GPU VRAM ledger and packing placer: several models share one card under explicit VRAM budgets (`colocation: shared`), refused with the measured number when they don't fit.
 - Autoscaling with scale to zero (`autoscale.floor: 0`); while it wakes, the leader answers 503 with Retry-After.
 - Verified rollouts (validate → apply → converge → probe → smoke chat); on failure the previous plan is restored; one-call rollback. Images pinned by digest.
@@ -34,5 +34,5 @@
 - Core licence: Apache-2.0, no usage limit. Control plane: proprietary, free tier 16 GPUs in one cell (8 in chart 0.1.0), offline licence keys, no phone-home.
 - Status: early access, chart and control plane 0.1.0. No signed release yet.
 - API shape: OpenAI-compatible only.
-- Not included: invoices/cost rating (usage facts only), hard multi-tenant isolation for shared packing, tensor parallelism across nodes (pipeline parallelism only).
+- Not included: invoices/cost rating (usage facts only), hard multi-tenant isolation for shared packing, tool calling and structured output at the gateway (dropped before the engine today). A tensor-parallel group MAY cross a node (ADR-068) — the product says what that costs on the fabric it has rather than refusing; pipeline parallelism is still the cheap shape on ordinary networking.
 - Contact: hadi@opod.io

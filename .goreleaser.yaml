@@ -39,10 +39,11 @@ archives:
 # lands as a v0.7 follow-up.
 #
 # Install path: /usr/bin/opod (so it's on PATH out of the box).
-# Catalog ships under /usr/share/opod/catalog/ — the binary's
-# resolveCatalogDir() already picks it up via the
-# /usr/local/share/opod/catalog fallback path, which most distros
-# also probe; we go one step further by placing it where APT controls.
+# The catalog is NOT packaged: it is embedded in the binary from
+# opod-io/opod-sdk (R9.8), so there is nothing to ship under
+# /usr/share/opod/catalog/. The binary still merges an operator's
+# overrides from /usr/local/share/opod/catalog, /usr/share/opod/catalog,
+# $OPOD_CATALOG_DIR and ~/.opod/catalog if any of them exist.
 nfpms:
   - id: linux-pkgs
     package_name: opod
@@ -51,10 +52,10 @@ nfpms:
     homepage: https://github.com/opod-io/opod-core
     maintainer: Hadi Honarvar Nazari <hadi.work.ca@gmail.com>
     description: |
-      Self-hosted control plane for LLMs — one URL + one key for your
-      team's models. Single Go binary; supports Ollama, vLLM, MLX-LM
-      and llama.cpp drivers; multi-machine routing + sharding via
-      llama.cpp RPC.
+      Self-hosted LLM gateway for teams — one URL + one key for your
+      team's models. Single Go binary; drives Ollama, vLLM, SGLang,
+      MLX-LM and llama.cpp; multi-machine routing plus sharding via
+      llama.cpp RPC, vLLM + Ray, or SGLang's own launcher.
     license: Apache-2.0
     formats:
       - deb
@@ -138,11 +139,12 @@ release:
     ---
 
     **About Opod** — self-hosted LLM gateway for teams. One Go binary
-    behind one URL serves OpenAI- and Anthropic-compatible APIs across a
-    fleet of Macs / Linux boxes running Ollama, vLLM, MLX-LM, or
-    llama.cpp-RPC. Per-user keys, daily quotas, full audit log,
-    sharded-inference orchestration, Prometheus + OTLP observability,
-    embedded admin dashboard. Engine-agnostic. Apache-2.0.
+    behind one URL serves an OpenAI-compatible API across a fleet of
+    Macs / Linux boxes running Ollama, vLLM, SGLang, MLX-LM or
+    llama.cpp. Per-user keys, daily quotas, rate limits, audit log,
+    sharded-inference orchestration across three backends, Prometheus
+    metrics + OTLP traces. CLI-only — the console is the separate
+    control plane. Engine-agnostic. Apache-2.0.
 
     Searching for an **OpenRouter alternative**, a **LiteLLM alternative**,
     a **self-hosted Claude Code proxy**, a **multi-machine Ollama**
