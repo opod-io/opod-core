@@ -68,6 +68,16 @@ func Middleware(keys store.APIKeyStore, requireKeys bool) func(http.Handler) htt
 func MiddlewareFn(keys store.APIKeyStore, requireKeys func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// An earlier middleware may already have authenticated this
+			// caller by something other than a key — today that is exactly one
+			// thing: a worker's client certificate on the join path (R9.6,
+			// controlplane.nodeCertGate), which is a stronger credential than
+			// the token it replaces. A scope in the context is the signal, and
+			// only a middleware can put one there.
+			if ScopeFrom(r.Context()) != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if !requireKeys() {
 				// Dev mode: no auth enforced. Inject an admin scope so the
 				// scope-gated routes (admin + node register/heartbeat) stay
@@ -139,6 +149,14 @@ func RequireScopeAny(scopes ...string) func(http.Handler) http.Handler {
 func ScopeFrom(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyScope).(string)
 	return v
+}
+
+// WithScope attaches a scope to a context. It exists for ONE caller: a
+// middleware that authenticated the request by something other than an API key
+// (a worker's client certificate, R9.6) and has to say what that caller may
+// reach. Everything else gets its scope from the key it presented.
+func WithScope(ctx context.Context, scope string) context.Context {
+	return context.WithValue(ctx, ctxKeyScope, scope)
 }
 
 // KeyFrom returns the API key record attached to the request context (or nil).

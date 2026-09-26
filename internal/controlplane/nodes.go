@@ -67,6 +67,13 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	// The certificate names the node (R9.6): a worker whose certificate says one
+	// id cannot register as another. Checked here because the claim is in the
+	// body, which only the handler has read.
+	if err := s.checkNodeCertMatches(r, req.ID); err != nil {
+		writeJSONError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	n, err := s.RegisterNode(r.Context(), req, callerFrom(r.Context()), extractBearer(r))
 	switch {
 	case errors.Is(err, ErrNodeBoundToOtherKey):
@@ -83,6 +90,10 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 	var req HeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.checkNodeCertMatches(r, req.ID); err != nil {
+		writeJSONError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	err := s.HeartbeatNode(r.Context(), req, callerFrom(r.Context()))

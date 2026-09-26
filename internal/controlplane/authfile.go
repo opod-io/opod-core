@@ -18,6 +18,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"os"
 	"strings"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/opod-io/opod-sdk/adminapi"
 
+	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -42,7 +44,35 @@ type authFileState struct {
 	revision    string
 	requireKeys atomic.Bool
 	keys        int
+	// The node-mTLS policy (R9.6): the mode, the CA the handshake verifies a
+	// worker's certificate against, and the serials this leader must refuse
+	// even though that CA signed them. Held behind one pointer swapped as a
+	// whole (atomic.Pointer) because the join path reads it on every heartbeat
+	// of every worker and must never block on a snapshot reload.
+	mtls atomic.Pointer[nodeMTLSPolicy]
 }
+
+// nodeMTLSPolicy is the snapshot's mTLS half, as the join path reads it.
+type nodeMTLSPolicy struct {
+	Mode    string // auth.MTLSOff | MTLSAllow | MTLSRequire
+	CAPEM   string
+	Revoked map[string]bool
+	pool    *x509.CertPool // parsed once, on load — not per handshake
+}
+
+// nodeMTLS is the policy in force, never nil.
+func (s *Server) nodeMTLS() *nodeMTLSPolicy {
+	if p := s.authf.mtls.Load(); p != nil {
+		return p
+	}
+	return &nodeMTLSPolicy{Mode: auth.MTLSOff}
+}
+
+// ClientCAs is what the TLS handshake verifies a worker certificate against,
+// or nil when there is nothing to verify with — in which case no certificate
+// can ever be Present and "require" refuses every join, loudly, rather than
+// letting one through unchecked.
+func (p *nodeMTLSPolicy) ClientCAs() *x509.CertPool { return p.pool }
 
 // AuthSnapshot / SnapshotKey are the shared wire types (opod-sdk/adminapi).
 type AuthSnapshot = adminapi.AuthSnapshot
@@ -176,14 +206,16 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 			}
 		}
 	}
-	changed := !s.authf.present || s.authf.revision != doc.Revision || s.authf.requireKeys.Load() != doc.RequireKeys
+	mtlsChanged := s.applyNodeMTLS(doc)
+	changed := !s.authf.present || s.authf.revision != doc.Revision || s.authf.requireKeys.Load() != doc.RequireKeys || mtlsChanged
 	s.authf.present = true
 	s.authf.revision = doc.Revision
 	s.authf.keys = len(doc.Keys)
 	s.authf.requireKeys.Store(doc.RequireKeys)
 	if changed || created+updated+revoked > 0 {
 		s.log.Info("auth snapshot applied", "revision", doc.Revision, "requireKeys", doc.RequireKeys, "keys", len(doc.Keys),
-			"created", created, "updated", updated, "revoked", revoked)
+			"created", created, "updated", updated, "revoked", revoked,
+			"nodeMtls", s.nodeMTLS().Mode, "revokedCerts", len(s.nodeMTLS().Revoked))
 		s.logEvent("auth.updated", doc.Revision, map[string]any{"requireKeys": doc.RequireKeys, "keys": len(doc.Keys),
 			"created": created, "updated": updated, "revoked": revoked})
 	}
@@ -200,4 +232,35 @@ func sameList(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// applyNodeMTLS installs the snapshot's mTLS half and reports whether anything
+// about it moved. Called with authf.mu held.
+//
+// A CA that does not parse turns the mode OFF and says so, rather than leaving a
+// leader in "require" with nothing to verify against: that state refuses every
+// worker in the endpoint, and the reason would be a silent parse failure in a
+// file nobody is looking at.
+func (s *Server) applyNodeMTLS(doc *AuthSnapshot) bool {
+	mode := auth.ParseMTLSMode(doc.NodeMTLS)
+	pem := strings.TrimSpace(doc.NodeCertCA)
+	var pool *x509.CertPool
+	if pem != "" {
+		pool = x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(pem)) {
+			s.log.Warn("auth snapshot: nodeCertCa holds no certificate — node mTLS stays off", "mode", mode)
+			pool, pem, mode = nil, "", auth.MTLSOff
+		}
+	}
+	if mode != auth.MTLSOff && pool == nil {
+		s.log.Warn("auth snapshot: nodeMtls asked for but no nodeCertCa — node mTLS stays off", "asked", mode)
+		mode = auth.MTLSOff
+	}
+	next := &nodeMTLSPolicy{Mode: mode, CAPEM: pem, Revoked: auth.RevokedSet(doc.RevokedCerts), pool: pool}
+	prev := s.authf.mtls.Load()
+	s.authf.mtls.Store(next)
+	if prev == nil {
+		return mode != auth.MTLSOff || len(next.Revoked) > 0
+	}
+	return prev.Mode != next.Mode || prev.CAPEM != next.CAPEM || len(prev.Revoked) != len(next.Revoked)
 }

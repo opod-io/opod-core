@@ -40,7 +40,7 @@ require (
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
-	github.com/opod-io/opod-sdk v0.2.4
+	github.com/opod-io/opod-sdk v0.2.5
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
@@ -63,3 +63,9 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
+
+// TEMPORARY, and the only thing standing between this tree and a clean build for
+// anyone else: the worker-certificate policy fields (R9.6, ADR-073) are committed
+// in the SDK but not TAGGED yet, so `v0.2.5` does not exist on the module proxy.
+// Delete this line the moment the tag is pushed — nothing else has to change.
+replace github.com/opod-io/opod-sdk => ../opod-sdk
