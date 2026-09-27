@@ -209,6 +209,19 @@ func cmdJoin(args []string) {
 	// for launching/stopping shard processes (rpc-server etc).
 	sup := agent.NewSupervisor(log)
 	sup.BaseEnv = workerBaseEnv(gpuIndex, vramBudget)
+	// The heartbeat's engine state (feature "engine_liveness") is read off THIS
+	// supervisor — it is the only thing that knows the engine process crashed,
+	// because the pod stays Running and the container reports nothing.
+	//
+	// It was never wired. The Agent above was built before the supervisor
+	// existed, so `Procs` stayed nil, `engineState` returned nil on every
+	// heartbeat and the field was never sent — while the leader advertised the
+	// feature, ingested it, and counted zero. Found on the design-partner cell
+	// 2026-09-27 by crash-looping an engine on purpose (a flag llama.cpp does
+	// not take) and watching the endpoint sit at "converging" with an empty
+	// lastError for ten minutes, which is the exact defect the feature exists
+	// to end.
+	a.Procs = sup
 	adapters, adaptersErr := agent.ParseAdapters(env.Adapters)
 	srv := &agent.Server{
 		Engine:     eng,
