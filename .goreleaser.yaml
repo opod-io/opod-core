@@ -153,7 +153,7 @@ release:
     for the full landing context.
 
     Full feature inventory: [CHANGELOG.md](https://github.com/opod-io/opod-core/blob/main/CHANGELOG.md).
-    What's coming next: [ROADMAP.md](https://github.com/opod-io/opod-core/blob/main/ROADMAP.md).
+    Full history: [CHANGELOG.md](https://github.com/opod-io/opod-core/blob/main/CHANGELOG.md).
 
 # Homebrew tap publishing is disabled until the opod-io/homebrew-tap
 # repo exists. To re-enable:

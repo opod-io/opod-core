@@ -96,9 +96,8 @@ Use **GitHub Discussions** for design questions, RFCs, and "is this a bug?". Use
 ## Further reading
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — design rationale, subsystem boundaries, and the rule that the CLI and the admin API are two callers of one function in `internal/control/`
-- [ROADMAP.md](ROADMAP.md) — what ships, what is next, and what is deliberately out of scope
+- [README.md → Deliberately out of scope](README.md#deliberately-out-of-scope) — what this project has decided not to become, and why
 - [CHANGELOG.md](CHANGELOG.md) — the feature inventory by area, newest notes on top
-- [docs/archive/TASKS-milestones-M0-M5.md](docs/archive/TASKS-milestones-M0-M5.md) — the M0–M5 milestone history, kept for context
 - [`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk) — the catalog YAML schema (`catalog/README.md` there) and the `/admin/v1` wire types
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - [SECURITY.md](SECURITY.md) — vulnerability disclosure process

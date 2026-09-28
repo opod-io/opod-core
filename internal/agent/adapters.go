@@ -1,7 +1,7 @@
 package agent
 
-// LoRA adapters as variants of one model identity (ADR-040 gap G2, ROADMAP
-// R9.2; feature "lora"). An adapter never becomes a second model: it is
+// LoRA adapters as variants of one model identity (ADR-040 gap G2;
+// feature "lora"). An adapter never becomes a second model: it is
 // served under "<base>:<name>" by the worker that holds the base, loaded into
 // the engine's LoRA slots (vLLM `--enable-lora` + the runtime
 // /v1/load_lora_adapter route), reported in the heartbeat under that

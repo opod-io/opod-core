@@ -10,7 +10,8 @@ body:
         the underlying problem first — features without a clear user problem
         tend to bloat the codebase.
 
-        For ideas already on the roadmap, check [ROADMAP.md](https://github.com/opod-io/opod-core/blob/main/ROADMAP.md).
+        Please check the open issues first, and the README's "Deliberately out of scope" section — it lists what this project
+        has decided not to become, with the reason for each.
 
   - type: textarea
     id: problem

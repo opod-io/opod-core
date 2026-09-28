@@ -190,7 +190,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full feature inventory, grouped by area
 **For new users**: see [QUICKSTART.md](QUICKSTART.md) — 3-minute install + first chat completion.
 **For full usage docs**: keep reading this file.
 **For contributors**: see [ARCHITECTURE.md](ARCHITECTURE.md).
-**For the roadmap**: see [ROADMAP.md](ROADMAP.md).
+**For what shipped when**: see [CHANGELOG.md](CHANGELOG.md) and the [releases](https://github.com/opod-io/opod-core/releases). **For what this project will never do**: see [Deliberately out of scope](#deliberately-out-of-scope).
 
 ---
 
@@ -201,6 +201,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full feature inventory, grouped by area
 - [Who is this for?](#who-is-this-for)
 - [Architecture overview](#architecture-overview)
 - [Features](#features)
+- [Deliberately out of scope](#deliberately-out-of-scope)
 - [Supported models](#supported-models)
 - [Supported clients](#supported-clients)
 - [Hardware recommendations](#hardware-recommendations)
@@ -358,7 +359,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) — the only protocol surface (ADR-022)
 - SSE streaming with proper client-disconnect handling (no goroutine leaks; bounded drain on cancel)
 - Vision (image input) on multimodal models — `image_url` content blocks on `/v1/chat/completions` route through the Ollama engine path (the only driver that forwards images today)
-- **Tool / function calling and structured output (`response_format`) are NOT carried today** — the gateway decodes a request into a fixed struct (`internal/api/openai.go` `chatRequest`) that has no `tools` and no `response_format` field, and the stream reader only reads `delta.content`, so both are dropped before the engine sees them and no `tool_calls` come back. Verified against a real engine: a request carrying `tools` + `response_format` arrives at the engine as `{model, messages, stream, temperature}` only, and an engine that answers *with* a tool call yields `content: ""` to the client — `finish_reason: "tool_calls"` survives while the call itself does not, so a client is told a tool was invoked and handed nothing. A catalog entry's `capabilities: [chat, tools]` describes the *model*, not this gateway. Point a tool that needs them straight at the engine, or track the gap in [ROADMAP.md](ROADMAP.md)
+- **Tool / function calling and structured output (`response_format`) are NOT carried today** — the gateway decodes a request into a fixed struct (`internal/api/openai.go` `chatRequest`) that has no `tools` and no `response_format` field, and the stream reader only reads `delta.content`, so both are dropped before the engine sees them and no `tool_calls` come back. Verified against a real engine: a request carrying `tools` + `response_format` arrives at the engine as `{model, messages, stream, temperature}` only, and an engine that answers *with* a tool call yields `content: ""` to the client — `finish_reason: "tool_calls"` survives while the call itself does not, so a client is told a tool was invoked and handed nothing. A catalog entry's `capabilities: [chat, tools]` describes the *model*, not this gateway. Point a tool that needs them straight at the engine, or open an issue if you need them here
 - `model=auto` resolves to the leader's default model (`router.default_model`) — one name a client can hardcode. There are no prompt heuristics and no vendor chain behind it (ADR-022)
 - **Response cache** — embeddings cached against a sha256 of the canonicalized request body (object keys sorted; ephemeral fields stripped). Two drivers: in-memory LRU (default) and SQLite-backed (persists across leader restart). Per-request opt-out via `Cache-Control: no-cache` / `no-store`; per-tenant scoping via `opod.cache.namespace` body field. `X-Opod-Cache: hit | miss` response header.
 - Typed `engine_unreachable` errors with engine name, endpoint, and start-hint (e.g. `ollama serve`) when the upstream engine isn't responding
@@ -381,6 +382,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Cross-platform workers: Mac (MLX), Linux+NVIDIA (vLLM, SGLang, llama.cpp), Linux+AMD (llama.cpp ROCm and vLLM ROCm both proven on a Radeon host; SGLang ROCm is an Instinct-only upstream build), Linux+Intel Arc (llama.cpp SYCL proven), Tenstorrent (vLLM on tt-metal, proven), CPU (llama.cpp)
 - HA leader (planned)
 
+- **Uneven layer splits, per worker** — `flags.tensor_split` (llama.cpp) and `flags.pp_layer_partition` (vLLM, SGLang) are declared per engine and validated, so a worker can weight its own split towards a bigger card instead of being bounded by the smallest. **They do not reach a gang yet**: a sharded model's parts are started from the gang's own command, which does not carry them, so a cross-machine split is still even
+- **A worker says goodbye on `SIGTERM`** — a process being stopped leaves the router's rotation at once, instead of costing a request per shutdown while its heartbeat ages out
+
 ### Multi-tenancy
 
 - Per-user API keys with revocation, scopes (admin / user / node), and **TTL expiry** (`--ttl 7d`, `--expires-at 2026-07-01`, `opod token renew/expire`)
@@ -388,7 +392,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
 - **Per-key model allowlist** — pin a key to specific model ids (or a family via a trailing-`*` glob such as `qwen3-*`); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Opod-Request-Id` correlation token (also embedded in audit rows for traceability)
-- OIDC / SSO — **not in core** (explicitly out of scope; see [ROADMAP.md](ROADMAP.md#deliberately-out-of-scope)). Core authenticates API keys only; per-user keys, quotas and the event stream cover accountability, and SSO belongs to the control plane
+- OIDC / SSO — **not in core** (explicitly [out of scope](#deliberately-out-of-scope)). Core authenticates API keys only; per-user keys, quotas and the event stream cover accountability, and SSO belongs to the control plane
 
 ```bash
 opod token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
@@ -417,6 +421,28 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 - Shell completion for bash / zsh / fish (`opod completion <shell>`)
 - Sensible defaults, no required flags
 - `--json` on the read commands, for scripts
+
+---
+
+## Deliberately out of scope
+
+Not "later" — **not this project**. Each was considered and declined for a reason. A pull request that adds one
+of these will be declined for the same reason, so the table is here to save you the work.
+
+| | Why not |
+|---|---|
+| **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes, quotas and the audit log are the accountability story on a trusted network. |
+| **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
+| **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
+| **Non-chat protocol surfaces** (Anthropic Messages, `/v1/rerank`, audio transcription and speech) | one protocol, done properly. These were removed in the 2026-09 contraction (ADR-022). |
+| **Content policies, output filtering, guardrail implementations** | the interface and the event stream stay; the policies belong where the request originates. |
+| **Kubernetes, Helm, operators, CRDs** | `opod` runs as a process. Anything that schedules processes across a fleet is an orchestrator's job, not the runtime's. |
+| **Training and fine-tuning** | use `axolotl`, `unsloth`, or `torchtune`. |
+| **A vector store** | an adapter for SQLite-VSS / pgvector may ship with signed catalogs; running one will not. |
+| **Video generation, real-time voice agents** | minutes-per-inference render farms and full-duplex sub-300 ms loops are different operational models. They belong in separate projects that use `opod` for the LLM leg. |
+| **Phoning home** | no automatic update check, no telemetry. `opod update` is something you type. |
+
+Everything in the dashboard/fleet-management direction lives in a separate product and is not part of this repo.
 
 ---
 
@@ -846,8 +872,8 @@ A few more are read outside that contract, by the CLI rather than by a serving p
 
 These features are mentioned elsewhere in this README but have no YAML knob today. The list is here so you don't waste time guessing.
 
-- **Mesh backend selection** — only the LAN backend ships today; there are no `mesh.*` config keys. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation. Tracked in [ROADMAP.md](ROADMAP.md).
-- **OIDC / SSO** — out of scope for core (see [ROADMAP.md → Deliberately out of scope](ROADMAP.md#deliberately-out-of-scope)). `internal/auth/` ships API keys only.
+- **Mesh backend selection** — only the LAN backend ships today; there are no `mesh.*` config keys. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation.
+- **OIDC / SSO** — out of scope for core (see [Deliberately out of scope](#deliberately-out-of-scope)). `internal/auth/` ships API keys only.
 - **Automatic replication / a placement policy engine** — `internal/scheduler/` ships gang orchestration, the part-count picker, GGUF distribution and `model move`; nothing decides on its own that a hot model needs a second replica, or moves one to balance a fleet. That is deliberate — an external manager owns capacity (ADR-022). What *is* tunable today: `placement.*` (admission, reserve, drain), `router.placement_allowed_fails` / `placement_cooldown_seconds` (the circuit breaker), `router.hedge_replicas`, and the load-aware routing weights a manager mounts in the policy snapshot (`routing.kvWeight`, `kvSaturationPct`, `prefixAffinity`).
 - Replication and a **mesh backend** (above) are the two real gaps. `/metrics` is no longer one of them: it is served on the main listener *and*, when `probe_listen` / `OPOD_PROBE_LISTEN` is set, on a second always-plain port beside `/healthz`, `/readyz` and `/loadz`. What is still missing there is a way to serve *only* metrics, or to authenticate them.
 - **Per-node config** — `~/.opod/node.yaml` only remembers the worker's node id between runs; it holds no settings. A worker takes its engine endpoints from its own `config.yaml` or env vars.
@@ -1523,7 +1549,7 @@ Go ships a static binary as fast as Rust for this workload, with a faster develo
 Not initially. The product is the software you run.
 
 **Can I use my own Tailscale account?**
-Opod has no built-in tailnet integration today — clustering is plain LAN HTTP, and there are no `mesh.*` config keys. Running Opod *over* a Tailscale network you manage yourself works fine (it's just IP connectivity between your machines); a built-in tsnet backend is a possible future addition (see [ROADMAP.md](ROADMAP.md)).
+Opod has no built-in tailnet integration today — clustering is plain LAN HTTP, and there are no `mesh.*` config keys. Running Opod *over* a Tailscale network you manage yourself works fine (it's just IP connectivity between your machines); a built-in tsnet backend is a possible future addition.
 
 **Does Opod support AMD GPUs?**
 Yes on Linux + ROCm. Both the llama.cpp and the vLLM worker images have served on a Radeon RX 7900 XTX host

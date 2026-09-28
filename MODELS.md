@@ -544,7 +544,7 @@ opod shard remove llama-3.3-70b-sharded --gang g1  # one gang; the others keep s
 `glm-5.1-sharded`, `glm-5.2-sharded`, `kimi-k2.6-sharded`, `nemotron-3-ultra-sharded` and
 `deepseek-v4-flash-sharded` for that, and they need more nodes and more memory. The part
 *count* is already picked for you when you omit it; changing a **live** gang's shape, or
-replacing a lost part's machine, still means a rebuild (see [ROADMAP.md](ROADMAP.md)).
+replacing a lost part's machine, still means a rebuild.
 
 ---
 

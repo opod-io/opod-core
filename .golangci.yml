@@ -16,7 +16,7 @@ linters:
     - staticcheck
     - unused
   settings:
-    # Size ratchets (ROADMAP R12.1, from the 2026-09-07 audit): the ceilings
+    # Size ratchets (from the 2026-09-07 audit): the ceilings
     # are the maxima measured on 2026-09-15 with the linter's own count
     # (funlen: code lines, comments ignored; gocyclo: cyclomatic complexity).
     # Longest function: scheduler/sharding.go CreateSharded (248); most complex: engines/enginetest Run (63).

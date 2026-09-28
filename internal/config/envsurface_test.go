@@ -1,6 +1,6 @@
 package config
 
-// The process environment is a contract (ROADMAP R12.1 → R12.2): a manager
+// The process environment is a contract: a manager
 // that launches opod sets OPOD_* variables, and a variable read somewhere in
 // library code is a promise nobody wrote down. This test is the written-down
 // list: every environment read outside this package and outside cmd/opod

@@ -1,6 +1,6 @@
 package router
 
-// Weighted routing between plan revisions (ROADMAP R15.17, feature
+// Weighted routing between plan revisions (feature
 // "routing_weights").
 //
 // A canary that rolls one worker of N gives you 1/N of the traffic and no say

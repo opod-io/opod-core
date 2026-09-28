@@ -1,6 +1,6 @@
 package router
 
-// Load-aware and prefix-affine worker choice (ADR-040 gap G3, ROADMAP R9.4;
+// Load-aware and prefix-affine worker choice (ADR-040 gap G3;
 // feature "routing_load_aware"). The picker used to order workers by the
 // leader's own in-flight counter alone, which is blind to what the engine
 // itself reports: a worker whose KV cache is full queues the next request

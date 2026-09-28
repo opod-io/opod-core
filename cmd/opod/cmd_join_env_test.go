@@ -4,7 +4,7 @@ import "testing"
 
 // `opod join --gpu / --vram-budget` reach the engines through the
 // supervisor's base environment, never through os.Setenv on the worker
-// process (ROADMAP R12.2); an operator's own device pin is left alone.
+// process; an operator's own device pin is left alone.
 func TestWorkerBaseEnv(t *testing.T) {
 	t.Setenv("CUDA_VISIBLE_DEVICES", "")
 	t.Setenv("HIP_VISIBLE_DEVICES", "")

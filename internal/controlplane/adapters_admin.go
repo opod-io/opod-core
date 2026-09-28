@@ -1,6 +1,6 @@
 package controlplane
 
-// The leader's runtime adapter surface (ROADMAP R15.15).
+// The leader's runtime adapter surface.
 //
 // A manager (the control plane) edits its plan and then wants the adapter set
 // on the workers to match, without rolling a pod: an adapter goes into the

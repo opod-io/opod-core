@@ -2,7 +2,7 @@
 
 > Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs and guardrail implementations moved to the control plane; this document describes what remains. The stable manager surface is listed at the end.
 
-Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For what is next, see [ROADMAP.md](ROADMAP.md).
+Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For what shipped when, see [CHANGELOG.md](CHANGELOG.md); for what this project deliberately will not do, see the README's [Deliberately out of scope](README.md#deliberately-out-of-scope).
 
 > **Doc-vs-code currency:** this document covers the shipped feature set — cross-node routing, sharding auto-orchestration, the CLI and `/admin/v1` as the only interfaces, HMAC mutual auth, GGUF distribution, OTLP traces, 15 connect clients, interactive picker, shell completion, `--json` on every read command, first-run wizard, real progress bar, colored output, engine health watchdog, typed `engine_unreachable` errors. The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
 
@@ -1163,7 +1163,6 @@ opod/
 ├── README.md                  # user docs
 ├── QUICKSTART.md              # 3-min new user landing page
 ├── ARCHITECTURE.md            # this file
-├── ROADMAP.md                 # what ships, what is next, what is deliberately out of scope
 ├── CHANGELOG.md               # the feature inventory by area, newest notes on top
 ├── MODELS.md                  # per-model walkthroughs + the picker table
 ├── LICENSE                    # Apache 2.0

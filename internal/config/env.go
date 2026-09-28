@@ -7,7 +7,7 @@ package config
 // TestEnvSurfaceOutsideConfigIsTheAllowlist fails on a new read — so the
 // list below is the whole surface, and Vars() is the same list as data for
 // the leader's contract (controlplane.EnvContract) and for anyone writing a
-// pod template. ROADMAP R12.2.
+// pod template.
 //
 // Tags: `env` is the variable, `side` says who reads it (leader | worker |
 // both), `doc` is one line for the table. A bool is set by "1" or "true".

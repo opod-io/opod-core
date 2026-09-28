@@ -112,9 +112,12 @@ and auth files whatever happens to whatever is scaling it.
 
 ## Owed (not shipped)
 
-Nothing on this page is owed any more — the two rows that used to be here, the **probe port** and the
-**uneven split flags from the plan** (`flags.tensor_split` for llama.cpp, `flags.pp_layer_partition` for vLLM
-and SGLang), both shipped and are documented above and in [ROADMAP.md](../ROADMAP.md#shipped).
+The **probe port** shipped and is documented above. The **uneven split flags** (`flags.tensor_split` for
+llama.cpp, `flags.pp_layer_partition` for vLLM and SGLang) are **half shipped, and the half that is missing is
+the one this page is about**: they are declared per engine and validated, and they are in force for a single
+worker — but they do not reach a **gang**. A sharded model's parts are started from the gang's own command,
+which does not carry them, so a split across machines is still even and a pair of unlike cards is still bounded
+by the smaller one. Do not read the flags as a cross-machine capability.
 
 What a reader should still not expect from this endpoint: a decision. The leader publishes numbers and routes
 across the workers it has; it never creates or removes one.

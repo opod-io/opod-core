@@ -1,6 +1,6 @@
 package scheduler
 
-// LoRA adapters at runtime (ROADMAP R15.15, feature "adapters_runtime").
+// LoRA adapters at runtime (feature "adapters_runtime").
 //
 // An adapter lives in the engine's LoRA slots on the worker that already holds
 // the base model, so adding one is not a placement decision and must not roll a
