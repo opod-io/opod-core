@@ -4,9 +4,10 @@
 // vLLM publishes what its KV cache stores and evicts on a ZeroMQ PUB socket
 // that CONNECTS to the worker's SUB socket on localhost
 // (`--kv-events-config`), msgpack-encoded: a batch `[ts, [event…], rank?]`
-// whose events are tagged arrays — `["BlockStored", block_hashes,
-// parent_block_hash, token_ids, block_size, …]`, `["BlockRemoved",
-// block_hashes, …]`, `["AllBlocksCleared"]`. Frames are `(topic, seq, payload)`
+// whose events are maps keyed by field name with the tag under "type"
+// (vLLM 0.27) or, in msgspec's array form, tagged arrays — `["BlockStored",
+// block_hashes, parent_block_hash, token_ids, block_size, …]`. Both are read
+// (eventFields). Frames are `(topic, seq, payload)`
 // with seq an 8-byte big-endian counter.
 //
 // What leaves this package is OUR hash of each block (nodeapi.BlockHash over
@@ -114,38 +115,70 @@ func (t *Translator) Frame(engineSeq int64, payload []byte) error {
 	return nil
 }
 
-func (t *Translator) event(ev any) error {
-	f, ok := ev.([]any)
-	if !ok || len(f) == 0 {
-		return fmt.Errorf("kv event: %T is not a tagged array", ev)
+// fields is one event in a form both wire layouts reduce to.
+type fields struct {
+	tag                          string
+	hashes, parent, tokens, size any
+}
+
+// eventFields reads an event in either layout an engine has used: a MAP keyed
+// by field name with its tag under "type" (vLLM 0.27, measured on a cluster),
+// or a tagged ARRAY `[tag, block_hashes, parent_block_hash, token_ids,
+// block_size, …]` (msgspec's array_like form). Fields this package does not
+// use are ignored in both, so a version that adds one changes nothing here.
+func eventFields(ev any) (fields, error) {
+	switch x := ev.(type) {
+	case map[string]any:
+		tag, ok := x["type"].(string)
+		if !ok {
+			return fields{}, fmt.Errorf("kv event: a map with no type (%T)", x["type"])
+		}
+		return fields{tag: tag, hashes: x["block_hashes"], parent: x["parent_block_hash"], tokens: x["token_ids"], size: x["block_size"]}, nil
+	case []any:
+		if len(x) == 0 {
+			return fields{}, fmt.Errorf("kv event: an empty array")
+		}
+		tag, ok := x[0].(string)
+		if !ok {
+			return fields{}, fmt.Errorf("kv event: tag is %T", x[0])
+		}
+		f := fields{tag: tag}
+		at := func(i int) any {
+			if i < len(x) {
+				return x[i]
+			}
+			return nil
+		}
+		f.hashes, f.parent, f.tokens, f.size = at(1), at(2), at(3), at(4)
+		return f, nil
 	}
-	tag, ok := f[0].(string)
-	if !ok {
-		return fmt.Errorf("kv event: tag is %T", f[0])
+	return fields{}, fmt.Errorf("kv event: %T is neither a map nor a tagged array", ev)
+}
+
+func (t *Translator) event(ev any) error {
+	f, err := eventFields(ev)
+	if err != nil {
+		return err
 	}
 	t.events++
-	switch tag {
+	switch f.tag {
 	case "BlockStored":
-		// [tag, block_hashes, parent_block_hash, token_ids, block_size, …]
-		if len(f) < 5 {
-			return fmt.Errorf("BlockStored: %d fields", len(f))
-		}
-		hashes, err := hashList(f[1])
+		hashes, err := hashList(f.hashes)
 		if err != nil {
 			return fmt.Errorf("BlockStored: block_hashes: %w", err)
 		}
-		parent, err := hashKey(f[2])
+		parent, err := hashKey(f.parent)
 		if err != nil {
 			return fmt.Errorf("BlockStored: parent_block_hash: %w", err)
 		}
-		tokens, err := intList(f[3])
+		tokens, err := intList(f.tokens)
 		if err != nil {
 			return fmt.Errorf("BlockStored: token_ids: %w", err)
 		}
-		size64, ok := asInt(f[4])
+		size64, ok := asInt(f.size)
 		size := int(size64)
 		if !ok || size <= 0 {
-			return fmt.Errorf("BlockStored: block_size %v", f[4])
+			return fmt.Errorf("BlockStored: block_size is %T", f.size)
 		}
 		t.blockSize = size
 		ours := ""
@@ -173,10 +206,7 @@ func (t *Translator) event(ev any) error {
 			t.order = t.order[1:]
 		}
 	case "BlockRemoved":
-		if len(f) < 2 {
-			return fmt.Errorf("BlockRemoved: %d fields", len(f))
-		}
-		hashes, err := hashList(f[1])
+		hashes, err := hashList(f.hashes)
 		if err != nil {
 			return fmt.Errorf("BlockRemoved: block_hashes: %w", err)
 		}
@@ -247,6 +277,8 @@ func hashKey(v any) (string, error) {
 		return "b:" + string(x), nil
 	case string:
 		return "s:" + x, nil
+	case uint64:
+		return fmt.Sprintf("u:%d", x), nil // never through int64: the top bit is part of the hash
 	}
 	if n, ok := asInt(v); ok {
 		return fmt.Sprintf("i:%d", n), nil

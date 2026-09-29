@@ -154,3 +154,46 @@ func TestSubscribeBindsAndAPublisherConnects(t *testing.T) {
 	}
 	t.Fatal("no block arrived through the socket")
 }
+
+// The layout vLLM 0.27.1 actually sends, measured on a cluster: each event a
+// MAP with its tag under "type", hashes as uint64, fields this package never
+// reads beside the ones it does.
+func TestTranslatorReadsTheMapLayout(t *testing.T) {
+	tr := NewTranslator()
+	stored := func(hashes []any, parent any, tokens []int) map[string]any {
+		return map[string]any{"type": "BlockStored", "block_hashes": hashes, "parent_block_hash": parent,
+			"token_ids": tokens, "block_size": int8(16), "lora_id": nil, "lora_name": nil, "medium": "gpu",
+			"extra_keys": make([]any, len(hashes)), "group_idx": int8(0), "kv_cache_spec_kind": "full"}
+	}
+	big := uint64(1)<<63 | 12 // a hash with the top bit set
+	first := toks(100, 32)
+	b, err := msgpack.Marshal([]any{1790000000.5, []any{stored([]any{uint64(11), big}, nil, first)}, int8(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Frame(0, b); err != nil {
+		t.Fatal(err)
+	}
+	next := toks(200, 16)
+	b, _ = msgpack.Marshal([]any{1790000001.5, []any{stored([]any{uint64(13)}, big, next)}, int8(0)})
+	if err := tr.Frame(1, b); err != nil {
+		t.Fatal(err)
+	}
+	got := tr.Drain()
+	want := nodeapi.BlockHashes(append(append([]int{}, first...), next...), 16)
+	if got == nil || got.Cleared || got.BlockSize != 16 || len(got.Stored) != 3 {
+		t.Fatalf("drain %+v", got)
+	}
+	for i := range want {
+		if got.Stored[i] != want[i] {
+			t.Fatalf("block %d: %s, want %s", i, got.Stored[i], want[i])
+		}
+	}
+	b, _ = msgpack.Marshal([]any{1790000002.5, []any{map[string]any{"type": "BlockRemoved", "block_hashes": []any{big}, "medium": "gpu"}}, int8(0)})
+	if err := tr.Frame(2, b); err != nil {
+		t.Fatal(err)
+	}
+	if got = tr.Drain(); got == nil || len(got.Removed) != 1 || got.Removed[0] != want[1] {
+		t.Fatalf("removal %+v, want [%s]", got, want[1])
+	}
+}
