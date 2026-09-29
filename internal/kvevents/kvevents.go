@@ -26,6 +26,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -302,7 +304,7 @@ func Subscribe(ctx context.Context, endpoint string, t *Translator, logf func(st
 	// once a minute, never every three seconds.
 	var lastSaid time.Time
 	for ctx.Err() == nil {
-		if err := listen(ctx, endpoint, t); err != nil && ctx.Err() == nil && time.Since(lastSaid) > time.Minute {
+		if err := listen(ctx, endpoint, t, logf); err != nil && ctx.Err() == nil && time.Since(lastSaid) > time.Minute {
 			logf("kv events: %v — reopening in 3 s", err)
 			lastSaid = time.Now()
 		}
@@ -317,7 +319,8 @@ func Subscribe(ctx context.Context, endpoint string, t *Translator, logf func(st
 	}
 }
 
-func listen(ctx context.Context, endpoint string, t *Translator) error {
+func listen(ctx context.Context, endpoint string, t *Translator, logf func(string, ...any)) error {
+	var lastSaid time.Time
 	sub := zmq4.NewSub(ctx)
 	defer func() { _ = sub.Close() }()
 	// The worker LISTENS and the engine connects. vLLM's publisher binds only
@@ -342,7 +345,57 @@ func listen(ctx context.Context, endpoint string, t *Translator) error {
 			continue
 		}
 		seq := int64(binary.BigEndian.Uint64(msg.Frames[1]))
-		_ = t.Frame(seq, msg.Frames[2]) // an unreadable batch already reset the translator
+		// An unreadable batch already reset the translator; what is left is to
+		// SAY so, or a worker reports nothing for ever and nobody knows why.
+		// The error names shapes and types, never a value from the payload.
+		if err := t.Frame(seq, msg.Frames[2]); err != nil && time.Since(lastSaid) > time.Minute {
+			logf("kv events: a batch could not be read, so this worker reports no blocks: %v (layout: %s)", err, Layout(msg.Frames[2]))
+			lastSaid = time.Now()
+		}
+	}
+}
+
+// Layout describes a payload's structure — the type of each field, the length
+// of each list, the tag of each event — and none of its values: enough to see
+// that an engine's version changed the wire, with nothing of a prompt in it.
+func Layout(payload []byte) string {
+	var v any
+	if err := msgpack.Unmarshal(payload, &v); err != nil {
+		return "not msgpack: " + err.Error()
+	}
+	return shape(v, 0)
+}
+
+func shape(v any, depth int) string {
+	switch x := v.(type) {
+	case []any:
+		if depth >= 3 || len(x) == 0 {
+			return fmt.Sprintf("list[%d]", len(x))
+		}
+		// A long homogeneous list (token ids, hashes) is described by its first element.
+		if len(x) > 8 {
+			return fmt.Sprintf("list[%d of %s]", len(x), shape(x[0], depth+1))
+		}
+		parts := make([]string, len(x))
+		for i, e := range x {
+			if s, ok := e.(string); ok && i == 0 && depth > 0 {
+				parts[i] = "tag " + s // an event's tag is a type name, not content
+				continue
+			}
+			parts[i] = shape(e, depth+1)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k, e := range x {
+			keys = append(keys, k+":"+shape(e, depth+1))
+		}
+		sort.Strings(keys)
+		return "map{" + strings.Join(keys, ", ") + "}"
+	case nil:
+		return "nil"
+	default:
+		return fmt.Sprintf("%T", v)
 	}
 }
 
