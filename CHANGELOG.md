@@ -5,6 +5,18 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-29 — a Hub that refuses a fetch says why, by name
+
+- **A gated repository with no token fails as `hub-token-missing`**, not as `GET <url> → 401 Unauthorized`.
+  `opod fetch` (one file or `--snapshot`) and a llama.cpp worker's own pull name the refusal: `hub-token-missing`
+  (no `HF_TOKEN` was sent and the Hub wants one — the repository is gated or private), `hub-token-refused` (a
+  token was sent and answered 401: mistyped, expired or revoked) and `hub-access-denied` (a token was sent and
+  answered 403: it is valid, and its account was never granted this repository). Three names because there are
+  three remedies. The sentence after the name says which one, and quotes the Hub's `X-Error-Code` when there is one.
+- Decided on the status and on whether a token was sent, so it holds behind a mirror (`HF_ENDPOINT`) that sends
+  no error header. A 404 and a 5xx are not named: neither is about the credential.
+- A refused fetch leaves nothing in the cache — no partial file and no lock.
+
 ## 2026-09-29 — routing by the prefix cache a worker actually holds
 
 - **Feature `kv_block_events`.** The prefix pin remembers which worker last served a prompt prefix; it cannot

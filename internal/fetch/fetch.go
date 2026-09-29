@@ -187,8 +187,8 @@ func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (
 		Touch(target)
 		return target, nil
 	}
-	if err := download(ctx, opt, fileURL, target, want); err != nil {
-		if errors.Is(err, errDigest) {
+	if err := download(ctx, opt, repo, fileURL, target, want); err != nil {
+		if errors.Is(err, errDigest) || RefusalReason(err) != "" {
 			return "", fmt.Errorf("fetch: %w", err)
 		}
 		return target, err
@@ -293,7 +293,7 @@ func pollInterval(waited bool) time.Duration {
 // a 40 GB safetensors the second read was ~80 s of pure I/O per verified pull,
 // on the path a cold node takes to serve. SHA-256 itself is not the cost —
 // Go's is per-arch assembly at ~2 GB/s — the second pass over the disk was.
-func download(ctx context.Context, opt Options, fileURL, target string, want int64) error {
+func download(ctx context.Context, opt Options, repo, fileURL, target string, want int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
 		return err
@@ -309,6 +309,9 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 		return fmt.Errorf("GET %s: %w", fileURL, err)
 	}
 	defer resp.Body.Close()
+	if err := hubRefusal(resp, opt, repo, fileURL); err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s → %s", fileURL, resp.Status)
 	}

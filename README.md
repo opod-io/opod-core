@@ -1430,6 +1430,11 @@ opod fetch <hf-repo> <file> [--dir D] [--revision R] [--sha256 S]
 opod fetch --snapshot <hf-repo>[@rev] [--dir D]
                                   The same for a safetensors model: the file set
                                   vLLM / SGLang loads, under <dir>/<repo>@<rev>/
+                                  Either mode, refused by the Hub, fails BY NAME:
+                                  hub-token-missing (no HF_TOKEN, and the repo is
+                                  gated or private), hub-token-refused (the token is
+                                  not accepted), hub-access-denied (the token is good
+                                  and its account may not read this repo)
 opod cache ls [--json]           What is cached, what is ours, when it was last used
 opod cache prune [--keep a.gguf,repo@rev] [--min-age 24h] [--target-free GB] [--apply]
                                   Reclaim space; a dry run unless --apply, and never

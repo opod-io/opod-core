@@ -202,8 +202,11 @@ func listRevision(ctx context.Context, repo string, opt Options) (commit string,
 		return "", nil, fmt.Errorf("GET %s: %w", infoURL, err)
 	}
 	defer resp.Body.Close()
+	if err := hubRefusal(resp, opt, repo, infoURL); err != nil {
+		return "", nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("GET %s → %s (a gated or private repo needs HF_TOKEN; an unknown revision is a 404)", infoURL, resp.Status)
+		return "", nil, fmt.Errorf("GET %s → %s (an unknown repository or revision is a 404)", infoURL, resp.Status)
 	}
 	var info struct {
 		SHA      string `json:"sha"`
