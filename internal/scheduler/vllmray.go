@@ -161,21 +161,15 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	// traverse the overlay — measured at 132 SECONDS per capture (≈1h46m before the
 	// first token). Eager mode skips capture entirely: slower per token, but the
 	// server actually comes up. PP is unaffected (its captures are node-local).
-	eager := ""
-	if split.TP > split.DevicesPerRank && len(workers) > 1 {
-		eager = " --enforce-eager"
+	eager := split.TP > split.DevicesPerRank && len(workers) > 1
+	if eager {
 		o.Log.Info("cross-machine TP: skipping CUDA-graph capture (--enforce-eager)",
 			"model", entry.ID, "tp", split.TP)
 	}
-	vllmCmd := fmt.Sprintf(
-		// Served under the catalog id AND the repo name, like agent.launchVLLM:
-		// the leader resolves a catalog id to the engine's native name at
-		// dispatch, so a coordinator that served the id alone answered 404
-		// "model does not exist" (design-partner cell, 2026-09-14).
-		"exec vllm serve '%s' --served-model-name '%s' '%s' --distributed-executor-backend ray "+
-			"--tensor-parallel-size %d --pipeline-parallel-size %d --host %s --port %d "+
-			"--trust-remote-code --gpu-memory-utilization 0.85"+eager,
-		model, entry.ID, model, gpusPerNode, pp, headHost, vllmPort)
+	vllmCmd := vllmGangCommand(vllmGang{
+		Model: model, ServedAs: entry.ID, Host: headHost, Port: vllmPort,
+		TP: gpusPerNode, PP: pp, Eager: eager,
+	})
 	vllmSpec := agent.ProcessSpec{
 		ID:      gangShardID(entry.ID, gangID, "vllm-ray"),
 		Command: "/bin/sh",
@@ -234,4 +228,50 @@ func rayCommand(args ...string) string {
 		quoted = append(quoted, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
 	}
 	return strings.Join(quoted, " ")
+}
+
+// vllmGang is what a Ray gang's COORDINATOR needs to build its serve command —
+// the head node's `vllm serve`, which drives every part through Ray. It is a
+// struct so the command is a pure function of it and can be tested without an
+// orchestrator, a cluster or a worker, exactly like sglangGang.
+type vllmGang struct {
+	Model    string // the engine's native model name (repo or path)
+	ServedAs string // the catalog id the leader dispatches under
+	Host     string
+	Port     int
+	TP       int  // devices per node — vLLM's tensor group
+	PP       int  // pipeline stages, one per part
+	Eager    bool // skip CUDA-graph capture (cross-machine TP)
+}
+
+// vllmGangCommand is the `vllm serve` line the Ray head runs under a login
+// shell.
+//
+// The fraction comes from the PART's VRAM budget, computed on the machine by
+// the one rule every start path uses (agent.MemFractionShell), and the budget
+// line runs BEFORE the exec because it writes the $U that the flag reads.
+//
+// A hard-coded 0.85 here started a part at 85% of the CARD rather than the
+// budget its plan gave it. On a dedicated whole-card part the two numbers
+// coincide and nothing shows; on a PACKED card the part takes memory the ledger
+// promised to another endpoint, and the ledger is then wrong rather than merely
+// optimistic. This is the same defect sglang.go carried until 2026-09-22 — where
+// it cost an outage, a part on an 8 GB card dying with 512 KiB free — in the one
+// start path that fix did not reach. A per-worker VRAM budget that one start
+// path ignores is not a budget.
+func vllmGangCommand(g vllmGang) string {
+	eager := ""
+	if g.Eager {
+		eager = " --enforce-eager"
+	}
+	return agent.MemFractionShell("0.85") + fmt.Sprintf(
+		// Served under the catalog id AND the repo name, like agent.launchVLLM:
+		// the leader resolves a catalog id to the engine's native name at
+		// dispatch, so a coordinator that served the id alone answered 404
+		// "model does not exist" (design-partner cell, 2026-09-14).
+		"exec vllm serve '%s' --served-model-name '%s' '%s' --distributed-executor-backend ray "+
+			"--tensor-parallel-size %d --pipeline-parallel-size %d --host %s --port %d "+
+			"--trust-remote-code --gpu-memory-utilization "+agent.MemFractionVar+eager,
+		shellQuote(g.Model), shellQuote(g.ServedAs), shellQuote(g.Model),
+		g.TP, g.PP, g.Host, g.Port)
 }
