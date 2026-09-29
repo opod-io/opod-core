@@ -104,17 +104,26 @@ type prefixKeyCtx struct{}
 // repeat). Empty when there is nothing to key on.
 func prefixKeyOf(req engines.ChatRequest) string {
 	const capChars = 1024
+	// Clip each part BEFORE joining: the key covers the first capChars bytes,
+	// so nothing past them is ever needed, and joining first copied a 1 MB
+	// prompt in full to hash 1 KiB of it.
+	clip := func(s string) string {
+		if len(s) > capChars {
+			return s[:capChars]
+		}
+		return s
+	}
 	var head string
 	if req.System != "" {
-		head = req.System
+		head = clip(req.System)
 	}
 	for _, m := range req.Messages {
 		if m.Role == "system" && head == "" {
-			head = m.Content
+			head = clip(m.Content)
 			continue
 		}
 		if m.Role == "user" {
-			head += "\n" + m.Content
+			head += "\n" + clip(m.Content)
 			break
 		}
 	}

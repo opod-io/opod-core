@@ -188,14 +188,10 @@ func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (
 		return target, nil
 	}
 	if err := download(ctx, opt, fileURL, target, want); err != nil {
+		if errors.Is(err, errDigest) {
+			return "", fmt.Errorf("fetch: %w", err)
+		}
 		return target, err
-	}
-	if err := verifyDigest(target, opt.SHA256); err != nil {
-		// The file is wrong, so it must not survive to be "found complete" by
-		// the next call. Removing it costs a re-download; keeping it would
-		// serve the wrong weights forever.
-		_ = os.Remove(target)
-		return "", fmt.Errorf("fetch: %w", err)
 	}
 	// The marker is what makes this file prunable later: a file without one is
 	// never deleted by cache management, whatever the disk pressure (ADR-046).
@@ -289,7 +285,14 @@ func pollInterval(waited bool) time.Duration {
 }
 
 // download streams the file to a unique temp sibling and renames it into
-// place once the byte count matches the declared size.
+// place once the byte count matches the declared size and, when the caller
+// declared a digest, the bytes hash to it.
+//
+// The hash is taken from the stream as it is written (io.MultiWriter, the same
+// shape agent.fileUpload uses) rather than by re-reading the finished file: on
+// a 40 GB safetensors the second read was ~80 s of pure I/O per verified pull,
+// on the path a cold node takes to serve. SHA-256 itself is not the cost —
+// Go's is per-arch assembly at ~2 GB/s — the second pass over the disk was.
 func download(ctx context.Context, opt Options, fileURL, target string, want int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
@@ -318,7 +321,13 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 		return fmt.Errorf("create temp for %s: %w", target, err)
 	}
 	tmp := f.Name()
-	n, copyErr := io.Copy(f, resp.Body)
+	wantSum := normalizeDigest(opt.SHA256)
+	var sink io.Writer = f
+	h := sha256.New()
+	if wantSum != "" {
+		sink = io.MultiWriter(f, h)
+	}
+	n, copyErr := io.Copy(sink, resp.Body)
 	closeErr := f.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp)
@@ -332,6 +341,16 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 		_ = os.Remove(tmp)
 		return fmt.Errorf("download %s: got %d bytes, expected %d (truncated)", fileURL, n, expected)
 	}
+	if wantSum != "" {
+		if got := hex.EncodeToString(h.Sum(nil)); got != wantSum {
+			// The file is wrong, so it must never reach its final name to be
+			// "found complete" by the next call. Removing it costs a
+			// re-download; keeping it would serve the wrong weights forever.
+			_ = os.Remove(tmp)
+			return fmt.Errorf("%w: %s hashes to sha256:%s, not the sha256:%s this version records",
+				errDigest, filepath.Base(target), got, wantSum)
+		}
+	}
 	if err := os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename %s → %s: %w", tmp, target, err)
@@ -340,24 +359,12 @@ func download(ctx context.Context, opt Options, fileURL, target string, want int
 	return nil
 }
 
-// verifyDigest checks a downloaded file against the digest the caller
-// declared. No digest = nothing to check (the Hub's size check still applies).
-func verifyDigest(target, want string) error {
-	want = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(want, "sha256:")))
-	if want == "" {
-		return nil
-	}
-	f, err := os.Open(target)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return err
-	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != want {
-		return fmt.Errorf("%s hashes to sha256:%s, not the sha256:%s this version records", filepath.Base(target), got, want)
-	}
-	return nil
+// errDigest marks a download whose bytes did not hash to the digest the caller
+// declared. The size check still applies when no digest was.
+var errDigest = errors.New("digest mismatch")
+
+// normalizeDigest strips the "sha256:" prefix and case so a digest compares
+// as hex. Empty = nothing to check.
+func normalizeDigest(want string) string {
+	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(want, "sha256:")))
 }

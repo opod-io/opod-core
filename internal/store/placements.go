@@ -35,6 +35,16 @@ func (s *sqlitePlacements) GetByModel(ctx context.Context, modelID string) ([]Pl
 	return scanPlacements(rows)
 }
 
+func (s *sqlitePlacements) All(ctx context.Context) ([]Placement, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, model_id, status, last_seen, cold FROM model_placements`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPlacements(rows)
+}
+
 func (s *sqlitePlacements) GetByNode(ctx context.Context, nodeID string) ([]Placement, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT node_id, model_id, status, last_seen, cold FROM model_placements

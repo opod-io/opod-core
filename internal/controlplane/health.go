@@ -62,7 +62,9 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, "ready")
 		return
 	}
-	if s.hasLivePlacement(r.Context()) {
+	// One read of the fleet answers every question below (liveness.go).
+	snap := s.readySnapshot(r.Context())
+	if snap.livePlacement {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "router-only"})
@@ -74,7 +76,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// with floor 0 the parked branch below used to answer first, so a sharded
 	// endpoint answering requests reported itself parked (seen on the
 	// design-partner cell, 2026-09-20).
-	if s.hasServableShardGroup(r.Context()) {
+	if s.servableShardGroup(r.Context(), snap) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "shard-coordinator"})
@@ -85,7 +87,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// get the honest 503 waking meanwhile, like scale-to-zero. Asked before
 	// the floor for the same reason: a worker whose engine sleeps is asleep
 	// on purpose, not a worker on its way up.
-	if s.hasSleepingPlacement(r.Context()) {
+	if snap.sleepingPlacement {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready", "mode": "sleeping-workers"})
@@ -106,7 +108,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// request is the very thing that brings the workers back.
 	if s.plan.sleepsByDesign() {
 		mode := "sleeping"
-		if s.hasAwakeWorkers(r.Context()) {
+		if snap.awake {
 			mode = "waking"
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -128,5 +130,6 @@ func (s *Server) hasServingCapacity(ctx context.Context) bool {
 	if s.engine.Health(ctx) == nil {
 		return true
 	}
-	return s.hasLivePlacement(ctx) || s.hasServableShardGroup(ctx)
+	snap := s.readySnapshot(ctx)
+	return snap.livePlacement || s.servableShardGroup(ctx, snap)
 }

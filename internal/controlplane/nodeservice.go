@@ -8,6 +8,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/opod-io/opod-sdk/nodeapi"
@@ -351,9 +352,62 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 			_ = s.store.Placements().Delete(ctx, p.NodeID, p.ModelID)
 		}
 	}
-	s.router.InvalidateNode(id)
+	s.forgetNode(ctx, id)
 	s.record("node.removed", id, nil)
 	return nil
+}
+
+// forgetNode drops everything the leader holds in memory about a node that
+// no longer exists: its load and engine samples, its pending reconcile and
+// engine-silence marks, the drivers and samples of any gang it coordinated,
+// and the router's per-node state. Every one of these is a cache of a fact
+// the store held, so forgetting cannot lose anything — and without it the
+// maps grew by one entry per node id for the leader's whole life, a whole
+// cloned http.Transport each in the case of gangEng (PLAN T15.4). The
+// heartbeat reaper does not remove rows (it only skips stale nodes), so the
+// store's RemoveNode is the one call here; a node that comes back reuses its
+// id and simply repopulates.
+func (s *Server) forgetNode(ctx context.Context, id string) {
+	s.nodeLoad.Delete(id)
+	s.nodeEngine.Delete(id)
+	s.reconcileNodes.Delete(id)
+	s.engineSilentTold.Delete(id)
+	if shards, err := s.store.Shards().List(ctx); err == nil {
+		for _, sh := range shards {
+			if sh.NodeID == id {
+				s.forgetGang(sh.ID)
+			}
+		}
+	}
+	s.router.InvalidateNode(id)
+}
+
+// forgetGang drops a coordinator's cached driver and sample, releasing the
+// driver's connection pool (T15.16).
+func (s *Server) forgetGang(shardID string) {
+	s.gangLoad.Delete(shardID)
+	if v, ok := s.gangEng.LoadAndDelete(shardID); ok {
+		releaseEngine(v.(gangCoordEngine).eng)
+	}
+}
+
+// releaseEngine asks an engine the leader will not dial again for its pooled
+// sockets, now rather than at the transport's idle timeout.
+func releaseEngine(e engines.Engine) {
+	if c, ok := e.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
+// HoldsNode reports whether any per-node map on the leader still names the
+// node — what forgetNode is expected to leave empty. For tests.
+func (s *Server) HoldsNode(id string) bool {
+	for _, m := range []*sync.Map{&s.nodeLoad, &s.nodeEngine, &s.reconcileNodes, &s.engineSilentTold} {
+		if _, ok := m.Load(id); ok {
+			return true
+		}
+	}
+	return s.router.HoldsNode(id)
 }
 
 func callerFrom(ctx context.Context) Caller {

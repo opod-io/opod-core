@@ -1,11 +1,9 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -44,16 +42,12 @@ func ModelAllowMiddleware(st store.Store) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			// Buffer the body so the downstream handler can re-read it.
-			// The /v1 endpoints already do this internally; replaying via
-			// NopCloser keeps that intact.
-			body, err := io.ReadAll(r.Body)
-			_ = r.Body.Close()
+			// One read, shared with the rest of the chain (body.go).
+			body, r, err := requestBody(r)
 			if err != nil {
 				writeJSONErr(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 				return
 			}
-			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			model := peekRequestedModel(body)
 			if model == "" {

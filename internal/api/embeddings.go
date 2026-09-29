@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -56,11 +55,9 @@ type embeddingResponse struct {
 // Embeddings handles POST /v1/embeddings.
 func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	// Read the body once so we can also build a deterministic cache
-	// key from it. Embedding requests are bounded in size (token-list
-	// rather than a streaming attachment) so the double-buffering is
-	// cheap.
-	body, err := io.ReadAll(r.Body)
+	// The body as the middleware chain already read it (body.go): one read
+	// per request, and a deterministic cache key is built from the same bytes.
+	body, r, err := requestBody(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 		return

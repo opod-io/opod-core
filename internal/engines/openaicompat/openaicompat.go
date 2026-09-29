@@ -61,6 +61,18 @@ func NewClient(driver, endpoint string, auth func(*http.Request)) Client {
 	}
 }
 
+// CloseIdleConnections releases the client's pooled sockets. Every driver owns
+// a private transport (streamingHTTPClient clones the default one), so an
+// engine the router evicts — a removed node, a torn-down gang, a coordinator
+// that moved — kept its idle connections and their reader goroutines alive for
+// the 90 s idle timeout, unbounded in aggregate while nodes churned (PLAN
+// T15.16). The router calls this at every eviction site.
+func (c *Client) CloseIdleConnections() {
+	if c.HTTP != nil {
+		c.HTTP.CloseIdleConnections()
+	}
+}
+
 // SignAsNode makes every request authenticate as an opod node: the HMAC
 // signature the worker prefers, plus the bearer header for one transition
 // release (engines.NodeSigned). It replaces whatever Auth the driver was built
@@ -220,6 +232,19 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 // chunk: the function captures finish_reason but continues reading until
 // it sees `[DONE]` or a chunk carrying Usage. It closes body and out.
 func ConsumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.StreamEvent) {
+	consumeStream(ctx, body, out, nil)
+}
+
+// consumeStream is the one loop behind ConsumeStream and
+// ConsumeStreamWithSpan: it forwards every event and, when asked, reports the
+// final usage to onUsage before the Done event is sent. The span variant used
+// to run ConsumeStream in a goroutine behind a second channel only to read
+// two integers off the last event — one more hop per token on both sides of
+// the leader (~68 ns per token per hop, ~135 µs per 2000-token stream, PLAN
+// T15.9). Single close point, as before: every exit path closes out, because
+// consumers drain with a bare `for range` and a missed close leaks their
+// goroutine permanently.
+func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.StreamEvent, onUsage func(*engines.Usage)) {
 	defer body.Close()
 	defer close(out)
 	send := func(ev engines.StreamEvent) bool {
@@ -242,6 +267,9 @@ func ConsumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 			return
 		}
 		emittedFinal = true
+		if onUsage != nil && u != nil {
+			onUsage(u)
+		}
 		send(engines.StreamEvent{Done: true, Reason: finishReason, Usage: u})
 	}
 
@@ -313,36 +341,16 @@ func ConsumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 	emitFinal(nil)
 }
 
-// ConsumeStreamWithSpan wraps ConsumeStream and additionally records the
-// per-request token counts + closes the span once the stream is drained or
+// ConsumeStreamWithSpan is ConsumeStream plus the span: it records the
+// per-request token counts and ends the span once the stream is drained or
 // the context cancels. Spans are no-op when the global TracerProvider isn't
 // set (OPOD_OTLP_ENDPOINT unset), so this path has zero overhead in the
-// default config.
+// default config. It runs in the caller's goroutine and starts none.
 func ConsumeStreamWithSpan(ctx context.Context, body io.ReadCloser, out chan<- engines.StreamEvent, span *engines.ChatSpan) {
-	// Single close point: every exit path (drained, ctx cancelled) must
-	// close `out` — consumers drain with a bare `for range`, so a missed
-	// close leaks their goroutine permanently.
 	defer span.End()
-	defer close(out)
-	intermediate := make(chan engines.StreamEvent, 16)
-	go ConsumeStream(ctx, body, intermediate)
 	var promptTokens, completionTokens int
-	for ev := range intermediate {
-		if ev.Done && ev.Usage != nil {
-			promptTokens = ev.Usage.PromptTokens
-			completionTokens = ev.Usage.CompletionTokens
-		}
-		select {
-		case out <- ev:
-		case <-ctx.Done():
-			// drain so the upstream producer doesn't block
-			go func() {
-				for range intermediate {
-				}
-			}()
-			span.SetTokens(promptTokens, completionTokens)
-			return
-		}
-	}
+	consumeStream(ctx, body, out, func(u *engines.Usage) {
+		promptTokens, completionTokens = u.PromptTokens, u.CompletionTokens
+	})
 	span.SetTokens(promptTokens, completionTokens)
 }

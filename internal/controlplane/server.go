@@ -36,8 +36,11 @@ type Server struct {
 	store  store.Store
 	engine engines.Engine
 	cat    []models.Entry
-	log    *slog.Logger
-	http   *http.Server
+	// catSources is cat as the engines package reads it, built once: it was
+	// rebuilt per reported model per heartbeat (models_admin.go, T15.12).
+	catSources []engines.Source
+	log        *slog.Logger
+	http       *http.Server
 
 	router *router.Router
 	orch   *scheduler.Orchestrator
@@ -172,6 +175,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		store:       st,
 		engine:      eng,
 		cat:         cat,
+		catSources:  catalogSourcesOf(cat),
 		log:         log,
 		router:      routed,
 		orch:        orch,

@@ -1,10 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -312,13 +310,11 @@ func RateLimitMiddlewareShared(buckets *BucketStore, share ShareSource) func(htt
 				next.ServeHTTP(w, r)
 				return
 			}
-			body, err := io.ReadAll(r.Body)
-			_ = r.Body.Close()
+			body, r, err := requestBody(r) // one read, shared with the chain (body.go)
 			if err != nil {
 				writeJSONErr(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 				return
 			}
-			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			estimate := estimateTokens(body)
 			// Stash the estimate on the request context so recordUsage

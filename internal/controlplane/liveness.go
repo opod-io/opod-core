@@ -220,99 +220,80 @@ func servableGangNodes(shards []store.Shard, alive map[string]bool, model string
 	return out
 }
 
-// hasServableShardGroup reports whether any sharded model can serve now. A
-// gang with a part on a draining node is out with it — the router does not
-// send it new requests (router.shardGroupRoutable), so it is not capacity.
-func (s *Server) hasServableShardGroup(ctx context.Context) bool {
+// readySnapshot is one read of the fleet — the node list and every placement
+// row — from which readiness answers all of its questions. Before this, a
+// router-only leader (the cluster default: no local engine, so the engine
+// health check always fails) did up to four node lists and a placement read
+// per node per kubelet probe, ~21 SQLite queries every ~10 s on an endpoint
+// that was parked and doing nothing else (PLAN T15.11). Two reads now, plus
+// one shard list when the gang question is reached.
+//
+// The questions keep exactly the meaning the helpers they replace had:
+//   - livePlacement: an alive worker the router would choose (TakesNewWork)
+//     holds a ready placement — the router-only readiness condition. A
+//     draining worker is alive but takes nothing new, so it does not count.
+//   - sleepingPlacement: an ALIVE worker holds a placement in the sleep tier
+//     (build item 13) — resident, not routable, wakes on demand.
+//   - awake: ANY registered worker is up and takes new work, whatever it is
+//     doing with it — the weakest question, which splits a floor-0 plan's
+//     PARKED (workers gone, by design) from AWAKE-BUT-NOT-SERVING (pods back
+//     and registered, the model or gang not up: a wake in progress, or one
+//     that failed and never will finish). One heartbeat bound of slack by
+//     construction: a just-parked worker heartbeats through its grace period.
+//   - routable: the nodes new work may be sent to (routableNodes), for the
+//     gang question.
+type readySnapshot struct {
+	livePlacement, sleepingPlacement, awake bool
+	routable                                map[string]bool
+}
+
+func (s *Server) readySnapshot(ctx context.Context) readySnapshot {
+	snap := readySnapshot{routable: map[string]bool{"local": true}}
+	nodes, err := s.store.Nodes().List(ctx)
+	if err != nil {
+		return snap
+	}
+	maxAge, now := s.heartbeatMaxAge(), time.Now()
+	takes := make(map[string]bool, len(nodes)) // alive and takes new work
+	alive := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		t := n.TakesNewWork(maxAge, now)
+		snap.routable[n.ID] = t && s.engineGoneWhy(n.ID) == ""
+		if n.ID == "local" {
+			continue
+		}
+		takes[n.ID], alive[n.ID] = t, nodeAlive(n, maxAge, now)
+		snap.awake = snap.awake || t
+	}
+	ps, err := s.store.Placements().All(ctx)
+	if err != nil {
+		return snap
+	}
+	for _, p := range ps {
+		switch {
+		case takes[p.NodeID] && (p.Status == "" || p.Status == "ready"):
+			snap.livePlacement = true
+		case alive[p.NodeID] && p.Status == PlacementSleeping:
+			snap.sleepingPlacement = true
+		}
+	}
+	return snap
+}
+
+// hasLivePlacement is the router-only readiness condition on its own, for
+// callers that ask nothing else.
+func (s *Server) hasLivePlacement(ctx context.Context) bool {
+	return s.readySnapshot(ctx).livePlacement
+}
+
+// servableShardGroup reports whether any sharded model can serve now, given
+// the snapshot's routable set. A gang with a part on a draining node is out
+// with it — the router does not send it new requests
+// (router.shardGroupRoutable), so it is not capacity.
+func (s *Server) servableShardGroup(ctx context.Context, snap readySnapshot) bool {
 	shards, err := s.store.Shards().List(ctx)
 	if err != nil || len(shards) == 0 {
 		return false
 	}
-	return len(servableShardModels(shards, s.routableNodes(ctx))) > 0
-}
-
-// hasAwakeWorkers reports whether ANY registered worker is up and takes new
-// work — whatever it is doing with it. It is deliberately the weakest question
-// the leader can ask about its fleet: not "can we serve" (hasServingCapacity)
-// and not "is there a ready row" (hasLivePlacement), only "is something
-// running out there".
-//
-// It exists to split the two states a floor-0 plan folds together (readyz):
-// PARKED, where the workers are gone and zero capacity is the plan, and
-// AWAKE-BUT-NOT-SERVING, where the pods are back and registered and the model
-// or the gang has not come up. The second is a wake in progress — or a wake
-// that failed and will never finish — and reporting it as the first hides it.
-//
-// One heartbeat bound of slack, by construction: a worker that has just been
-// parked keeps heartbeating through its termination grace period, so the
-// window right after a park reads `waking`. Both states answer 200, so the
-// cost is a label, and the honest reading of that window is that the endpoint
-// is neither parked yet nor able to serve.
-func (s *Server) hasAwakeWorkers(ctx context.Context) bool {
-	nodes, err := s.store.Nodes().List(ctx)
-	if err != nil {
-		return false
-	}
-	maxAge, now := s.heartbeatMaxAge(), time.Now()
-	for _, n := range nodes {
-		if n.ID == "local" {
-			continue
-		}
-		if n.TakesNewWork(maxAge, now) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasLivePlacement reports whether any alive non-local worker the router
-// would choose has a ready placement — the router-only readiness condition.
-// A draining worker is alive but takes no new request, so it does not count:
-// when every worker holding the model drains, requests get the waking 503.
-func (s *Server) hasLivePlacement(ctx context.Context) bool {
-	nodes, err := s.store.Nodes().List(ctx)
-	if err != nil {
-		return false
-	}
-	maxAge, now := s.heartbeatMaxAge(), time.Now()
-	for _, n := range nodes {
-		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
-			continue
-		}
-		ps, err := s.store.Placements().GetByNode(ctx, n.ID)
-		if err != nil {
-			continue
-		}
-		for _, p := range ps {
-			if p.Status == "" || p.Status == "ready" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// hasSleepingPlacement: at least one ALIVE worker holds a placement in the
-// sleep tier (build item 13) — resident, not routable, wakes on demand.
-func (s *Server) hasSleepingPlacement(ctx context.Context) bool {
-	nodes, err := s.store.Nodes().List(ctx)
-	if err != nil {
-		return false
-	}
-	maxAge, now := s.heartbeatMaxAge(), time.Now()
-	for _, n := range nodes {
-		if n.ID == "local" || !nodeAlive(n, maxAge, now) {
-			continue
-		}
-		ps, err := s.store.Placements().GetByNode(ctx, n.ID)
-		if err != nil {
-			continue
-		}
-		for _, p := range ps {
-			if p.Status == PlacementSleeping {
-				return true
-			}
-		}
-	}
-	return false
+	return len(servableShardModels(shards, snap.routable)) > 0
 }

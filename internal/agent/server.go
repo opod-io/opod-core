@@ -344,6 +344,7 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 			flusher.Flush()
 		}
 	}
+	var buf, chunk []byte // reused across every delta of this stream (T15.13)
 
 	// initial role chunk
 	sendChunk(map[string]any{
@@ -395,12 +396,16 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 			return
 		}
 		if ev.Delta != "" {
-			sendChunk(map[string]any{
-				"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
-				"choices": []map[string]any{{
-					"index": 0, "delta": map[string]any{"content": ev.Delta}, "finish_reason": nil,
-				}},
-			})
+			// The per-token chunk, appended by hand into one reused buffer
+			// (engines.AppendChatDeltaChunk, PLAN T15.13): the map form above
+			// is kept for the role and final chunks, which run once. The
+			// leader parses these bytes; it does not compare them.
+			buf = engines.AppendSSEData(buf[:0], engines.AppendChatDeltaChunk(chunk[:0], id, created, model, ev.Delta))
+			chunk = chunk[:0]
+			_, _ = w.Write(buf)
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 }

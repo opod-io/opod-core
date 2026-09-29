@@ -243,10 +243,10 @@ type chatChunkChoice struct {
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r = r.WithContext(router.WithTrace(r.Context())) // which worker served it → usage row
-	// Read the body so pre-call guardrails can inspect (or rewrite)
-	// it before we decode. The hot-path short-circuits when no
-	// guardrails are configured.
-	body, err := io.ReadAll(r.Body)
+	// The body as the middleware chain already read it (body.go) — one read
+	// per request — so pre-call guardrails can inspect (or rewrite) it before
+	// we decode. The hot-path short-circuits when no guardrails are configured.
+	body, r, err := requestBody(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 		return
@@ -362,6 +362,8 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	flusher, _ := w.(http.Flusher)
+	// Reused across every delta of this stream (T15.13).
+	var buf, chunk []byte
 	// Time to the first token the client can use (R15.13): the role chunk is
 	// protocol, not content, so the clock stops at the first delta. A stream
 	// that never produces one leaves it zero rather than claiming a number.
@@ -419,13 +421,15 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			ttft = time.Since(start)
 		}
 		if ev.Delta != "" {
-			sendChunk(w, flusher, chatChunk{
-				ID: id, Object: "chat.completion.chunk", Created: created, Model: modelOut,
-				Choices: []chatChunkChoice{{
-					Index: 0,
-					Delta: map[string]any{"content": ev.Delta},
-				}},
-			})
+			// The per-token chunk, appended by hand into one reused buffer:
+			// byte-identical to sendChunk(chatChunk{…}) and a fraction of its
+			// cost (engines.AppendChatDeltaChunk, T15.13).
+			buf = engines.AppendSSEData(buf[:0], engines.AppendChatDeltaChunk(chunk[:0], id, created, modelOut, ev.Delta))
+			chunk = chunk[:0]
+			_, _ = w.Write(buf)
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 	// The producer closed the stream without a final event. That is what a
@@ -457,7 +461,10 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	id string, created int64, modelOut string, start time.Time) {
 	defer drainStream(stream)
 
-	var text string
+	// A Builder, not `text +=`: the concat re-copied the whole answer so far on
+	// every token — quadratic, 91× slower at 2000 tokens — while the worker's
+	// half of this same function (agent.writeAggregate) already did it right.
+	var text strings.Builder
 	var u *engines.Usage
 	reason := "stop"
 	done := false
@@ -475,7 +482,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 			}
 			break
 		}
-		text += ev.Delta
+		text.WriteString(ev.Delta)
 	}
 	if !done && r.Context().Err() != nil {
 		// The caller left while the answer was being gathered: nobody is there
@@ -487,7 +494,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		ID: id, Object: "chat.completion", Created: created, Model: modelOut,
 		Choices: []chatChoice{{
 			Index:        0,
-			Message:      chatMessage{Role: "assistant", Content: jsonString(text)},
+			Message:      chatMessage{Role: "assistant", Content: jsonString(text.String())},
 			FinishReason: reason,
 		}},
 	}

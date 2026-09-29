@@ -314,10 +314,38 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 // case and costs one store read.
 func (s *Server) gangCoordinators(ctx context.Context, model string) []store.Shard {
 	shards, err := s.store.Shards().List(ctx)
-	if err != nil || len(shards) == 0 {
+	if err != nil {
+		return nil
+	}
+	s.forgetGoneGangs(shards)
+	if len(shards) == 0 {
 		return nil
 	}
 	return servableGangCoordinators(shards, s.routableNodes(ctx), model)
+}
+
+// forgetGoneGangs drops the cached driver and sample of every coordinator that
+// is no longer a shard row at all — a gang torn down or re-formed under a new
+// id (T15.4). Judged against the FULL shard list, never the servable set: a
+// gang that is merely unroutable for a minute keeps its driver, because the
+// driver holds the tokens_per_s rate between samples (gangSample).
+func (s *Server) forgetGoneGangs(shards []store.Shard) {
+	live := make(map[string]bool, len(shards))
+	for _, sh := range shards {
+		live[sh.ID] = true
+	}
+	s.gangEng.Range(func(k, _ any) bool {
+		if id := k.(string); !live[id] {
+			s.forgetGang(id)
+		}
+		return true
+	})
+	s.gangLoad.Range(func(k, _ any) bool {
+		if id := k.(string); !live[id] {
+			s.gangLoad.Delete(id)
+		}
+		return true
+	})
 }
 
 // gangCoordEngine is a coordinator's driver with the address it was built for:
@@ -338,7 +366,9 @@ func (s *Server) gangEngine(coord store.Shard) (engines.Engine, bool) {
 		}
 	}
 	eng := engines.MustNew(router.CoordinatorEngine(coord), "http://"+coord.Address, "")
-	s.gangEng.Store(coord.ID, gangCoordEngine{addr: coord.Address, eng: eng})
+	if old, ok := s.gangEng.Swap(coord.ID, gangCoordEngine{addr: coord.Address, eng: eng}); ok {
+		releaseEngine(old.(gangCoordEngine).eng) // the gang moved: the old address is never dialled again
+	}
 	return eng, true
 }
 

@@ -210,6 +210,10 @@ type PlacementStore interface {
 	Upsert(ctx context.Context, p Placement) error
 	GetByModel(ctx context.Context, modelID string) ([]Placement, error)
 	GetByNode(ctx context.Context, nodeID string) ([]Placement, error)
+	// All returns every placement row, whatever its status: one read for a
+	// caller that judges the whole fleet at once (readiness) instead of one
+	// GetByNode per node.
+	All(ctx context.Context) ([]Placement, error)
 	ReplaceForNode(ctx context.Context, nodeID string, ps []Placement) error
 	Delete(ctx context.Context, nodeID, modelID string) error
 	// SetStatus flips a single placement's status in place (e.g. ready ↔

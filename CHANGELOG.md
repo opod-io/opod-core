@@ -5,6 +5,37 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-28 — the request path stops copying itself, and a removed node leaves nothing behind
+
+Every item here was measured before it was changed; none changes the wire, and the one that changes bytes
+(the worker's streamed delta chunk) is held byte-identical to the leader's encoding by a fuzzed test.
+
+- **A non-streamed chat answer is assembled linearly.** The leader concatenated every token onto a string
+  (quadratic: 91× slower than a builder at 2000 tokens, 16× worse again at 8k); it uses a builder, as the
+  worker already did.
+- **A `/v1` request body is read once.** Three middlewares and the handler each read it into their own copy;
+  the first reader stashes it and the rest share it. Same limits, same errors.
+- **`/readyz` on a router-only leader reads the fleet once per probe** — one node list and one placement
+  read — instead of up to four node lists and a placement read per node every ~10 s. Same answers, same
+  precedence between the branches.
+- **A removed node is forgotten everywhere.** `opod node remove` dropped the row and its placements and left
+  the leader's load, engine, reconcile and silence samples, the drivers and samples of any gang it
+  coordinated, and the router's per-node state behind; all of it goes now, and the evicted engine clients
+  release their connection pools at the eviction rather than at the 90 s idle timeout.
+- **The pick path parses a node's capabilities once**, not four times per candidate per request.
+- **Prefix-affinity keys cost their first KiB**, not a copy of the whole prompt.
+- **A verified model pull hashes the bytes as they land.** The digest was checked by a second full read of the
+  finished file — ~80 s of pure I/O on a 40 GB safetensors; a mismatched file is now refused before it is ever
+  renamed into place.
+- **The streamed delta chunk is appended by hand on both sides.** The worker built a nested map per token and
+  marshalled it (key-sorted every call); the leader marshalled a struct. Both now append the fixed structure
+  and marshal only the strings, byte-identical to the leader's struct encoding (the frozen contract). A
+  worker's delta chunk therefore carries its keys in the leader's order rather than alphabetical order — the
+  same JSON, and the leader parses it rather than comparing it.
+- **The span-recording stream relay is gone**: one loop forwards and records the token counts; no extra
+  goroutine, no extra channel hop per token.
+- The catalog's engine-source list is built once per leader rather than once per reported model per heartbeat.
+
 ## 2026-09-26 — a worker's identity can be a certificate (R9.6)
 
 - **A worker may be identified by a CLIENT CERTIFICATE instead of the join token it holds** (feature `mtls`,

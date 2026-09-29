@@ -73,15 +73,21 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		metrics.ObserveRouterPick("worker", "none-reachable")
 		return nil, "", noWorkerLeft(model)
 	}
+	// The capabilities each candidate registered, read once per candidate per
+	// pick and parsed only when the blob is new to this router (nodecaps.go).
+	caps := make(map[string]nodeCaps, len(nodes))
+	for id, n := range nodes {
+		caps[id] = r.capsOf(n)
+	}
 	// Roles (roles.go): generation never lands on a prefill half while a
 	// decode half is alive.
-	workers = decodeOnly(workers, func(id string) string { return roleOf(nodes[id]) })
+	workers = decodeOnly(workers, func(id string) string { return caps[id].role })
 
 	// Revision weights (R15.17): when the policy splits traffic between plan
 	// revisions and more than one is serving, the group is chosen first and the
 	// load-aware ordering below then runs INSIDE it. A revision with no live
 	// worker is skipped, so a restarting canary pod never black-holes its share.
-	workers = r.pickRevisionGroup(ctx, model, workers, func(id string) int { return revisionOf(nodes[id]) })
+	workers = r.pickRevisionGroup(ctx, model, workers, func(id string) int { return caps[id].revision })
 
 	// 3. Pick least-loaded worker. The snapshot we sort against is
 	//    consistent under RLock, but the actual inflight increment
@@ -378,9 +384,10 @@ func (r *Router) InvalidateModel(modelID string) {
 	// Every gang of the model, not just one: a create or a teardown can add,
 	// move or remove any of them, and a cached engine for a gang that is gone
 	// would keep being dialled.
-	for key := range r.remotes {
+	for key, eng := range r.remotes {
 		if strings.HasPrefix(key, prefix) {
 			delete(r.remotes, key)
+			releaseEngine(eng)
 		}
 	}
 	r.mu.Unlock()
@@ -396,7 +403,12 @@ func (r *Router) InvalidateNode(nodeID string) {
 		return
 	}
 	r.mu.Lock()
+	if eng, ok := r.remotes[nodeID]; ok {
+		releaseEngine(eng)
+	}
 	delete(r.remotes, nodeID)
+	delete(r.caps, nodeID)
+	delete(r.staleWarned, nodeID)
 	delete(r.cooldowns, nodeID)
 	delete(r.failures, nodeID)
 	delete(r.inflight, nodeID)

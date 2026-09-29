@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/lifecycle"
+	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/scheduler"
 )
 
@@ -29,10 +30,17 @@ func (s *Server) catalogIDForNative(name string) string {
 	return engines.CatalogID("", name, s.catalogSources())
 }
 
-func (s *Server) catalogSources() []engines.Source {
-	out := make([]engines.Source, 0, len(s.cat))
-	for i := range s.cat {
-		e := &s.cat[i]
+// catalogSources is the catalog as the engines package reads it. Built once
+// in NewServer: the catalog is fixed for the server's life, and this used to
+// allocate a fresh slice of every entry per reported model per heartbeat —
+// pure garbage, every 5 s, per worker (PLAN T15.12). Callers must not mutate
+// the slice.
+func (s *Server) catalogSources() []engines.Source { return s.catSources }
+
+func catalogSourcesOf(cat []models.Entry) []engines.Source {
+	out := make([]engines.Source, 0, len(cat))
+	for i := range cat {
+		e := &cat[i]
 		out = append(out, engines.Source{ID: e.ID, OllamaName: e.Source.OllamaName, Repo: e.Source.Repo, Path: e.Source.Path})
 	}
 	return out

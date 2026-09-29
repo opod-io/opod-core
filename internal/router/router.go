@@ -160,6 +160,7 @@ type Router struct {
 	failures    map[string]int            // node_id → consecutive recent failures
 	stickiness  map[string]stickyEntry    // user_id|model → pinned node + expiry
 	staleWarned map[string]bool           // node_id → its current stale episode was logged once
+	caps        map[string]nodeCaps       // node_id → its capabilities blob parsed once (nodecaps.go)
 
 	// stickyInserts counts rememberSticky calls so the map can be swept
 	// of expired entries opportunistically (every stickySweepEvery-th

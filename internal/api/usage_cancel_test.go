@@ -52,7 +52,7 @@ func (e *cancelEngine) Chat(ctx context.Context, _ engines.ChatRequest) (<-chan 
 	return out, nil
 }
 
-func usageTestStore(t *testing.T) store.Store {
+func usageTestStore(t testing.TB) store.Store {
 	t.Helper()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "usage.db"))
 	if err != nil {
