@@ -38,6 +38,12 @@ func TestLoadzCountsOnlyWorkersThatTakeNewRequests(t *testing.T) {
 	if ld := loadz(); ld.Workers != 2 || ld.Reporting != 2 || ld.QueueDepth != 8 {
 		t.Fatalf("two serving workers: %+v", ld)
 	}
+	// kv_busy_workers is proportional (T11.20): two workers at 80 % is 1.6
+	// workers' worth of cache, where kv_used_pct (a max) reads 80 whatever the
+	// fleet size.
+	if ld := loadz(); ld.KVUsedPct != 80 || ld.KVBusyWorkers < 1.59 || ld.KVBusyWorkers > 1.61 {
+		t.Fatalf("kv_busy_workers = %v (kv_used_pct %v), want 1.6", ld.KVBusyWorkers, ld.KVUsedPct)
+	}
 
 	if err := srv.DrainNode(ctx, "w1"); err != nil {
 		t.Fatal(err)

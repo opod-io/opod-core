@@ -13,6 +13,10 @@ the last section.
 - **A worker with no `OPOD_NODE_ID` and no persisted `node.yaml` derives its id from `POD_NAME`** (`n_<pod name>`)
   before minting a random one, so a worker in a pod restarts as the same node instead of registering a new one
   every time.
+- **`/loadz` publishes `kv_busy_workers`** (SDK v0.2.6): the mean KV-cache use across reporting workers times
+  the worker count — "how many workers' worth of cache is in use" — beside `kv_used_pct`, which is a maximum. A
+  horizontal scaler computes replicas as ceil(metric ÷ target), so only a figure that grows with the replica
+  count can ask for more than one step; the control plane's external-scaler KV trigger reads this one.
 - **llama.cpp KV pressure is slot occupancy**: the shipped llama-server emits no `kv_cache_usage_ratio`, so the
   field read 0 for ever and the autoscaler's KV trigger could never fire. It is now `requests_processing ÷
   total_slots` (from `/props`, read once) — exact once the context is pinned, because each slot owns a fixed

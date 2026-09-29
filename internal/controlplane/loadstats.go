@@ -240,7 +240,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		gangNodes = servableGangNodes(shards, s.routableNodes(ctx), out.PlanModel)
 	}
 	maxAge := s.heartbeatMaxAge()
-	var prefixSum float64
+	var prefixSum, kvSum float64
 	var prefixSamples int
 	for _, n := range nodes {
 		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
@@ -269,6 +269,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		if ld.KVUsedPct > out.KVUsedPct {
 			out.KVUsedPct = ld.KVUsedPct
 		}
+		kvSum += ld.KVUsedPct / 100
 		out.QueueDepth += ld.QueueDepth
 		out.TokensPerSec += ld.TokensPerSec
 		prefixSum += ld.PrefixHitPct
@@ -297,6 +298,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		if ld.KVUsedPct > out.KVUsedPct {
 			out.KVUsedPct = ld.KVUsedPct
 		}
+		kvSum += ld.KVUsedPct / 100
 		out.QueueDepth += ld.QueueDepth
 		out.TokensPerSec += ld.TokensPerSec
 		prefixSum += ld.PrefixHitPct
@@ -306,6 +308,13 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	// prefix-cache hit rate as a fraction of itself.
 	if prefixSamples > 0 {
 		out.PrefixHitPct = prefixSum / float64(prefixSamples)
+		// KV pressure as a PROPORTIONAL figure (PLAN T11.20): the mean use
+		// across the samples, times the workers it speaks for — "how many
+		// workers' worth of cache is in use". A horizontal scaler computes
+		// replicas as ceil(metric ÷ target), which only means anything for a
+		// metric that grows with the replica count; the maximum above can never
+		// ask for more than two. Always published, 0 with no sample.
+		out.KVBusyWorkers = kvSum / float64(prefixSamples) * float64(out.Workers)
 	}
 }
 
