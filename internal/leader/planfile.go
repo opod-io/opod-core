@@ -101,6 +101,12 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 					Pipeline int `json:"pipeline"`
 				} `json:"parallelism"`
 				DevicesPerPart int `json:"devicesPerPart"`
+				// Flags are the gang's engine knobs (the manager's plan carries
+				// them as shardGroups[].flags); a heal that re-forms the gang
+				// passes them to its coordinator like the create did (T14.26).
+				// Without this a leader restart formed the gang bare — no -c,
+				// no tensor split — whatever the plan said.
+				Flags map[string]string `json:"flags"`
 			} `json:"shardGroups"`
 		}
 		if err := json.Unmarshal(raw, &doc); err != nil {
@@ -122,7 +128,7 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 				continue // a gang with no parts is not a gang to form
 			}
 			gangs = append(gangs, planGang{ID: g.ID, Parts: len(g.Parts),
-				TP: g.Parallelism.Tensor, PP: g.Parallelism.Pipeline, Devices: g.DevicesPerPart})
+				TP: g.Parallelism.Tensor, PP: g.Parallelism.Pipeline, Devices: g.DevicesPerPart, Flags: g.Flags})
 		}
 		s.plan.revision, s.plan.modelID, s.plan.adapters, s.plan.gangs = doc.Revision, doc.Model.ID, names, gangs
 		s.plan.present = true

@@ -136,7 +136,8 @@ func TestPlanWatcherReadsTheGangsItDeclares(t *testing.T) {
 	    {"id": "g0",
 	     "parts": [{"node": "node-b", "gpu": 0, "vramBudgetGb": 6}, {"node": "node-c", "gpu": 0, "vramBudgetGb": 6}],
 	     "parallelism": {"tensor": 1, "pipeline": 2},
-	     "head": "node-b"}
+	     "head": "node-b",
+	     "flags": {"ctx": "4096", "tensor_split": "12,8"}}
 	  ],
 	  "autoscale": {"floor": 0, "max": 1, "unit": "gangs"}
 	}`
@@ -152,6 +153,12 @@ func TestPlanWatcherReadsTheGangsItDeclares(t *testing.T) {
 	}
 	if specs[0].ID != "g0" || specs[0].Parts != 2 || specs[0].PP != 2 || specs[0].TP != 1 {
 		t.Errorf("gang read wrong: %+v", specs[0])
+	}
+	// The gang's knobs ride along, so a heal re-forms the gang the way the
+	// create formed it (T14.26): on the cell a leader restart re-created a
+	// gang with no `-c` although the plan pinned one.
+	if specs[0].Flags["ctx"] != "4096" || specs[0].Flags["tensor_split"] != "12,8" {
+		t.Errorf("the gang's flags were not read from the plan: %+v", specs[0].Flags)
 	}
 	if rev, model := srv.plan.get(); rev != 4 || model != "llama-3.2-3b-sharded" {
 		t.Errorf("the rest of the plan must still be read: rev=%d model=%q", rev, model)
