@@ -165,9 +165,10 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		}
 		cur, ok := byID[id]
 		if !ok {
-			rec := store.APIKey{ID: id, Hash: sk.Hash, Name: sk.Name, Scope: scope, RPMLimit: sk.RPMLimit, TPMLimit: sk.TPMLimit,
-				QuotaDailyTokens: sk.QuotaDailyTokens,
-				AllowedModels:    sk.AllowedModels, CreatedAt: time.Now(), ExpiresAt: exp}
+			// A managed key's rpmLimit, tpmLimit, quotaDailyTokens and
+			// allowedModels in the snapshot are read by nothing since the per-key
+			// policy left core (ADR-077 §5, 2026-09-28); a key is an identity.
+			rec := store.APIKey{ID: id, Hash: sk.Hash, Name: sk.Name, Scope: scope, CreatedAt: time.Now(), ExpiresAt: exp}
 			if err := keys.Create(ctx, rec); err != nil {
 				s.log.Warn("auth snapshot: create key", "id", id, "err", err)
 				continue
@@ -179,25 +180,7 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 			// A revoked row cannot come back; the manager mints a new id instead.
 			continue
 		}
-		if cur.RPMLimit != sk.RPMLimit || cur.TPMLimit != sk.TPMLimit {
-			if err := keys.UpdateRateLimits(ctx, id, sk.RPMLimit, sk.TPMLimit); err == nil {
-				updated++
-			}
-		}
-		// The key's daily ceiling, for the same reason the rate limits are
-		// here: the manager owns it and this file is how it arrives. Without
-		// this line a managed key was minted with quota 0 and QuotaMiddleware
-		// let every request through, whatever the manager had set.
-		if cur.QuotaDailyTokens != sk.QuotaDailyTokens {
-			if err := keys.UpdateDailyQuota(ctx, id, sk.QuotaDailyTokens); err == nil {
-				updated++
-			}
-		}
-		if !sameList(cur.AllowedModels, sk.AllowedModels) {
-			if err := keys.UpdateAllowedModels(ctx, id, sk.AllowedModels); err == nil {
-				updated++
-			}
-		}
+
 	}
 	for _, k := range existing {
 		if strings.HasPrefix(k.ID, SnapshotKeyPrefix) && !k.Revoked && !want[k.ID] {
@@ -220,18 +203,6 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 			"created": created, "updated": updated, "revoked": revoked})
 	}
 	return nil
-}
-
-func sameList(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // applyNodeMTLS installs the snapshot's mTLS half and reports whether anything

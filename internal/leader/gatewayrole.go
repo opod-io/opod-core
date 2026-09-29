@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/gateway"
 	"github.com/opod-io/opod/internal/store"
 )
@@ -134,7 +133,6 @@ func (s *Server) recordUsageForGateway(u store.Usage, rowID string) {
 	// The quota this door enforces is the leader's number plus what it has
 	// served since, so tell the enforcer immediately rather than waiting for
 	// the row to come back in a snapshot.
-	s.front.spend.Spent(u.APIKeyID, int64(u.PromptTokens+u.CompletionTokens))
 }
 
 // gatewayz answers GET /gatewayz in whichever role this process is.
@@ -205,27 +203,4 @@ func (s *Server) GatewayStatus() map[string]any {
 		}
 	}
 	return out
-}
-
-// spendSource is the door's view of what a key has spent across every door,
-// and nil on a leader — where the local store IS the record and asking a
-// snapshot would only add lag to a number this process already knows.
-//
-// Both return the INTERFACE, nil-checked here: handing back a typed nil
-// *gateway.Spend would arrive downstream as a non-nil interface and every
-// leader would then call Share on a nil receiver.
-func (s *Server) spendSource() api.SpendSource {
-	if s.front == nil {
-		return nil
-	}
-	return s.front.spend
-}
-
-// shareSource is the door's slice of each key's per-minute ceilings; nil on a
-// leader, whose ceilings are the whole of what the key bought.
-func (s *Server) shareSource() api.ShareSource {
-	if s.front == nil {
-		return nil
-	}
-	return s.front.spend
 }

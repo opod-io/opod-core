@@ -260,22 +260,6 @@ func (s *Server) pushUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": accepted, "duplicate": duplicate})
 }
 
-// spendKey is one key's ceiling and the share of it this door may use.
-type spendKey struct {
-	APIKeyID string `json:"api_key_id"`
-	// TokensToday is what the leader has recorded since the quota window
-	// opened — the number a gateway subtracts from the daily quota.
-	TokensToday int64 `json:"tokens_today"`
-	QuotaDaily  int64 `json:"quota_daily_tokens,omitempty"`
-	RPMLimit    int   `json:"rpm_limit,omitempty"`
-	TPMLimit    int   `json:"tpm_limit,omitempty"`
-	// RPMShare / TPMShare are this door's slice of the ceiling: the limit
-	// divided by the doors the leader has heard from, never below 1 for a
-	// limited key (a share that rounded to 0 would refuse every request).
-	RPMShare int `json:"rpm_share,omitempty"`
-	TPMShare int `json:"tpm_share,omitempty"`
-}
-
 // spendSnapshot is what a gateway polls.
 type spendSnapshot struct {
 	TS int64 `json:"ts"`
@@ -285,49 +269,17 @@ type spendSnapshot struct {
 	Doors    int      `json:"doors"`
 	Gateways []string `json:"gateways,omitempty"`
 	// LagBoundMS is published, not implied (ADR-063).
-	LagBoundMS   int        `json:"lag_bound_ms"`
-	WindowOpened int64      `json:"window_opened_unix"`
-	Keys         []spendKey `json:"keys"`
+	LagBoundMS int `json:"lag_bound_ms"`
 }
 
 // spend serves the snapshot every gateway polls: what has been spent per key,
 // the ceilings, and this door's share of them.
 func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
+	// The snapshot used to carry every key's ceilings and this door's share of
+	// them. The per-key policy left core (ADR-077 §5, 2026-09-28); what stays is
+	// what the doors and the leader still need from each other — who the doors
+	// are, and the lag bound the poll publishes.
 	now := time.Now()
 	doors, names := s.gateways.doors(now)
-	// The quota window is the day the daily quota is counted over — the same
-	// window the leader's own middleware uses, so a gateway and the leader
-	// never disagree about when it opened.
-	opened := now.UTC().Truncate(24 * time.Hour)
-	out := spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS, WindowOpened: opened.Unix(), Keys: []spendKey{}}
-	keys, err := s.store.APIKeys().List(r.Context())
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	share := func(limit int) int {
-		if limit <= 0 {
-			return 0 // unlimited stays unlimited: a share of "no ceiling" is no ceiling
-		}
-		if n := limit / doors; n > 0 {
-			return n
-		}
-		return 1 // never 0: a door that may serve nothing is a door that is down
-	}
-	for _, k := range keys {
-		if k.Revoked || k.Scope == "node" {
-			continue // a node token is not a customer key and has no spend
-		}
-		row := spendKey{APIKeyID: k.ID, QuotaDaily: k.QuotaDailyTokens, RPMLimit: k.RPMLimit, TPMLimit: k.TPMLimit,
-			RPMShare: share(k.RPMLimit), TPMShare: share(k.TPMLimit)}
-		if k.QuotaDailyTokens > 0 {
-			// Only a key with a quota costs a query: the rest have nothing to
-			// compare a total with.
-			if n, err := s.store.Usage().SumTokensSince(r.Context(), k.ID, opened); err == nil {
-				row.TokensToday = n
-			}
-		}
-		out.Keys = append(out.Keys, row)
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS})
 }

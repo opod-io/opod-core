@@ -39,18 +39,18 @@ func (e *finishingEngine) Chat(context.Context, engines.ChatRequest) (<-chan eng
 	return out, nil
 }
 
-// A chat POST through the whole /v1 chain — allowlist, rate limit, quota,
-// handler — reads its body off the wire exactly once (PLAN T15.2): three
-// middlewares used to hold three copies of it.
+// A chat POST through the /v1 chain reads its body off the wire exactly once
+// (PLAN T15.2): the middlewares used to hold three copies of it. The per-key
+// middlewares have since left (ADR-077 §5); requestBody stays the one reader.
 func TestABodyIsReadOnceThroughTheChain(t *testing.T) {
 	st := usageTestStore(t)
 	ctx := context.Background()
-	key := &store.APIKey{ID: "k_once", Hash: "h", Name: "u", Scope: "user", UserID: "u", AllowedModels: []string{"m"}}
+	key := &store.APIKey{ID: "k_once", Hash: "h", Name: "u", Scope: "user", UserID: "u"}
 	if err := st.APIKeys().Create(ctx, *key); err != nil {
 		t.Fatal(err)
 	}
 	h := &Handler{Engine: &finishingEngine{cancelEngine{deltas: []string{"Hel", "lo"}}}, Store: st, Default: "m"}
-	chain := ModelAllowMiddleware(st)(RateLimitMiddleware(NewBucketStore())(QuotaMiddleware(st)(http.HandlerFunc(h.ChatCompletions))))
+	chain := ResponseHeadersMiddleware()(http.HandlerFunc(h.ChatCompletions))
 
 	body := `{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("hi ", 2000) + `"}]}`
 	wire := &countingBody{Reader: strings.NewReader(body)}

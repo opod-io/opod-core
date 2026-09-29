@@ -615,8 +615,9 @@ model_placements    (node_id, model_id, status, last_seen, cold)
 desired_placements  (node_id, model_id, priority, pinned, created_at)
 shards              (id, model_id, gang_id, role, node_id, address, process_id, status, config_json,
                      created_at, last_seen)
-api_keys            (id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit,
-                     allowed_models, expires_at, created_at, revoked)
+api_keys            (id, hash, name, scope, user_id, expires_at, created_at, revoked;
+                     quota_daily_tokens, rpm_limit, tpm_limit, allowed_models remain as columns
+                     nothing reads since 2026-09-28 — a schema step drops them later)
 usage               (id, ts, api_key_id, user_id, model, protocol, prompt_tokens, completion_tokens,
                      latency_ms, outcome, cost_usd, node_id, ttft_ms)
 event_log           (id, ts, type, subject, data)

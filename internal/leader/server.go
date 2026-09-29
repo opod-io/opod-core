@@ -76,7 +76,6 @@ type Server struct {
 	plan           planFileState
 	authf          authFileState
 	policy         policyFileState
-	rateBuckets    *api.BucketStore
 
 	// movePoll / moveSettle shorten a model move's waits (modelmove.go); zero
 	// = the orchestrator's defaults. Only tests set them.
@@ -167,24 +166,22 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		}
 		return native
 	})
-	buckets := api.NewBucketStore()
 	// The request-path policy is one value the handler serves under (P13-8):
 	// catalog (label bounding), rate-limit buckets, response cache; the
 	// guardrail registry is swapped in by the policy-file watcher.
-	openaiH.SetPolicy(&api.Policy{Catalog: cat, Buckets: buckets, Cache: buildResponseCache(cfg.Observability.ResponseCache, st, log)})
+	openaiH.SetPolicy(&api.Policy{Catalog: cat, Cache: buildResponseCache(cfg.Observability.ResponseCache, st, log)})
 	s := &Server{
-		cfg:         cfg,
-		store:       st,
-		engine:      eng,
-		cat:         cat,
-		catSources:  catalogSourcesOf(cat),
-		log:         log,
-		router:      routed,
-		orch:        orch,
-		openaiH:     openaiH,
-		rateBuckets: buckets,
-		gateways:    newGatewayFront(),
-		bus:         events.New(),
+		cfg:        cfg,
+		store:      st,
+		engine:     eng,
+		cat:        cat,
+		catSources: catalogSourcesOf(cat),
+		log:        log,
+		router:     routed,
+		orch:       orch,
+		openaiH:    openaiH,
+		gateways:   newGatewayFront(),
+		bus:        events.New(),
 	}
 	// A door's usage rows belong to the leader's store, not its own (ADR-063).
 	if s.isGateway() {
@@ -413,25 +410,15 @@ func (s *Server) routes() http.Handler {
 		// estimation, the dispatch handlers) buffers an unbounded body.
 		r.Use(s.limitRequestBody)
 		r.Use(auth.MiddlewareFn(s.store.APIKeys(), s.requireKeys))
-		// Per-key model allowlist runs BEFORE quota: a key with no quota
-		// to spend on an unauthorized model would otherwise burn a 429
-		// instead of the more accurate 403.
-		r.Use(api.ModelAllowMiddleware(s.store))
-		// RPM/TPM ceilings. Wired before the daily quota check so a
-		// runaway client gets the more-actionable 429 with Retry-After
-		// instead of the daily 429.
-		// On a DOOR both ceilings come from the leader's spend snapshot: its
-		// share of each key's rate (1/N, rebalanced every 10 s) and the key's
-		// day across every door. Enforcing either from this process's own
-		// store would sell the key N times what it bought (ADR-063).
-		r.Use(api.RateLimitMiddlewareShared(s.rateBuckets, s.shareSource()))
-		// Stamp a request id + standard rate-limit headers on every
-		// response so client SDKs see throttling status without
-		// special-casing Opod. Runs after RateLimitMiddleware so the
-		// remaining-* values include this request's deduction (the
-		// contract documented on ResponseHeadersMiddleware).
-		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
-		r.Use(api.QuotaMiddlewareShared(s.store, s.spendSource()))
+		// The per-key policy — model allowlist, RPM/TPM ceilings, the daily
+		// token quota — left core on 2026-09-28 (ADR-077 §5): per-caller
+		// limits belong to the application layer in front of an endpoint,
+		// not to the runtime that turns GPUs into tokens. A key is an
+		// identity here and nothing more.
+		//
+		// Stamp a request id on every response so client SDKs and the usage
+		// row share one correlation token.
+		r.Use(api.ResponseHeadersMiddleware())
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)

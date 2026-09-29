@@ -35,24 +35,11 @@ import (
 // the published lag bound true, so the two move together or neither does.
 const SpendPollEvery = 10 * time.Second
 
-// KeyLimit is one key's ceilings and this door's share of them.
-type KeyLimit struct {
-	APIKeyID    string `json:"api_key_id"`
-	TokensToday int64  `json:"tokens_today"`
-	QuotaDaily  int64  `json:"quota_daily_tokens"`
-	RPMLimit    int    `json:"rpm_limit"`
-	TPMLimit    int    `json:"tpm_limit"`
-	RPMShare    int    `json:"rpm_share"`
-	TPMShare    int    `json:"tpm_share"`
-}
-
 // Snapshot is the leader's answer.
 type Snapshot struct {
-	TS           int64      `json:"ts"`
-	Doors        int        `json:"doors"`
-	LagBoundMS   int        `json:"lag_bound_ms"`
-	WindowOpened int64      `json:"window_opened_unix"`
-	Keys         []KeyLimit `json:"keys"`
+	TS         int64 `json:"ts"`
+	Doors      int   `json:"doors"`
+	LagBoundMS int   `json:"lag_bound_ms"`
 }
 
 // Spend polls the snapshot and answers the two questions the request path asks.
@@ -107,49 +94,6 @@ func (s *Spend) Poll(ctx context.Context) error {
 	s.localUse = map[string]int64{}
 	s.mu.Unlock()
 	return nil
-}
-
-// Spent records tokens this door has just served, so the quota it enforces
-// between polls is the leader's number PLUS what this door has spent since.
-// Without it a door would serve its whole quota again in every 10 s window.
-func (s *Spend) Spent(apiKeyID string, tokens int64) {
-	s.mu.Lock()
-	s.localUse[apiKeyID] += tokens
-	s.mu.Unlock()
-}
-
-// QuotaExceeded reports whether this key is over its daily quota, counting the
-// leader's total plus what this door has served since the snapshot. A key with
-// no quota is never over one; a door that has never polled does not refuse —
-// falling closed on a missing snapshot would take an endpoint down when the
-// brain blinks.
-func (s *Spend) QuotaExceeded(apiKeyID string) (over bool, used, quota int64) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, k := range s.snap.Keys {
-		if k.APIKeyID != apiKeyID {
-			continue
-		}
-		if k.QuotaDaily <= 0 {
-			return false, k.TokensToday + s.localUse[apiKeyID], 0
-		}
-		used = k.TokensToday + s.localUse[apiKeyID]
-		return used >= k.QuotaDaily, used, k.QuotaDaily
-	}
-	return false, 0, 0
-}
-
-// Share is this door's slice of a key's per-minute ceilings: what the local
-// rate limiter should be set to. 0 means no ceiling.
-func (s *Spend) Share(apiKeyID string) (rpm, tpm int) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, k := range s.snap.Keys {
-		if k.APIKeyID == apiKeyID {
-			return k.RPMShare, k.TPMShare
-		}
-	}
-	return 0, 0
 }
 
 // Age is how old the enforced snapshot is, and the bound the leader published.

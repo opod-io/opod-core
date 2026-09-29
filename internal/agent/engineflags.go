@@ -123,6 +123,13 @@ func (f EngineFlags) vllmShellOverrides() (overrides string, extraArgs string) {
 	return strings.Join(sh, " "), shellQuoteAll(args)
 }
 
+// LlamaServerArgs is llamaArgs for a caller outside the agent: the
+// scheduler's gang coordinator, which is a llama-server too and took no flags
+// at all until PLAN T14.26 — so `-c` and `--tensor-split` could never reach a
+// gang, a small card could not join one, and the refusal it got was an OOM
+// crash loop rather than a plan-time error.
+func (f EngineFlags) LlamaServerArgs() []string { return f.llamaArgs() }
+
 // llamaArgs returns the extra `llama-server` arguments for the pinned knobs.
 func (f EngineFlags) llamaArgs() []string {
 	var args []string

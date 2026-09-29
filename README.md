@@ -44,7 +44,7 @@
       ║                  (this is what we built)                             ║
       ║  ════════════════════════════════════════════════════════════════    ║
       ║  Gateway     OpenAI-compatible /v1/chat/completions + /v1/embeddings ║
-      ║              per-key rpm/tpm/daily quotas · typed event stream       ║
+      ║              keys as identity · usage + typed event streams          ║
       ║              CLI-only core · the console is the control plane        ║
       ║                                                                      ║
       ║  Router      Same model on N nodes  → load-balance                   ║
@@ -331,7 +331,7 @@ Aider is now talking to your local Qwen-Coder. Same UX, your hardware.
                        ▼  one endpoint, one key
    ┌──────────────────────────────────────────────────┐
    │  LEADER  (`opod up`)                             │
-   │  gateway   OpenAI-compatible · auth · rate limits│
+   │  gateway   OpenAI-compatible · auth · usage rows │
    │  router    placement · load · fallback chain     │
    │  admin     /admin/v1 · event + usage streams     │
    │  store     SQLite (nodes, models, keys, usage)   │
@@ -388,18 +388,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 ### Multi-tenancy
 
 - Per-user API keys with revocation, scopes (admin / user / node), and **TTL expiry** (`--ttl 7d`, `--expires-at 2026-07-01`, `opod token renew/expire`)
-- Daily token quotas per key, enforced at the gateway from the usage log (429 once the day's tokens are spent). The CLI has no flag for it: set `quota_daily_tokens` when creating the key through `POST /admin/v1/tokens`; `0` = unlimited. A key a manager mints carries its ceiling in the mounted auth snapshot (`quotaDailyTokens`), on create **and** on edit, so raising a customer's limit does not mean minting a new key id
-- **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
-- **Per-key model allowlist** — pin a key to specific model ids (or a family via a trailing-`*` glob such as `qwen3-*`); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
-- Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Opod-Request-Id` correlation token (also embedded in audit rows for traceability)
-- OIDC / SSO — **not in core** (explicitly [out of scope](#deliberately-out-of-scope)). Core authenticates API keys only; per-user keys, quotas and the event stream cover accountability, and SSO belongs to the control plane
+- **A key is an identity — who is calling, with which scope, until when — and nothing more.** Per-key daily quotas, RPM/TPM rate limits and model allowlists were part of core until 2026-09-28 and are not any more: per-caller policy belongs to the application layer in front of an endpoint (an API gateway, a billing service), which is where accounts, users and plans live. Every request is still recorded per key in the usage stream, which is what such a layer meters from. Older clients that send `rpm_limit`, `tpm_limit`, `quota_daily_tokens` or `allowed_models` on a key are accepted and the fields are ignored.
+- An always-on `X-Opod-Request-Id` correlation token on every `/v1/*` response (also embedded in audit rows for traceability)
+- OIDC / SSO — **not in core** (explicitly [out of scope](#deliberately-out-of-scope)). Core authenticates API keys only; per-user keys and the event stream cover accountability, and SSO belongs to the control plane
 
 ```bash
-opod token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
-opod token create bob   --models 'qwen3-*,llama-*'         # model families via glob
-opod token create dave  --rpm 60 --tpm 100000 --ttl 30d    # rate-limited + expiring
-opod token edit k_abc --add-model gpt-oss-20b              # extend
-opod token edit k_abc --remove-model qwen3-14b             # tighten
+opod token create dave  --ttl 30d                           # expiring key
 opod token renew k_abc --ttl 30d                           # extend expiry
 ```
 
@@ -1325,7 +1319,7 @@ print(resp.choices[0].message.content)
 | `DELETE` | `/admin/v1/adapters/{name}` | Drop one |
 | `GET` | `/admin/v1/tokens` | List API keys (no hash, no plaintext) |
 | `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |
-| `PATCH` | `/admin/v1/tokens/{id}` | Edit a key's model allowlist / rate limits / expiry |
+| `PATCH` | `/admin/v1/tokens/{id}` | Edit a key's expiry (`expires_at` / `ttl_seconds`) |
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
 | `POST` | `/admin/v1/usage/push` | A front door's usage rows (feature `gateway_spend`), deduplicated by a row id the door mints. Also the door's heartbeat, carrying its own load |
 | `GET` | `/admin/v1/spend` | What each key has spent in the current daily window, its ceilings, **this door's 1/N share** of them, and the lag bound a quota may drift by |
@@ -1454,12 +1448,8 @@ opod shard remove <model> [--gang ID] [--yes]
                                   (prompts unless --yes)
 
 # --- API keys / tokens ---
-opod token create [name]         Issue an API key (--admin, --node, --models a,b,
-                                  --rpm N, --tpm N, --ttl 7d, --expires-at DATE)
+opod token create [name]         Issue an API key (--admin, --node, --ttl 7d, --expires-at DATE)
 opod token ls                    List API keys
-opod token edit <id>             Change a key's model allowlist / rate limits
-                                  (--add-model, --remove-model, --set-models,
-                                  --clear-models, --rpm, --tpm)
 opod token renew <id>            Extend expiry (--ttl DURATION | --expires-at DATE)
 opod token expire <id> [--in D]  Expire a key now (or in DURATION, e.g. --in 1h)
 opod token revoke <id>           Revoke a key

@@ -67,8 +67,6 @@ func TestAGatewayIsASecondFrontForOneBrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	custRec.RPMLimit = 2
-	custRec.QuotaDailyTokens = 1000
 	if err := leaderStore.APIKeys().Create(ctx, custRec); err != nil {
 		t.Fatal(err)
 	}
@@ -203,48 +201,12 @@ func TestAGatewayIsASecondFrontForOneBrain(t *testing.T) {
 		t.Errorf("the quota lag bound is published, not documented: %d", doors.LagBoundS)
 	}
 
-	// 6) The ceilings the door enforces are the leader's. Poll the snapshot:
-	//    one live door, so the share is the whole rate of 2/min…
+	// Steps 6 and 7 used to prove the door enforced the key's rate share and
+	// daily quota from the leader's snapshot. The per-key policy left core on
+	// 2026-09-28 (ADR-077 §5); the snapshot now carries the doors and the lag
+	// bound, which step 5 checked, and the door serves whatever the key sends.
 	if err := door.front.spend.Poll(ctx); err != nil {
 		t.Fatalf("spend poll: %v", err)
-	}
-	if rpm, _ := door.front.spend.Share(custRec.ID); rpm != 2 {
-		t.Errorf("one door gets the whole rate: rpm=%d", rpm)
-	}
-	// …and with a second door heard from, half of it — a flat share would hand
-	// a keep-alive client pinned to one door 1/N of what it bought, so the
-	// number moves with the doors the leader can actually see.
-	leader.gateways.note("door-2", "req_other", time.Now())
-	if err := door.front.spend.Poll(ctx); err != nil {
-		t.Fatalf("spend re-poll: %v", err)
-	}
-	if rpm, _ := door.front.spend.Share(custRec.ID); rpm != 1 {
-		t.Errorf("two doors split the rate: rpm=%d want 1", rpm)
-	}
-
-	// 7) The daily quota is the key's WHOLE day, not this door's slice. The
-	//    leader has 1000 of quota and 120 spent; push the rest and the door
-	//    must refuse the next request — even though its own store holds one
-	//    row of 120 tokens and would have let the key through.
-	big := row
-	big.PromptTokens, big.CompletionTokens = 900, 0
-	door.recordUsageForGateway(big, "req_cafe")
-	if err := door.front.push.Flush(ctx, 100); err != nil {
-		t.Fatalf("push: %v", err)
-	}
-	if err := door.front.spend.Poll(ctx); err != nil {
-		t.Fatalf("spend poll: %v", err)
-	}
-	if over, u, q := door.front.spend.QuotaExceeded(custRec.ID); !over || q != 1000 || u < 1020 {
-		t.Fatalf("the door reads the key's whole day: over=%v used=%d quota=%d", over, u, q)
-	}
-	respBody, code := post(t, doorHTTP.URL+"/v1/chat/completions", custPlain,
-		`{"model":"qwen2.5-0.5b-gguf","messages":[{"role":"user","content":"hi"}]}`)
-	if code != http.StatusTooManyRequests {
-		t.Fatalf("a door over the key's daily quota refuses: %d %s", code, respBody)
-	}
-	if !bytes.Contains(respBody, []byte("quota")) {
-		t.Errorf("and says which ceiling it hit: %s", respBody)
 	}
 
 	// 8) The door reports its own staleness and backlog — the only symptom a

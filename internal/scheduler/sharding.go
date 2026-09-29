@@ -173,6 +173,11 @@ type Parallelism struct {
 	// DevicesPerRank is how many GPUs every part holds (0 = 1). TP must be a
 	// multiple of it: the devices inside a part are always in one tensor group.
 	DevicesPerRank int
+	// Flags are the plan's engine knobs for the gang — the same allowlist a
+	// worker's flags use (agent.EngineFlags: ctx, ngl, parallel, kv_cache_type,
+	// tensor_split, extra). They reach the COORDINATOR, the process that
+	// allocates the context and decides the split across the parts (T14.26).
+	Flags map[string]string
 }
 
 // resolve fills in the defaults and checks the product against the GPU count.
@@ -506,7 +511,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 				"(check the rpc-server on those nodes)", strings.Join(bad, ", "))
 		}
 	}
-	coordArgs := coordinatorArgs(coordModelPath, coordPort, coordHostBind, rpcEndpoints)
+	coordArgs := coordinatorArgs(coordModelPath, coordPort, coordHostBind, rpcEndpoints, agent.EngineFlags(par.Flags).LlamaServerArgs())
 	coordSpec := agent.ProcessSpec{
 		ID:      coordID,
 		Command: "llama-server",
@@ -825,7 +830,11 @@ func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (remo
 // kv_used_pct 0 and queue_depth 0 with nothing to say why. The worker passes
 // the same flag for the engine it launches (agent/server.go); the coordinator
 // had been missed, and it is the one that matters for a gang.
-func coordinatorArgs(modelPath string, port int, host string, rpcEndpoints []string) []string {
+// extra are the plan's pinned knobs as llama-server arguments
+// (agent.EngineFlags.LlamaServerArgs): `-c`, `-np`, `--tensor-split` and the
+// rest, validated by the same rules a worker's are. Appended last, so a plan's
+// knob is what the engine reads.
+func coordinatorArgs(modelPath string, port int, host string, rpcEndpoints []string, extra []string) []string {
 	args := []string{
 		"-m", modelPath,
 		"--port", strconv.Itoa(port),
@@ -835,5 +844,5 @@ func coordinatorArgs(modelPath string, port int, host string, rpcEndpoints []str
 	if len(rpcEndpoints) > 0 {
 		args = append(args, "--rpc", strings.Join(rpcEndpoints, ","))
 	}
-	return args
+	return append(args, extra...)
 }

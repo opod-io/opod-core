@@ -37,8 +37,8 @@ func TestAuthSnapshotSync(t *testing.T) {
 
 	plainA, plainB := "sk-orc-AAAA", "sk-orc-BBBB"
 	snap := &AuthSnapshot{Revision: "r1", RequireKeys: true, Keys: []SnapshotKey{
-		{ID: "a", Name: "team-a", Hash: auth.Hash(plainA), RPMLimit: 10},
-		{ID: "b", Name: "team-b", Hash: auth.Hash(plainB), AllowedModels: []string{"m1"}},
+		{ID: "a", Name: "team-a", Hash: auth.Hash(plainA)},
+		{ID: "b", Name: "team-b", Hash: auth.Hash(plainB)},
 	}}
 	if err := srv.applyAuthSnapshot(ctx, snap); err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestAuthSnapshotSync(t *testing.T) {
 		t.Fatal("requireKeys must follow the snapshot")
 	}
 	ka, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainA))
-	if ka == nil || ka.ID != SnapshotKeyPrefix+"a" || ka.RPMLimit != 10 || ka.Scope != "user" {
+	if ka == nil || ka.ID != SnapshotKeyPrefix+"a" || ka.Scope != "user" {
 		t.Fatalf("key a not synced: %+v", ka)
 	}
 
@@ -78,14 +78,13 @@ func TestAuthSnapshotSync(t *testing.T) {
 
 	// second snapshot: limits change, key b leaves, requireKeys off
 	snap2 := &AuthSnapshot{Revision: "r2", RequireKeys: false, Keys: []SnapshotKey{
-		{ID: "a", Name: "team-a", Hash: auth.Hash(plainA), RPMLimit: 20, TPMLimit: 5},
+		{ID: "a", Name: "team-a", Hash: auth.Hash(plainA), RPMLimit: 20, TPMLimit: 5}, // the snapshot may still carry limits; core ignores them (ADR-077 §5)
 	}}
 	if err := srv.applyAuthSnapshot(ctx, snap2); err != nil {
 		t.Fatal(err)
 	}
-	ka, _ = st.APIKeys().GetByHash(ctx, auth.Hash(plainA))
-	if ka.RPMLimit != 20 || ka.TPMLimit != 5 {
-		t.Fatalf("limits not updated: %+v", ka)
+	if ka, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainA)); ka == nil || ka.Revoked {
+		t.Fatalf("key a stays live across a snapshot that only changed fields core no longer holds: %+v", ka)
 	}
 	kb, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainB))
 	if kb == nil || !kb.Revoked {

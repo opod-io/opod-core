@@ -17,7 +17,6 @@ import (
 // buckets, no guardrails, no cache. There are no package-level globals (P13-8).
 type Policy struct {
 	Catalog    []models.Entry
-	Buckets    *BucketStore
 	Guardrails *guardrails.Registry // nil = none configured
 	Cache      cache.Cache          // nil = caching disabled
 }

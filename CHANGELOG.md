@@ -5,6 +5,24 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-28 (late) — a key is an identity: per-key quotas, rate limits and allowlists leave core
+
+**Breaking, on purpose.** The daily token quota, the RPM/TPM leaky buckets and the model allowlist that a key
+could carry are gone from the request path, the token API, the CLI and the auth snapshot's effect. Per-caller
+policy belongs to the application layer in front of an endpoint — an API gateway, a billing service — where
+accounts, users and plans live; the runtime turns GPUs into tokens and records every request per key in the
+usage stream, which is what such a layer meters from.
+
+- `/v1` no longer answers `429` for a key's minute or day, nor `403 model_not_allowed`; `X-RateLimit-*` headers
+  are not emitted. `X-Opod-Request-Id` stays on every response.
+- `POST /admin/v1/tokens` and `PATCH /admin/v1/tokens/{id}` accept and ignore `rpm_limit`, `tpm_limit`,
+  `quota_daily_tokens` and `allowed_models`; `PATCH` edits expiry only. The token list no longer carries them.
+- `opod token create` loses `--models`, `--rpm`, `--tpm`; `opod token edit` is gone (`expire` and `renew` stay).
+- A manager's auth snapshot may still carry those fields on a key; the leader ignores them.
+- The front doors' spend snapshot (`GET /admin/v1/spend`) carries the doors and the lag bound and no per-key
+  ceilings; the doors keep pushing usage and heartbeating through it.
+- The `api_keys` columns stay in the table with their defaults until a schema step drops them.
+
 ## 2026-09-28 (evening) — per-route body caps, a stable worker identity, and KV pressure llama.cpp can actually report
 
 - **`internal/controlplane` is `internal/leader`.** The package is the leader process's HTTP surface — gateway, `/admin/v1`, adapters — and the old name read as if core knew of a control plane. Its comments now call whatever writes the plan, auth and policy files "a manager", the term `contract.go` already used. No behaviour change.

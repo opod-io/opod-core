@@ -5,21 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
-	"strconv"
-
-	"github.com/opod-io/opod/internal/auth"
 )
 
 // Header names — OpenAI-style, stamped by one middleware on every /v1 route.
 const (
-	HeaderRequestID         = "X-Opod-Request-Id"
-	HeaderBudgetResetAt     = "X-Opod-Budget-Reset-At"
-	HeaderLimitRequests     = "X-RateLimit-Limit-Requests"
-	HeaderRemainingRequests = "X-RateLimit-Remaining-Requests"
-	HeaderResetRequests     = "X-RateLimit-Reset-Requests"
-	HeaderLimitTokens       = "X-RateLimit-Limit-Tokens"
-	HeaderRemainingTokens   = "X-RateLimit-Remaining-Tokens"
-	HeaderResetTokens       = "X-RateLimit-Reset-Tokens"
+	HeaderRequestID = "X-Opod-Request-Id"
 )
 
 type requestIDKey struct{}
@@ -46,42 +36,21 @@ func newRequestID() string {
 	return "req_" + hex.EncodeToString(buf)
 }
 
-// ResponseHeadersMiddleware emits standard rate-limit headers
-// (`x-ratelimit-*`) and a `x-opod-request-id` correlation token on
-// every response from a `/v1/*` route. Client SDKs (OpenAI's,
-// Anthropic's wrappers) inspect these headers to surface throttling
-// status and pick retry timing.
+// ResponseHeadersMiddleware stamps an `x-opod-request-id` correlation token
+// on every response from a `/v1/*` route and puts the same id on the context
+// for the usage row and the audit recorder. It writes BEFORE handing off to
+// `next` so the header is present even on a streaming response.
 //
-// The middleware does its writes BEFORE handing off to `next` so the
-// values are present even on a streaming response (which writes
-// headers as soon as Flush() runs). Reading bucket state at the top of
-// the handler is correct for rate-limit accounting too — by the time
-// the response is being assembled the per-request RPM/TPM deduction
-// has already happened (RateLimitMiddleware runs earlier in the
-// chain), so what we report here is the bucket's state AS OF this
-// request's admission, which is what clients want for "remaining" to
-// reflect this very request.
-func ResponseHeadersMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
+// It used to carry `x-ratelimit-*` too, from per-key RPM/TPM buckets; those
+// left core with the per-key policy (ADR-077 §5, 2026-09-28): rate limits,
+// quotas and allowlists per caller are the application layer's in front of
+// an endpoint, not the runtime's.
+func ResponseHeadersMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := newRequestID()
 			ctx := WithRequestID(r.Context(), id)
 			w.Header().Set(HeaderRequestID, id)
-
-			key := auth.KeyFrom(r.Context())
-			if key != nil && buckets != nil {
-				rpm, tpm := buckets.Get(key.ID)
-				if rpm != nil && key.RPMLimit > 0 {
-					w.Header().Set(HeaderLimitRequests, strconv.Itoa(key.RPMLimit))
-					w.Header().Set(HeaderRemainingRequests, strconv.Itoa(int(rpm.Available())))
-					w.Header().Set(HeaderResetRequests, strconv.Itoa(rpm.RefillETA()))
-				}
-				if tpm != nil && key.TPMLimit > 0 {
-					w.Header().Set(HeaderLimitTokens, strconv.Itoa(key.TPMLimit))
-					w.Header().Set(HeaderRemainingTokens, strconv.Itoa(int(tpm.Available())))
-					w.Header().Set(HeaderResetTokens, strconv.Itoa(tpm.RefillETA()))
-				}
-			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -15,35 +15,6 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-// rateLimitEstimateKey is unexported so other packages can't shadow the
-// estimate (which is meaningful only to the rate-limit reconciliation
-// path).
-type rateLimitEstimateKey struct{}
-
-// rateLimitEstimate is the upfront token count attached to a request
-// by RateLimitMiddleware. recordUsage reads it to reconcile against
-// the actual prompt+completion tokens once the response is done.
-type rateLimitEstimate struct {
-	KeyID    string
-	Estimate int
-}
-
-// WithRateLimitEstimate stashes the upfront estimate on ctx for the
-// downstream recordUsage reconciliation step. Exported so the
-// middleware (in the same package, but kept callable for tests too) can
-// build the context.
-func WithRateLimitEstimate(ctx context.Context, keyID string, estimate int) context.Context {
-	return context.WithValue(ctx, rateLimitEstimateKey{}, rateLimitEstimate{KeyID: keyID, Estimate: estimate})
-}
-
-// rateLimitEstimateFrom reads the stashed estimate. Returns the zero
-// value when no estimate was set — the reconciliation step is then a
-// no-op.
-func rateLimitEstimateFrom(ctx context.Context) rateLimitEstimate {
-	v, _ := ctx.Value(rateLimitEstimateKey{}).(rateLimitEstimate)
-	return v
-}
-
 // usageWriteTimeout bounds the usage insert once it is detached from the
 // request: long enough for a busy SQLite writer, short enough that a wedged
 // store cannot pile up handler goroutines.
@@ -132,69 +103,6 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		h.OnUsage(rec, id)
 	}
 
-	// Reconcile the rate-limit TPM bucket. The middleware deducted an
-	// upfront estimate; once the real usage is known we either refund
-	// (over-estimated) or deduct the delta (under-estimated). The
-	// bucket can go briefly negative — that's fine; subsequent
-	// requests refill and rate-limit normally.
-	if est := rateLimitEstimateFrom(ctx); est.KeyID != "" && pol.Buckets != nil {
-		actual := prompt + completion
-		if _, tpm := pol.Buckets.Get(est.KeyID); tpm != nil {
-			switch {
-			case actual > est.Estimate:
-				tpm.Deduct(float64(actual - est.Estimate))
-			case actual < est.Estimate:
-				tpm.Refund(float64(est.Estimate - actual))
-			}
-		}
-	}
-}
-
-// QuotaMiddleware enforces per-key daily token quotas. Keys with quota=0
-// are unlimited.
-func QuotaMiddleware(st store.Store) func(http.Handler) http.Handler {
-	return QuotaMiddlewareShared(st, nil)
-}
-
-// SpendSource answers "is this key over its daily quota" from a view WIDER than
-// this process's store. A gateway replica's own rows are a fraction of the
-// key's day (ADR-063): asked locally, every door would let the key through
-// until it had spent the whole quota at that one door. nil = a single writer,
-// where the local store IS the day.
-type SpendSource interface {
-	QuotaExceeded(apiKeyID string) (over bool, used, quota int64)
-}
-
-// QuotaMiddlewareShared is QuotaMiddleware with an optional wider spend view.
-func QuotaMiddlewareShared(st store.Store, spend SpendSource) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := auth.KeyFrom(r.Context())
-			if key == nil || key.QuotaDailyTokens <= 0 {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if spend != nil {
-				// The snapshot is the authority on a door, stale or not: a door
-				// that fell back to its own store would enforce a quota N times
-				// too large, which is the bug this exists to avoid. How stale it
-				// may be is published (spend_lag_bound_s on /loadz).
-				if over, used, quota := spend.QuotaExceeded(key.ID); over {
-					writeQuotaExceeded(w, quota, used)
-					return
-				}
-				next.ServeHTTP(w, r)
-				return
-			}
-			midnight := startOfUTCDay(time.Now())
-			used, err := st.Usage().SumTokensSince(r.Context(), key.ID, midnight)
-			if err == nil && used >= key.QuotaDailyTokens {
-				writeQuotaExceeded(w, key.QuotaDailyTokens, used)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 func startOfUTCDay(t time.Time) time.Time {

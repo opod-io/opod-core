@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/opod-io/opod/internal/agent"
 )
 
 // T11.3, found on a cluster: the leader scrapes a gang's coordinator for the
@@ -17,7 +19,7 @@ import (
 // kv_used_pct 0` — the count was right and the pressure was still a constant,
 // which looks exactly like the defect the scrape was written to fix.
 func TestCoordinatorIsLaunchedWithMetrics(t *testing.T) {
-	args := coordinatorArgs("/data/models/m.gguf", 9001, "127.0.0.1", []string{"10.0.0.2:50052"})
+	args := coordinatorArgs("/data/models/m.gguf", 9001, "127.0.0.1", []string{"10.0.0.2:50052"}, nil)
 	if !slices.Contains(args, "--metrics") {
 		t.Fatalf("a gang's coordinator must expose /metrics or its pressure is unreadable: %v", args)
 	}
@@ -35,7 +37,7 @@ func TestCoordinatorIsLaunchedWithMetrics(t *testing.T) {
 
 	// One shard is a plain whole-model llama-server: no --rpc at all, because
 	// an empty list would make it abort on a backend that does not exist.
-	solo := coordinatorArgs("/data/models/m.gguf", 9001, "0.0.0.0", nil)
+	solo := coordinatorArgs("/data/models/m.gguf", 9001, "0.0.0.0", nil, nil)
 	if slices.Contains(solo, "--rpc") {
 		t.Errorf("a 1-shard coordinator takes no --rpc: %v", solo)
 	}
@@ -44,5 +46,26 @@ func TestCoordinatorIsLaunchedWithMetrics(t *testing.T) {
 	}
 	if strings.Join(solo, " ") == strings.Join(args, " ") {
 		t.Error("the two shapes must differ")
+	}
+}
+
+// The plan's knobs reach the coordinator (PLAN T14.26): `-c` pins the context
+// the gang allocates and `--tensor-split` the share each part holds — appended
+// after the fixed arguments so they are what llama-server reads. Validated by
+// the worker's own rules, so a bad value is dropped rather than passed.
+func TestCoordinatorTakesThePlansFlags(t *testing.T) {
+	extra := agent.EngineFlags{"ctx": "8192", "tensor_split": "12,8", "parallel": "2", "ngl": "not-a-number"}.LlamaServerArgs()
+	args := coordinatorArgs("/data/models/m.gguf", 9001, "127.0.0.1", []string{"10.0.0.2:50052"}, extra)
+	got := strings.Join(args, " ")
+	for _, want := range []string{"--rpc 10.0.0.2:50052", "-c 8192", "--tensor-split 12,8", "-np 2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "n-gpu-layers") {
+		t.Fatalf("an invalid knob reached the coordinator: %q", got)
+	}
+	if strings.Index(got, "--rpc") > strings.Index(got, "-c 8192") {
+		t.Fatalf("the plan's knobs come after the fixed arguments: %q", got)
 	}
 }

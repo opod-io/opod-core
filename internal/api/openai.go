@@ -20,7 +20,6 @@ import (
 
 	"github.com/opod-io/opod/internal/router"
 
-	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/store"
@@ -272,15 +271,6 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	requested, sortHint := models.SplitSortSuffix(req.Model)
 	if requested == "" || requested == "auto" {
 		requested = h.Default
-	}
-	// Re-check the per-key allowlist on the post-substitution model.
-	// ModelAllowMiddleware passes empty/`auto` model requests through,
-	// so the default must be authorized for this key too.
-	if !modelAllowedForKey(r.Context(), requested) {
-		key := auth.KeyFrom(r.Context())
-		auditRefusal(r.Context(), h.Store, key, requested)
-		writeModelNotAllowed(w, requested, key.AllowedModels)
-		return
 	}
 	// Validate the model exists in the catalog, but do NOT substitute the
 	// engine-native name here. The router routes by CATALOG id (placements are

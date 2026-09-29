@@ -219,6 +219,10 @@ type CreateShardsRequest struct {
 	// replaces only itself, and the model's other gangs keep serving through
 	// the create; the router then load-balances across every ready coordinator.
 	Gang string `json:"gang,omitempty"`
+	// Flags are the plan's engine knobs for the gang, reaching its coordinator
+	// (T14.26): ctx, ngl, parallel, kv_cache_type, tensor_split, extra — the
+	// same allowlist and validation a worker's OPOD_ENGINE_FLAGS get.
+	Flags map[string]string `json:"flags,omitempty"`
 }
 
 // CreateShards builds the gang through the orchestrator. A failed create is
@@ -239,7 +243,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	if req.Head != "" {
 		s.orch.CoordinatorNode = req.Head
 	}
-	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices}); err != nil {
+	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices, Flags: req.Flags}); err != nil {
 		if errors.Is(err, scheduler.ErrUnplaceable) {
 			// Refused before anything was touched: the gang this create would
 			// have replaced is still serving, and the cleanup below would

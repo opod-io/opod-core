@@ -52,18 +52,12 @@ type CacheStore interface {
 
 // APIKey represents a Opod API key. Plain key text is never stored; only Hash.
 //
-// AllowedModels, when non-nil, restricts the key to the listed model ids
-// — requests for any other model are refused with HTTP 403
-// `model_not_allowed`. A nil slice (the default, and the value for keys
-// created before this column existed) means "no restriction". An empty
-// slice means "no model is allowed" — useful for hard-disabling a key
-// without revoking it. Entries support glob suffix wildcards (e.g.
-// `claude-*`, `gpt-*`) so vendor families can be approved in one row.
-//
-// RPMLimit and TPMLimit are per-minute token-bucket ceilings. 0 means
-// unlimited (the default for legacy keys). Enforced by
-// api.RateLimitMiddleware via in-memory leaky buckets; resets on
-// leader restart.
+// A key is an IDENTITY: who is calling, with which scope, until when. The
+// per-key policy that used to ride on it — a model allowlist, RPM/TPM
+// ceilings, a daily token quota — left core on 2026-09-28 (ADR-077 §5 in the
+// control plane's decisions): per-caller limits belong to the application
+// layer in front of an endpoint, not to the runtime. The columns stay in the
+// table with their defaults until a schema step drops them.
 //
 // ExpiresAt, when non-zero, makes the key time-limited: the auth
 // middleware refuses requests with HTTP 401 `key_expired` once `now >
@@ -71,18 +65,14 @@ type CacheStore interface {
 // expires". Useful for short-lived per-PR keys and external-contractor
 // access.
 type APIKey struct {
-	ID               string
-	Hash             string
-	Name             string
-	Scope            string // "admin" | "user" | "node"
-	UserID           string
-	QuotaDailyTokens int64
-	RPMLimit         int
-	TPMLimit         int
-	AllowedModels    []string
-	CreatedAt        time.Time
-	ExpiresAt        time.Time
-	Revoked          bool
+	ID        string
+	Hash      string
+	Name      string
+	Scope     string // "admin" | "user" | "node"
+	UserID    string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	Revoked   bool
 }
 
 type APIKeyStore interface {
@@ -94,12 +84,10 @@ type APIKeyStore interface {
 	// UpdateAllowedModels replaces the allowlist for the given key id.
 	// Pass nil for "unrestricted", an empty slice for "deny all", or a
 	// list (each entry may include a `*` suffix wildcard).
-	UpdateAllowedModels(ctx context.Context, id string, allowed []string) error
 	// UpdateRateLimits replaces the RPM/TPM ceilings on the given key.
 	// Passing 0 means "unlimited" — restores the legacy behavior. Both
 	// fields are set atomically so a partial edit can't accidentally
 	// leave one ceiling set and the other clear.
-	UpdateRateLimits(ctx context.Context, id string, rpm, tpm int) error
 	// UpdateExpiresAt sets the key's expiry. A zero time clears the
 	// expiry ("never expires"); a past time effectively expires the
 	// key immediately.
@@ -108,7 +96,6 @@ type APIKeyStore interface {
 	// "no quota", which is what QuotaMiddleware reads as unlimited. It
 	// exists for the same reason UpdateRateLimits does: a managed key's
 	// ceiling is edited by whoever minted it, not by the key's holder.
-	UpdateDailyQuota(ctx context.Context, id string, quota int64) error
 }
 
 type Model struct {
