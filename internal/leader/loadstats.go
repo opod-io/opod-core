@@ -211,6 +211,10 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// other and holds its card, and a scaler that believes the count scales out
 	// too late or not at all.
 	out.EnginesUnhealthy, out.EngineIssue = s.EnginesUnhealthy()
+	// Whether the block scorer has anything to score with (feature
+	// "kv_block_events"): absent when no worker reports cache events, so an
+	// operator who set the weight can see that the sticky pin is still deciding.
+	out.PrefixIndex = s.prefix.state()
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -98,6 +98,15 @@ func First(m map[string]float64, names ...string) (float64, bool) {
 	return 0, false
 }
 
+// Tokenizer is implemented by engines that tokenize a prompt for a caller,
+// chat template applied — what the engine itself would feed the model. The
+// leader has no tokenizer and asks for one through the worker to score a
+// request against the prefix-cache blocks a worker holds (feature
+// "kv_block_events"). limit bounds the answer; ≤ 0 = everything.
+type Tokenizer interface {
+	Tokenize(ctx context.Context, model string, messages []Message, prompt string, limit int) ([]int, error)
+}
+
 // Sleeper is implemented by engines that can drop their GPU working set
 // while keeping the process (core build item 13, the §6 "sleep" tier):
 // vLLM's sleep mode (weights offloaded / freed, wake in under a second).

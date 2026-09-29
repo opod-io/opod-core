@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/opod-io/opod/internal/kvevents"
+
 	"github.com/opod-io/opod-sdk/nodeapi"
 
 	"github.com/opod-io/opod/internal/auth"
@@ -46,6 +48,9 @@ type Agent struct {
 	// times. nil = nothing of ours launched an engine here, and the heartbeat
 	// says nothing about one rather than claiming health.
 	Procs *Supervisor
+	// Blocks is the prefix-cache translator the Server feeds (feature
+	// "kv_block_events"); nil = the worker reports no blocks.
+	Blocks *kvevents.Translator
 
 	HTTP              *http.Client
 	HeartbeatInterval time.Duration
@@ -158,6 +163,15 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 			hb["load"] = ld
 		}
 		cancel()
+	}
+	// What changed in the engine's prefix cache since the last heartbeat, as
+	// block hashes (feature "kv_block_events"). Drained only when the post
+	// below is about to be made: a batch that is never sent is a gap the
+	// leader detects by its sequence and answers by starting over.
+	if a.Blocks != nil {
+		if kb := a.Blocks.Drain(); kb != nil {
+			hb["kv_blocks"] = kb
+		}
 	}
 	body, _ := json.Marshal(hb)
 	return a.post(ctx, "/admin/v1/nodes/heartbeat", body)

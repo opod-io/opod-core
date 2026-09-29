@@ -175,8 +175,12 @@ type Router struct {
 	kvWeight        float64
 	kvSaturationPct int
 	prefixAffinity  bool
-	prefixPins      map[string]stickyEntry // prefix hash|model → pinned node + expiry
-	prefixInserts   int
+	// Block scoring (prefixblocks.go, feature "kv_block_events").
+	blockWeight   float64
+	blockResolve  BlockResolver
+	blockHeld     BlockHolder
+	prefixPins    map[string]stickyEntry // prefix hash|model → pinned node + expiry
+	prefixInserts int
 }
 
 // stickySweepEvery and stickySweepThreshold tune the opportunistic

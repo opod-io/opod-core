@@ -127,6 +127,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	s.policy.fallback.Store(&r)
 	if s.router != nil {
 		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
+		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
 	}
 	if doc.Logging.AccessLog != nil {
 		s.policy.accessLog.Store(*doc.Logging.AccessLog)

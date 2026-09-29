@@ -5,6 +5,23 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-29 — routing by the prefix cache a worker actually holds
+
+- **Feature `kv_block_events`.** The prefix pin remembers which worker last served a prompt prefix; it cannot
+  know whether that worker's cache still holds the blocks, nor see a second worker that has them warm. With
+  `OPOD_KV_EVENTS=1` a worker starts vLLM with its cache events on (a ZeroMQ publisher bound to localhost),
+  translates every stored and evicted block into a hash chained from the block before it, and reports the hashes
+  on its heartbeat (`kv_blocks`) — **hashes only: no token id and no text leaves the worker**, and the hash is the
+  SDK's `nodeapi.BlockHash`, never the engine's own. The leader keeps a bounded per-worker set and, when the
+  policy gives `routing.prefixBlockWeight`, takes that much off a worker's load score for each LEADING block of
+  the request it holds. A saturated worker still goes last; with nothing reported the pin decides as before.
+- The leader has no tokenizer, so it asks a reporting worker's engine (`POST /v1/tokenize` on the worker, vLLM's
+  own `/tokenize` behind it), once per distinct prefix and inside a 250 ms budget.
+- Whatever could leave the index wrong — a gap in the engine's event sequence, a gap in a worker's batches, a new
+  worker process, an unreadable payload — empties that worker's set. `/loadz` carries `prefix_index
+  { workers_reporting, blocks }`, so an operator who set the weight can see whether anything is being reported.
+- Pure Go: `go-zeromq/zmq4` and `vmihailenco/msgpack`; the static cross-compile is unchanged.
+
 ## 2026-09-29 — a request wakes a sleeping engine, and is served
 
 - **A request for a model whose engine sleeps resumes it and is held through the wake** (feature

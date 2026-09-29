@@ -38,6 +38,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	if r.prefixAffinity {
 		ctx = withPrefixKey(ctx, prefixKeyOf(req))
 	}
+	ctx = r.withPrefixBlocks(ctx, req)
 	chain, source, chains := r.chainFor(req.Model, ov)
 	switch {
 	case ov.Sort != "":

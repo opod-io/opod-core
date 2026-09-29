@@ -36,6 +36,7 @@ type Env struct {
 	EngineFlags   string `env:"OPOD_ENGINE_FLAGS" side:"worker" doc:"JSON map of engine flags from the plan (tp, max_model_len, ctx, ngl, …)"`
 	Adapters      string `env:"OPOD_ADAPTERS" side:"worker" doc:"JSON list of LoRA adapters [{name, source, rank}] served as <model>:<name>"`
 	RejectBearer  bool   `env:"OPOD_REJECT_BEARER" side:"worker" doc:"1 = the worker's API accepts HMAC only, never a bearer token"`
+	KVEvents      bool   `env:"OPOD_KV_EVENTS" side:"worker" doc:"1 = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds"`
 	SleepMode     bool   `env:"OPOD_SLEEP_MODE" side:"worker" doc:"1 = vLLM starts with sleep mode on (the sleep autoscale tier)"`
 	WorkerRole    string `env:"OPOD_WORKER_ROLE" side:"worker" doc:"prefill | decode for disaggregated serving; unset = a whole worker"`
 	PlanRevision  string `env:"OPOD_PLAN_REVISION" side:"worker" doc:"the plan revision this worker process was started for; the leader routes a share of traffic per revision (R15.17)"`

@@ -53,8 +53,9 @@ type Server struct {
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
 	load      loadStats
-	nodeLoad  sync.Map // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
-	gangLoad  sync.Map // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
+	prefix    *prefixIndex // the blocks each worker's engine holds (prefixindex.go, feature "kv_block_events")
+	nodeLoad  sync.Map     // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
+	gangLoad  sync.Map     // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
 	// gateways is the leader's view of its front doors (T11.1, ADR-063): who
 	// has pushed usage lately, and the row ids already recorded so a retry does
 	// not bill twice.
@@ -190,6 +191,9 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
 	// policy snapshot switches the weights on.
 	routed.SetLoadSource(s.loadSignal)
+	// The blocks each worker's engine holds (prefixindex.go): wired always,
+	// scored only when the policy gives the weight.
+	s.prefix = newPrefixIndex()
 	// A worker's own last word on its engine (T11.2): a pod being terminated
 	// heartbeats through its grace period with its last good report, and a
 	// request routed into that dead engine is a 502 the caller cannot act on.

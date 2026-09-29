@@ -29,6 +29,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/internal/kvevents"
+
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/fetch"
@@ -57,10 +60,15 @@ type Server struct {
 	EngineFlags  EngineFlags // OPOD_ENGINE_FLAGS, parsed (ParseEngineFlags)
 	Adapters     []Adapter   // OPOD_ADAPTERS, parsed (ParseAdapters); AdaptersErr says why a value was ignored
 	AdaptersErr  error
-	RejectBearer bool   // OPOD_REJECT_BEARER: HMAC only on this API
-	SleepMode    bool   // OPOD_SLEEP_MODE: vLLM starts with sleep mode on
-	HFToken      string // HF_TOKEN for the worker's own pulls
-	HFEndpoint   string // HF_ENDPOINT ("" = the public Hub)
+	RejectBearer bool // OPOD_REJECT_BEARER: HMAC only on this API
+	SleepMode    bool // OPOD_SLEEP_MODE: vLLM starts with sleep mode on
+	// KVEvents (OPOD_KV_EVENTS): vLLM publishes its prefix-cache events and
+	// the worker translates them into block hashes for its heartbeat. Blocks
+	// is where they accumulate; nil = the feature is off.
+	KVEvents   bool
+	Blocks     *kvevents.Translator
+	HFToken    string // HF_TOKEN for the worker's own pulls
+	HFEndpoint string // HF_ENDPOINT ("" = the public Hub)
 	// Log is where the worker's own load (SelfLoad) reports; nil = slog's
 	// default. The HTTP surface answers its caller and needs none.
 	Log *slog.Logger
@@ -96,11 +104,12 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
-	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))      // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
-	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))       // leader-side placement: pull+load a model on this worker
-	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload))   // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
-	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))     // sleep tier (build item 13): engine drops its GPU working set, process stays
-	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume))   // wake it (sub-second on vLLM)
+	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))    // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
+	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))     // leader-side placement: pull+load a model on this worker
+	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload)) // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
+	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))   // sleep tier (build item 13): engine drops its GPU working set, process stays
+	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume))
+	mux.HandleFunc(nodeapi.PathTokenize, s.auth(s.tokenize))    // the leader has no tokenizer (feature "kv_block_events")   // wake it (sub-second on vLLM)
 	mux.HandleFunc("/v1/adapters", s.auth(s.adaptersList))      // LoRA variants held (adapters.go, feature lora)
 	mux.HandleFunc("/v1/adapters/load", s.auth(s.adaptersLoad)) // load one into the engine, served as <base>:<name>
 	mux.HandleFunc("/v1/adapters/unload", s.auth(s.adaptersUnload))
@@ -557,6 +566,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 	if s.sleepModeArgs() != "" {
 		env["VLLM_SERVER_DEV_MODE"] = "1" // exposes /sleep, /wake_up, /is_sleeping
 	}
+	s.startKVEvents()
 	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{
 		ID:          "vllm-serve",
 		Command:     "/bin/sh",
@@ -637,7 +647,7 @@ func (s *Server) vllmCmdline(model, servedName, host string, port int) (string, 
 		"%s "+
 			"exec vllm serve '%s' %s --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
-		flagOverrides, source, revArgs, servedName, model, host, port, flagArgs, s.sleepModeArgs())
+		flagOverrides, source, revArgs, servedName, model, host, port, flagArgs, strings.TrimSpace(s.sleepModeArgs()+" "+s.kvEventsArgs()))
 	return cmdline, nil
 }
 

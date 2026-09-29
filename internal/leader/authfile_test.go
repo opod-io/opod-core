@@ -2,6 +2,7 @@ package leader
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -77,9 +78,13 @@ func TestAuthSnapshotSync(t *testing.T) {
 	}
 
 	// second snapshot: limits change, key b leaves, requireKeys off
-	snap2 := &AuthSnapshot{Revision: "r2", RequireKeys: false, Keys: []SnapshotKey{
-		{ID: "a", Name: "team-a", Hash: auth.Hash(plainA), RPMLimit: 20, TPMLimit: 5}, // the snapshot may still carry limits; core ignores them (ADR-077 §5)
-	}}
+	// An older manager's snapshot may still carry per-key limits; they are not
+	// fields any more (ADR-077 §5), so they are decoded as JSON decodes any
+	// unknown key — ignored — and the key is what it always was.
+	snap2 := &AuthSnapshot{}
+	if err := json.Unmarshal([]byte(`{"revision":"r2","requireKeys":false,"keys":[{"id":"a","name":"team-a","hash":"`+auth.Hash(plainA)+`","rpmLimit":20,"tpmLimit":5,"quotaDailyTokens":1000,"allowedModels":["x"]}]}`), snap2); err != nil {
+		t.Fatal(err)
+	}
 	if err := srv.applyAuthSnapshot(ctx, snap2); err != nil {
 		t.Fatal(err)
 	}

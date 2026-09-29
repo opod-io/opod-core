@@ -59,6 +59,9 @@ type HeartbeatRequest struct {
 	// counting workers that pod is capacity. nil = an older worker, or one
 	// that launched no engine of ours: no statement, never "healthy".
 	Engine *nodeapi.EngineState `json:"engine"`
+	// KVBlocks (feature "kv_block_events"): what changed in the engine's
+	// prefix cache since the previous heartbeat, as block hashes only.
+	KVBlocks *nodeapi.KVBlocks `json:"kv_blocks"`
 }
 
 // Caller is who is calling: admin keys pass every binding; a node key owns
@@ -216,6 +219,10 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 		s.nodeLoad.Store(req.ID, nodeLoadSample{EngineLoad: *req.Load, at: time.Now()})
 	}
 	if incarnation(n.BootID, req.BootID) == incarnationNew {
+		s.prefix.forget(req.ID) // a new process holds a new cache
+	}
+	s.prefix.apply(req.ID, req.KVBlocks)
+	if incarnation(n.BootID, req.BootID) == incarnationNew {
 		// The process behind the id changed between heartbeats (a container
 		// restarted in place: same pod, same address — the case no address
 		// heuristic catches). R10.1.
@@ -369,6 +376,7 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 // id and simply repopulates.
 func (s *Server) forgetNode(ctx context.Context, id string) {
 	s.nodeLoad.Delete(id)
+	s.prefix.forget(id)
 	s.nodeEngine.Delete(id)
 	s.reconcileNodes.Delete(id)
 	s.engineSilentTold.Delete(id)

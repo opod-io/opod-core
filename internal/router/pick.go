@@ -105,9 +105,16 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		score     float64
 	}
 	rank := make(map[string]ranked, len(workers))
+	warm := false // some candidate holds blocks of this request's prefix
 	for _, w := range workers {
 		sat, sc := r.loadRank(w.NodeID)
-		rank[w.NodeID] = ranked{sat, sc}
+		// Blocks the worker's engine actually holds for this prompt
+		// (prefixblocks.go): a warm cache outweighs a little load.
+		credit, blocks := r.blockCredit(ctx, w.NodeID)
+		if blocks > 0 {
+			warm = true
+		}
+		rank[w.NodeID] = ranked{sat, sc - credit}
 	}
 	sort.SliceStable(workers, func(i, j int) bool {
 		a, b := rank[workers[i].NodeID], rank[workers[j].NodeID]
@@ -121,7 +128,10 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// 3b. Prefix affinity: the worker that last served this prompt prefix
 	// still holds it in its prefix cache — prefer it unless it is saturated
 	// (a cache hit is not worth a queue).
-	if pin := r.prefixPick(ctx, model); pin != "" && !rank[pin].saturated {
+	// When the block index found the prefix warm somewhere, the score above
+	// already decided from what the engines hold; the pin is a guess and is
+	// consulted only when nobody reports holding anything.
+	if pin := r.prefixPick(ctx, model); pin != "" && !rank[pin].saturated && !warm {
 		workers = preferNode(workers, pin)
 	}
 

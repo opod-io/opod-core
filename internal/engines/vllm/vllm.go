@@ -15,6 +15,7 @@
 package vllm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -162,3 +163,44 @@ func (v *Driver) Sleeping(ctx context.Context) (bool, error) {
 
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)
+
+// Tokenize asks vLLM for the prompt's token ids (POST /tokenize), the chat
+// template applied with the generation prompt — the ids the model is fed, and
+// so the ids its prefix cache is keyed by.
+func (v *Driver) Tokenize(ctx context.Context, model string, messages []engines.Message, prompt string, limit int) ([]int, error) {
+	body := map[string]any{"model": model}
+	if len(messages) > 0 {
+		msgs := make([]map[string]string, 0, len(messages))
+		for _, m := range messages {
+			msgs = append(msgs, map[string]string{"role": m.Role, "content": m.Content})
+		}
+		body["messages"] = msgs
+		body["add_generation_prompt"] = true
+	} else {
+		body["prompt"] = prompt
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.BaseURL+"/tokenize", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := v.HTTP.Do(req)
+	if err != nil {
+		return nil, engines.Unreachable(name, v.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, engines.Upstream(name, "POST /tokenize", resp.StatusCode, nil)
+	}
+	var out struct {
+		Tokens []int `json:"tokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(out.Tokens) > limit {
+		out.Tokens = out.Tokens[:limit]
+	}
+	return out.Tokens, nil
+}

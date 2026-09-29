@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/opod-io/opod/internal/kvevents"
+
 	"github.com/opod-io/opod/internal/agent"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
@@ -189,7 +191,14 @@ func cmdJoin(args []string) {
 	if err != nil {
 		die("%v", err)
 	}
+	// Prefix-cache block events (feature "kv_block_events"): one translator,
+	// fed by the server's subscriber and drained by the agent's heartbeat.
+	var blocks *kvevents.Translator
+	if env.KVEvents {
+		blocks = kvevents.NewTranslator()
+	}
 	a := &agent.Agent{
+		Blocks:            blocks,
 		NodeID:            nodeID,
 		LeaderURL:         leader,
 		Token:             token,
@@ -237,6 +246,8 @@ func cmdJoin(args []string) {
 		AdaptersErr:  adaptersErr,
 		RejectBearer: env.RejectBearer,
 		SleepMode:    env.SleepMode,
+		KVEvents:     env.KVEvents,
+		Blocks:       blocks,
 		HFToken:      env.HFToken,
 		HFEndpoint:   env.HFEndpoint,
 		// R15.16: the version this worker serves, pinned by the manager.
