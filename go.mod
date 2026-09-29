@@ -68,8 +68,3 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
-
-// Until opod-sdk v0.3.0 is tagged: the prefix-cache block wire (kv_block_events)
-// is committed to the SDK and not yet on the module proxy. push-all.sh takes
-// this out once the tag lands — core is public and must build without it.
-replace github.com/opod-io/opod-sdk => ../opod-sdk
