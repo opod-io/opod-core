@@ -178,7 +178,13 @@ jobs:
           # AMD ships rocm/vllm per GPU family (RDNA here; a CDNA fleet overrides the
           # base), Intel ships intel/vllm for XPU, and Tenstorrent ships tt-metal's own
           # server — whose tag must match the model spec's commits (images/worker-tt).
-          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab", rpc: "" }
+          # sbom_in_build: the 25-30 GB ROCm images. syft's registry scan re-pulls and
+          # unpacks the image and filled the runner's layer cache every time
+          # ("unable to populate layer cache", 2026-09-20, /mnt included), so for
+          # these two BuildKit generates the SBOM DURING the build from the layers it
+          # already has and attaches it to the pushed image; the attest step reads it
+          # back from the registry instead of scanning (S3, decided 2026-09-28).
+          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab", rpc: "", sbom_in_build: true }
           - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3f5abccbfbe38474a27635666f988b4c3c181d856e51beecc", rpc: "" }
           - { name: opod-worker-vllm-tt,         file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e@sha256:e48d532e8ea57141896af4cd2f098b406b081476a6cbb48d110c7f124873ea8f", rpc: "" }
           # SGLang is an engine core drives like any other (internal/engines/sglang,
@@ -186,7 +192,7 @@ jobs:
           # ship with the rest. One node per endpoint until a multi-node path exists:
           # the planner refuses a gang on it, so the image promises nothing more.
           - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.2-cu126@sha256:fce5585fa8da175224ead70727a4660f719e34adf0638aebf6dd27930f03e1b6", rpc: "" }
-          - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58", rpc: "" }
+          - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58", rpc: "", sbom_in_build: true }
     steps:
       - name: Free disk space (the vLLM, ROCm and tt-metal bases are 7-30GB)
         if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt') || contains(matrix.name, 'sglang')
@@ -229,6 +235,10 @@ jobs:
           # Registry cache: no 10 GB cap (the gha cache evicted every run → full rebuilds).
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:buildcache,mode=max
+          # The builder's own SBOM (BuildKit's syft scanner over the layers it just
+          # wrote) for the images too large to scan again from the registry; the
+          # image is pushed as an index with an attestation manifest beside it.
+          sbom: ${{ matrix.sbom_in_build == true }}
       # ── supply chain (ARCHITECTURE §7, TASKS M19 S3) ───────────────────────
       # Everything below addresses the index digest, never a tag: a tag can be
       # moved, a digest cannot, and the digest is what the chart and ADR-017
@@ -266,12 +276,14 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$ref" >/dev/null
           echo "signed + verified $ref"
       - name: room for the SBOM scan
+        if: matrix.sbom_in_build != true
         # syft unpacks the image to read it. The ROCm vLLM and SGLang images are 25-30 GB: the docker
         # daemon had no room left to pull them again and the registry fallback filled /tmp (2026-09-19,
         # "no space left on device" for both). /mnt is the runner's large disk, and it is where the
         # registry scan below unpacks; what keeps the daemon out of it is registry-username there.
         run: sudo mkdir -p /mnt/syft-tmp && sudo chown "$USER" /mnt/syft-tmp
       - uses: anchore/sbom-action@v0
+        if: matrix.sbom_in_build != true
         # A package-level SBOM: every package, version and licence, without a record
         # for each file a package owns. With them the vLLM image's document is 36 MB
         # (41,060 files, 28 MB of it) and the public transparency log rejects the
@@ -295,6 +307,20 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: true
+      - name: read the builder's SBOM back from the registry (the images too large to scan again)
+        if: matrix.sbom_in_build == true
+        # `sbom: true` above made BuildKit attach an SPDX attestation to the pushed
+        # image; imagetools reads it without pulling a layer. Files are dropped and
+        # only package-to-package relationships kept, the same package-level document
+        # the syft step produces, because the transparency log rejects a document
+        # over ~16 MB and the ROCm images own hundreds of thousands of files.
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+          docker buildx imagetools inspect "$ref" --format '{{ json .SBOM.SPDX }}' > sbom.full.spdx.json
+          [ "$(head -c 4 sbom.full.spdx.json)" != "null" ] || { echo "::error::the builder attached no SBOM to $ref — sbom: true did not take"; exit 1; }
+          jq 'del(.files) | .relationships |= map(select((.relatedSpdxElement | startswith("SPDXRef-Package")) or (.relatedSpdxElement | startswith("SPDXRef-DOCUMENT")))) | .packages |= map(del(.hasFiles))' sbom.full.spdx.json > sbom.spdx.json
+          echo "packages: $(jq '.packages | length' sbom.spdx.json) · $(du -h sbom.spdx.json | cut -f1) (from $(du -h sbom.full.spdx.json | cut -f1) with files)"
       - name: attach the SBOM to the image
         # The worker images are mostly someone else's base (vLLM, llama.cpp,
         # ROCm), so the SBOM is the only place a customer can see what they are
