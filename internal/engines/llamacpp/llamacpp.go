@@ -39,7 +39,10 @@ package llamacpp
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -64,6 +67,9 @@ func init() {
 type Driver struct {
 	openaicompat.Client
 	genRate engines.RateTracker // tokens_predicted_total → tokens/s between Load samples
+	// slots is /props total_slots, read once (totalSlots); slotsMu guards it.
+	slotsMu sync.Mutex
+	slots   int
 }
 
 // New returns a driver for a llama-server at endpoint.
@@ -115,9 +121,20 @@ func (l *Driver) Unload(ctx context.Context, modelID string) error {
 var _ engines.Engine = (*Driver)(nil)
 
 // Load scrapes llama-server's /metrics (needs `--metrics`, which the worker
-// passes): KV-cache usage, deferred requests (every slot busy) and predicted
+// passes): KV-cache pressure, deferred requests (every slot busy) and predicted
 // tokens/s since the last sample. llama-server reports no prefix-cache hit
 // rate, so that stays 0.
+//
+// KV pressure is SLOT OCCUPANCY on this engine (PLAN T6.35, decided
+// 2026-09-28): `requests_processing ÷ total_slots`. The image we ship emits
+// no `kv_cache_usage_ratio` — read from inside a serving worker, its /metrics
+// carries fifteen series and that is not one of them, so the field was 0 for
+// every llama.cpp worker for ever and the autoscaler's KV trigger could not
+// fire. Each slot owns a fixed partition of the context the server was
+// started with (`-c` is the total, `-np` divides it), so a busy slot IS a full
+// partition: with the context pinned, occupancy is KV occupancy exactly. The
+// ratio is still read first when a build emits it. The slot count comes from
+// /props (`total_slots`), read once and kept.
 func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.BaseURL+"/metrics", nil)
 	if err != nil {
@@ -136,6 +153,10 @@ func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	ld := engines.EngineLoad{SampledAt: now.Unix()}
 	if kv, ok := engines.First(m, "llamacpp:kv_cache_usage_ratio"); ok {
 		ld.KVUsedPct = kv * 100
+	} else if busy, ok := engines.First(m, "llamacpp:requests_processing"); ok {
+		if slots := l.totalSlots(ctx); slots > 0 {
+			ld.KVUsedPct = min(100, busy/float64(slots)*100)
+		}
 	}
 	if q, ok := engines.First(m, "llamacpp:requests_deferred"); ok {
 		ld.QueueDepth = int64(q)
@@ -144,6 +165,36 @@ func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 		ld.TokensPerSec = l.genRate.Rate(gen, now)
 	}
 	return ld, nil
+}
+
+// totalSlots is the server's slot count from /props, read once: it is fixed
+// for the process's life (`-np`). 0 when the server does not say.
+func (l *Driver) totalSlots(ctx context.Context) int {
+	l.slotsMu.Lock()
+	defer l.slotsMu.Unlock()
+	if l.slots > 0 {
+		return l.slots
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.BaseURL+"/props", nil)
+	if err != nil {
+		return 0
+	}
+	resp, err := l.HTTP.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	var props struct {
+		TotalSlots int `json:"total_slots"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&props) != nil {
+		return 0
+	}
+	l.slots = props.TotalSlots
+	return l.slots
 }
 
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.

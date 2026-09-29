@@ -40,7 +40,8 @@ type Env struct {
 	WorkerRole    string `env:"OPOD_WORKER_ROLE" side:"worker" doc:"prefill | decode for disaggregated serving; unset = a whole worker"`
 	PlanRevision  string `env:"OPOD_PLAN_REVISION" side:"worker" doc:"the plan revision this worker process was started for; the leader routes a share of traffic per revision (R15.17)"`
 	AdvertiseAddr string `env:"OPOD_ADVERTISE_ADDR" side:"worker" doc:"the host:port the leader should dial (overlay / multi-NIC hosts)"`
-	NodeID        string `env:"OPOD_NODE_ID" side:"worker" doc:"a stable node id across restarts (else node.yaml, else random)"`
+	NodeID        string `env:"OPOD_NODE_ID" side:"worker" doc:"a stable node id across restarts (else node.yaml, else POD_NAME, else random)"`
+	PodName       string `env:"POD_NAME" side:"worker" doc:"the pod's name, injected by any Kubernetes manifest; a worker with no OPOD_NODE_ID and no node.yaml derives its id from it (n_<pod name>) rather than minting a random one per restart"`
 	LeaderCA      string `env:"OPOD_LEADER_CA" side:"worker" doc:"PEM certificate the worker trusts for a TLS leader (exactly that one)"`
 	NodeCert      string `env:"OPOD_NODE_CERT" side:"worker" doc:"PEM client certificate this worker presents to its leader; its SPIFFE SAN spiffe://<domain>/opod/node/<id> IS the worker's identity (R9.6). Needs OPOD_NODE_KEY"`
 	NodeKey       string `env:"OPOD_NODE_KEY" side:"worker" doc:"the private key for OPOD_NODE_CERT"`

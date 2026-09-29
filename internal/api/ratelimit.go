@@ -312,7 +312,7 @@ func RateLimitMiddlewareShared(buckets *BucketStore, share ShareSource) func(htt
 			}
 			body, r, err := requestBody(r) // one read, shared with the chain (body.go)
 			if err != nil {
-				writeJSONErr(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
+				BodyReadError(w, err)
 				return
 			}
 

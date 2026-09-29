@@ -3,11 +3,27 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 )
 
 type bodyKey struct{}
+
+// BodyReadError answers a failed body read the way the surface promises: a
+// body over its route's cap is 413 `request_too_large` naming the cap, and
+// anything else is 400 `invalid_request`. OpenAI-shaped, like every other
+// error here (PLAN T15.3).
+func BodyReadError(w http.ResponseWriter, err error) {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "request_too_large",
+			fmt.Sprintf("request body exceeds this route's limit of %d bytes", tooBig.Limit))
+		return
+	}
+	writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
+}
 
 // bufferedBody is a request body read once, shared by every middleware and
 // the handler behind it through the request context.

@@ -153,17 +153,14 @@ func cmdJoin(args []string) {
 	}
 	// Keep a STABLE identity across container recreates/restarts so we don't
 	// orphan a "stale · no heartbeat" registration on the leader every time.
-	// Precedence: OPOD_NODE_ID env (deterministic — Fleet sets one per machine) >
-	// a persisted node.yaml from a prior run > a fresh random id.
-	nodeID := generateNodeID()
-	if v := strings.TrimSpace(env.NodeID); v != "" {
-		nodeID = v
-	} else if b, err := os.ReadFile(filepath.Join(cfg.DataDir, "node.yaml")); err == nil {
-		var prev NodeConfig
-		if yaml.Unmarshal(b, &prev) == nil && prev.NodeID != "" {
-			nodeID = prev.NodeID
-		}
-	}
+	// Precedence: OPOD_NODE_ID env (deterministic — a manager sets one per
+	// slot) > a persisted node.yaml from a prior run > the pod's name (POD_NAME,
+	// which any Kubernetes manifest can inject and which is stable for a
+	// StatefulSet-like slot and at worst per pod) > a fresh random id. The
+	// POD_NAME rung exists because in a pod DataDir is not a volume, so the
+	// node.yaml rung never fires and a random id per restart is what a
+	// hand-rolled or third-party worker would otherwise get (PLAN T15.15).
+	nodeID := nodeIDFrom(env.NodeID, readPersistedNodeID(filepath.Join(cfg.DataDir, "node.yaml")), env.PodName)
 
 	// Persist node config so a subsequent `opod up` enters worker mode.
 	nodeCfg := NodeConfig{
@@ -351,6 +348,34 @@ func generateNodeID() string {
 	buf := make([]byte, 6)
 	_, _ = rand.Read(buf)
 	return "n_" + base64.RawURLEncoding.EncodeToString(buf)
+}
+
+// nodeIDFrom is the identity precedence: an explicit id, a persisted one, the
+// pod's name, and only then a random one.
+func nodeIDFrom(explicit, persisted, podName string) string {
+	if v := strings.TrimSpace(explicit); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(persisted); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(podName); v != "" {
+		return "n_" + v
+	}
+	return generateNodeID()
+}
+
+// readPersistedNodeID is the node id a prior run wrote, or "".
+func readPersistedNodeID(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var prev NodeConfig
+	if yaml.Unmarshal(b, &prev) != nil {
+		return ""
+	}
+	return prev.NodeID
 }
 
 // NodeConfig is the per-worker config saved at ~/.opod/node.yaml.

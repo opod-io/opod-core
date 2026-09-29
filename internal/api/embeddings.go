@@ -59,7 +59,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	// per request, and a deterministic cache key is built from the same bytes.
 	body, r, err := requestBody(r)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
+		BodyReadError(w, err)
 		return
 	}
 

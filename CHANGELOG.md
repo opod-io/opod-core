@@ -5,6 +5,19 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-28 (evening) — per-route body caps, a stable worker identity, and KV pressure llama.cpp can actually report
+
+- **`/v1` request bodies are capped per route**: 32 MiB for `/chat/completions` (`max_body_bytes` overrides that
+  one, as before), 8 MiB for `/embeddings`, 1 MiB for anything else. A body over its cap answers
+  `413 request_too_large` with an OpenAI-shaped body; it was one flat 32 MiB cap answering 400.
+- **A worker with no `OPOD_NODE_ID` and no persisted `node.yaml` derives its id from `POD_NAME`** (`n_<pod name>`)
+  before minting a random one, so a worker in a pod restarts as the same node instead of registering a new one
+  every time.
+- **llama.cpp KV pressure is slot occupancy**: the shipped llama-server emits no `kv_cache_usage_ratio`, so the
+  field read 0 for ever and the autoscaler's KV trigger could never fire. It is now `requests_processing ÷
+  total_slots` (from `/props`, read once) — exact once the context is pinned, because each slot owns a fixed
+  partition of it. A build that emits the ratio is still read first.
+
 ## 2026-09-28 — the request path stops copying itself, and a removed node leaves nothing behind
 
 Every item here was measured before it was changed; none changes the wire, and the one that changes bytes

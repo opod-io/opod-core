@@ -3,8 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 
@@ -67,16 +65,10 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 }
 
 // writeBodyReadError maps a request-body read failure to the matching
-// JSON error: 413 when the limitRequestBody cap tripped, 400 otherwise.
-func writeBodyReadError(w http.ResponseWriter, err error) {
-	var mbe *http.MaxBytesError
-	if errors.As(err, &mbe) {
-		writeJSONError(w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("request body exceeds the %d-byte limit", mbe.Limit))
-		return
-	}
-	writeJSONError(w, http.StatusBadRequest, "read body: "+err.Error())
-}
+// OpenAI-shaped error: 413 `request_too_large` when the route's cap tripped,
+// 400 otherwise — the same writer the handlers use (api.BodyReadError), so
+// the surface answers one way whichever reader hit the cap first (T15.3).
+func writeBodyReadError(w http.ResponseWriter, err error) { api.BodyReadError(w, err) }
 
 func peekModel(body []byte) string {
 	var m struct {

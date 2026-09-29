@@ -46,7 +46,9 @@ type Config struct {
 	DataDir     string `yaml:"data_dir"`
 	LogLevel    string `yaml:"log_level"`
 	CatalogDir  string `yaml:"catalog_dir"`
-	// MaxBodyBytes caps the request body size on the /v1/* API surface.
+	// MaxBodyBytes caps the request body size of /v1/chat/completions (the
+	// route that carries inline images); embeddings and every other /v1 route
+	// have fixed, smaller caps (controlplane.limitRequestBody).
 	// 0 (default) uses the server's built-in 32 MiB ceiling. Env
 	// override: OPOD_MAX_BODY_BYTES.
 	MaxBodyBytes int64 `yaml:"max_body_bytes"`

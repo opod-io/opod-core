@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -589,21 +590,35 @@ func realRemoteAddr(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// defaultMaxBodyBytes caps /v1/* request bodies at 32 MiB — generous
-// for chat/embedding payloads (vision requests inline base64 images)
-// while keeping a single request from buffering unbounded memory.
-// Override via `max_body_bytes` in config.yaml / OPOD_MAX_BODY_BYTES.
-const defaultMaxBodyBytes = 32 << 20
+// Request-body caps on /v1, per route (PLAN T15.3, decided 2026-09-28):
+// chat carries inline base64 images, so it gets the generous cap;
+// embeddings carry batches of text and get a quarter of it; anything else
+// on the surface takes a body no larger than a megabyte. A body over its cap
+// answers 413 with an OpenAI-shaped error (api.BodyReadError) and the handler
+// is never reached. `max_body_bytes` / OPOD_MAX_BODY_BYTES overrides the CHAT
+// cap only, as it always did; the other two are fixed.
+const (
+	defaultMaxBodyBytes    int64 = 32 << 20 // chat: vision requests inline base64 images
+	embeddingsMaxBodyBytes int64 = 8 << 20
+	otherMaxBodyBytes      int64 = 1 << 20
+)
 
-// limitRequestBody wraps every /v1 request body in http.MaxBytesReader
-// so downstream io.ReadAll calls fail fast at the cap instead of
+// limitRequestBody wraps every /v1 request body in http.MaxBytesReader with
+// the route's cap, so downstream reads fail fast at the cap instead of
 // buffering whatever a client streams at us.
 func (s *Server) limitRequestBody(next http.Handler) http.Handler {
-	limit := s.cfg.MaxBodyBytes
-	if limit <= 0 {
-		limit = defaultMaxBodyBytes
+	chat := s.cfg.MaxBodyBytes
+	if chat <= 0 {
+		chat = defaultMaxBodyBytes
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := otherMaxBodyBytes
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
+			limit = chat
+		case strings.HasSuffix(r.URL.Path, "/embeddings"):
+			limit = embeddingsMaxBodyBytes
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r)
 	})

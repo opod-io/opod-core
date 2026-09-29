@@ -45,7 +45,7 @@ func ModelAllowMiddleware(st store.Store) func(http.Handler) http.Handler {
 			// One read, shared with the rest of the chain (body.go).
 			body, r, err := requestBody(r)
 			if err != nil {
-				writeJSONErr(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
+				BodyReadError(w, err)
 				return
 			}
 
