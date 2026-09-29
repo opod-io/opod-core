@@ -125,3 +125,34 @@ func TestResolveBlocksTokenizesOncePerPrefix(t *testing.T) {
 		t.Fatalf("a new prefix must be tokenized: %d calls", n)
 	}
 }
+
+// A replaced worker is a new node id and the old one only stops heartbeating:
+// its blocks leave the index when /loadz is read, and it is never the worker a
+// tokenize is sent to.
+func TestPrefixIndexForgetsWorkersThatAreGone(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Router.HeartbeatMaxAgeSeconds = 30
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := NewServer(cfg, st, &deadEngine{&stubLeaderEngine{}}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	for id, beat := range map[string]time.Time{"old": time.Now().Add(-10 * time.Minute), "new": time.Now()} {
+		if err := st.Nodes().Upsert(ctx, store.Node{ID: id, Hostname: id, State: "ready", Address: "127.0.0.1:1", WorkerToken: "t", LastHeartbeat: beat}); err != nil {
+			t.Fatal(err)
+		}
+		srv.prefix.apply(id, &nodeapi.KVBlocks{Seq: 1, BlockSize: 16, Stored: []string{"a", "b"}})
+	}
+	srv.prefix.apply("never-registered", &nodeapi.KVBlocks{Seq: 1, BlockSize: 16, Stored: []string{"a"}})
+	srv.prunePrefixIndex(ctx)
+	st8 := srv.prefix.state()
+	if st8 == nil || st8.WorkersReporting != 1 || st8.Blocks != 2 {
+		t.Fatalf("state %+v, want the one live worker and its two blocks", st8)
+	}
+	if id, _ := srv.liveReporter(ctx); id != "new" {
+		t.Fatalf("the reporter to ask is %q, want the live one", id)
+	}
+}

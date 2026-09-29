@@ -146,6 +146,30 @@ func (p *prefixIndex) state() *adminapi.PrefixIndex {
 	return out
 }
 
+// prune drops the sets of workers that are gone. A replaced pod is a NEW node
+// id (n_<pod name>), and the old one simply stops heartbeating — nothing ever
+// calls forget for it, so without this its blocks stayed in the index for the
+// life of the leader and /loadz counted workers that no longer existed
+// (measured: two workers restarted, four reported).
+func (s *Server) prunePrefixIndex(ctx context.Context) {
+	s.prefix.mu.RLock()
+	ids := make([]string, 0, len(s.prefix.workers))
+	for id := range s.prefix.workers {
+		ids = append(ids, id)
+	}
+	s.prefix.mu.RUnlock()
+	maxAge, now := s.heartbeatMaxAge(), time.Now()
+	for _, id := range ids {
+		n, err := s.store.Nodes().Get(ctx, id)
+		if err != nil {
+			continue // unreadable is not gone
+		}
+		if n == nil || !n.Alive(maxAge, now) {
+			s.prefix.forget(id)
+		}
+	}
+}
+
 // reporter is a worker that reports blocks, with the block size it uses, or "".
 func (p *prefixIndex) reporter() (string, int) {
 	p.mu.RLock()
@@ -158,13 +182,29 @@ func (p *prefixIndex) reporter() (string, int) {
 	return "", 0
 }
 
+// liveReporter is a reporting worker that is alive to be asked, pruning as it
+// looks: a tokenize sent to a worker that is gone costs the whole budget.
+func (s *Server) liveReporter(ctx context.Context) (string, int) {
+	for i := 0; i < 4; i++ {
+		id, size := s.prefix.reporter()
+		if id == "" {
+			return "", 0
+		}
+		if n, err := s.store.Nodes().Get(ctx, id); err == nil && n != nil && n.Alive(s.heartbeatMaxAge(), time.Now()) {
+			return id, size
+		}
+		s.prefix.forget(id)
+	}
+	return "", 0
+}
+
 // resolveBlocks is the router's BlockResolver: the request's prompt as a chain
 // of block hashes. The leader has no tokenizer, so it asks a reporting
 // worker's engine (nodeapi.PathTokenize) — once per distinct prefix, then from
 // the cache — inside a budget: a tokenize that is slow costs the request more
 // than a cold cache would.
 func (s *Server) resolveBlocks(ctx context.Context, req engines.ChatRequest) []string {
-	nodeID, blockSize := s.prefix.reporter()
+	nodeID, blockSize := s.liveReporter(ctx)
 	if nodeID == "" {
 		return nil
 	}

@@ -214,6 +214,7 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// Whether the block scorer has anything to score with (feature
 	// "kv_block_events"): absent when no worker reports cache events, so an
 	// operator who set the weight can see that the sticky pin is still deciding.
+	s.prunePrefixIndex(r.Context())
 	out.PrefixIndex = s.prefix.state()
 	writeJSON(w, http.StatusOK, out)
 }
