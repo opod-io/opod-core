@@ -463,10 +463,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     name                TEXT NOT NULL,
     scope               TEXT NOT NULL,
     user_id             TEXT NOT NULL DEFAULT '',
-    quota_daily_tokens  INTEGER NOT NULL DEFAULT 0,
-    rpm_limit           INTEGER NOT NULL DEFAULT 0,
-    tpm_limit           INTEGER NOT NULL DEFAULT 0,
-    allowed_models      TEXT,
     expires_at          INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL,
     revoked             INTEGER NOT NULL DEFAULT 0
@@ -581,7 +577,10 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	return runColumnMigrations(ctx, db)
+	if err := runColumnMigrations(ctx, db); err != nil {
+		return err
+	}
+	return runColumnDrops(ctx, db)
 }
 
 // runColumnMigrations brings older databases up to the current column set.
@@ -598,12 +597,6 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		table, column, ddl string
 	}
 	migrations := []colMigration{
-		// v0.8 — per-key model allowlist. NULL preserves the existing
-		// "any model" behavior for keys created before this column.
-		{table: "api_keys", column: "allowed_models", ddl: `ALTER TABLE api_keys ADD COLUMN allowed_models TEXT`},
-		// v0.8 — per-key RPM / TPM ceilings. 0 = unlimited.
-		{table: "api_keys", column: "rpm_limit", ddl: `ALTER TABLE api_keys ADD COLUMN rpm_limit INTEGER NOT NULL DEFAULT 0`},
-		{table: "api_keys", column: "tpm_limit", ddl: `ALTER TABLE api_keys ADD COLUMN tpm_limit INTEGER NOT NULL DEFAULT 0`},
 		// v0.8 — per-call $ cost. 0 default — pre-migration rows have no
 		// cost recorded.
 		{table: "usage", column: "cost_usd", ddl: `ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`},
@@ -639,6 +632,38 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		}
 		if _, err := db.ExecContext(ctx, m.ddl); err != nil {
 			return fmt.Errorf("migrate %s.%s: %w", m.table, m.column, err)
+		}
+	}
+	return nil
+}
+
+// droppedColumns are columns a release removed. Each is dropped from a
+// database that still carries it, once; a fresh database never has it. The
+// api_keys four carried a key's policy — the per-key rate limits, daily
+// token quota and model allowlist — which left the leader on 2026-09-28: a
+// key is an identity, and per-caller limits belong to the application layer
+// in front of the endpoint. A value left in one of them would be a limit an
+// operator believes is enforced and is not.
+var droppedColumns = []struct{ table, column string }{
+	{"api_keys", "quota_daily_tokens"},
+	{"api_keys", "rpm_limit"},
+	{"api_keys", "tpm_limit"},
+	{"api_keys", "allowed_models"},
+}
+
+// runColumnDrops removes the columns in droppedColumns where they still exist.
+// Idempotent like the adds: the presence check is the same PRAGMA.
+func runColumnDrops(ctx context.Context, db *sql.DB) error {
+	for _, d := range droppedColumns {
+		exists, err := columnExists(ctx, db, d.table, d.column)
+		if err != nil {
+			return fmt.Errorf("check column %s.%s: %w", d.table, d.column, err)
+		}
+		if !exists {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `ALTER TABLE `+d.table+` DROP COLUMN `+d.column); err != nil {
+			return fmt.Errorf("drop column %s.%s: %w", d.table, d.column, err)
 		}
 	}
 	return nil

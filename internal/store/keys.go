@@ -13,10 +13,8 @@ import (
 type sqliteAPIKeys struct{ db *sql.DB }
 
 func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
-	// quota_daily_tokens, rpm_limit, tpm_limit and allowed_models stay in the
-	// table (defaults) and are no longer read or written: the per-key policy
-	// left core on 2026-09-28 (ADR-077 §5). Dropping the columns is a schema
-	// step for a later release; leaving them costs nothing.
+	// A key is an identity: the per-key policy columns left with the policy
+	// (droppedColumns, sqlite.go).
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO api_keys(id, hash, name, scope, user_id, expires_at, created_at, revoked)
 		 VALUES(?,?,?,?,?,?,?,?)`,

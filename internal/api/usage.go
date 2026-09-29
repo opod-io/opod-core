@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/opod-io/opod/internal/router"
@@ -103,24 +101,4 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		h.OnUsage(rec, id)
 	}
 
-}
-
-func startOfUTCDay(t time.Time) time.Time {
-	t = t.UTC()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-}
-
-func writeQuotaExceeded(w http.ResponseWriter, quota, used int64) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Retry-After", "3600")
-	w.WriteHeader(http.StatusTooManyRequests)
-	body := map[string]any{
-		"error": map[string]any{
-			"type":    "rate_limit_error",
-			"message": "Daily token quota exceeded",
-			"quota":   quota,
-			"used":    used,
-		},
-	}
-	_ = json.NewEncoder(w).Encode(body)
 }

@@ -21,7 +21,10 @@ usage stream, which is what such a layer meters from.
 - A manager's auth snapshot may still carry those fields on a key; the leader ignores them.
 - The front doors' spend snapshot (`GET /admin/v1/spend`) carries the doors and the lag bound and no per-key
   ceilings; the doors keep pushing usage and heartbeating through it.
-- The `api_keys` columns stay in the table with their defaults until a schema step drops them.
+- The `api_keys` columns that carried the policy — `quota_daily_tokens`, `rpm_limit`, `tpm_limit`,
+  `allowed_models` — are **dropped on the next open** of a store that still has them (2026-09-29, idempotent
+  like every column step; a fresh store never creates them). A value left in one would be a limit an operator
+  believes is enforced and is not.
 
 ## 2026-09-28 (evening) — per-route body caps, a stable worker identity, and KV pressure llama.cpp can actually report
 

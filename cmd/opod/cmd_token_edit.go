@@ -150,14 +150,3 @@ func parseFlexibleDate(s string) (time.Time, error) {
 	}
 	return time.Time{}, fmt.Errorf("expected YYYY-MM-DD or RFC3339, got %q", s)
 }
-
-// parseIntFlag parses a non-negative integer for a token-create flag.
-// Centralized so the error message stays consistent ("invalid --rpm",
-// not whatever strconv defaults to).
-func parseIntFlag(s, flag string) int {
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil || n < 0 {
-		die("invalid %s: %q (expected a non-negative integer)", flag, s)
-	}
-	return n
-}
