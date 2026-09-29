@@ -5,6 +5,19 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-29 — a request wakes a sleeping engine, and is served
+
+- **A request for a model whose engine sleeps resumes it and is held through the wake** (feature
+  `request_wake`). The leader used to answer `503 … waking; retry shortly` and leave the resume to whoever
+  manages the endpoint, on that manager's clock — measured on a cluster, the caller was refused and the
+  engine woke ten seconds later, which is the price of a parked pod charged for a sleep. Now the leader calls
+  the worker's `/v1/model/resume` itself, holds the request for up to 3 s, marks the placement routable on
+  the worker's own `200` rather than on its next heartbeat, and serves. One resume per worker however many
+  callers arrive together; an engine with no sleep mode (`501`) is left alone; past the budget the caller
+  gets the same `503` + `Retry-After` as before while the resume finishes for the next one. The audit stream
+  records `worker.resume` with `by: request` and the milliseconds it took. A manager still decides when an
+  engine sleeps.
+
 ## 2026-09-28 (late) — a key is an identity: per-key quotas, rate limits and allowlists leave core
 
 **Breaking, on purpose.** The daily token quota, the RPM/TPM leaky buckets and the model allowlist that a key

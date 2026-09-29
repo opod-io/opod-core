@@ -43,7 +43,11 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	// drained, lost or asleep is unavailable even while another model on this
 	// leader serves. The 503 itself is the autoscaler's wake signal (it shows
 	// up in /loadz unavailable_1m), and the message says which cause it is.
-	if reason := s.unavailable(r.Context(), model); reason != "" {
+	reason := s.unavailable(r.Context(), model)
+	if reason != "" && s.wakeForRequest(r.Context(), model) {
+		reason = "" // a sleeping engine was resumed for this request: serve it
+	}
+	if reason != "" {
 		// Policy fallback (P12-2): forward instead of 503 when the snapshot
 		// names a target — after the pre guardrail chain, so a blocked prompt
 		// is refused here and never leaves the endpoint.

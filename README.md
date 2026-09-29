@@ -369,7 +369,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Cluster
 
-- Sleep tier: a worker's engine can drop its GPU working set and keep the process (vLLM sleep mode) — `POST /v1/model/sleep|resume` on the worker, proxied by the leader as `/admin/v1/nodes/{id}/sleep|resume`; a sleeping worker is resident but not routed to until resumed
+- Sleep tier: a worker's engine can drop its GPU working set and keep the process (vLLM sleep mode) — `POST /v1/model/sleep|resume` on the worker, proxied by the leader as `/admin/v1/nodes/{id}/sleep|resume`; a sleeping worker is resident but not routed to until resumed — and a request for its model resumes it: the leader wakes the worker, holds the request through the wake (up to 3 s) and serves it (`request_wake`)
 
 - Worker unload (`worker_unload`): `POST /v1/model/unload` on a worker is the counterpart of `/v1/model/load` — the engine's unload (Ollama), or a stop of the engine process the worker launched (vLLM, SGLang, llama.cpp); idempotent, `409` while a shard part or an adapter of the model is held there, `501` when the engine cannot. The leader calls it; there is no CLI verb on it yet
 

@@ -180,31 +180,42 @@ func (s *Server) workerSleepCall(w http.ResponseWriter, r *http.Request, action 
 		writeJSONError(w, http.StatusNotFound, "unknown node "+id)
 		return
 	}
-	addr := n.Address
-	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
-		addr = "http://" + addr
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(addr, "/")+"/v1/model/"+action, nil)
-	req.Header.Set("Authorization", "Bearer "+n.WorkerToken)
-	auth.SignRequest(req, n.ID, n.WorkerToken)
-	resp, err := s.workerHTTP().Do(req)
+	code, body, err := s.callWorkerSleep(ctx, n, action)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "worker "+id+": "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusOK {
+	if code == http.StatusOK {
 		s.record("worker."+action, id, map[string]any{"node": id})
 		if action == "resume" {
 			s.router.InvalidateModel("") // placements change on the next heartbeat; drop any cached pick
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
+	w.WriteHeader(code)
 	_, _ = w.Write(body)
+}
+
+// callWorkerSleep asks one worker's agent to sleep or resume its engine and
+// returns the worker's own answer. Shared by the admin proxies and by the
+// request path's wake (wakeonrequest.go).
+func (s *Server) callWorkerSleep(ctx context.Context, n *store.Node, action string) (int, []byte, error) {
+	addr := n.Address
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		addr = "http://" + addr
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(addr, "/")+"/v1/model/"+action, nil)
+	req.Header.Set("Authorization", "Bearer "+n.WorkerToken)
+	auth.SignRequest(req, n.ID, n.WorkerToken)
+	resp, err := s.workerHTTP().Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, nil
 }
 
 func (s *Server) workerHTTP() *http.Client { return &http.Client{Timeout: 2 * time.Minute} }

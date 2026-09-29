@@ -1442,7 +1442,7 @@ Rather than restate the key list here and let it rot, read it: `curl -s -H "Auth
 localhost:8080/admin/v1/capabilities | jq .features`. Each key is commented at its declaration with what it
 promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `policy_file`,
 `events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`,
-`engine_liveness`, `worker_goodbye`, `worker_sleep`, `node_drain`, `placement_drain`, `model_move`,
+`engine_liveness`, `worker_goodbye`, `worker_sleep`, `request_wake`, `node_drain`, `placement_drain`, `model_move`,
 `shards`, `shard_head`, `shard_groups`, `shard_sglang`, `plan_heal_gangs`, `gateway_spend`, `mtls`,
 `tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.
 
@@ -1491,6 +1491,9 @@ Two mechanisms a manager drives through this surface (2026-09-07):
 - **Worker unload** (`worker_unload`): `POST /v1/model/unload` on the worker — the driver's `Unload`, or a
   supervisor stop of the engine process the worker launched; `noop` when not resident, `409` for a shard part
   or a held adapter, `501 unsupported` when neither is possible. See "Live model move" under Scheduler.
+- **Request wake** (`request_wake`, `internal/leader/wakeonrequest.go`): a request for a model whose only
+  holders sleep resumes one of them from the request path, single-flight per worker, holds the caller for up to
+  3 s and serves; past that budget the caller gets `503` + `Retry-After` and the resume finishes for the next.
 - **Sleep tier** (`worker_sleep`): `engines.Sleeper` (vLLM sleep mode) behind the worker's
   `/v1/model/sleep|resume`; the heartbeat says `sleeping`, the leader keeps those placements as
   `sleeping` (not routable), `/readyz` answers `sleeping-workers`, requests get `503 waking`; an engine with
