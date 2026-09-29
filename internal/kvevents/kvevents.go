@@ -2,6 +2,7 @@
 // hashes a worker reports on its heartbeat (feature "kv_block_events").
 //
 // vLLM publishes what its KV cache stores and evicts on a ZeroMQ PUB socket
+// that CONNECTS to the worker's SUB socket on localhost
 // (`--kv-events-config`), msgpack-encoded: a batch `[ts, [event…], rank?]`
 // whose events are tagged arrays — `["BlockStored", block_hashes,
 // parent_block_hash, token_ids, block_size, …]`, `["BlockRemoved",
@@ -287,17 +288,23 @@ func (t *Translator) Events() int64 {
 	return t.events
 }
 
-// Subscribe listens to the engine's publisher until ctx ends, feeding t. It
-// reconnects for as long as it runs: the engine starts after the worker, is
-// restarted under it, and a connection that comes back has lost events — so
-// every reconnect is a reset.
+// Subscribe receives the engine's events until ctx ends, feeding t. It binds
+// the endpoint and the engine's publisher connects to it; a socket that had to
+// be reopened has lost events, so every reopen is a reset. An engine that is
+// restarted reconnects to the same socket on its own, and its sequence starts
+// over — which Frame reads as a gap and answers the same way.
 func Subscribe(ctx context.Context, endpoint string, t *Translator, logf func(string, ...any)) {
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
+	// The engine starts minutes after the worker and is restarted under it, so
+	// "nothing listens yet" is the normal state for a while: said once, then
+	// once a minute, never every three seconds.
+	var lastSaid time.Time
 	for ctx.Err() == nil {
-		if err := listen(ctx, endpoint, t); err != nil && ctx.Err() == nil {
-			logf("kv events: %v — reconnecting", err)
+		if err := listen(ctx, endpoint, t); err != nil && ctx.Err() == nil && time.Since(lastSaid) > time.Minute {
+			logf("kv events: %v — reopening in 3 s", err)
+			lastSaid = time.Now()
 		}
 		t.mu.Lock()
 		t.reset()
@@ -313,7 +320,13 @@ func Subscribe(ctx context.Context, endpoint string, t *Translator, logf func(st
 func listen(ctx context.Context, endpoint string, t *Translator) error {
 	sub := zmq4.NewSub(ctx)
 	defer func() { _ = sub.Close() }()
-	if err := sub.Dial(endpoint); err != nil {
+	// The worker LISTENS and the engine connects. vLLM's publisher binds only
+	// when its endpoint carries a wildcard ("tcp://*:5557") and otherwise
+	// connects out — and a wildcard bind would put a stream that carries token
+	// ids on the pod's network. A plain localhost endpoint keeps it inside the
+	// pod, which means this side is the one that binds. (Found on a cluster:
+	// dialling got "connection refused" for as long as the engine ran.)
+	if err := sub.Listen(endpoint); err != nil {
 		return err
 	}
 	if err := sub.SetOption(zmq4.OptionSubscribe, Topic); err != nil {
@@ -338,7 +351,7 @@ func EngineConfig(endpoint string) string {
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
-	// The engine BINDS; "tcp://*:port" is its spelling of every interface, so
-	// the host is pinned to localhost here, not left to a default.
+	// A plain localhost endpoint: the engine CONNECTS to it (it would bind only
+	// for a wildcard), so the stream never leaves the pod.
 	return fmt.Sprintf(`{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":%q,"topic":%q}`, endpoint, Topic)
 }

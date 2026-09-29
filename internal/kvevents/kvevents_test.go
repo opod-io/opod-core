@@ -1,7 +1,13 @@
 package kvevents
 
 import (
+	"context"
+	"encoding/binary"
+	"net"
 	"testing"
+	"time"
+
+	"github.com/go-zeromq/zmq4"
 
 	"github.com/vmihailenco/msgpack/v5"
 
@@ -108,4 +114,43 @@ func TestTranslatorClearsRatherThanGuess(t *testing.T) {
 			t.Fatalf("bytes hash: %+v", got)
 		}
 	})
+}
+
+// The wire, end to end: the worker binds, a publisher CONNECTS to it as vLLM
+// does for a plain endpoint, and a frame it sends arrives as block hashes.
+func TestSubscribeBindsAndAPublisherConnects(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "tcp://" + ln.Addr().String()
+	ln.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tr := NewTranslator()
+	go Subscribe(ctx, endpoint, tr, func(string, ...any) {})
+
+	pub := zmq4.NewPub(ctx)
+	defer pub.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for pub.Dial(endpoint) != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the subscriber never bound its endpoint")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	payload := batch(t, []any{"BlockStored", []any{int64(1)}, nil, toks(0, 16), 16})
+	for seq := int64(0); time.Now().Before(deadline); seq++ {
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(seq))
+		_ = pub.Send(zmq4.NewMsgFrom([]byte(Topic), b[:], payload))
+		if got := tr.Drain(); got != nil && len(got.Stored) > 0 {
+			if got.Stored[0] != nodeapi.BlockHash("", toks(0, 16)) {
+				t.Fatalf("stored %v", got.Stored)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("no block arrived through the socket")
 }
