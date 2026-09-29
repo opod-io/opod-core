@@ -32,7 +32,7 @@ import (
 
 // tracer is package-scoped so spans created here all carry the same
 // instrumentation-library name; the global TracerProvider (set in
-// internal/controlplane/tracing.go) decides whether they're exported
+// internal/leader/tracing.go) decides whether they're exported
 // or no-op'd.
 var tracer trace.Tracer = otel.Tracer("github.com/opod-io/opod/internal/router")
 

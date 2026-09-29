@@ -116,13 +116,13 @@ One binary, six modes determined by subcommand (and by `--role` on `opod up`):
 | `opod doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
 | `opod update` / `opod upgrade` | Hits `api.github.com/repos/opod-io/opod-core/releases/latest`, downloads the matching platform tarball, verifies SHA-256 against `checksums.txt`, atomically replaces the running binary. Restarts are user-driven (`opod down && opod up`). |
 
-The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/opod/main.go`. A gateway is the leader's own code with the admin surface not mounted (`internal/controlplane/server.go` returns the router before the `/admin/v1` group) and three loops running in place of a registry it owns (`internal/gateway`).
+The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/opod/main.go`. A gateway is the leader's own code with the admin surface not mounted (`internal/leader/server.go` returns the router before the `/admin/v1` group) and three loops running in place of a registry it owns (`internal/gateway`).
 
 ### Process lifecycle
 
 1. `main()` parses subcommand + flags
 2. Loads config (`internal/config`)
-3. Initializes telemetry (`internal/controlplane/tracing.go`, `internal/metrics`)
+3. Initializes telemetry (`internal/leader/tracing.go`, `internal/metrics`)
 4. Initializes mesh (`internal/mesh`)
 5. Initializes store (`internal/store`)
 6. Wires up subsystems based on mode
@@ -247,7 +247,7 @@ Each worker runs a thin HTTP server bound to the address it reported at registra
 
 Auth is HMAC-based: the leader and agent both sign requests with the per-node worker_token, set at registration. Signature header `X-Opod-Auth: v=1,id=<nodeID>,ts=<unix>,sig=<hex>` carries an HMAC-SHA256 of `v1\n<METHOD>\n<PATH>\n<ts>` keyed by the token. Receiver re-derives and constant-time compares; ts must be within ±5 minutes (replay window). The bearer fallback (`Authorization: Bearer <worker_token>`) is still accepted for one transition release; set `OPOD_REJECT_BEARER=1` on workers to refuse it. Every caller of a worker's API signs: the leader's scheduler, the GGUF distribution, the adapter loader, and **the request path** — the router's client to a worker is the vLLM driver under `engines.NodeSigned`, which signs as the node rather than sending the token as a bearer (until 2026-09-21 it did the latter, so an HMAC-only worker answered `401` to every completion). The worker's own start-up load does not call the API at all.
 
-**A worker may instead be identified by a CLIENT CERTIFICATE on the calls it makes to its leader** (feature `mtls`): with `OPOD_NODE_CERT` and `OPOD_NODE_KEY` the agent presents a keypair, and the leader reads the node id out of the certificate's SPIFFE URI SAN — `spiffe://<trust domain>/opod/node/<id>`, the one SAN shape an identity is read from (a common name is free text an existing PKI hands out for other reasons, so reading an id from it would make any certificate that CA signed a worker identity). Three properties the token path cannot state: the certificate NAMES the node, so a worker whose certificate says one id cannot register or heartbeat as another; a REVOKED certificate is refused although the CA signed it; and a worker joins with no shared secret at all. The mode (`off` | `allow` | `require`), the CA and the revoked serials live in the auth snapshot the leader already watches (`nodeMtls`, `nodeCertCa`, `revokedCerts`), so a fleet moves one endpoint at a time and can move back without restarting a leader that is serving. `require` applies to the two join routes only — one listener serves the gateway as well, so the handshake asks for a certificate and verifies it if given (`VerifyClientCertIfGiven`) rather than demanding one from every client with a prompt, and the manager's own admin calls, which carry a token and no certificate, are untouched. HMAC stays the GA path and the only path for leader → worker. `internal/auth/nodecert.go`, `internal/controlplane/nodemtls.go`. A worker told which model it exists to serve (`OPOD_LOAD_MODEL`, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE`) waits for its engine and then loads it in-process (`agent.SelfLoad`, one path with the HTTP route's `LoadModel`). It used to be the container entrypoint POSTing the worker's own `/v1/model/load` with a bearer token — the one caller that could not sign, because a shell cannot, which made `OPOD_REJECT_BEARER=1` unusable: the worker registered and then refused its own load. See `internal/auth/hmac.go`.
+**A worker may instead be identified by a CLIENT CERTIFICATE on the calls it makes to its leader** (feature `mtls`): with `OPOD_NODE_CERT` and `OPOD_NODE_KEY` the agent presents a keypair, and the leader reads the node id out of the certificate's SPIFFE URI SAN — `spiffe://<trust domain>/opod/node/<id>`, the one SAN shape an identity is read from (a common name is free text an existing PKI hands out for other reasons, so reading an id from it would make any certificate that CA signed a worker identity). Three properties the token path cannot state: the certificate NAMES the node, so a worker whose certificate says one id cannot register or heartbeat as another; a REVOKED certificate is refused although the CA signed it; and a worker joins with no shared secret at all. The mode (`off` | `allow` | `require`), the CA and the revoked serials live in the auth snapshot the leader already watches (`nodeMtls`, `nodeCertCa`, `revokedCerts`), so a fleet moves one endpoint at a time and can move back without restarting a leader that is serving. `require` applies to the two join routes only — one listener serves the gateway as well, so the handshake asks for a certificate and verifies it if given (`VerifyClientCertIfGiven`) rather than demanding one from every client with a prompt, and the manager's own admin calls, which carry a token and no certificate, are untouched. HMAC stays the GA path and the only path for leader → worker. `internal/auth/nodecert.go`, `internal/leader/nodemtls.go`. A worker told which model it exists to serve (`OPOD_LOAD_MODEL`, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE`) waits for its engine and then loads it in-process (`agent.SelfLoad`, one path with the HTTP route's `LoadModel`). It used to be the container entrypoint POSTing the worker's own `/v1/model/load` with a bearer token — the one caller that could not sign, because a shell cannot, which made `OPOD_REJECT_BEARER=1` unusable: the worker registered and then refused its own load. See `internal/auth/hmac.go`.
 
 ### Placements (`internal/store/sqlite.go → model_placements`)
 
@@ -523,7 +523,7 @@ The rule is that a mutating operation lives in `internal/control/` and the CLI a
 | `opod connect <client>` | `control.ConnectSnippet()` + `control.Clients()` | none — the snippet is rendered locally, and the console is the control plane's (ADR-022). The `/admin/v1/connect/*` routes core briefly served left with the dashboard |
 | `opod disconnect <client>` | `control.DisconnectSnippet()` | none — a static reversal text per client |
 
-`internal/control/snippets/*.tmpl` are `go:embed`-ed templates, one per client (15 today) — adding a supported client is a one-file change plus a row in `control.clients`. Other CLI/admin pairs (model add, token create, node drain) still hold their logic in `cmd/opod` and `internal/controlplane` respectively; moving them behind `internal/control/` is unfinished work, not a claim this document makes.
+`internal/control/snippets/*.tmpl` are `go:embed`-ed templates, one per client (15 today) — adding a supported client is a one-file change plus a row in `control.clients`. Other CLI/admin pairs (model add, token create, node drain) still hold their logic in `cmd/opod` and `internal/leader` respectively; moving them behind `internal/control/` is unfinished work, not a claim this document makes.
 
 ---
 
@@ -776,7 +776,7 @@ Runs on the leader. What ships today in `internal/scheduler`:
 loaded, and a bare `opod model add <id>` installs on the machine it is run on. The leader
 does push, in exactly these cases: `opod model add <id> --node a,b` (pull + warm there),
 `model move`, `/admin/v1/models/{id}/load|unload`, the adapter routes, gang formation, and
-`planheal` re-forming a gang its mounted plan declares (`internal/controlplane/planheal.go`,
+`planheal` re-forming a gang its mounted plan declares (`internal/leader/planheal.go`,
 feature `plan_heal_gangs`). `desired_placements` is what makes a load survive a restart.
 What the leader does *not* do is decide **on its own** that capacity should change — no
 replica is added, nothing is rebalanced.
@@ -1070,7 +1070,7 @@ vLLM / MLX / llamacpp drivers all carry the same `<driver>.Chat` span shape via 
 
 `slog` to stderr in JSON. Levels: debug, info, warn, error. Request IDs propagated through context.
 
-**OTLP export (feature `otlp_logs`).** With `OPOD_OTLP_LOGS_ENDPOINT` set (a URL or bare `host:port`, the same forms as the trace endpoint) the leader also sends its own records to a collector over OTLP/HTTP, on the upstream SDK (`otel/sdk/log` + `otlploghttp`, bridged from `slog` by `contrib/bridges/otelslog`) — `internal/controlplane/logexport.go`. It is a tee, not a redirect: stderr keeps every record it had. `log_level` governs both sides, so a collector never receives what the operator did not ask for. Records carry the same `service.name=opod` / `service.version` resource as the spans. The batch queue holds 2,048 records and emit never waits on the network: a slow or absent collector costs the oldest queued records, never a request, and a bad endpoint is a startup warning rather than a failure. Only the leader process's own records are exported — what an engine writes to its stdout belongs to whatever collects the host's or the pod's logs.
+**OTLP export (feature `otlp_logs`).** With `OPOD_OTLP_LOGS_ENDPOINT` set (a URL or bare `host:port`, the same forms as the trace endpoint) the leader also sends its own records to a collector over OTLP/HTTP, on the upstream SDK (`otel/sdk/log` + `otlploghttp`, bridged from `slog` by `contrib/bridges/otelslog`) — `internal/leader/logexport.go`. It is a tee, not a redirect: stderr keeps every record it had. `log_level` governs both sides, so a collector never receives what the operator did not ask for. Records carry the same `service.name=opod` / `service.version` resource as the spans. The batch queue holds 2,048 records and emit never waits on the network: a slow or absent collector costs the oldest queued records, never a request, and a bad endpoint is a startup warning rather than a failure. Only the leader process's own records are exported — what an engine writes to its stdout belongs to whatever collects the host's or the pod's logs.
 
 ### Dashboards
 
@@ -1337,9 +1337,9 @@ Start with these files in order. Each top-of-file comment explains what the pack
 
 1. `cmd/opod/main.go` — switch statement over subcommand verbs
 2. `cmd/opod/cmd_*.go` — one file per CLI subcommand (no file over 400 lines); each parses flags, calls a package and prints: model install/search → `internal/models` (`Install`, `Search`, `PersistUserCatalogEntry`), boot steps → `internal/control/bootstrap.go`, self-update → `internal/update`
-3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
+3. `internal/leader/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
 4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
-5. `internal/controlplane/contract.go` — the frozen `/admin/v1` surface, the feature keys and the environment contract: what an external manager may rely on
+5. `internal/leader/contract.go` — the frozen `/admin/v1` surface, the feature keys and the environment contract: what an external manager may rely on
 6. `internal/config/env.go` — every environment variable a manager may set, as a table with the side that reads it
 7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule: the CLI and the admin API are two callers of one function)
 8. `internal/router/pick.go` — picks the backing engine per request (gang → local → live workers → fallback); `router.go` is the entry point and the fallback walk
@@ -1355,7 +1355,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 | Add a new inference engine | `internal/engines/<name>/` (implement `Engine`, `engines.Register` in `init`), one line in `internal/engines/all`, `enginetest.Run` conformance test |
 | Add a new model to the catalog | `opod-sdk/catalog/<id>.yaml` — see the SDK's catalog/README.md for the schema; bump the SDK and the go.mod require |
 | Add a new CLI subcommand | `cmd/opod/cmd_<name>.go` + add a case in `cmd/opod/main.go` + add the mutating function in `internal/control/` first (CLI is the source of truth) |
-| Add a new admin HTTP endpoint | `internal/controlplane/admin_<name>.go` — must delegate to `internal/control/` |
+| Add a new admin HTTP endpoint | `internal/leader/admin_<name>.go` — must delegate to `internal/control/` |
 | Add a metric | declare in `internal/metrics/metrics.go`, increment at the relevant call site |
 | Add a config field | extend the `Config` struct in `internal/config/config.go`, add a default in `Default()`, optionally read an env var in `applyEnv()`, document in [README.md → Full reference](README.md#full-reference) |
 
@@ -1395,7 +1395,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 
 1. Read `internal/api/openai.go` as the simplest example.
 2. Translate to and from the engine-agnostic `engines.ChatRequest` / `StreamEvent` — never engine-specific shapes, or every driver has to learn the new protocol.
-3. Wire the routes in `internal/controlplane/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern; the middleware chain above it is what enforces keys, allowlist, rate limits and quota).
+3. Wire the routes in `internal/leader/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern; the middleware chain above it is what enforces keys, allowlist, rate limits and quota).
 4. Document in [README.md → Supported clients](README.md#supported-clients) and in [README.md → API reference](README.md#api-reference).
 
 ### Add a new mesh backend
@@ -1420,7 +1420,7 @@ Add `catalog/<id>.yaml` in `opod-io/opod-sdk` (embedded into the binary; an oper
 
 ## Stable admin surface (v1)
 
-`internal/controlplane/contract.go` freezes the routes an external manager may rely on. As of 2026-09-26 the
+`internal/leader/contract.go` freezes the routes an external manager may rely on. As of 2026-09-26 the
 list is:
 
 - **probes** — `GET /healthz`, `/readyz`, `/loadz`, `/metrics`

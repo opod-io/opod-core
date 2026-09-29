@@ -7,6 +7,8 @@ the last section.
 
 ## 2026-09-28 (evening) — per-route body caps, a stable worker identity, and KV pressure llama.cpp can actually report
 
+- **`internal/controlplane` is `internal/leader`.** The package is the leader process's HTTP surface — gateway, `/admin/v1`, adapters — and the old name read as if core knew of a control plane. Its comments now call whatever writes the plan, auth and policy files "a manager", the term `contract.go` already used. No behaviour change.
+
 - **`/v1` request bodies are capped per route**: 32 MiB for `/chat/completions` (`max_body_bytes` overrides that
   one, as before), 8 MiB for `/embeddings`, 1 MiB for anything else. A body over its cap answers
   `413 request_too_large` with an OpenAI-shaped body; it was one flat 32 MiB cap answering 400.

@@ -1341,7 +1341,7 @@ print(resp.choices[0].message.content)
 | `GET` | `/admin/v1/cache/stats` | Response-cache driver + counters |
 | `DELETE` | `/admin/v1/cache` | Flush the response cache (`?namespace=…` or `?all=1`) |
 
-All `/admin/v1` routes require an admin key (`opod token create --admin`), except the worker pair, which also accepts a node key. The subset an external manager may rely on across releases is frozen in `internal/controlplane/contract.go` and served by `/admin/v1/capabilities`; see [ARCHITECTURE.md → Stable admin surface](ARCHITECTURE.md#stable-admin-surface-v1).
+All `/admin/v1` routes require an admin key (`opod token create --admin`), except the worker pair, which also accepts a node key. The subset an external manager may rely on across releases is frozen in `internal/leader/contract.go` and served by `/admin/v1/capabilities`; see [ARCHITECTURE.md → Stable admin surface](ARCHITECTURE.md#stable-admin-surface-v1).
 
 ### Model routing rules
 

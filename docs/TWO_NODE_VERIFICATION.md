@@ -1,6 +1,6 @@
 # Two-node verification — 10-minute manual checklist
 
-Opod's cross-node routing has automated coverage via `internal/controlplane/two_node_e2e_test.go` (an in-process register / heartbeat / placement-reconciliation simulation). This document is for the **real-hardware** verification: two physical machines, one network, end-to-end inference.
+Opod's cross-node routing has automated coverage via `internal/leader/two_node_e2e_test.go` (an in-process register / heartbeat / placement-reconciliation simulation). This document is for the **real-hardware** verification: two physical machines, one network, end-to-end inference.
 
 Walking the checklist on your own hardware confirms the path holds for your setup; nothing in this repo claims it for your machines.
 

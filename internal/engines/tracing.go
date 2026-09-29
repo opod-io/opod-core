@@ -11,7 +11,7 @@ import (
 
 // tracer is shared so every engine driver reports under the same
 // instrumentation-library name. The global TracerProvider (set in
-// internal/controlplane/tracing.go) decides whether spans are exported
+// internal/leader/tracing.go) decides whether spans are exported
 // or NoOp'd, so there's zero overhead when OTLP isn't configured.
 var tracer trace.Tracer = otel.Tracer("github.com/opod-io/opod/internal/engines")
 

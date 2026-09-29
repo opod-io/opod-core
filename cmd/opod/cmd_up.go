@@ -13,8 +13,8 @@ import (
 	"github.com/opod-io/opod/internal/agent"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/control"
-	"github.com/opod-io/opod/internal/controlplane"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/leader"
 	"github.com/opod-io/opod/internal/lifecycle"
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/scheduler"
@@ -78,7 +78,7 @@ func cmdUp(args []string) {
 	// The leader's own records also go to an OTLP collector when one is named
 	// (OPOD_OTLP_LOGS_ENDPOINT). stderr keeps working either way, and a bad
 	// endpoint is a warning: telemetry never decides whether the gateway starts.
-	log, stopLogExport, err := controlplane.ExportLogs(context.Background(), cfg.Env.OTLPLogsEndpoint, version, log)
+	log, stopLogExport, err := leader.ExportLogs(context.Background(), cfg.Env.OTLPLogsEndpoint, version, log)
 	if err != nil {
 		log.Warn("log export disabled", "err", err)
 	}
@@ -235,7 +235,7 @@ func cmdUp(args []string) {
 	orch.HeartbeatMaxAge = time.Duration(cfg.Router.HeartbeatMaxAgeSeconds) * time.Second
 
 	// 11. Start server with signal context
-	srv := controlplane.NewServer(cfg, st, eng, cat, log, orch)
+	srv := leader.NewServer(cfg, st, eng, cat, log, orch)
 	srv.Version = version
 
 	// 11a. Memory-lifecycle manager: admission ("does it fit?"), LRU
