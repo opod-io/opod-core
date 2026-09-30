@@ -102,6 +102,12 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 	if err := s.store.Nodes().Upsert(ctx, n); err != nil {
 		return store.Node{}, err
 	}
+	if existing != nil && (existing.Address != n.Address || existing.WorkerToken != n.WorkerToken) {
+		// The router's client for this id was built from the previous
+		// registration; a node that moved or re-keyed must be dialled where
+		// it is now (router.ForgetRemote).
+		s.router.ForgetRemote(n.ID)
+	}
 	if existing != nil {
 		switch incarnation(existing.BootID, req.BootID) {
 		case incarnationNew:

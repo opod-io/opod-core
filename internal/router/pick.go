@@ -417,6 +417,28 @@ func (r *Router) InvalidateModel(modelID string) {
 	r.mu.Unlock()
 }
 
+// ForgetRemote drops only the cached client for a node, so the next request
+// dials the address and signs with the token the node holds NOW. Called when a
+// node registers again at a different address or with a different token: the
+// client was built once from the first registration and keyed by node id, so
+// a worker pod re-created under a pinned id (every worker with a certificate,
+// R9.6) was dialled at its previous pod's IP until this leader restarted —
+// found on the design-partner cell (2026-09-29, PLAN T7.3): a re-minted
+// worker registered, heartbeat 200, and every chat was "worker could not be
+// reached" at the old IP. The rest of the node's state (capabilities,
+// cooldowns, in-flight counts) is the node's, not the process's, and stays.
+func (r *Router) ForgetRemote(nodeID string) {
+	if nodeID == "" {
+		return
+	}
+	r.mu.Lock()
+	if eng, ok := r.remotes[nodeID]; ok {
+		releaseEngine(eng)
+		delete(r.remotes, nodeID)
+	}
+	r.mu.Unlock()
+}
+
 // InvalidateNode drops all per-node router state for a deleted node: the
 // cached remote engine plus cooldown, failure, inflight, and sticky-pin
 // entries keyed by it. Called by the control plane when a node is removed

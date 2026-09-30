@@ -7,6 +7,11 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
+- **A worker that registers again at a new address is dialled there.** The router's client for a node id was built
+  from the first registration and cached by id, so a worker pod re-created under a pinned id — every
+  certificate-identified worker — was dialled at its previous pod's IP until the leader restarted: heartbeats 200,
+  every chat "worker could not be reached". A re-register that changes the address or the token drops the cached
+  client; nothing else about the node is forgotten.
 - **A worker with a certificate joins with no token.** `opod join <leader-url>` without `?token=` is a certificate join
   when `OPOD_NODE_CERT`/`OPOD_NODE_KEY` are set: the leader's mTLS gate is the credential check, and the secret the
   leader signs its calls back to the worker with is minted per process and handed over in the register. A pod under
