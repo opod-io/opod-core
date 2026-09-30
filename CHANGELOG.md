@@ -5,6 +5,19 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
+
+- **A gateway trusts its leader's certificate.** With `OPOD_LEADER_CA` set, the registry mirror, the usage push and the
+  spend poll of `--role gateway` trust exactly that certificate; before, a leader serving a minted certificate could
+  not be reached by any door. A CA file that does not load is a refusal, not a fallback to the system roots.
+- **A VRAM budget is what the card loses.** The memory fraction an engine is started with is the budget less 768 MiB
+  of process overhead, cut to two decimals and never rounded up. Measured: a 10 GB budget cost its card 11.08 GB
+  before, 10.12 GB after.
+- **Equally loaded gangs take turns.** A tie went to the first gang by name, so one request at a time was all served
+  by one gang and a canary gang was never sent the requests it is judged on.
+- **The uneven-split wording follows its proof** (`README.md`, `docs/SCALING-SIGNALS.md`): in force across machines
+  for a llama.cpp gang, measured; delivered and not serving on the one vLLM gang it was tried on.
+
 ## 2026-09-29 — a Hub that refuses a fetch says why, by name
 
 - **A gated repository with no token fails as `hub-token-missing`**, not as `GET <url> → 401 Unauthorized`.

@@ -113,11 +113,12 @@ and auth files whatever happens to whatever is scaling it.
 ## Owed (not shipped)
 
 The **probe port** shipped and is documented above. The **uneven split flags** (`flags.tensor_split` for
-llama.cpp, `flags.pp_layer_partition` for vLLM and SGLang) are **half shipped, and the half that is missing is
-the one this page is about**: they are declared per engine and validated, and they are in force for a single
-worker — but they do not reach a **gang**. A sharded model's parts are started from the gang's own command,
-which does not carry them, so a split across machines is still even and a pair of unlike cards is still bounded
-by the smaller one. Do not read the flags as a cross-machine capability.
+llama.cpp, `flags.pp_layer_partition` for vLLM and SGLang) are declared per engine, validated, and in force for
+a single worker. **Across machines they are shipped for one engine and not for the others.** A llama.cpp gang
+carries its flags to the coordinator: on a 48 GB and an 8 GB card, `tensor_split` `12,8` left 11.0 GB on the one
+and 6.4 GB on the other, and the gang served (measured 2026-09-29). A vLLM gang is delivered its
+`pp_layer_partition` and each rank loads its share, but the one gang it was tried on never finished starting;
+SGLang has not been tried. Read the flags as a cross-machine capability for llama.cpp only.
 
 What a reader should still not expect from this endpoint: a decision. The leader publishes numbers and routes
 across the workers it has; it never creates or removes one.

@@ -382,7 +382,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Cross-platform workers: Mac (MLX), Linux+NVIDIA (vLLM, SGLang, llama.cpp), Linux+AMD (llama.cpp ROCm and vLLM ROCm both proven on a Radeon host; SGLang ROCm is an Instinct-only upstream build), Linux+Intel Arc (llama.cpp SYCL proven), Tenstorrent (vLLM on tt-metal, proven), CPU (llama.cpp)
 - HA leader (planned)
 
-- **Uneven layer splits, per worker** — `flags.tensor_split` (llama.cpp) and `flags.pp_layer_partition` (vLLM, SGLang) are declared per engine and validated, so a worker can weight its own split towards a bigger card instead of being bounded by the smallest. **They do not reach a gang yet**: a sharded model's parts are started from the gang's own command, which does not carry them, so a cross-machine split is still even
+- **Uneven layer splits, per worker** — `flags.tensor_split` (llama.cpp) and `flags.pp_layer_partition` (vLLM, SGLang) are declared per engine and validated, so a worker can weight its own split towards a bigger card instead of being bounded by the smallest. **On a llama.cpp gang the split is in force too**: a gang's flags reach its coordinator, and on a 48 GB and an 8 GB card `tensor_split` `12,8` left 11.0 GB on the one and 6.4 GB on the other, serving (measured 2026-09-29). **A vLLM or SGLang gang is not there**: `pp_layer_partition` is delivered and each rank loads its share, but the one vLLM gang it was tried on never finished starting, so do not plan a cross-machine split on those engines
 - **A worker says goodbye on `SIGTERM`** — a process being stopped leaves the router's rotation at once, instead of costing a request per shutdown while its heartbeat ages out
 
 ### Multi-tenancy
