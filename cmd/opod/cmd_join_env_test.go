@@ -23,3 +23,21 @@ func TestWorkerBaseEnv(t *testing.T) {
 		t.Errorf("an operator's own CUDA_VISIBLE_DEVICES must win: %v", got)
 	}
 }
+
+// A join URL without `?token=` parses (the certificate is the credential under
+// node mTLS, R9.6 / PLAN T7.3); the token is still returned when present, and
+// the leader URL never keeps the query.
+func TestParseJoinTargetTokenOptional(t *testing.T) {
+	leader, token, err := parseJoinTarget("https://ep.opod.svc:8080?token=sk-orc-abc")
+	if err != nil || leader != "https://ep.opod.svc:8080" || token != "sk-orc-abc" {
+		t.Fatalf("with token: %q %q %v", leader, token, err)
+	}
+	leader, token, err = parseJoinTarget("https://ep.opod.svc:8080")
+	if err != nil || leader != "https://ep.opod.svc:8080" || token != "" {
+		t.Fatalf("without token: %q %q %v", leader, token, err)
+	}
+	// The minted callback secret is per process and never the same twice.
+	if a, b := generateCallbackSecret(), generateCallbackSecret(); a == b || len(a) < 40 {
+		t.Fatalf("callback secret: %q %q", a, b)
+	}
+}

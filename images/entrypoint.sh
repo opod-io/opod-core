@@ -5,7 +5,7 @@
 #   leader:  OPOD_LISTEN, OPOD_JOIN_TOKEN, OPOD_REQUIRE_KEYS, OPOD_PULL_DEFAULT_MODEL, OPOD_ENGINE (all optional)
 #   gateway: OPOD_LEADER_URL (required), OPOD_ADMIN_TOKEN (required — the registry and spend reads are
 #            admin-keyed), OPOD_GATEWAY_ID (defaults to the hostname), OPOD_LISTEN (optional)
-#   worker:  OPOD_LEADER_URL (required), OPOD_JOIN_TOKEN (required), OPOD_ENGINE=llamacpp|vllm|sglang,
+#   worker:  OPOD_LEADER_URL (required), OPOD_JOIN_TOKEN (required unless OPOD_NODE_CERT), OPOD_ENGINE=llamacpp|vllm|sglang,
 #            OPOD_LOAD_MODEL=<catalog id> (+ OPOD_LOAD_REPO / OPOD_LOAD_FILE overrides), OPOD_MODELS_DIR,
 #            OPOD_ENGINE_FLAGS (json), POD_IP / POD_NAME (Kubernetes downward API)
 # Nothing here knows about Kubernetes or the control plane — it is plain opod.
@@ -102,7 +102,12 @@ fi
 
 # ---- worker ----
 : "${OPOD_LEADER_URL:?OPOD_LEADER_URL is required for a worker}"
-: "${OPOD_JOIN_TOKEN:?OPOD_JOIN_TOKEN is required for a worker}"
+# The join token identifies the worker unless it has a certificate (R9.6): a
+# worker under nodeMtls=require is handed OPOD_NODE_CERT/KEY and no token at
+# all, and joins on the certificate alone (PLAN T7.3).
+if [ -z "${OPOD_NODE_CERT:-}" ]; then
+  : "${OPOD_JOIN_TOKEN:?OPOD_JOIN_TOKEN is required for a worker without a certificate (OPOD_NODE_CERT)}"
+fi
 ENGINE="${OPOD_ENGINE:-llamacpp}"
 case "$ENGINE" in
   llamacpp) export OPOD_ENGINE=llamacpp OPOD_LLAMACPP_ENDPOINT="${OPOD_LLAMACPP_ENDPOINT:-http://127.0.0.1:8089}";;
@@ -134,7 +139,7 @@ for i in $(seq 1 120); do
   sleep 5
 done
 log "worker: joining $OPOD_LEADER_URL engine=$ENGINE advertise=${OPOD_ADVERTISE_ADDR:-auto}"
-opod join "$OPOD_LEADER_URL?token=$OPOD_JOIN_TOKEN" &
+opod join "$OPOD_LEADER_URL${OPOD_JOIN_TOKEN:+?token=$OPOD_JOIN_TOKEN}" &
 JOIN_PID=$!
 
 # The model this worker exists to serve (OPOD_LOAD_MODEL, with

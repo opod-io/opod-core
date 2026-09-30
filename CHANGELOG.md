@@ -7,6 +7,11 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
+- **A worker with a certificate joins with no token.** `opod join <leader-url>` without `?token=` is a certificate join
+  when `OPOD_NODE_CERT`/`OPOD_NODE_KEY` are set: the leader's mTLS gate is the credential check, and the secret the
+  leader signs its calls back to the worker with is minted per process and handed over in the register. A pod under
+  `nodeMtls=require` carries no shared secret at all, which is what `require` was for. Without a certificate the token
+  is still required, by name.
 - **A gateway trusts its leader's certificate.** With `OPOD_LEADER_CA` set, the registry mirror, the usage push and the
   spend poll of `--role gateway` trust exactly that certificate; before, a leader serving a minted certificate could
   not be reached by any door. A CA file that does not load is a refusal, not a fallback to the system roots.

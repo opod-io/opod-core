@@ -84,6 +84,7 @@ func cmdJoin(args []string) {
 	if err != nil {
 		die("%v", err)
 	}
+	certJoin := token == "" // decided below, once the environment is read
 	// Placement hints for the engines this worker will supervise. They reach
 	// every engine launcher (vLLM, llama.cpp, …) through the supervisor's base
 	// environment — one contract; a manager sets the same variables on the
@@ -114,6 +115,21 @@ func cmdJoin(args []string) {
 	cfg := loadConfigOrExit()
 	log := newLogger(cfg)
 	env := cfg.Env // the environment contract, parsed once (config.Env)
+	if certJoin {
+		// No `?token=`: the worker's certificate (OPOD_NODE_CERT/KEY) is the
+		// credential the leader sees, and its mTLS gate needs no shared secret
+		// (nodeMtls=require is exactly a leader that refuses one). The token
+		// has a second job, though: it is the secret the LEADER signs its calls
+		// to THIS worker's API with (the register request hands it over as the
+		// worker token). That job is per process and needs no operator, so a
+		// certificate join mints its own and sends it to the leader over the
+		// mTLS-protected register — a pod under `require` then carries no
+		// join token at all (PLAN T7.3).
+		if env.NodeCert == "" || env.NodeKey == "" {
+			die("join URL has no ?token= and no worker certificate is set (OPOD_NODE_CERT/OPOD_NODE_KEY): one or the other identifies this worker")
+		}
+		token = generateCallbackSecret()
+	}
 	if gpuIndex == "" {
 		gpuIndex = env.GPUIndex
 	}
@@ -339,20 +355,29 @@ func parseJoinTarget(raw string) (leader, token string, err error) {
 		return "", "", fmt.Errorf("invalid URL: %w", err)
 	}
 	q := u.Query()
+	// The token is optional here and required by the caller unless the worker
+	// has a certificate (R9.6): under node mTLS the certificate is the
+	// credential and there is no shared secret to put in the URL.
 	token = q.Get("token")
-	if token == "" {
-		return "", "", fmt.Errorf("token query param required")
-	}
 	// A bare host was upgraded to http:// above. Warn when the join token
 	// would travel in cleartext to a non-local leader — it should go over
 	// https (or a private tailnet) for anything but localhost.
-	if host := u.Hostname(); u.Scheme == "http" &&
+	if host := u.Hostname(); token != "" && u.Scheme == "http" &&
 		host != "localhost" && host != "127.0.0.1" && host != "::1" {
 		warn(os.Stderr, "joining %s over cleartext http — the join token will be sent unencrypted; prefer https for non-local leaders", host)
 	}
 	u.RawQuery = ""
 	leader = strings.TrimRight(u.String(), "/")
 	return leader, token, nil
+}
+
+// generateCallbackSecret is the per-process secret a certificate join gives the
+// leader for its calls back into this worker (see cmdJoin). 32 random bytes:
+// it never leaves the register body and nobody types it.
+func generateCallbackSecret() string {
+	buf := make([]byte, 32)
+	_, _ = rand.Read(buf)
+	return "sk-orc-cb-" + base64.RawURLEncoding.EncodeToString(buf)
 }
 
 func generateNodeID() string {

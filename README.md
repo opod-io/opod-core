@@ -844,7 +844,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_ADVERTISE_ADDR` | worker | the `host:port` the leader should dial (overlay / multi-NIC hosts) |
 | `OPOD_NODE_ID` | worker | a stable node id across restarts (else `node.yaml`, else random) |
 | `OPOD_LEADER_CA` | worker | PEM certificate the worker trusts for a TLS leader — exactly that one |
-| `OPOD_NODE_CERT` / `OPOD_NODE_KEY` | worker | the client certificate this worker presents to its leader; its SPIFFE SAN `spiffe://<domain>/opod/node/<id>` **is** the worker's identity (feature `mtls`) |
+| `OPOD_NODE_CERT` / `OPOD_NODE_KEY` | worker | the client certificate this worker presents to its leader; its SPIFFE SAN `spiffe://<domain>/opod/node/<id>` **is** the worker's identity (feature `mtls`). With it set, `opod join <leader-url>` needs no `?token=`: the worker mints the secret the leader signs its calls back with and hands it over in the register |
 | `OPOD_VRAM_BUDGET_GB` | worker | the slice of the card this worker may use (shared placement); also `opod join --vram-budget` |
 | `OPOD_GPU_INDEX` | worker | the device index the worker was pinned to (informational; also `opod join --gpu`) |
 | `OPOD_LOAD_MODEL` | worker | the catalog id this worker loads itself once its engine answers, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE` overriding the catalog's repo and file. No call to its own API, so `OPOD_REJECT_BEARER=1` is usable |
