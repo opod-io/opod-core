@@ -204,3 +204,60 @@ func TestTheRightDigestPasses(t *testing.T) {
 		t.Fatalf("a pinned revision was not cached under its own directory: %s", p)
 	}
 }
+
+// A file the node already holds is CHECKED against a pinned digest, not trusted
+// by size: the check used to run only on the download that first wrote the
+// file, so a plan that pinned the wrong sha256 for a cached file rolled out and
+// served it (design-partner cell, 2026-09-29, PLAN T6.10). The hash is computed
+// once and recorded in the marker; the next pinned fetch does not read the file.
+func TestACachedFileIsCheckedAgainstAPinnedDigest(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("the weights, cached")
+	sum := sha256.Sum256(body)
+	right := hex.EncodeToString(sum[:])
+	downloads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		downloads++
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	opt := func(sum string) Options { return Options{Endpoint: srv.URL, Revision: "v1", SHA256: sum} }
+
+	// Cached without any digest (an unpinned pull of the same revision).
+	p, err := GGUF(context.Background(), "org/model", "w.gguf", dir, Options{Endpoint: srv.URL, Revision: "v1"})
+	if err != nil || downloads != 1 {
+		t.Fatalf("first pull: %v (downloads %d)", err, downloads)
+	}
+	// The wrong digest against the cached file is refused by name, and the file stays (it is not wrong, the pin is).
+	_, err = GGUF(context.Background(), "org/model", "w.gguf", dir, opt("0000000000000000000000000000000000000000000000000000000000000000"))
+	if err == nil || !strings.Contains(err.Error(), "hashes to") {
+		t.Fatalf("a cached file with the wrong pinned digest was served: %v", err)
+	}
+	if _, statErr := os.Stat(p); statErr != nil {
+		t.Fatal("a correct cached file was removed because a caller pinned the wrong digest")
+	}
+	// The right digest passes, hashes once, and records itself in the marker.
+	if _, err := GGUF(context.Background(), "org/model", "w.gguf", dir, opt(right)); err != nil {
+		t.Fatalf("the right digest against the cached file was refused: %v", err)
+	}
+	m, err := readMarker(p)
+	if err != nil || m.SHA256 != right {
+		t.Fatalf("the marker does not record the verified digest: %+v %v", m, err)
+	}
+	// The next pinned fetch is answered from the marker: nothing is hashed or
+	// downloaded again.
+	before, _ := os.Stat(markerPath(p))
+	if _, err := GGUF(context.Background(), "org/model", "w.gguf", dir, opt(right)); err != nil {
+		t.Fatalf("the recorded digest was not accepted: %v", err)
+	}
+	if after, _ := os.Stat(markerPath(p)); before != nil && after != nil && after.ModTime().Before(before.ModTime()) {
+		t.Fatal("marker went backwards")
+	}
+	if downloads != 1 {
+		t.Fatalf("a cached file was downloaded again: %d", downloads)
+	}
+}

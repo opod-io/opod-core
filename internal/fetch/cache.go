@@ -52,6 +52,12 @@ type Marker struct {
 	Size       int64     `json:"size"`
 	FetchedAt  time.Time `json:"fetchedAt"`
 	LastUsedAt time.Time `json:"lastUsedAt,omitempty"`
+	// SHA256 is the digest the file was last VERIFIED to hash to — by the
+	// download that wrote it, or by a later pinned fetch that found it cached
+	// and hashed it (verifiedDigest). A cached file whose marker records the
+	// digest a caller pins is served without another read; one that records a
+	// different digest, or none, is hashed again.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // Entry is one cached file — or one snapshot directory — as `opod cache ls`
@@ -82,7 +88,10 @@ func markerPath(target string) string { return target + MarkerSuffix }
 // WriteMarker records a fetched file. A failure here is not fatal to the
 // fetch — a file without a marker is simply one the cache will never delete.
 func WriteMarker(target, repo, file string, size int64) error {
-	m := Marker{Repo: repo, File: file, Size: size, FetchedAt: time.Now().UTC(), LastUsedAt: time.Now().UTC()}
+	return writeMarker(target, Marker{Repo: repo, File: file, Size: size, FetchedAt: time.Now().UTC(), LastUsedAt: time.Now().UTC()})
+}
+
+func writeMarker(target string, m Marker) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err

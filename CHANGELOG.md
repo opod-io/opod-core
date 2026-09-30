@@ -7,6 +7,11 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
+- **A cached file is checked against a pinned digest.** A file already complete on disk was trusted by size, so a
+  `--sha256` was only ever compared on the download that first wrote the file, and a version that pinned the wrong
+  digest for a file the node held was served. A pinned fetch now hashes a cached file once, records the verified
+  digest in the file's cache marker, and answers later pinned fetches from the marker; a mismatch is refused by name
+  and the file stays (the pin is wrong, not the file).
 - **A worker that registers again at a new address is dialled there.** The router's client for a node id was built
   from the first registration and cached by id, so a worker pod re-created under a pinned id — every
   certificate-identified worker — was dialled at its previous pod's IP until the leader restarted: heartbeats 200,

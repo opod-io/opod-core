@@ -168,8 +168,7 @@ func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (
 		want, known = expectedSize(ctx, opt, fileURL)
 	}
 	if complete(target, want, known) {
-		Touch(target) // least-recently-used pruning needs to know it was wanted (ADR-046)
-		return target, nil
+		return verifiedCached(target, opt)
 	}
 	// Exclusive per target. The lock names the holder so a stale one (a
 	// crashed puller) is readable; it is cleared when the holder finishes or
@@ -180,12 +179,11 @@ func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (
 		return "", err
 	}
 	if release == nil {
-		return target, nil // another caller finished it while we waited
+		return verifiedCached(target, opt) // another caller finished it while we waited
 	}
 	defer release()
 	if complete(target, want, known) {
-		Touch(target)
-		return target, nil
+		return verifiedCached(target, opt)
 	}
 	if err := download(ctx, opt, repo, fileURL, target, want); err != nil {
 		if errors.Is(err, errDigest) || RefusalReason(err) != "" {
@@ -195,10 +193,58 @@ func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (
 	}
 	// The marker is what makes this file prunable later: a file without one is
 	// never deleted by cache management, whatever the disk pressure (ADR-046).
-	if err := WriteMarker(target, repo, file, want); err != nil {
+	// It also records the digest the download was verified against, so a later
+	// pinned fetch of the same file is answered without hashing it again.
+	if err := writeMarker(target, Marker{Repo: repo, File: file, Size: want, SHA256: normalizeDigest(opt.SHA256),
+		FetchedAt: time.Now().UTC(), LastUsedAt: time.Now().UTC()}); err != nil {
 		opt.Log.Warn("cache marker not written: this file will never be pruned", "file", file, "err", err)
 	}
 	return target, nil
+}
+
+// verifiedCached answers a fetch with a file that is already complete on disk. With a
+// digest pinned it is the digest CHECK for that file: a complete file used to
+// be trusted by size alone, so the digest was only ever compared on the
+// download that first wrote the file — a plan that pinned the wrong sha256
+// for a file the node already held rolled out and served (design-partner
+// cell, 2026-09-29, PLAN T6.10). The hash is computed once per file and
+// digest and recorded in the marker; the next pinned fetch reads the marker.
+func verifiedCached(target string, opt Options) (string, error) {
+	Touch(target) // least-recently-used pruning needs to know it was wanted (ADR-046)
+	want := normalizeDigest(opt.SHA256)
+	if want == "" {
+		return target, nil
+	}
+	if m, err := readMarker(target); err == nil && m.SHA256 == want {
+		return target, nil
+	}
+	got, err := sha256File(target)
+	if err != nil {
+		return "", fmt.Errorf("fetch: hash %s: %w", filepath.Base(target), err)
+	}
+	if got != want {
+		return "", fmt.Errorf("fetch: %w: the cached %s hashes to sha256:%s, not the sha256:%s this version records",
+			errDigest, filepath.Base(target), got, want)
+	}
+	if m, err := readMarker(target); err == nil {
+		m.SHA256 = got
+		_ = writeMarker(target, m)
+	}
+	return target, nil
+}
+
+// sha256File hashes a file on disk.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // complete: the file exists and, when the server declared a size, matches it.
