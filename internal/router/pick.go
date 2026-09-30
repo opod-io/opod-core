@@ -295,17 +295,31 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	// Least loaded gang wins. A gang's load is what we have sent to it plus
 	// what its coordinator's node reports — the coordinator is where a
 	// request queues, so its node's signal is the gang's signal.
+	//
+	// A TIE goes round the gangs in turn, never to the first by name. With the
+	// first always winning, one request at a time — most of a quiet endpoint's
+	// life — was all served by one gang: a second gang held its cards and
+	// carried nothing, and a canary gang was never sent the requests it is
+	// judged on (run on a cluster, 2026-09-29: 209 of 209 to `g0`).
 	best := ready[0]
 	if len(ready) > 1 {
 		r.mu.RLock()
 		bestSat, bestScore := r.gangRank(best.gang, modelID, best.coord)
+		tied := []candidate{best}
 		for _, c := range ready[1:] {
 			sat, score := r.gangRank(c.gang, modelID, c.coord)
-			if (bestSat && !sat) || (sat == bestSat && score < bestScore) {
+			switch {
+			case (bestSat && !sat) || (sat == bestSat && score < bestScore):
 				best, bestSat, bestScore = c, sat, score
+				tied = []candidate{c}
+			case sat == bestSat && score == bestScore:
+				tied = append(tied, c)
 			}
 		}
 		r.mu.RUnlock()
+		if len(tied) > 1 {
+			best = tied[int(r.gangTurn.Add(1)-1)%len(tied)]
+		}
 	}
 
 	key := gangKey(modelID, best.gang)

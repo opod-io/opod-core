@@ -20,6 +20,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -73,6 +74,9 @@ type FallbackResolver func(modelID string) FallbackChains
 // Router implements engines.Engine by dispatching to either the local engine
 // or a remote worker engine based on cluster placements.
 type Router struct {
+	// gangTurn breaks a tie between equally loaded gangs by taking turns.
+	gangTurn atomic.Uint64
+
 	local     engines.Engine
 	store     store.Store
 	localNode string // node id used for "local" placements (typically "local")

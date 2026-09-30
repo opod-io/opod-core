@@ -144,3 +144,22 @@ func TestInvalidateModelDropsEveryGang(t *testing.T) {
 		}
 	}
 }
+
+// Equally loaded gangs take turns. With the first by name always winning, a
+// quiet endpoint's second gang carried nothing and a canary gang was never sent
+// the requests it is judged on (run on a cluster: 209 of 209 to g0).
+func TestEquallyLoadedGangsTakeTurns(t *testing.T) {
+	r, _ := gangRouter(t, "m", map[string][2]string{"g0": {"n1", "n2"}, "g1": {"n3", "n4"}},
+		store.Node{ID: "n1"}, store.Node{ID: "n2"}, store.Node{ID: "n3"}, store.Node{ID: "n4"})
+	seen := map[string]int{}
+	for i := 0; i < 20; i++ {
+		_, node, err := r.pick(context.Background(), "m")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[node]++
+	}
+	if seen["shard:m:g0"] != 10 || seen["shard:m:g1"] != 10 {
+		t.Fatalf("twenty requests one at a time over two idle gangs: %v, want ten each", seen)
+	}
+}
