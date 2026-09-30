@@ -23,13 +23,26 @@ package agent
 // (design-partner cell, 2026-09-22). A per-worker VRAM budget that one start
 // path ignores is not a budget.
 //
+// THE BUDGET IS WHAT THE CARD LOSES, not what the engine is told. The fraction
+// bounds the engine's own pool; the process also holds a CUDA context and its
+// allocator's slack, which the fraction does not count. Measured on a cluster
+// (2026-09-29, a 48 GB card, a 10 GB budget): the fraction was 10 GB of the
+// card rounded UP to 0.21, the pool took 10.3 GB and the card lost 11.08 GB —
+// 8% more than the ledger had promised anyone. So the engine's share is the
+// budget LESS that overhead, and the two decimals are cut, never rounded up.
+//
 // The caller writes the result before its `exec` and passes "$U" wherever the
 // engine wants the fraction.
 func MemFractionShell(defaultFraction string) string {
 	return "U=" + defaultFraction + "; B=\"${OPOD_VRAM_BUDGET_GB:-0}\"; " +
 		"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '); " +
-		"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" 'BEGIN{u=b*1024/t; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%.2f\", u}'); fi; "
+		"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" -v o=\"" + processOverheadMiB + "\" 'BEGIN{u=(b*1024-o)/t; u=int(u*100)/100; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%.2f\", u}'); fi; "
 }
+
+// processOverheadMiB is what an engine process holds on its card outside the
+// pool its memory fraction bounds: the CUDA context and the allocator's slack.
+// 768 is the measurement above (837 MiB over, of which ~100 was the rounding).
+const processOverheadMiB = "768"
 
 // MemFractionVar is what a command line writes where the fraction goes.
 const MemFractionVar = `"$U"`
