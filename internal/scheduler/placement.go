@@ -236,8 +236,8 @@ type coordinatorChoice struct {
 // Why this exists: the coordinator does the actual layer aggregation across
 // rpc-servers. Pinning it to the leader was the v0.4 default and wasted
 // capacity when a worker had more RAM than the leader.
-func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.Node) coordinatorChoice {
-	if override := o.CoordinatorNode; override != "" {
+func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.Node, par Parallelism) coordinatorChoice {
+	if override := o.coordinatorOverride(par); override != "" {
 		if override == "local" {
 			return coordinatorChoice{nodeID: "local", local: true}
 		}
@@ -247,7 +247,7 @@ func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.
 				return coordinatorChoice{nodeID: w.ID, node: &w}
 			}
 		}
-		o.Log.Warn("OPOD_COORDINATOR_NODE not in shard worker set — falling back to default", "want", override)
+		o.Log.Warn("coordinator override not in shard worker set — falling back to default", "want", override)
 	}
 
 	// Default policy: pick the worker with the most of the memory that
@@ -280,3 +280,13 @@ func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.
 }
 
 // ---- HTTP calls to worker process endpoints ----
+
+// coordinatorOverride is the head this create was asked for: the request's own
+// (Parallelism.Head) over the leader-wide OPOD_COORDINATOR_NODE. Per call, so
+// two creates never read each other's.
+func (o *Orchestrator) coordinatorOverride(par Parallelism) string {
+	if par.Head != "" {
+		return par.Head
+	}
+	return o.CoordinatorNode
+}

@@ -7,6 +7,10 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
+- **A gang create's head is the request's own, never the leader's shared state.** The `head` of a create was written
+  into the orchestrator's `OPOD_COORDINATOR_NODE` field and never cleared, so a later or concurrent create read
+  whichever head had last been written — a sibling gang's — and fell back to the default picker after a warning.
+  The head now rides the create call; the leader-wide setting stays the default for a create that names none.
 - **A request whose gang cannot be reached is retried on a sibling gang.** A coordinator that could not be dialled
   — its node died, a part went and llama-server with it — ended the request, although another gang of the same model
   was serving; the walk that already moves a request off an unreachable WORKER now sets the gang aside by its key and

@@ -240,10 +240,10 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	if s.orch == nil {
 		return ErrNoOrchestrator
 	}
-	if req.Head != "" {
-		s.orch.CoordinatorNode = req.Head
-	}
-	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices, Flags: req.Flags}); err != nil {
+	// The head rides the request (Parallelism.Head), never the orchestrator's
+	// shared field: a create used to write it there for every later create to
+	// read, including a sibling gang's running at the same time.
+	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices, Flags: req.Flags, Head: req.Head}); err != nil {
 		if errors.Is(err, scheduler.ErrUnplaceable) {
 			// Refused before anything was touched: the gang this create would
 			// have replaced is still serving, and the cleanup below would

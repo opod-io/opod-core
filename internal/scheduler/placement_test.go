@@ -76,30 +76,42 @@ func TestCoordinatorGoesOnTheBiggestCardNotTheBiggestHost(t *testing.T) {
 	big := store.Node{ID: "big-card", RAMGB: 31, HardwareJSON: hw(46)}
 
 	// Whichever order they arrive in, the big card wins.
-	if got := o.pickCoordinatorHost(ctx, []store.Node{small, big}); got.nodeID != "big-card" {
+	if got := o.pickCoordinatorHost(ctx, []store.Node{small, big}, Parallelism{}); got.nodeID != "big-card" {
 		t.Errorf("coordinator = %q, want big-card", got.nodeID)
 	}
-	if got := o.pickCoordinatorHost(ctx, []store.Node{big, small}); got.nodeID != "big-card" {
+	if got := o.pickCoordinatorHost(ctx, []store.Node{big, small}, Parallelism{}); got.nodeID != "big-card" {
 		t.Errorf("coordinator = %q with the order reversed, want big-card", got.nodeID)
 	}
 
 	// A host with MORE RAM and a SMALLER card does not win: RAM is not what
 	// runs out here.
 	roomy := store.Node{ID: "roomy-host", RAMGB: 512, HardwareJSON: hw(8)}
-	if got := o.pickCoordinatorHost(ctx, []store.Node{roomy, big}); got.nodeID != "big-card" {
+	if got := o.pickCoordinatorHost(ctx, []store.Node{roomy, big}, Parallelism{}); got.nodeID != "big-card" {
 		t.Errorf("coordinator = %q, want big-card — host RAM is not the constraint", got.nodeID)
 	}
 
 	// Workers that report no card at all fall back to host RAM, as before.
 	cpuBig := store.Node{ID: "cpu-big", RAMGB: 256}
 	cpuSmall := store.Node{ID: "cpu-small", RAMGB: 32}
-	if got := o.pickCoordinatorHost(ctx, []store.Node{cpuSmall, cpuBig}); got.nodeID != "cpu-big" {
+	if got := o.pickCoordinatorHost(ctx, []store.Node{cpuSmall, cpuBig}, Parallelism{}); got.nodeID != "cpu-big" {
 		t.Errorf("coordinator = %q among cardless workers, want cpu-big", got.nodeID)
 	}
 
 	// An explicit head still wins over any of it (feature shard_head).
 	o.CoordinatorNode = "small-card"
-	if got := o.pickCoordinatorHost(ctx, []store.Node{small, big}); got.nodeID != "small-card" {
+	if got := o.pickCoordinatorHost(ctx, []store.Node{small, big}, Parallelism{}); got.nodeID != "small-card" {
 		t.Errorf("a named head must be honoured, got %q", got.nodeID)
+	}
+	// And a create's OWN head wins over the leader-wide one, and is not
+	// remembered: the next create with no head reads the leader-wide default
+	// again, never a sibling's (design-partner cell, 2026-09-29).
+	if got := o.pickCoordinatorHost(ctx, []store.Node{small, big}, Parallelism{Head: "big-card"}); got.nodeID != "big-card" {
+		t.Errorf("the request's head must win over the leader-wide one, got %q", got.nodeID)
+	}
+	if got := o.pickCoordinatorHost(ctx, []store.Node{small, big}, Parallelism{}); got.nodeID != "small-card" {
+		t.Errorf("a request's head leaked into the next create: got %q", got.nodeID)
+	}
+	if o.CoordinatorNode != "small-card" {
+		t.Errorf("the leader-wide default was overwritten: %q", o.CoordinatorNode)
 	}
 }

@@ -51,7 +51,7 @@ type Orchestrator struct {
 	// the file at source.path the old-fashioned way.
 	ModelsDir string
 	// From the environment contract (config.Env), set by `opod up`:
-	CoordinatorNode string // OPOD_COORDINATOR_NODE: pin the llama.cpp coordinator ("local" = the leader)
+	CoordinatorNode string // OPOD_COORDINATOR_NODE: the leader-wide default for the coordinator ("local" = the leader); a create's own Parallelism.Head wins
 	HFToken         string // HF_TOKEN for the leader's own GGUF pulls
 	HFEndpoint      string // HF_ENDPOINT ("" = the public Hub)
 	// HeartbeatMaxAge is the liveness bound WorkerFor applies to a row
@@ -178,6 +178,14 @@ type Parallelism struct {
 	// tensor_split, extra). They reach the COORDINATOR, the process that
 	// allocates the context and decides the split across the parts (T14.26).
 	Flags map[string]string
+	// Head names the part that runs the coordinator, for THIS create. It used
+	// to be written into the orchestrator's CoordinatorNode — one field for
+	// the whole leader, set by every create and never cleared — so a create
+	// read the head of whichever create had last touched it: on the
+	// design-partner cell (2026-09-29) a gang formed with its sibling's head
+	// named, fell back to the default, and the two gangs collided on a port.
+	// Empty = the leader's own OPOD_COORDINATOR_NODE, else its picker.
+	Head string
 }
 
 // resolve fills in the defaults and checks the product against the GPU count.
@@ -443,12 +451,12 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	if shardCount == 1 {
 		w := workers[0]
 		coordHost = coordinatorChoice{nodeID: w.ID, node: &w}
-		if ov := o.CoordinatorNode; ov != "" && ov != w.ID {
-			o.Log.Warn("OPOD_COORDINATOR_NODE ignored for single-shard placement — coordinator runs on the selected node",
+		if ov := o.coordinatorOverride(par); ov != "" && ov != w.ID {
+			o.Log.Warn("coordinator override ignored for single-shard placement — coordinator runs on the selected node",
 				"override", ov, "node", w.ID)
 		}
 	} else {
-		coordHost = o.pickCoordinatorHost(ctx, workers)
+		coordHost = o.pickCoordinatorHost(ctx, workers, par)
 	}
 
 	// Avoid port collisions with shards already running on the same host —
