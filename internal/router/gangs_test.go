@@ -12,9 +12,11 @@ package router
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -161,5 +163,40 @@ func TestEquallyLoadedGangsTakeTurns(t *testing.T) {
 	}
 	if seen["shard:m:g0"] != 10 || seen["shard:m:g1"] != 10 {
 		t.Fatalf("twenty requests one at a time over two idle gangs: %v, want ten each", seen)
+	}
+}
+
+// A gang whose coordinator cannot be dialled costs the request nothing while a
+// sibling gang serves the model: it is set aside for this request, by its key,
+// exactly as an unreachable worker is (nextworker.go), and the next pick lands
+// on the other gang. Before this the walk stopped at the first gang — one
+// failed request per lost part (design-partner cell, T8.7: 59 of 60). Every
+// gang unreachable: the caller hears the unreachable error and no gang is
+// asked twice.
+func TestAnUnreachableGangCostsNoRequestWhileASiblingServes(t *testing.T) {
+	r, _ := gangRouter(t, "m", map[string][2]string{"g0": {"n1", "n2"}, "g1": {"n3", "n4"}},
+		store.Node{ID: "n1"}, store.Node{ID: "n2"}, store.Node{ID: "n3"}, store.Node{ID: "n4"})
+	dead := &stubEngine{name: "g0", failFor: map[string]error{"m": gone("n1")}}
+	live := &stubEngine{name: "g1"}
+	r.remotes["shard:m:g0"], r.remotes["shard:m:g1"] = dead, live
+	r.inflight["shard:m:g1"] = 50 // load order alone picks the dead gang first
+
+	stream, err := r.Chat(context.Background(), engines.ChatRequest{Model: "m"})
+	if err != nil {
+		t.Fatalf("the request failed although gang g1 serves the model: %v", err)
+	}
+	for range stream {
+	}
+	if len(dead.calls) != 1 || len(live.calls) != 1 {
+		t.Fatalf("want one attempt on each gang, got g0=%v g1=%v", dead.calls, live.calls)
+	}
+
+	dead.calls, live.calls = nil, nil
+	live.failFor = map[string]error{"m": gone("n3")}
+	if _, err := r.Chat(context.Background(), engines.ChatRequest{Model: "m"}); !errors.Is(err, engines.ErrUnreachable) {
+		t.Fatalf("all gangs gone: want an unreachable error, got %v", err)
+	}
+	if len(dead.calls) != 1 || len(live.calls) != 1 {
+		t.Fatalf("each gang is asked once, got g0=%v g1=%v", dead.calls, live.calls)
 	}
 }

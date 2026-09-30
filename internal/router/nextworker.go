@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -12,7 +11,8 @@ import (
 )
 
 // A worker that has just gone away — its pod was moved, its machine died —
-// keeps a fresh placement row until its heartbeat ages out. A request picked
+// keeps a fresh placement row until its heartbeat ages out. A GANG whose
+// coordinator has gone is the same thing under its own key (skippedGang). A request picked
 // for it cannot connect. The walk used to go on to the next fallback MODEL,
 // so with no fallback configured the request failed although another worker
 // was serving the same model: one lost request per worker move.
@@ -36,7 +36,8 @@ import (
 type pickState struct {
 	mu       sync.Mutex
 	skipped  map[string]bool
-	revision map[string]int // model → the revision group this request was assigned to
+	revision map[string]int  // model → the revision group this request was assigned to
+	gangless map[string]bool // model → a gang of it was passed over as skipped on the last pick
 }
 
 type pickStateKey struct{}
@@ -46,7 +47,7 @@ func withPickState(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(pickStateKey{}).(*pickState); ok {
 		return ctx
 	}
-	return context.WithValue(ctx, pickStateKey{}, &pickState{skipped: map[string]bool{}, revision: map[string]int{}})
+	return context.WithValue(ctx, pickStateKey{}, &pickState{skipped: map[string]bool{}, revision: map[string]int{}, gangless: map[string]bool{}})
 }
 
 func pickStateOf(ctx context.Context) *pickState {
@@ -109,11 +110,51 @@ func noWorkerLeft(model string) error {
 // coordinator have no sibling to ask.
 func (r *Router) tryNextWorker(ctx context.Context, nodeID string, err error) (context.Context, bool) {
 	st := pickStateOf(ctx)
-	if st == nil || !errors.Is(err, engines.ErrUnreachable) || nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
+	// A gang is set aside by its key (shard:<model>:<gang>), the id the pick
+	// accounts it under: a coordinator that could not be dialled — its node
+	// died, a part went and llama-server with it — is the same case as a
+	// worker that could not be, and a sibling gang serving the same model is
+	// the same answer. Before this the walk stopped at the first gang and one
+	// request in flight failed per lost part (design-partner cell, T8.7:
+	// 59 of 60).
+	if st == nil || !errors.Is(err, engines.ErrUnreachable) || nodeID == "" || nodeID == r.localNode {
 		return ctx, false
 	}
 	st.mu.Lock()
 	st.skipped[nodeID] = true
 	st.mu.Unlock()
 	return ctx, true
+}
+
+// skippedGang says whether this request already found the gang unreachable.
+func skippedGang(ctx context.Context, key string) bool {
+	st := pickStateOf(ctx)
+	if st == nil {
+		return false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.skipped[key]
+}
+
+// noteSkippedGang records that a routable gang of the model was passed over
+// because this request had set it aside; skippedEveryGang reads it after a
+// pick that found no gang, so "every gang unreachable" is told apart from
+// "the model has no gang".
+func noteSkippedGang(ctx context.Context, model string) {
+	if st := pickStateOf(ctx); st != nil {
+		st.mu.Lock()
+		st.gangless[model] = true
+		st.mu.Unlock()
+	}
+}
+
+func skippedEveryGang(ctx context.Context, model string) bool {
+	st := pickStateOf(ctx)
+	if st == nil {
+		return false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.gangless[model]
 }

@@ -7,6 +7,11 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
+- **A request whose gang cannot be reached is retried on a sibling gang.** A coordinator that could not be dialled
+  — its node died, a part went and llama-server with it — ended the request, although another gang of the same model
+  was serving; the walk that already moves a request off an unreachable WORKER now sets the gang aside by its key and
+  picks again. With every gang set aside the caller hears "unreachable" (503, retry shortly), never the leader's own
+  engine, which holds no sharded model.
 - **A cached file is checked against a pinned digest.** A file already complete on disk was trusted by size, so a
   `--sha256` was only ever compared on the download that first wrote the file, and a version that pinned the wrong
   digest for a file the node held was served. A pinned fetch now hashes a cached file once, records the verified

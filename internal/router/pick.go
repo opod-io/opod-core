@@ -24,6 +24,12 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	if eng, key, ok := r.shardCoordinator(ctx, model); ok {
 		metrics.ObserveRouterPick("shard", "ok")
 		return eng, key, nil
+	} else if skippedEveryGang(ctx, model) {
+		// Every routable gang was set aside by THIS request (nextworker.go):
+		// the answer is "unreachable", never the leader's own engine, which
+		// does not hold a sharded model.
+		metrics.ObserveRouterPick("shard", "none-reachable")
+		return nil, "", noWorkerLeft(model)
 	}
 
 	// 1. Is the model on the local node?
@@ -279,6 +285,12 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 		// routable on its first request can lose a worker, or have one
 		// drained, at any time after it.
 		if !r.shardGroupRoutable(ctx, parts) {
+			continue
+		}
+		// Set aside for THIS request: its coordinator could not be dialled a
+		// moment ago (nextworker.go). The cooldown keeps later requests away.
+		if skippedGang(ctx, gangKey(modelID, id)) {
+			noteSkippedGang(ctx, modelID)
 			continue
 		}
 		for _, s := range parts {
