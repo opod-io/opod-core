@@ -76,21 +76,10 @@ type Orchestrator struct {
 // on a two-part gang. It ran for twelve minutes without once forming the gang,
 // and every attempt looked healthy in isolation.
 //
-// Keyed by the model AND the gang. What a create tears down is what it
-// replaces (replacePrior): a NAMED create removes only its own gang's prior
-// parts, a bare create removes every gang of the model. So two named creates
-// of different gangs touch nothing of each other's and may run at once; a
-// bare create excludes every create of the model, and is excluded by any.
-//
-// The guard was keyed by the model alone until 2026-09-29, when a gang whose
-// coordinator could never start (a context no card holds) kept its create
-// running for the whole formation budget, and the healthy sibling — whose
-// parts had been re-created meanwhile — was refused its own create for as
-// long: the endpoint served nothing although one gang's parts were up. One
-// gang's stuck create must not strand its sibling.
+// Keyed by the model, not the gang: a bare create replaces every gang of it.
 type createGuard struct {
 	mu   sync.Mutex
-	busy map[string]map[string]string // model id → gang id ("" = the whole model) → what holds it
+	busy map[string]string // model id → what holds it
 }
 
 // ErrCreateInFlight says a create for this model's gangs is already running.
@@ -103,40 +92,19 @@ func (g *createGuard) claim(model, gang string) (release func(), err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.busy == nil {
-		g.busy = map[string]map[string]string{}
+		g.busy = map[string]string{}
 	}
-	held := g.busy[model]
-	conflict := ""
-	if gang == "" {
-		// A whole-model create replaces every gang: nothing of the model may
-		// be forming.
-		for _, what := range held {
-			conflict = what
-			break
-		}
-	} else if what, ok := held[""]; ok {
-		conflict = what
-	} else if what, ok := held[gang]; ok {
-		conflict = what
-	}
-	if conflict != "" {
-		return nil, fmt.Errorf("%w (%s); its parts would be torn down as this one's — wait for it to end", ErrCreateInFlight, conflict)
+	if holder, taken := g.busy[model]; taken {
+		return nil, fmt.Errorf("%w (%s); its parts would be torn down as this one's — wait for it to end", ErrCreateInFlight, holder)
 	}
 	what := "gang " + gang
 	if gang == "" {
 		what = "the whole model"
 	}
-	if held == nil {
-		held = map[string]string{}
-		g.busy[model] = held
-	}
-	held[gang] = what
+	g.busy[model] = what
 	return func() {
 		g.mu.Lock()
-		delete(g.busy[model], gang)
-		if len(g.busy[model]) == 0 {
-			delete(g.busy, model)
-		}
+		delete(g.busy, model)
 		g.mu.Unlock()
 	}, nil
 }

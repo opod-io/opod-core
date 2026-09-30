@@ -7,11 +7,6 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
-- **One gang's stuck create no longer strands its sibling.** The guard against two creates of one model tearing each
-  other's parts down was keyed by the model alone; a gang whose coordinator could never start kept its create running
-  for the whole formation budget, and the healthy sibling, whose parts had been re-created meanwhile, was refused its
-  own create for as long — nothing served although one gang's parts were up. A named create replaces only its own
-  gang, so two named creates of different gangs now run at once; a whole-model create still excludes every other.
 - **A request whose gang cannot be reached is retried on a sibling gang.** A coordinator that could not be dialled
   — its node died, a part went and llama-server with it — ended the request, although another gang of the same model
   was serving; the walk that already moves a request off an unreachable WORKER now sets the gang aside by its key and
