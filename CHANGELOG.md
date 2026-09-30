@@ -7,10 +7,23 @@ the last section.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
+- **One gang's stuck create no longer strands its sibling.** The guard against two creates of one model tearing each
+  other's parts down was keyed by the model alone; a gang whose coordinator never came up held its create for the
+  whole formation budget and the healthy sibling, whose parts had been re-created meanwhile, was refused its own
+  create for as long. A named create replaces only its own gang and places only on the nodes it names, so two named
+  creates of different gangs run at once; a whole-model create still excludes every other. (A first attempt at this
+  was reverted the same night: the creates collided through the shared head above, which is what the fix before
+  this one ends.)
 - **A gang create's head is the request's own, never the leader's shared state.** The `head` of a create was written
   into the orchestrator's `OPOD_COORDINATOR_NODE` field and never cleared, so a later or concurrent create read
   whichever head had last been written — a sibling gang's — and fell back to the default picker after a warning.
   The head now rides the create call; the leader-wide setting stays the default for a create that names none.
+- **One gang's stuck create no longer strands its sibling.** The guard against two creates of one model tearing each
+  other's parts down was keyed by the model alone; a gang whose coordinator never came up held its create for the
+  whole formation budget and the healthy sibling, whose parts had been re-created meanwhile, was refused its own
+  create for as long. A named create replaces only its own gang and places only on the nodes it names, so two named
+  creates of different gangs run at once; a whole-model create still excludes every other. (A first attempt at this
+  was reverted the same night: the creates collided through the shared head above, which the entry above ends.)
 - **A request whose gang cannot be reached is retried on a sibling gang.** A coordinator that could not be dialled
   — its node died, a part went and llama-server with it — ended the request, although another gang of the same model
   was serving; the walk that already moves a request off an unreachable WORKER now sets the gang aside by its key and

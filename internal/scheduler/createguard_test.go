@@ -22,15 +22,27 @@ func TestOneCreatePerModelAtATime(t *testing.T) {
 		t.Fatalf("first create refused: %v", err)
 	}
 
-	// A second create of the same model — any gang of it — is refused, and says
-	// what holds it and why.
-	_, err = g.claim("llama-3.2-3b-sharded", "g1")
+	// A second create of the SAME gang is refused, and says what holds it and why.
+	_, err = g.claim("llama-3.2-3b-sharded", "g0")
 	if !errors.Is(err, ErrCreateInFlight) {
-		t.Fatalf("second create of the same model: %v — must wrap ErrCreateInFlight", err)
+		t.Fatalf("second create of the same gang: %v — must wrap ErrCreateInFlight", err)
 	}
 	if !strings.Contains(err.Error(), "gang g0") || !strings.Contains(err.Error(), "torn down") {
 		t.Errorf("the refusal must name what holds it and what a second create would do: %q", err)
 	}
+	// A create of a SIBLING gang runs alongside: it replaces only its own
+	// gang's parts, so nothing of g0's is torn down. Keyed by the model alone,
+	// g1's stuck create stranded g0 on the design-partner cell (2026-09-29).
+	siblingRelease, err := g.claim("llama-3.2-3b-sharded", "g1")
+	if err != nil {
+		t.Fatalf("a sibling gang's create was refused while g0 forms: %v", err)
+	}
+	// A whole-model create waits for both, and while it runs nothing else of
+	// the model may start.
+	if _, err := g.claim("llama-3.2-3b-sharded", ""); !errors.Is(err, ErrCreateInFlight) {
+		t.Fatalf("a whole-model create must wait for the named ones: %v", err)
+	}
+	siblingRelease()
 
 	// Another model is untouched: the guard is per model, not a global lock.
 	otherRelease, err := g.claim("mimo-7b", "g0")
@@ -41,9 +53,12 @@ func TestOneCreatePerModelAtATime(t *testing.T) {
 
 	// And the model is free again once the create ends.
 	release()
-	again, err := g.claim("llama-3.2-3b-sharded", "g0")
+	again, err := g.claim("llama-3.2-3b-sharded", "")
 	if err != nil {
 		t.Fatalf("the model stayed claimed after its create returned: %v", err)
+	}
+	if _, err := g.claim("llama-3.2-3b-sharded", "g1"); !errors.Is(err, ErrCreateInFlight) {
+		t.Fatalf("a named create must wait for a whole-model create: %v", err)
 	}
 	again()
 }
