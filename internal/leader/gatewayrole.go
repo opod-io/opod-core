@@ -68,12 +68,23 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 			id = "gateway"
 		}
 	}
+	// A leader with a minted certificate is trusted through the same variable a
+	// worker uses. A CA that does not load is a refusal, not a fallback to the
+	// system roots: that fallback is a door that cannot reach its leader and
+	// does not say why.
+	trust, err := gateway.LeaderTransport(strings.TrimSpace(s.cfg.Env.LeaderCA))
+	if err != nil {
+		return fmt.Errorf("OPOD_ROLE=gateway: %w", err)
+	}
 	s.front = &gatewayLoops{
 		mirror: gateway.NewMirror(leaderURL, token, s.store),
 		push:   gateway.NewPusher(leaderURL, token, id),
 		spend:  gateway.NewSpend(leaderURL, token),
 		id:     id,
 	}
+	s.front.mirror.Trust(trust)
+	s.front.push.Trust(trust)
+	s.front.spend.Trust(trust)
 	// A door never receives a heartbeat, so the heartbeat-AGE rule is not a
 	// liveness rule for it — it is a clock on how long ago the LEADER last saw
 	// the worker, copied with the row. While the leader restarts (every rollout,
