@@ -91,7 +91,7 @@ File an issue with:
 
 ## Asking questions
 
-Use **GitHub Discussions** for design questions, RFCs, and "is this a bug?". Use **GitHub Issues** only for confirmed bugs and concrete feature requests.
+Use **GitHub Discussions** for design questions, RFCs, and "is this a bug?". Use **GitHub Issues** only for confirmed bugs and concrete feature requests. [SUPPORT.md](SUPPORT.md) is the one-table map of where each kind of question goes.
 
 ## Further reading
 

@@ -1,0 +1,25 @@
+# Dependabot keeps the Go modules and the Actions pins current. The SDK is
+# excluded on purpose: a bump of github.com/opod-io/opod-sdk is a contract
+# change that lands with the code that reads the new fields, never alone.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: github.com/opod-io/opod-sdk
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci(deps)"

@@ -4,11 +4,12 @@
 
 [![License](https://img.shields.io/github/license/opod-io/opod-core?color=blue)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/opod-io/opod-core)](go.mod)
-[![Release](https://img.shields.io/github/v/release/opod-io/opod-core?sort=semver)](https://github.com/opod-io/opod-core/releases/latest)
 [![CI](https://github.com/opod-io/opod-core/actions/workflows/ci.yml/badge.svg)](https://github.com/opod-io/opod-core/actions/workflows/ci.yml)
 [![Auto-release](https://github.com/opod-io/opod-core/actions/workflows/auto-release.yml/badge.svg)](https://github.com/opod-io/opod-core/actions/workflows/auto-release.yml)
+[![Contributor Covenant](https://img.shields.io/badge/code%20of%20conduct-Contributor%20Covenant%202.1-5e4b8b)](CODE_OF_CONDUCT.md)
+[![Discussions](https://img.shields.io/github/discussions/opod-io/opod-core?label=discussions)](https://github.com/opod-io/opod-core/discussions)
 
-[**opod.io**](https://opod.io) · [GitHub](https://github.com/opod-io/opod-core) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
+[**opod.io**](https://opod.io) · [Discussions](https://github.com/opod-io/opod-core/discussions) · [Go SDK](https://github.com/opod-io/opod-sdk) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
 
 >
 > Engine-agnostic: bring **Ollama**, **vLLM**, **SGLang**, **MLX-LM**, or **llama.cpp**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware and shard a giant model across several machines — llama.cpp RPC, vLLM + Ray, or SGLang's own launcher, whichever the catalog entry names. Core has no vendor egress: nothing leaves your network.
