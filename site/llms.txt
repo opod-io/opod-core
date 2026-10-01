@@ -1,6 +1,6 @@
 # Opod
 
-> Opod serves open-weight models on GPUs you already own. It has two parts. The open-source core (Apache-2.0) is a leader/worker inference runtime with an OpenAI-compatible gateway. The control plane (`opodcp`) installs into any Kubernetes cluster with one `helm install`. It runs each model endpoint as a leader plus GPU workers, packs models onto cards by measured VRAM, scales idle endpoints to zero, rolls out changes with proof, and is never on the request path. The control plane is proprietary, publicly pullable, and free with no key up to 16 GPUs in one cell (chart 0.1.0 still enforces the earlier limit of 8).
+> Opod serves open-weight models on GPUs you already own. It has two parts. The open-source core (Apache-2.0) is a leader/worker inference runtime with an OpenAI-compatible gateway. The control plane (`opodcp`) installs into any Kubernetes cluster with one `helm install`. It runs each model endpoint as a leader plus GPU workers, packs models onto cards by measured VRAM, scales idle endpoints to zero, rolls out changes with proof, and is never on the request path. The control plane is proprietary, publicly pullable, and free with no key up to 4 GPUs in one cell.
 
 ## What it does
 
@@ -31,7 +31,7 @@
 
 ## Facts
 
-- Core licence: Apache-2.0, no usage limit. Control plane: proprietary, free tier 16 GPUs in one cell (8 in chart 0.1.0), offline licence keys, no phone-home.
+- Core licence: Apache-2.0, no usage limit. Control plane: proprietary, free tier 4 GPUs in one cell, offline licence keys, no phone-home.
 - Status: early access, chart and control plane 0.1.0. No signed release yet.
 - API shape: OpenAI-compatible only.
 - Not included: invoices/cost rating (usage facts only), hard multi-tenant isolation for shared packing, tool calling and structured output at the gateway (dropped before the engine today). A tensor-parallel group MAY cross a node (ADR-068) — the product says what that costs on the fabric it has rather than refusing; pipeline parallelism is still the cheap shape on ordinary networking.

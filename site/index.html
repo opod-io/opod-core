@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0b1120">
 <title>Opod — serve open models on the GPUs you already own</title>
-<meta name="description" content="Opod turns a Kubernetes cluster, or a few Linux machines with GPUs, into OpenAI-compatible model endpoints: packed by measured VRAM, scaled to zero, rolled out with proof, and still serving when the control plane is down. Open-source core (Apache-2.0); the control plane installs with one helm command and is free up to 16 GPUs.">
+<meta name="description" content="Opod turns a Kubernetes cluster, or a few Linux machines with GPUs, into OpenAI-compatible model endpoints: packed by measured VRAM, scaled to zero, rolled out with proof, and still serving when the control plane is down. Open-source core (Apache-2.0); the control plane installs with one helm command and is free up to 4 GPUs.">
 <link rel="canonical" href="https://opod.io/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Opod">
 <meta property="og:url" content="https://opod.io/">
 <meta property="og:title" content="Opod — serve open models on the GPUs you already own">
-<meta property="og:description" content="Open-source inference runtime (Apache-2.0) plus a control plane you install with one helm command. OpenAI-compatible endpoints, VRAM packing, scale to zero, verified rollouts. Free up to 16 GPUs.">
+<meta property="og:description" content="Open-source inference runtime (Apache-2.0) plus a control plane you install with one helm command. OpenAI-compatible endpoints, VRAM packing, scale to zero, verified rollouts. Free up to 4 GPUs.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1120'/%3E%3Ccircle cx='10' cy='16' r='3.2' fill='%2334d399'/%3E%3Ccircle cx='16' cy='16' r='3.2' fill='%2334d399' opacity='.7'/%3E%3Ccircle cx='22' cy='16' r='3.2' fill='%2334d399' opacity='.4'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,7 +27,7 @@
   "url": "https://opod.io/",
   "codeRepository": "https://github.com/opod-io/opod-core",
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
-  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "description": "Open-source core; control plane free up to 16 GPUs in one cell" }
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "description": "Open-source core; control plane free up to 4 GPUs in one cell" }
 }
 </script>
 <style>
@@ -287,7 +287,7 @@
           <li>API keys, guardrail webhooks, fallback target, audit log, usage facts and export, alerts</li>
           <li>Local users or OIDC SSO with viewer, operator and admin roles, team scoping, backup and restore</li>
         </ul>
-        <span class="licence">Proprietary · free with no key up to 16 GPUs in one cell (chart 0.1.0 still enforces the earlier 8) · public images</span>
+        <span class="licence">Proprietary · free with no key up to 4 GPUs in one cell (chart 0.1.0 still enforces the earlier 8) · public images</span>
       </div>
     </div>
   </div>
@@ -539,7 +539,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
     <div class="grid g3" style="margin-top:14px">
       <div class="card"><div class="card-head"><h3>Embeddings endpoints</h3><span class="chip next">next release</span></div><p>Embeddings endpoints for RAG, proven on a GPU at 768 dimensions with a first vector in 175 ms.</p></div>
       <div class="card"><div class="card-head"><h3>Training and batch jobs</h3><span class="chip next">next release</span></div><p>Jobs claim cards from the same ledger as endpoints. Preemptible jobs yield to serving and resume from a checkpoint.</p></div>
-      <div class="card"><div class="card-head"><h3>HA, quotas, SGLang</h3><span class="chip next">next release</span></div><p>Leader election for several control-plane replicas on Postgres, per-team GPU quotas, SGLang as a third engine, a guided create form, Pod Security <code>baseline</code> on every pod, and the free tier raised to 16 GPUs.</p></div>
+      <div class="card"><div class="card-head"><h3>HA, quotas, SGLang</h3><span class="chip next">next release</span></div><p>Leader election for several control-plane replicas on Postgres, per-team GPU quotas, SGLang as a third engine, a guided create form, Pod Security <code>baseline</code> on every pod, and the free tier set to 4 GPUs (ADR-080).</p></div>
     </div>
   </div>
 </section>
@@ -560,7 +560,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
       <div class="card"><h3>No lock-in on the wire</h3><p>Clients speak the plain OpenAI API, and usage leaves as open formats. Endpoints are ordinary Deployments and Services with <code>opod.io/*</code> labels. The runtime underneath is Apache-2.0.</p></div>
       <div class="card"><h3>Pinned and reproducible</h3><p>Every image in a plan is resolved to a digest when the plan is written and changed only by a rollout. No pod silently picks up a moved tag.</p></div>
       <div class="card"><h3>Honest when things break</h3><p>Alerts are persisted and carry a remedy. Pods stranded on a lost node are swept, and an endpoint that can't converge reads <code>degraded</code> with the reason instead of pretending to be Pending.</p></div>
-      <div class="card"><h3>Fair free tier</h3><p>The full product is free up to 16 GPUs in one cell. Beyond that, only <em>new</em> placements are refused, with the remedy. Running workloads are never stopped, and an expired key never kills anything.</p></div>
+      <div class="card"><h3>Fair free tier</h3><p>The full product is free up to 4 GPUs in one cell. Beyond that, only <em>new</em> placements are refused, with the remedy. Running workloads are never stopped, and an expired key never kills anything.</p></div>
     </div>
   </div>
 </section>
@@ -688,7 +688,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
           <tr><td>Metrics</td><td><code>/metrics</code> for Prometheus to scrape</td><td><code>ports.metrics.otlpEndpoint</code> (OTLP push)</td></tr>
           <tr><td>Alerts</td><td>console + a gauge</td><td><code>ports.notifier.urls</code>: webhook · <code>slack+https://</code> · <code>alertmanager+https://</code> · <code>pagerduty://</code></td></tr>
           <tr><td>Autoscaler</td><td>built into the control plane</td><td><code>autoscaler.adapter=keda</code> (a ScaledObject per endpoint)</td></tr>
-          <tr><td>Licence</td><td>free tier: 16 GPUs (8 in chart 0.1.0)</td><td><code>licence.key=opod1.…</code> (verified offline)</td></tr>
+          <tr><td>Licence</td><td>free tier: 4 GPUs</td><td><code>licence.key=opod1.…</code> (verified offline)</td></tr>
         </tbody>
       </table>
     </div>
@@ -760,7 +760,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
       <div class="card"><ul>
         <li><b>Shared packing is not a security boundary.</b> VRAM budgets keep models from colliding, not tenants from each other. Use <code>dedicated</code> (the default) for untrusted neighbours.</li>
         <li><b>One control-plane replica in 0.1.0.</b> High availability on Postgres lands in the next chart.</li>
-        <li><b>The free tier is 16 GPUs, but chart 0.1.0 still enforces the earlier 8.</b> The next chart carries 16. Running workloads are never affected either way.</li>
+        <li><b>The free tier is 4 GPUs in one cell.</b> Running workloads are never affected by the ceiling.</li>
         <li><b>Usage facts, not invoices.</b> Opod exports what happened; pricing and showback are left to your FinOps tools.</li>
         <li><b>OpenAI API only.</b> The Anthropic Messages, audio and rerank shapes are out of scope for core.</li>
       </ul></div>
@@ -774,10 +774,10 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
     <div class="eyebrow">FAQ</div>
     <h2>Questions people ask first.</h2>
     <div style="margin-top:18px">
-      <details><summary>Is opod open source?</summary><p>The core runtime (<code>opod</code>) and the SDK are Apache-2.0 with no usage limit. The control plane (<code>opodcp</code>) is proprietary. Its images are publicly pullable, and it is free with no key up to 16 GPUs in one cell. The runtime never depends on the control plane: you can run core on its own, or manage it with your own tooling through <code>/admin/v1</code>.</p></details>
+      <details><summary>Is opod open source?</summary><p>The core runtime (<code>opod</code>) and the SDK are Apache-2.0 with no usage limit. The control plane (<code>opodcp</code>) is proprietary. Its images are publicly pullable, and it is free with no key up to 4 GPUs in one cell. The runtime never depends on the control plane: you can run core on its own, or manage it with your own tooling through <code>/admin/v1</code>.</p></details>
       <details><summary>Do I need Kubernetes?</summary><p>For the control plane, yes: Kubernetes is its only executor. If you don't have a cluster, <code>opodcp infra up</code> builds k3s on your Linux machines over SSH. The core runtime alone needs no Kubernetes and runs on a Mac or Linux box.</p></details>
       <details><summary>Does traffic flow through the control plane?</summary><p>No. Clients call the endpoint's Service, and the leader answers. The control plane writes the plan, keys and guardrail rules into a Secret the leader mounts, and pulls events and usage from the leader. Its console includes a playground proxy for convenience, but your applications never need it.</p></details>
-      <details><summary>What happens above the free tier, or when a key expires?</summary><p>The free tier is 16 GPUs in one cell (chart 0.1.0 still enforces the earlier 8; the next chart carries 16). Only new placements beyond the licensed number of GPUs are refused, and the refusal includes the remedy. Running workers are never stopped. An expired key keeps its ceiling through a grace period, then the free tier applies to new placements. Keys are verified offline against a public key built into the binary.</p></details>
+      <details><summary>What happens above the free tier, or when a key expires?</summary><p>The free tier is 4 GPUs in one cell. Only new placements beyond the licensed number of GPUs are refused, and the refusal includes the remedy. Running workers are never stopped. An expired key keeps its ceiling through a grace period, then the free tier applies to new placements. Keys are verified offline against a public key built into the binary.</p></details>
       <details><summary>Does anything phone home?</summary><p>No. Core has no telemetry. The control plane needs no connection to us: there is no licence server and no remote kill switch. It needs to reach your registry and model hub (or your mirrors) to pull images and weights.</p></details>
       <details><summary>Which models can I run?</summary><p>Anything in the catalog (Qwen, Llama, Gemma, GLM, DeepSeek, gpt-oss, Mistral, Phi, vision and embedding models), or a Hugging Face GGUF or safetensors repo you add. Sizing is up to you: the ledger tells you what fits on each card before anything is scheduled.</p></details>
       <details><summary>Can I pack models on AMD, Intel or Tenstorrent cards?</summary><p>The ledger places on any card whose VRAM is measured, which today means NVIDIA and AMD. Serving is proven on NVIDIA. AMD is waiting on its worker image, and Intel and Tenstorrent are inventoried only. We use those three words on purpose, because each one is checkable.</p></details>
@@ -803,7 +803,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
 
 <footer>
   <div class="wrap">
-    <div>© 2026 Opod contributors · core is Apache-2.0 · control plane is proprietary, free up to 16 GPUs</div>
+    <div>© 2026 Opod contributors · core is Apache-2.0 · control plane is proprietary, free up to 4 GPUs</div>
     <nav aria-label="Footer">
       <a href="https://github.com/opod-io/opod-core">GitHub</a>
       <a href="https://github.com/opod-io/opod-sdk">SDK</a>
