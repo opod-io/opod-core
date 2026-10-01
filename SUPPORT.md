@@ -24,4 +24,4 @@
 - The command you ran and the full output, with any key or token redacted (`sk-orc-…`)
 - For a cluster question: how many nodes, which one is the leader, and `opod node ls`
 
-Core is a CLI-only runtime maintained in the open. There is no paid support tier for it; response times are best-effort.
+Core is a CLI-only runtime maintained in the open. Support is community support, best-effort.

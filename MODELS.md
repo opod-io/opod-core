@@ -92,7 +92,7 @@ For per-model walkthroughs (with detailed install + client snippets), the curate
 
 Use the [picker table above](#-picker-table--what-to-install). It covers every model in the catalog with size, RAM, capability ratings, and license — pick the row that matches your hardware, then go by use case.
 
-The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-core/issues/new?template=catalog_request.yml) if you'd like a full walkthrough added.
+The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-sdk/issues/new?template=catalog_request.yml) in the SDK repo, where the catalog lives, if you'd like a full walkthrough added.
 
 ### Installing models that aren't in the catalog
 
