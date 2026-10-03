@@ -307,6 +307,16 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: true
+          # On a TAG the action also tries to attach every SBOM to the GitHub
+          # Release, which needs `contents: write` — this workflow grants
+          # `contents: read`. That step only activates when there is a release,
+          # so a workflow_dispatch never reached it and the failure first
+          # appeared on v0.1.0, the repo's first tag: five of eleven images were
+          # pushed and SIGNED and then lost their attestation, because the job
+          # died before `attach the SBOM to the image`. The SBOM's home is the
+          # cosign attestation on the image, not a second copy on the release,
+          # so this is off rather than the permission widened.
+          upload-release-assets: false
       - name: read the builder's SBOM back from the registry (the images too large to scan again)
         if: matrix.sbom_in_build == true
         # `sbom: true` above made BuildKit attach an SPDX attestation to the pushed
