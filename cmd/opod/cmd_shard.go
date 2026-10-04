@@ -36,10 +36,11 @@ func cmdShard(args []string) {
 		},
 		notes: []string{
 			"Sharding uses llama.cpp's RPC backend. Every shard worker needs `rpc-server` on PATH.",
-			"The coordinator runs `llama-server` — by default on the worker with the most card memory (host RAM for a worker with no card; the leader only when there are no workers), so that machine needs `llama-server` on PATH. Override with OPOD_COORDINATOR_NODE=<node_id|local>.",
+			"The coordinator runs `llama-server` — by default on the worker with the biggest card, and a worker with no card is chosen only when no candidate has one (then by host RAM; the leader only when there are no workers), so that machine needs `llama-server` on PATH. Override with OPOD_COORDINATOR_NODE=<node_id|local>.",
 			"The catalog entry must have `sharding.required: true` and a local GGUF path in `source.path`.",
 			"A shard count of 1 (or a single --nodes machine) runs the whole model on that host — no rpc-servers, just llama-server on the selected node (the coordinator override is ignored).",
 			"A model may have SEVERAL gangs — independent copies of the weights, each serving whole requests, which the leader load-balances across. `--gang <id>` names one: creating it leaves the model's other gangs serving, and removing it leaves the rest. Without --gang, create replaces every gang of the model and remove takes them all down.",
+			"Without --nodes, the parts go to the strongest workers: a worker with a card is always preferred to one without, then the biggest card wins, then the biggest host. Name --nodes to place them yourself, in the order you name.",
 			"With no count, --nodes, --tp or --pp, this command picks the shape itself: the smallest number of equal parts that fits the live workers' free memory (1 when the model fits one worker; never more parts than workers or than the model's layers) and prints what it picked and why. Any shape you name is sent untouched, and the admin API never picks — a body without a count means the catalog's default_shards.",
 		},
 	}

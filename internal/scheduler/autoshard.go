@@ -224,6 +224,46 @@ func WorkerMemoryFacts(ctx context.Context, st store.Store, cat []models.Entry, 
 	return out, nil
 }
 
+// workerCardBytes is a worker's total card memory, 0 for a worker that
+// reported no card with a size. Unlike workerMemoryBytes it never falls back
+// to host RAM, because the callers below have to be able to tell the two
+// apart.
+func workerCardBytes(n store.Node) int64 {
+	var caps agent.Capabilities
+	if n.HardwareJSON == "" || json.Unmarshal([]byte(n.HardwareJSON), &caps) != nil {
+		return 0
+	}
+	vram := 0
+	for _, g := range caps.GPUs {
+		vram += g.VRAMGB
+	}
+	return int64(vram) << 30
+}
+
+// strongerWorker reports whether a outranks b as the host for a shard part.
+//
+// This is deliberately NOT workerMemoryBytes, which answers a different
+// question — how much a worker can serve FROM, where a CPU host's RAM is the
+// honest number. Ranking with it compares gigabytes of card against gigabytes
+// of host RAM as though they were the same quantity, and they are not: a
+// cardless 512 GB host then outranks the one host whose 48 GB card is the
+// reason the create was made at all. On a mixed fleet the accelerator machines
+// routinely carry the LEAST host RAM, so this is the ordinary case, not a
+// corner.
+//
+// The rule: a worker with a card outranks one without, whatever the host RAM.
+// Among carded workers the bigger card wins. Among cardless ones the bigger
+// host wins, so a CPU-only gang still orders sensibly. A cardless worker is
+// ranked last, never excluded — WorkerFor remains the only rule for whether
+// work may go to a node, and a CPU gang is a legitimate thing to ask for.
+func strongerWorker(a, b store.Node) bool {
+	ca, cb := workerCardBytes(a), workerCardBytes(b)
+	if ca != cb {
+		return ca > cb
+	}
+	return a.RAMGB > b.RAMGB
+}
+
 // workerMemoryBytes is the memory a worker serves from: its cards when it
 // reported any with a size, else its RAM (CPU hosts, unified memory).
 func workerMemoryBytes(n store.Node) int64 {

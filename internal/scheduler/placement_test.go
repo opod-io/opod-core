@@ -55,6 +55,57 @@ func TestPickWorkersAsksTheWorkerRule(t *testing.T) {
 	}
 }
 
+// The twin of TestCoordinatorGoesOnTheBiggestCardNotTheBiggestHost, for the
+// PARTS rather than the head. pickWorkers ranked by host RAM long after the
+// coordinator choice was corrected, and the consequence is larger than a
+// tie-break: WorkerFor asks nothing about cards, so a cardless or small-card
+// host with plenty of RAM outranked the one host whose card could hold a part.
+// On a mixed fleet the GPU machines are routinely the ones with the LEAST host
+// RAM, which is exactly the case this pins.
+func TestPickWorkersRankByCardNotHostRAM(t *testing.T) {
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, now := context.Background(), time.Now()
+	hw := func(vramGB int) string {
+		raw, err := json.Marshal(agent.Capabilities{GPUs: []agent.GPU{{Name: "card", VRAMGB: vramGB}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	// The shape of a real mixed fleet: the accelerator hosts carry the least
+	// host RAM, and one roomy host has no card at all.
+	for _, n := range []store.Node{
+		{ID: "cardless-roomy", RAMGB: 512, Address: "192.0.2.1:8081", State: "ready", LastHeartbeat: now},
+		{ID: "small-card", RAMGB: 62, Address: "192.0.2.2:8081", State: "ready", LastHeartbeat: now, HardwareJSON: hw(8)},
+		{ID: "big-card", RAMGB: 31, Address: "192.0.2.3:8081", State: "ready", LastHeartbeat: now, HardwareJSON: hw(48)},
+	} {
+		if err := st.Nodes().Upsert(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := New(st, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+
+	got, err := o.pickWorkers(ctx, 1)
+	if err != nil || len(got) != 1 || got[0].ID != "big-card" {
+		t.Fatalf("pickWorkers(1) = %+v, %v; want big-card — the 48 GB card beats 512 GB of host RAM", got, err)
+	}
+	got, err = o.pickWorkers(ctx, 2)
+	if err != nil || len(got) != 2 || got[0].ID != "big-card" || got[1].ID != "small-card" {
+		t.Fatalf("pickWorkers(2) = %+v, %v; want big-card then small-card — a cardless host comes last", got, err)
+	}
+	// A cardless host is still placeable: it is last, never excluded, because
+	// WorkerFor is the only rule for "may work go here" and a CPU-only gang is
+	// a legitimate thing to ask for.
+	got, err = o.pickWorkers(ctx, 3)
+	if err != nil || len(got) != 3 || got[2].ID != "cardless-roomy" {
+		t.Fatalf("pickWorkers(3) = %+v, %v; want the cardless host last, not refused", got, err)
+	}
+}
+
 // The coordinator holds the KV cache, so it belongs on the biggest CARD — not
 // the biggest host. Two hosts alike in RAM and unalike in cards is the ordinary
 // mixed fleet, and it is what broke on the design-partner cell (2026-09-20):

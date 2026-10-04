@@ -87,9 +87,30 @@ func (o *Orchestrator) pickWorkersByID(ctx context.Context, ids []string) ([]sto
 	return out, nil
 }
 
-// pickWorkers selects the n highest-RAM rows WorkerFor accepts. With fewer
-// than n it refuses with the numbers — how many were asked for, which rows
-// qualify, and why each other row does not — before anything is launched.
+// pickWorkers selects the n strongest rows WorkerFor accepts, ranked by
+// strongerWorker: a worker with a card outranks one without, the bigger card
+// wins among carded workers, and the bigger host among cardless ones.
+// With fewer than n it refuses with the numbers — how many were asked for,
+// which rows qualify, and why each other row does not — before anything is
+// launched.
+//
+// This used to compare host RAM, the same wrong quantity pickCoordinatorHost
+// was fixed for, and wrong here for a worse reason: WorkerFor has no card
+// requirement at all, so the inversion is not limited to hosts that tie on
+// RAM. A cardless or small-card host with plenty of RAM outranked a host whose
+// card was the only one big enough, and on a mixed fleet the GPU machines are
+// routinely the ones with the LEAST host RAM. Nothing downstream corrects the
+// choice either: --tensor-split is an operator-supplied engine flag, not a
+// split computed from whatever cards the placer happened to return.
+//
+// Swapping in workerMemoryBytes — the fix the coordinator choice got — is not
+// enough on its own, which a test written for this caught: that function falls
+// back to host RAM for a cardless worker, so a 512 GB CPU host still outranked
+// a 48 GB card. Hence strongerWorker, which both this and the coordinator
+// choice now use.
+//
+// Only an automatic create reaches this: a caller that names its nodes gets
+// pickWorkersByID, which keeps the caller's order and sorts nothing.
 func (o *Orchestrator) pickWorkers(ctx context.Context, n int) ([]store.Node, error) {
 	all, err := o.Store.Nodes().List(ctx)
 	if err != nil {
@@ -116,7 +137,7 @@ func (o *Orchestrator) pickWorkers(ctx context.Context, n int) ([]store.Node, er
 		}
 		return nil, errors.New(msg + " — join more workers (`opod join`), or name a smaller count")
 	}
-	sort.SliceStable(ready, func(i, j int) bool { return ready[i].RAMGB > ready[j].RAMGB })
+	sort.SliceStable(ready, func(i, j int) bool { return strongerWorker(ready[i], ready[j]) })
 	return ready[:n], nil
 }
 
@@ -228,7 +249,8 @@ type coordinatorChoice struct {
 	node   *store.Node // populated when local==false; the worker to dial
 }
 
-// pickCoordinatorHost picks the strongest host (by RAM) among workers + the
+// pickCoordinatorHost picks the strongest host (strongerWorker: a card beats
+// no card, then the bigger card, then the bigger host) among workers + the
 // leader to run the llama-server coordinator. Operators can override with
 // OPOD_COORDINATOR_NODE=<node_id> ("local" forces the leader), carried in
 // o.CoordinatorNode through the config contract.
@@ -251,8 +273,9 @@ func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.
 	}
 
 	// Default policy: pick the worker with the most of the memory that
-	// actually constrains a coordinator — its CARD, falling back to host RAM
-	// for a worker that reports no card (workerMemoryBytes). Only fall back to
+	// actually constrains a coordinator — its CARD, ranked by strongerWorker,
+	// which puts any carded worker ahead of a cardless one however roomy the
+	// host, and orders cardless workers by RAM. Only fall back to
 	// the leader when there are no workers (single-machine sharding test).
 	// Operators who want the leader can set OPOD_COORDINATOR_NODE=local.
 	//
@@ -270,10 +293,9 @@ func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.
 		return coordinatorChoice{nodeID: "local", local: true}
 	}
 	best := workers[0]
-	bestMem := workerMemoryBytes(best)
 	for _, w := range workers[1:] {
-		if m := workerMemoryBytes(w); m > bestMem {
-			best, bestMem = w, m
+		if strongerWorker(w, best) {
+			best = w
 		}
 	}
 	return coordinatorChoice{nodeID: best.ID, node: &best}
