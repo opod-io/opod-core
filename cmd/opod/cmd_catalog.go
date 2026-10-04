@@ -11,9 +11,23 @@ import (
 // binary (opod-sdk/catalog, R9.8); export writes it out as files for the
 // worker entrypoint and for operators who keep drop-in overrides beside it.
 func cmdCatalog(args []string) {
+	help := helpSpec{
+		name:    "catalog",
+		summary: "the bundled model catalog (embedded in the binary)",
+		usage:   "opod catalog ls\n  opod catalog export <dir>",
+		examples: []string{
+			"opod catalog ls                    # one catalog id per line",
+			"opod catalog export ./catalog      # write every entry out as <id>.yaml",
+		},
+		notes: []string{
+			"Drop-in overrides go beside the exported files (OPOD_CATALOG_DIR).",
+		},
+	}
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: opod catalog ls | export <dir>")
-		os.Exit(2)
+		dieHelp(help)
+	}
+	if wantsHelp(args) {
+		showHelp(help)
 	}
 	switch args[0] {
 	case "ls":
@@ -27,15 +41,13 @@ func cmdCatalog(args []string) {
 		}
 	case "export":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: opod catalog export <dir>")
-			os.Exit(2)
+			dieHelp(help)
 		}
 		if err := models.ExportBundled(args[1]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "usage: opod catalog ls | export <dir>")
-		os.Exit(2)
+		dieUnknownSubcommand("catalog", args[0], []string{"ls", "export"})
 	}
 }

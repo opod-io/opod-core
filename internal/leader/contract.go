@@ -145,9 +145,9 @@ func contractFeatures() map[string]bool {
 		// Gateway replicas, leader side (T11.1, ADR-063): POST
 		// /admin/v1/usage/push takes usage rows a copied front recorded,
 		// deduplicated by a row id the GATEWAY mints; GET /admin/v1/spend
-		// serves the per-key spend, the ceilings, this door's 1/N share of them
-		// and the lag bound a quota may drift by. Without it a manager must keep
-		// every request on one front door.
+		// serves the live door count and the lag bound (the per-key ceilings it
+		// once carried left with ADR-077). Without it a manager must keep every
+		// request on one front door.
 		"gateway_spend": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once

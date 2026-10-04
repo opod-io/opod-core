@@ -22,9 +22,24 @@ import (
 // (<repo>@<rev>/): a pinned GGUF is a file like any other, a safetensors
 // snapshot is one entry that goes whole or stays whole.
 func cmdCache(args []string) {
+	help := helpSpec{
+		name:    "cache",
+		summary: "the node's weight cache: list it, or remove what no plan references",
+		usage:   "opod cache ls [--dir <models dir>] [--json]\n  opod cache prune [--dir <models dir>] [--keep a.gguf,org-model@rev] [--min-age 24h] [--target-free 50] [--sweep 24h] [--apply] [--json]",
+		examples: []string{
+			"opod cache ls --dir /data/models",
+			"opod cache prune --dir /data/models                       # dry run: what would go",
+			"opod cache prune --dir /data/models --keep org-model@rev --apply",
+		},
+		notes: []string{
+			"--dir defaults to $OPOD_MODELS_DIR. prune never removes a file opod did not fetch, and is a dry run without --apply.",
+		},
+	}
 	if len(args) == 0 {
-		cacheUsage()
-		os.Exit(2)
+		dieHelp(help)
+	}
+	if wantsHelp(args) {
+		showHelp(help)
 	}
 	switch args[0] {
 	case "ls":
@@ -32,14 +47,8 @@ func cmdCache(args []string) {
 	case "prune":
 		cachePrune(args[1:])
 	default:
-		cacheUsage()
-		os.Exit(2)
+		dieUnknownSubcommand("cache", args[0], []string{"ls", "prune"})
 	}
-}
-
-func cacheUsage() {
-	fmt.Fprintln(os.Stderr, "usage: opod cache ls [--dir <models dir>] [--json]")
-	fmt.Fprintln(os.Stderr, "       opod cache prune [--dir <models dir>] [--keep a.gguf,org-model@rev] [--min-age 24h] [--target-free 50] [--apply] [--json]")
 }
 
 func cacheLs(args []string) {

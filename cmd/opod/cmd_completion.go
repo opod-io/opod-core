@@ -106,7 +106,7 @@ _opod() {
     local subsub=${words[2]:-}
 
     # Top-level subcommands
-    local cmds="up down status join node model shard image token config doctor update upgrade connect disconnect completion version help"
+    local cmds="up down status join node model shard image catalog fetch cache token config doctor update upgrade connect disconnect completion version help"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
@@ -138,6 +138,18 @@ _opod() {
         connect|disconnect)
             if [[ $cword -eq 2 ]]; then
                 COMPREPLY=( $(compgen -W "$(opod completion __clients 2>/dev/null) --list" -- "$cur") )
+            fi
+            return 0
+            ;;
+        catalog)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "ls export" -- "$cur") )
+            fi
+            return 0
+            ;;
+        cache)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "ls prune" -- "$cur") )
             fi
             return 0
             ;;
@@ -173,7 +185,7 @@ _opod() {
             ;;
         token)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "create ls list edit expire renew revoke" -- "$cur") )
+                COMPREPLY=( $(compgen -W "create ls list expire renew revoke" -- "$cur") )
             fi
             return 0
             ;;
@@ -207,6 +219,9 @@ _opod() {
         'model:install, list, search, inspect, or uninstall LLM models'
         'shard:orchestrate sharded models'
         'image:container images, and which one serves a model'
+        'catalog:list or export the bundled catalog'
+        'fetch:make model weights present in the models dir'
+        'cache:list or prune the weight cache of this node'
         'token:manage API keys'
                 'config:show / edit runtime config'
         'doctor:diagnose common problems'
@@ -237,10 +252,12 @@ _opod() {
                     ;;
                 shard)   _values 'subcommand' create ls list remove rm ;;
                 node)    _values 'subcommand' ls list show drain undrain remove rm ;;
-                token)   _values 'subcommand' create ls list edit expire renew revoke ;;
+                token)   _values 'subcommand' create ls list expire renew revoke ;;
                 config)  _values 'subcommand' show path edit ;;
                 completion) _values 'shell' bash zsh fish ;;
                 image)   _values 'subcommand' ls show recommend ;;
+                catalog) _values 'subcommand' ls export ;;
+                cache)   _values 'subcommand' ls prune ;;
             esac
             ;;
         args)
@@ -282,7 +299,7 @@ end
 complete -c opod -f
 
 # Top-level
-complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard image token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard image token config doctor update upgrade connect disconnect completion version help"
+complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard image catalog fetch cache token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard image catalog fetch cache token config doctor update upgrade connect disconnect completion version help"
 
 # model subcommands
 complete -c opod -n "__opod_using_command model" -a "add ls list ps search info load unload move remove rm"
@@ -303,13 +320,15 @@ complete -c opod -n "__opod_using_command disconnect" -a "(opod completion __cli
 # shard subcommands
 complete -c opod -n "__opod_using_command shard" -a "create ls list remove rm"
 complete -c opod -n "__opod_using_command image" -a "ls show recommend"
+complete -c opod -n "__opod_using_command catalog" -a "ls export"
+complete -c opod -n "__opod_using_command cache" -a "ls prune"
 complete -c opod -n "__opod_using_subcommand 'image recommend'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'shard create'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'shard remove'" -a "(opod completion __models 2>/dev/null)"
 
 # node / token / config
 complete -c opod -n "__opod_using_command node" -a "ls list show drain undrain remove rm"
-complete -c opod -n "__opod_using_command token" -a "create ls list edit expire renew revoke"
+complete -c opod -n "__opod_using_command token" -a "create ls list expire renew revoke"
 complete -c opod -n "__opod_using_command config" -a "show path edit"
 complete -c opod -n "__opod_using_command completion" -a "bash zsh fish"
 `

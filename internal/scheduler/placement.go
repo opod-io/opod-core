@@ -264,8 +264,8 @@ func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.
 	// card. llama.cpp then died on startup, "failed to allocate RPC0 buffer of
 	// size 4294967296 ... failed to allocate buffer for kv cache", and the gang
 	// never formed. A caller that names a head (the control plane always does,
-	// feature shard_head) never saw this; `opod shard create` without --head on
-	// a mixed pair always could.
+	// feature shard_head) never saw this; `opod shard create` (which has no head
+	// flag) on a mixed pair always could.
 	if len(workers) == 0 {
 		return coordinatorChoice{nodeID: "local", local: true}
 	}

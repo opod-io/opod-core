@@ -34,6 +34,6 @@ COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 # entrypoint.sh (base_env) when this base has one; every other base records
 # nothing and starts exactly as before.
 RUN if [ -r /opt/intel/oneapi/setvars.sh ]; then mkdir -p /usr/local/share/opod && echo "/opt/intel/oneapi/setvars.sh --force" > /usr/local/share/opod/base-env; fi
-ENV OPOD_ROLE=worker OPOD_ENGINE=vllm OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1 VLLM_WORKER_MULTIPROC_METHOD=spawn
+ENV OPOD_ROLE=worker OPOD_ENGINE=vllm OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models VLLM_WORKER_MULTIPROC_METHOD=spawn
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -45,7 +45,6 @@ ENV OPOD_ROLE=worker \
     OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 \
     OPOD_DATA_DIR=/var/lib/opod \
     OPOD_MODELS_DIR=/data/models \
-    OPOD_NO_UPDATE_CHECK=1 \
     OPOD_ENGINE_START="/usr/local/bin/docker-entrypoint.sh /bin/bash -c 'source ${PYTHON_ENV_DIR}/bin/activate && python run_vllm_api_server.py'"
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/opod-entrypoint.sh"]

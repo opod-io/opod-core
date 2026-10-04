@@ -180,7 +180,8 @@ func cmdJoin(args []string) {
 	// hand-rolled or third-party worker would otherwise get (PLAN T15.15).
 	nodeID := nodeIDFrom(env.NodeID, readPersistedNodeID(filepath.Join(cfg.DataDir, "node.yaml")), env.PodName)
 
-	// Persist node config so a subsequent `opod up` enters worker mode.
+	// Record this join. Only node_id is read back (readPersistedNodeID, the
+	// next `opod join`); the other fields are a record for the operator.
 	nodeCfg := NodeConfig{
 		NodeID:    nodeID,
 		LeaderURL: leader,

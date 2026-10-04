@@ -88,6 +88,6 @@ RUN set -eux; \
 # /usr/local/bin BEFORE /app so the wrappers win.
 ENV PATH=/usr/local/bin:/app:$PATH \
     OPOD_ROLE=worker OPOD_ENGINE=llamacpp \
-    OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models OPOD_NO_UPDATE_CHECK=1
+    OPOD_DATA_DIR=/var/lib/opod OPOD_MODELS_DIR=/data/models
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

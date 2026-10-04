@@ -24,7 +24,7 @@ import (
 func cmdUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.yaml (default: ~/.opod/config.yaml)")
-	autoPull := fs.Bool("auto-pull", true, "auto-pull the default model on first run")
+	autoPull := fs.Bool("auto-pull", true, "pull the default model on first run when pull_default_model is on (off by default; OPOD_PULL_DEFAULT_MODEL=1)")
 	noWizard := fs.Bool("no-wizard", false, "skip the interactive first-run prompt; combine with --auto-pull=false for a fully quiet boot")
 	unloadOnExit := fs.Bool("unload-on-exit", os.Getenv("OPOD_UNLOAD_ON_EXIT") == "1",
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (OPOD_UNLOAD_ON_EXIT=1 sets the default)")
@@ -39,8 +39,8 @@ func cmdUp(args []string) {
 		flags:   fs,
 		examples: []string{
 			"opod up",
-			"OPOD_DEFAULT_MODEL=llama-3.2-1b opod up",
-			"OPOD_ENGINE=llamacpp opod up           # auto-spawns llama-server if not already running",
+			"OPOD_PULL_DEFAULT_MODEL=1 OPOD_DEFAULT_MODEL=llama-3.2-1b opod up   # this machine serves a model too",
+			"OPOD_ENGINE=llamacpp OPOD_PULL_DEFAULT_MODEL=1 opod up   # auto-spawns llama-server if not already running",
 			"opod up --config ~/.opod/staging.yaml",
 			"opod up --auto-pull=false              # don't pre-pull the default model",
 			"opod up --no-wizard                    # skip the interactive 'install a starter?' prompt",
@@ -48,8 +48,9 @@ func cmdUp(args []string) {
 		},
 		notes: []string{
 			"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
-			"--role gateway serves the OpenAI routes and the probes only: the worker registry, the join tokens and the shard calls stay with the one leader, whose store is the single writer for usage. A door's quota decisions can lag the leader by up to 10s and it enforces a 1/N share of each key's rate limit (ADR-063).",
-			"When engine.preferred=llamacpp and no llama-server is listening on engine.llamacpp_endpoint, Opod auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
+			"By default the leader is router-only: it loads no model of its own and serves from the workers that join it. OPOD_PULL_DEFAULT_MODEL=1 (router.pull_default_model) makes it pull and serve the default model too; the first-run prompt and --auto-pull apply only then.",
+			"--role gateway serves the OpenAI routes and the probes only: the worker registry, the join tokens and the shard calls stay with the one leader, whose store is the single writer for usage. A door polls the leader every 10s for the live door count; /gatewayz publishes that bound as spend_lag_bound_s (ADR-063).",
+			"When engine.preferred=llamacpp, pull_default_model is on and no llama-server is listening on engine.llamacpp_endpoint, Opod auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
 		},
 	}
 	// Bad flags: print usage to stderr and let ExitOnError exit 2.

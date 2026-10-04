@@ -1,26 +1,17 @@
 package gateway
 
-// The enforcement half (ADR-063): a door polls the leader's spend snapshot and
-// enforces from it.
+// The spend poll (ADR-063): a door polls the leader's spend snapshot every
+// SpendPollEvery and reports, on /gatewayz, how many doors the leader counts and
+// how old its own copy is.
 //
-// Two decisions Hadi made, and the reasons they are not the obvious ones:
+// The snapshot used to carry each key's daily quota and rate limit, which a door
+// enforced from it (a 1/N share per door, eventually consistent within the
+// published bound). Per-key quotas and rate limits left core on 2026-09-28
+// (ADR-077): they belong to the application layer in front of an endpoint. What
+// remains is the door count and the lag bound.
 //
-//   - a per-key daily quota may lag up to 10 s across doors, AND THE BOUND IS
-//     PUBLISHED. Every door subtracting from a shared total in real time would
-//     need a round trip per request, which puts the leader back on the request
-//     path (ADR-001 says it never is). So the quota is eventually consistent by
-//     design, the window is stated, and a customer reads it from the API.
-//   - a key's rate limit is a 1/N SHARE per door, rebalanced every 10 s, not a
-//     flat division fixed at start. A keep-alive client is pinned to one door
-//     for the life of its connection: give every door a fixed 1/N and that
-//     client gets 1/N of the rate it was sold, while the other doors sit idle.
-//     The share follows the doors the LEADER has heard from, so doors that die
-//     hand their share back.
-//
-// Fail-static: a door that cannot reach the leader keeps enforcing the last
-// snapshot it has. It does not fall open (that would sell an unlimited key) and
-// it does not fall closed (that would take the endpoint down when the brain
-// blinks) — it keeps the last thing the brain said, and says how old it is.
+// Fail-static: a door that cannot reach the leader keeps the last snapshot it
+// has, and says how old it is.
 
 import (
 	"context"
@@ -42,7 +33,7 @@ type Snapshot struct {
 	LagBoundMS int   `json:"lag_bound_ms"`
 }
 
-// Spend polls the snapshot and answers the two questions the request path asks.
+// Spend polls the snapshot and keeps the last good one.
 type Spend struct {
 	leaderURL string
 	token     string
@@ -96,9 +87,9 @@ func (s *Spend) Poll(ctx context.Context) error {
 	return nil
 }
 
-// Age is how old the enforced snapshot is, and the bound the leader published.
-// A door serving on a snapshot older than the bound is still serving — it just
-// cannot claim the quota is accurate, and this is what says so.
+// Age is how old the held snapshot is, and the bound the leader published.
+// A door holding a snapshot older than the bound is still serving; this is what
+// says its door count is stale.
 func (s *Spend) Age() (age time.Duration, bound time.Duration, doors int, lastErr string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

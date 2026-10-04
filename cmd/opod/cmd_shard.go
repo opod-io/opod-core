@@ -36,7 +36,7 @@ func cmdShard(args []string) {
 		},
 		notes: []string{
 			"Sharding uses llama.cpp's RPC backend. Every shard worker needs `rpc-server` on PATH.",
-			"The coordinator runs `llama-server` — by default on the highest-RAM worker (the leader only when there are no workers), so that machine needs `llama-server` on PATH. Override with OPOD_COORDINATOR_NODE=<node_id|local>.",
+			"The coordinator runs `llama-server` — by default on the worker with the most card memory (host RAM for a worker with no card; the leader only when there are no workers), so that machine needs `llama-server` on PATH. Override with OPOD_COORDINATOR_NODE=<node_id|local>.",
 			"The catalog entry must have `sharding.required: true` and a local GGUF path in `source.path`.",
 			"A shard count of 1 (or a single --nodes machine) runs the whole model on that host — no rpc-servers, just llama-server on the selected node (the coordinator override is ignored).",
 			"A model may have SEVERAL gangs — independent copies of the weights, each serving whole requests, which the leader load-balances across. `--gang <id>` names one: creating it leaves the model's other gangs serving, and removing it leaves the rest. Without --gang, create replaces every gang of the model and remove takes them all down.",

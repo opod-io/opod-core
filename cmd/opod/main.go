@@ -212,7 +212,6 @@ Commands:
   shard remove <model>     Tear down a sharded model
   token create [name]      Issue an API key (--admin, --node)
   token ls                 List API keys
-  token edit <id>          Edit a key's model allowlist / rate limits
   token expire <id>        Expire a key now (or --in DURATION)
   token renew <id>         Extend a key's expiry (--ttl / --expires-at)
   token revoke <id>        Revoke an API key

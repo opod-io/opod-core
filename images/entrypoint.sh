@@ -50,7 +50,7 @@ mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
 # The catalog is embedded in the binary (opod-sdk/catalog, R9.8); the file copy
 # this script reads repo/file from is exported once, so no image carries one.
 [ -d "$CATALOG" ] || opod catalog export "$CATALOG" >/dev/null 2>&1 || true
-export OPOD_DATA_DIR="$DATA" OPOD_CATALOG_DIR="$CATALOG" OPOD_NO_UPDATE_CHECK=1
+export OPOD_DATA_DIR="$DATA" OPOD_CATALOG_DIR="$CATALOG"
 export HF_HOME="${HF_HOME:-$MODELS/hf}" LLAMA_CACHE="${LLAMA_CACHE:-$MODELS/llamacpp}"
 
 # models_dir has no env var in opod — write the config file.

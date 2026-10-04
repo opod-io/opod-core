@@ -19,6 +19,6 @@ FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe6
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash && rm -rf /var/lib/apt/lists/*
 COPY --from=opod /opod /usr/local/bin/opod
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
-ENV OPOD_ROLE=leader OPOD_LISTEN=:8080 OPOD_DATA_DIR=/var/lib/opod OPOD_PULL_DEFAULT_MODEL=false OPOD_NO_UPDATE_CHECK=1
+ENV OPOD_ROLE=leader OPOD_LISTEN=:8080 OPOD_DATA_DIR=/var/lib/opod OPOD_PULL_DEFAULT_MODEL=false
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
