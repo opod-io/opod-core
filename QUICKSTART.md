@@ -68,10 +68,12 @@ open -a Ollama
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 
 # 3. start Opod with a small model (auto-downloads on first run)
-OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
+OPOD_PULL_DEFAULT_MODEL=1 OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
 ```
 
-> First-run behavior: on an empty install, `opod up` shows a one-line prompt asking whether to pull the recommended starter for your hardware (press enter to accept, `o` to pick another, `n` to skip). Add `--no-wizard` for a quiet boot, or `--auto-pull=false` to skip the pull entirely.
+> `OPOD_PULL_DEFAULT_MODEL=1` (or `router.pull_default_model: true` in config) is what makes this machine download and serve a model itself. It is off by default: a plain `opod up` is a router-only leader that serves models from the workers that join it.
+>
+> First-run behavior: with the pull on, on an empty install `opod up` shows a one-line prompt asking whether to pull the recommended starter for your hardware (press enter to accept, `o` to pick another, `n` to skip). Add `--no-wizard` for a quiet boot, or `--auto-pull=false` to skip the pull entirely.
 
 ## 🐧 Linux (x86_64 or arm64)
 
@@ -84,7 +86,7 @@ sudo systemctl enable --now ollama
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 
 # 3. start Opod with a small model
-OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
+OPOD_PULL_DEFAULT_MODEL=1 OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
 ```
 
 ---
@@ -97,7 +99,7 @@ After step 3, Opod prints:
 ▶ detected darwin/arm64 · 24 GB RAM · 8 cores
 ✔ default model: llama-3.2-1b
 ✔ engine: ollama at http://127.0.0.1:11434
-▶ pulling llama3.2:1b ... 100%
+  pulling llama-3.2-1b · … [██████████] 1.2 GB/1.2 GB
 ✔ model ready: llama-3.2-1b
 
   Opod is ready.
@@ -225,16 +227,15 @@ Once you've confirmed it works:
 opod token create hadi
 ```
 
-This creates a user-scope key for `hadi` and prints it **once**. Narrow it at creation if you like:
+This creates a user-scope key for `hadi` and prints it **once**. Give it an expiry at creation if you like:
 
 ```bash
-opod token create hadi --models qwen-coder-14b,qwen3-14b   # only these models (a trailing * is a glob)
-opod token create hadi --rpm 60 --tpm 100000 --ttl 30d     # rate limits + an expiry
-opod token ls                                              # ids, scopes, limits
+opod token create hadi --ttl 30d                           # an expiry (or --expires-at 2026-12-31)
+opod token ls                                              # ids, names, scopes, expiry
 opod token revoke <id>                                     # when they leave
 ```
 
-A key has no daily cap unless you give it one; `--rpm` / `--tpm` are the per-minute ceilings. Then print the snippet for the tool your teammate uses, with their key and the address they will reach you on, and send them that:
+A key is an identity — who is calling, with which scope, until when. Per-key model allowlists, per-minute ceilings and daily quotas are not core's: they belong to the application layer in front of the gateway. Then print the snippet for the tool your teammate uses, with their key and the address they will reach you on, and send them that:
 
 ```bash
 opod connect cursor --token <their key> --base-url http://<your-host>:8080
@@ -508,10 +509,10 @@ brew install llama.cpp     # macOS · apt: see https://github.com/ggml-org/llama
 #  models; build from source with `cmake -DGGML_RPC=ON` if you need it)
 
 # 2. that's it — Opod spawns llama-server itself
-OPOD_ENGINE=llamacpp OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
+OPOD_ENGINE=llamacpp OPOD_PULL_DEFAULT_MODEL=1 OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
 ```
 
-Opod looks up the catalog entry for the default model, reads its `source.repo` (a GGUF HuggingFace repo), and runs `llama-server -hf <repo> --port 8089` via its internal supervisor — the same one that already manages `rpc-server` for sharded models. When Opod stops, the spawned `llama-server` stops too.
+With `OPOD_PULL_DEFAULT_MODEL=1`, Opod looks up the catalog entry for the default model, reads its `source.repo` (a GGUF HuggingFace repo), and runs `llama-server -hf <repo> --port 8089` via its internal supervisor — the same one that already manages `rpc-server` for sharded models. When Opod stops, the spawned `llama-server` stops too.
 
 If you'd rather manage `llama-server` yourself (e.g. to pass custom flags like `-ngl 999`), start it before `opod up` and Opod will detect it and skip the auto-spawn:
 
@@ -606,7 +607,7 @@ If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overl
 | → engine endpoint (`ollama` / `vllm` / `sglang` / `mlx` / `llamacpp`) | Every inference request. The engine is operator-selected (`engine.preferred`) and normally on this host or your LAN. | Don't pick that engine. |
 | ↔ leader / workers | A worker you joined heartbeats to its leader every 5 s and receives model loads; HMAC-signed per node. Only between machines you joined. | `opod node remove`, or don't `opod join`. |
 | → Hugging Face Hub (or `HF_ENDPOINT`) / the Ollama registry | When weights are pulled: `opod model add`, `opod fetch`, the first-run starter model you accepted, a worker loading a model it does not hold yet. | Pre-place the weights in the models directory; point `HF_ENDPOINT` at your mirror. |
-| → `github.com/opod-io/opod-core/releases/latest` | Only when you run `opod update` / `opod update --check`. Anonymous; no Opod-specific identifier sent. **Never at `opod up`.** | Don't run `opod update`. |
+| → `api.github.com/repos/opod-io/opod-core/releases/latest` (and the release download from `github.com/opod-io/opod-core/releases`) | Only when you run `opod update` / `opod update --check`. Anonymous; no Opod-specific identifier sent. **Never at `opod up`.** | Don't run `opod update`. |
 | → OTLP collector (traces) | If `OPOD_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector. | Unset `OPOD_OTLP_ENDPOINT`. |
 | → OTLP collector (logs) | If `OPOD_OTLP_LOGS_ENDPOINT` is set. This process's log records, beside stderr, to your own collector. | Unset `OPOD_OTLP_LOGS_ENDPOINT`. |
 | → guardrail webhook URL(s) | Every `/v1/chat/completions` if a guardrail rule is present in the **policy snapshot** a manager mounts (`OPOD_POLICY_FILE`, default `/etc/opod-auth/policy.json`) — there is no `config.yaml` key for it. **Synchronous on the request path**; the gateway waits for the answer. | Remove the rule from the policy file, or run with `OPOD_POLICY_FILE=off`. |

@@ -28,7 +28,7 @@ gang and `--pp-size` for stages, and **rank 0 serves the group's API** — it is
 coordinator row. That is a tensor group crossing a node by construction, which ADR-068
 allows and logs loudly (on plain ethernet, every all-reduce of every token is on the wire)
 rather than refusing. `images.yaml` cannot say so in its `gang` column yet: the field takes
-only `rpc` and `ray`, so these rows read blank in `opod image ls`.
+only `rpc` and `ray`, so these rows read `-` in `opod image ls`.
 
 Not supported: the sleep tier. SGLang has no sleep mode, so an endpoint that
 asks for one is refused at plan time rather than parked and never woken.

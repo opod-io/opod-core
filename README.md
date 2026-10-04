@@ -76,7 +76,7 @@
       └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**One-sentence version:** Opod is the layer that lets your tools talk to open-weight LLMs on your own hardware through **one URL and one API key**, with the team controls (quotas, rate limits, per-user keys) a bare inference engine doesn't give you. It is a CLI and an HTTP API; there is no UI in core.
+**One-sentence version:** Opod is the layer that lets your tools talk to open-weight LLMs on your own hardware through **one URL and one API key**, with the team controls (per-user keys with scopes and expiry, a per-key usage stream) a bare inference engine doesn't give you. It is a CLI and an HTTP API; there is no UI in core.
 
 ---
 
@@ -96,7 +96,7 @@ brew install --cask ollama && open -a Ollama
 # alternatives: pip install mlx-lm  ·  or run llama.cpp's llama-server  ·  or run vLLM in Docker
 
 # 3. start Opod with a tiny model (~1 GB, fast download)
-OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
+OPOD_DEFAULT_MODEL=llama-3.2-1b OPOD_PULL_DEFAULT_MODEL=1 opod up   # PULL=1: this machine serves the model too
 ```
 
 ### 🐧 Linux (x86_64 or arm64) — including Raspberry Pi, NAS, edge boxes
@@ -130,7 +130,7 @@ curl -fsSL https://ollama.com/install.sh | sh && sudo systemctl enable --now oll
 # alternatives: vLLM in Docker for NVIDIA  ·  llama.cpp's llama-server  ·  MLX-LM (Apple Silicon only)
 
 # 3. start Opod with a tiny model (~1 GB, fast download)
-OPOD_DEFAULT_MODEL=llama-3.2-1b opod up
+OPOD_DEFAULT_MODEL=llama-3.2-1b OPOD_PULL_DEFAULT_MODEL=1 opod up   # PULL=1: this machine serves the model too
 ```
 
 > 💡 Not sure which engine to install? Run `opod doctor` after step 1 — it inspects your hardware and tells you the single command to run.
@@ -246,14 +246,14 @@ There are excellent open-weight models now — Qwen3-Coder, Llama 3.3, DeepSeek-
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
-opod up
+OPOD_PULL_DEFAULT_MODEL=1 opod up   # without it the leader is router-only and pulls no model of its own
 ```
 
 You'll see:
 
 ```
 ▶ detected darwin/arm64 · 24 GB RAM · 8 cores
-✔ default model: qwen-coder-7b
+✔ auto-selected model: qwen-coder-7b (Qwen 2.5 Coder 7B Instruct)
 ✔ engine: ollama at http://127.0.0.1:11434
 ▶ pulling qwen-coder-7b · downloading [████████████████████] 4.7/4.7 GB · 85 MB/s · ETA 0:00
 ✔ model ready: qwen-coder-7b
@@ -379,7 +379,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - **Memory lifecycle** — admission control against live engine residency (a machine is never overcommitted), `opod model load --swap` with LRU evict-and-drain, `--pin` to protect a model, desired placements restored on restart, `opod down` releases engine memory by default, `--exclusive` for one-model-per-machine
 - Heterogeneous sharding for a model larger than any single node — `opod shard create <model> [N]` orchestrates every part end to end. Three backends, picked by the catalog entry's `sharding.engine`: llama.cpp **RPC parts** (layer-split, the default), a **vLLM + Ray** cluster (tensor and pipeline parallel), and **SGLang's own distributed launcher** (rank 0 serves the group). A model may run **several gangs** under one leader (`--gang <id>`) and the router picks the least loaded ready one
 - Live model migration — **built**: `opod model move <id> --from <node> --to <node>` hands a whole model to another worker by overlap, so no request fails and none waits for a cold load (no KV-cache transfer; a gang is rebuilt, not moved)
-- **Front doors** (`opod up --role gateway --leader <url>`): extra copies of the gateway for one endpoint. A door serves `/v1` only — no `/admin/v1`, no join surface, no engine — mirrors the leader's worker list, pushes its usage rows to the leader (the single writer) and enforces each key's 1/N share of its rate limits from the spend snapshot it polls back
+- **Front doors** (`opod up --role gateway --leader <url>`): extra copies of the gateway for one endpoint. A door serves `/v1` only — no `/admin/v1`, no join surface, no engine — mirrors the leader's worker list, pushes its usage rows to the leader (the single writer) and polls back the leader's door count and lag bound (`/admin/v1/spend`)
 - Cross-platform workers: Mac (MLX), Linux+NVIDIA (vLLM, SGLang, llama.cpp), Linux+AMD (llama.cpp ROCm and vLLM ROCm both proven on a Radeon host; SGLang ROCm is an Instinct-only upstream build), Linux+Intel Arc (llama.cpp SYCL proven), Tenstorrent (vLLM on tt-metal, proven), CPU (llama.cpp)
 - HA leader (planned)
 
@@ -426,7 +426,7 @@ of these will be declined for the same reason, so the table is here to save you 
 
 | | Why not |
 |---|---|
-| **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes, quotas and the audit log are the accountability story on a trusted network. |
+| **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes and expiry, the usage stream and the audit log are the accountability story on a trusted network. |
 | **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
 | **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
 | **Non-chat protocol surfaces** (Anthropic Messages, `/v1/rerank`, audio transcription and speech) | one protocol, done properly. These were removed in the 2026-09 contraction (ADR-022). |
@@ -477,7 +477,7 @@ These work today via `opod model add hf:owner/repo` but don't have curated YAML 
 Shipped recently (don't fall in this list):
 - **Vision (image input)** — `gemma4-12b`, `gemma4-26b`, `gemma4-31b`, `gemma4-e2b`, `gemma4-e4b`, `qwen3-vl-8b`, `qwen3-vl-32b`, `pixtral-12b`, `moondream3`, `mimo-vl-7b`, `llama-4-scout` all serve through `/v1/chat/completions` with `image_url` content blocks.
 - **Embeddings (for RAG)** — `/v1/embeddings` is live; install `nomic-embed-text` and call it from any OpenAI-shape embedding client.
-- **Audio (input)** — `mimo-audio`, `gemma4-e2b`, `gemma4-e4b` declare `audio` capability for future routing; today they serve as `chat` models.
+- **Audio (input)** — `mimo-audio`, `gemma4-12b`, `gemma4-e2b`, `gemma4-e4b` declare `audio` capability for future routing; today they serve as `chat` models.
 
 ---
 
@@ -700,7 +700,7 @@ auth:
   require_keys: true   # set false for local-only dev mode
 ```
 
-The initial admin key is auto-generated on first `opod up` and printed to stderr — copy it then. There is no `auth.initial_admin_key` field; the key lives in the SQLite store, not the YAML.
+The initial admin key is auto-generated on first `opod up` and printed to stdout (and saved to `~/.opod/admin.key`) — copy it then. There is no `auth.initial_admin_key` field; the key lives in the SQLite store, not the YAML.
 
 ### Full reference
 
@@ -784,7 +784,7 @@ There is no `observability.guardrails:` and no `observability.callbacks:` key: g
 **policy snapshot** a manager mounts (`OPOD_POLICY_FILE`, default `/etc/opod-auth/policy.json`) and the
 callback sinks left with ADR-022. Beyond this file, a manager steers a leader or a worker through the
 **process-environment contract** — `internal/config/env.go`, exported as a table for a manager as
-`controlplane.EnvContract` and reproduced below. A test (`TestEnvSurfaceOutsideConfigIsTheAllowlist`) fails
+`leader.EnvContract` (`internal/leader/contract.go`) and reproduced below. A test (`TestEnvSurfaceOutsideConfigIsTheAllowlist`) fails
 when library code reads a variable that is not on it, so the list is the whole surface.
 
 ### Environment variables
@@ -806,7 +806,7 @@ when library code reads a variable that is not on it, so the list is the whole s
 | `OPOD_ENGINE` | `engine.preferred` |
 | `OPOD_OLLAMA_ENDPOINT` / `OPOD_VLLM_ENDPOINT` / `OPOD_SGLANG_ENDPOINT` / `OPOD_MLX_ENDPOINT` / `OPOD_LLAMACPP_ENDPOINT` | the corresponding `engine.*_endpoint` |
 | `OPOD_VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent). The old unprefixed `VLLM_API_KEY` still works as a deprecated fallback; the prefixed form wins when both are set |
-| `OPOD_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
+| `OPOD_REQUIRE_KEYS` | `auth.require_keys` (`1/true` or `0/false`) |
 | `OPOD_ADMIN_TOKEN` | `auth.admin_token` — seeded as an admin-scope key at every `opod up` |
 | `OPOD_JOIN_TOKEN` | `auth.join_token` — seeded as a node-scope key, so joins survive a wiped leader DB |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |
@@ -839,11 +839,13 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_ENGINE_FLAGS` | worker | JSON map of engine flags from the plan (`tp`, `max_model_len`, `ctx`, `ngl`, …) |
 | `OPOD_ADAPTERS` | worker | JSON list of LoRA adapters `[{name, source, rank}]`, served as `<model>:<name>` |
 | `OPOD_REJECT_BEARER` | worker | `1` = this worker's API accepts HMAC only, never a bearer token |
+| `OPOD_KV_EVENTS` | worker | `1` = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds |
 | `OPOD_SLEEP_MODE` | worker | `1` = vLLM starts with sleep mode on (the sleep autoscale tier) |
 | `OPOD_WORKER_ROLE` | worker | `prefill` \| `decode` for disaggregated serving; unset = a whole worker |
 | `OPOD_PLAN_REVISION` | worker | the plan revision this worker process was started for; the leader splits traffic per revision |
 | `OPOD_ADVERTISE_ADDR` | worker | the `host:port` the leader should dial (overlay / multi-NIC hosts) |
-| `OPOD_NODE_ID` | worker | a stable node id across restarts (else `node.yaml`, else random) |
+| `OPOD_NODE_ID` | worker | a stable node id across restarts (else `node.yaml`, else `POD_NAME`, else random) |
+| `POD_NAME` | worker | the pod's name, injected by any Kubernetes manifest; a worker with no `OPOD_NODE_ID` and no `node.yaml` takes `n_<pod name>` as its id rather than a random one per restart |
 | `OPOD_LEADER_CA` | worker | PEM certificate the worker trusts for a TLS leader — exactly that one |
 | `OPOD_NODE_CERT` / `OPOD_NODE_KEY` | worker | the client certificate this worker presents to its leader; its SPIFFE SAN `spiffe://<domain>/opod/node/<id>` **is** the worker's identity (feature `mtls`). With it set, `opod join <leader-url>` needs no `?token=`: the worker mints the secret the leader signs its calls back with and hands it over in the register |
 | `OPOD_VRAM_BUDGET_GB` | worker | the slice of the card this worker may use (shared placement); also `opod join --vram-budget` |
@@ -871,7 +873,7 @@ These features are mentioned elsewhere in this README but have no YAML knob toda
 - **OIDC / SSO** — out of scope for core (see [Deliberately out of scope](#deliberately-out-of-scope)). `internal/auth/` ships API keys only.
 - **Automatic replication / a placement policy engine** — `internal/scheduler/` ships gang orchestration, the part-count picker, GGUF distribution and `model move`; nothing decides on its own that a hot model needs a second replica, or moves one to balance a fleet. That is deliberate — an external manager owns capacity (ADR-022). What *is* tunable today: `placement.*` (admission, reserve, drain), `router.placement_allowed_fails` / `placement_cooldown_seconds` (the circuit breaker), `router.hedge_replicas`, and the load-aware routing weights a manager mounts in the policy snapshot (`routing.kvWeight`, `kvSaturationPct`, `prefixAffinity`).
 - Replication and a **mesh backend** (above) are the two real gaps. `/metrics` is no longer one of them: it is served on the main listener *and*, when `probe_listen` / `OPOD_PROBE_LISTEN` is set, on a second always-plain port beside `/healthz`, `/readyz` and `/loadz`. What is still missing there is a way to serve *only* metrics, or to authenticate them.
-- **Per-node config** — `~/.opod/node.yaml` only remembers the worker's node id between runs; it holds no settings. A worker takes its engine endpoints from its own `config.yaml` or env vars.
+- **Per-node config** — `~/.opod/node.yaml` records the last join (node id, leader URL, token, address), but only the node id is read back, by the next `opod join`; it holds no settings. A worker takes its engine endpoints from its own `config.yaml` or env vars.
 
 ### Per-node engine override
 
@@ -891,7 +893,7 @@ OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 opod join "http://lead
 opod up
 ```
 
-Idempotent. Re-running it shows status if already running.
+Re-running it after a stop reuses the store and the admin key (re-displayed from `~/.opod/admin.key` while that file exists). There is no already-running check: a second `opod up` on the same port fails with `listen :8080: … address already in use` — `opod status` shows the one that is running.
 
 ### Add a node
 
@@ -996,7 +998,7 @@ What Opod does:
 1. Picks 2 workers (highest RAM among the rows that can take a part) and refuses up front, with the numbers, if it cannot find them
 2. Sends `POST /v1/process/start` to each worker → launches `rpc-server -p 50052`
 3. Waits for both rpc-servers to be TCP-reachable (readiness probe)
-4. On the coordinator host — the shard worker with the most GPU memory, or the one named by `--head` / `OPOD_COORDINATOR_NODE` — launches `llama-server -m <gguf> --rpc <worker1>:50052,<worker2>:50052 --port 9001 --metrics`
+4. On the coordinator host — the shard worker with the most GPU memory, or the one named by `head` in `POST /admin/v1/shards/create` / `OPOD_COORDINATOR_NODE` — launches `llama-server -m <gguf> --rpc <worker1>:50052,<worker2>:50052 --port 9001 --metrics`
 5. Waits for the coordinator to be reachable
 6. Persists shard rows + a `placements` row pointing the model at the coordinator
 7. The Router routes any request for `llama-3.3-70b-sharded` to that gang's coordinator, which fans out to the rpc-server parts internally
@@ -1040,15 +1042,15 @@ an RPC gang is refused and says which backends have one.
 ```bash
 opod node ls
 # ID             HOSTNAME             OS/ARCH      ADDRESS                STATE      LAST HB
-# local          mac-studio-1         darwin/arm64 127.0.0.1:8080         ready      2s ago
-# n_abc123       mac-mini-1           darwin/arm64 192.0.2.50:8081        ready      3s ago
-# n_def456       gpu-tower            linux/amd64  192.0.2.51:8081        draining   4s ago
-# n_ghi789       lab-mac              darwin/arm64 192.0.2.52:8081        lost        6m ago
+# local          mac-studio-1         darwin/arm64 127.0.0.1:8080         ready      2026-06-01T10:12:44Z
+# n_abc123       mac-mini-1           darwin/arm64 192.0.2.50:8081        ready      2026-06-01T10:12:43Z
+# n_def456       gpu-tower            linux/amd64  192.0.2.51:8081        draining   2026-06-01T10:12:42Z
+# n_ghi789       lab-mac              darwin/arm64 192.0.2.52:8081        lost       2026-06-01T10:06:40Z
 ```
 
 `STATE` is what the leader acts on, computed at read time from the row: `ready`, `joining`, `draining`,
 `lost` (heartbeats stopped) or `engine-silent` (still heartbeating, but its engine has not answered it for
-the heartbeat bound). Add `--json` for the full records.
+the heartbeat bound). `LAST HB` is the last heartbeat's time (RFC 3339). `node ls` has no `--json`; `opod node show <id>` prints one full record as JSON.
 
 ### Inspect a node
 
@@ -1084,7 +1086,7 @@ opod model add --from ./my-model.yaml           # from a user-supplied catalog Y
 1. **Curated catalog** — the 47 entries embedded from `opod-sdk/catalog` (`opod catalog ls`). Hardware-floor checks apply.
 2. **Scheme prefix** (`hf:` / `ollama:` / `file:`) — one-liner for anything the engine supports; no hardware check.
 3. **`--from <my.yaml>`** — install from a user-written catalog YAML. The file is copied into `~/.opod/catalog/` so it persists and shows up in `opod model search` / `info` next run.
-4. **Drop-in dir** — write a YAML to `~/.opod/catalog/<id>.yaml` directly, then `opod model add <id>` treats it like a built-in entry. Same schema as `catalog/*.yaml` (`id`, `display_name`, `source.{type,repo,ollama_name,path}`, `hardware`, `capabilities`).
+4. **Drop-in dir** — write a YAML to `~/.opod/catalog/<id>.yaml` directly, then `opod model add <id>` treats it like a built-in entry. Same schema as the SDK's `catalog/*.yaml` (`id`, `display_name`, `source.{type,repo,ollama_name,path}`, `hardware`, `capabilities`).
 
 This:
 1. Checks the entry's `hardware.min_ram_gb` (and `min_vram_gb`) against the cluster — an install that overshoots the floor is refused with a clear error. Pass `--force` to override (e.g. when you know swap or a quantization knob will save you).
@@ -1160,8 +1162,8 @@ whose images load the entry's weights (a GGUF file → llama.cpp; a safetensors 
 Ollama-library entry → no image), narrows a model that must be split across workers to images that can join a gang
 (`rpc`, `ray`), and stars one pick per vendor — images proven on hardware first. Everything it passed over is listed
 with the reason. Whether the model fits a card is `min_vram_gb` in the answer and your call. Every sub-verb takes
-`--json`; image fields are `name`, `repository`, `engine`, `vendor`, `arch`, `weights`, `gang`, `proven`,
-`requires`, `notes` (plus `tag` on a release binary — there is no floating `latest`, pin a digest).
+`--json`; image fields are `name`, `repository`, `role`, `engine`, `vendor`, `arch`, `dockerfile`, `base`, `weights`,
+`gang`, `proven`, `hardware`, `families`, `requires`, `summary`, `notes` (plus `tag` on a release binary — there is no floating `latest`, pin a digest).
 
 ### Remove a model
 
@@ -1284,7 +1286,7 @@ print(resp.choices[0].message.content)
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
-| `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
+| `POST` | `/v1/embeddings` | Embedding models (e.g. `nomic-embed-text`): Ollama's own API, or the OpenAI `/v1/embeddings` of a vLLM / SGLang / MLX-LM / llama.cpp engine |
 | `GET` | `/v1/models` | Lists the models a request can be answered for now: installed on the leader, or held by a worker that takes new work. A model held only by drained or lost workers is not listed; one that is merely asleep (sleeping workers, or a plan that scales to zero) is, because a request for it is how it wakes (`503` + `Retry-After`) |
 
 (Planned: `/v1/completions`.)
@@ -1296,7 +1298,7 @@ print(resp.choices[0].message.content)
 | `GET` | `/healthz` `/readyz` | Liveness / readiness. `/readyz` answers 200 with a mode: local engine · `router-only` · `shard-coordinator` · `sleeping-workers` · `sleeping` (parked on purpose) · `waking` (workers registered, nothing serving yet). Failing the probe would turn the honest `503 waking` into a connection error, so it almost never does. No key |
 | `GET` | `/loadz` | Load for an external autoscaler: in-flight, rpm, waking 503s, plus the workers' engine signals (`kv_used_pct`, `queue_depth`, `tokens_per_s`, `prefix_hit_pct`, `workers`, `reporting`). `workers` = workers that can take a new request for the plan's model now: a drained, lost or sleeping one is not counted, and neither is its pressure. No key |
 | `GET` | `/metrics` | Prometheus exposition. No key |
-| `GET` | `/gatewayz` | The front doors. On a **leader**: how many doors it has heard from, the endpoint's total and per-door in-flight / rpm, the door-liveness window and the quota lag bound. On a **door**: how stale its mirrored registry is and how big its backlog is. No key, no key ids, no prompts. Not part of the frozen contract |
+| `GET` | `/gatewayz` | The front doors. On a **leader**: how many doors it has heard from, the endpoint's total and per-door in-flight / rpm, the door-liveness window and the spend lag bound. On a **door**: how stale its mirrored registry is and how big its backlog is. No key, no key ids, no prompts. Not part of the frozen contract |
 | `GET` | `/admin/v1/version` | Binary version + contract version |
 | `GET` | `/admin/v1/capabilities` | The frozen route list, feature flags, and the engine drivers linked into this binary |
 | `GET` | `/admin/v1/status` | The compact summary behind `opod status --json` |
@@ -1323,7 +1325,7 @@ print(resp.choices[0].message.content)
 | `PATCH` | `/admin/v1/tokens/{id}` | Edit a key's expiry (`expires_at` / `ttl_seconds`) |
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
 | `POST` | `/admin/v1/usage/push` | A front door's usage rows (feature `gateway_spend`), deduplicated by a row id the door mints. Also the door's heartbeat, carrying its own load |
-| `GET` | `/admin/v1/spend` | What each key has spent in the current daily window, its ceilings, **this door's 1/N share** of them, and the lag bound a quota may drift by |
+| `GET` | `/admin/v1/spend` | The snapshot each door polls: `{ts, doors, gateways, lag_bound_ms}` — how many doors the leader believes are serving, their names, and the published lag bound. Per-key ceilings and shares left with the per-key policy (2026-09-28) |
 | `GET` | `/admin/v1/gateways` | The doors the leader has heard from — including one that stopped pushing |
 | `GET` | `/admin/v1/shards` | List shards across all models, per gang |
 | `GET` | `/admin/v1/shards/processes` | Process state of the parts the leader supervises (`running` · `starting` · `stopped` · `failed` · `crashloop`) |
@@ -1361,7 +1363,9 @@ opod up [--no-wizard] [--auto-pull=false] [--exclusive] [--unload-on-exit]
         [--config PATH] [--role gateway --leader http://leader:8080]
                                   Start the local node (first-run wizard picker
                                   installs a starter model unless --no-wizard is
-                                  set; --exclusive = one resident model per machine).
+                                  set — only with router.pull_default_model /
+                                  OPOD_PULL_DEFAULT_MODEL=1, off by default;
+                                  --exclusive = one resident model per machine).
                                   --role gateway starts a FRONT DOOR for another
                                   leader's endpoint: /v1 only, no /admin/v1, no join
                                   surface, no engine — its worker list mirrored from
@@ -1373,7 +1377,8 @@ opod join "<url>?token=…" [--gpu N] [--vram-budget GB]
                                   Join an existing cluster as a worker (optionally
                                   pinned to one GPU and a memory budget)
 opod doctor                      Diagnose common problems
-opod update [--check]            Check / install the latest Opod release
+opod update [--check] [--version vX.Y.Z] [--force]
+                                  Check / install the latest (or a pinned) Opod release
 opod upgrade                     Alias for `update`
 opod completion <bash|zsh|fish>  Print a shell completion script
 opod version                     Print version
@@ -1422,7 +1427,7 @@ opod model move <id> --from <node> --to <node>
                                   the source serves until the target does, in-flight
                                   requests finish, then the source unloads. Refused
                                   up front when it cannot work; needs the leader
-opod model ps                    Models resident in engine memory + what is free
+opod model ps [--json]           Models resident in engine memory + what is free
 
 # --- weights on a node ---
 opod fetch <hf-repo> <file> [--dir D] [--revision R] [--sha256 S]
@@ -1436,10 +1441,12 @@ opod fetch --snapshot <hf-repo>[@rev] [--dir D]
                                   gated or private), hub-token-refused (the token is
                                   not accepted), hub-access-denied (the token is good
                                   and its account may not read this repo)
-opod cache ls [--json]           What is cached, what is ours, when it was last used
-opod cache prune [--keep a.gguf,repo@rev] [--min-age 24h] [--target-free GB] [--apply]
+opod cache ls [--dir D] [--json] What is cached, what is ours, when it was last used
+opod cache prune [--dir D] [--keep a.gguf,repo@rev] [--min-age 24h] [--target-free GB]
+                 [--sweep 24h] [--apply] [--json]
                                   Reclaim space; a dry run unless --apply, and never
-                                  a file this binary did not fetch
+                                  a file this binary did not fetch; --sweep also clears
+                                  crashed pulls older than that (0 = off)
 
 # --- sharded models (one model split across N machines) ---
 opod shard create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID]
@@ -1463,7 +1470,8 @@ opod token revoke <id>           Revoke a key
 # --- connecting clients ---
 opod connect <client>            Print the copy-paste config snippet for a client
                                   (--list shows the 15-client roster; --model,
-                                  --base-url, --token overrides)
+                                  --base-url, --token overrides; --retries N adds
+                                  X-Opod-Num-Retries)
 opod disconnect <client>         Print the rollback commands for a client (--list)
 
 # --- config ---
@@ -1533,7 +1541,7 @@ Ollama is a great single-node inference engine. Opod is the *orchestration layer
 vLLM is a single-node inference server. Opod orchestrates vLLM (and others) across your fleet.
 
 **How is this different from exo?**
-exo is the closest project conceptually. Opod differs by: (1) an OpenAI-compatible gateway with per-key quotas, (2) explicit placement + sharding on three backends (llama.cpp RPC, vLLM + Ray, SGLang), (3) multi-tenant API keys, quotas and rate limits, (4) Prometheus metrics, OTLP traces and a typed event + usage stream, (5) Go single-binary install.
+exo is the closest project conceptually. Opod differs by: (1) an OpenAI-compatible gateway with per-user API keys, (2) explicit placement + sharding on three backends (llama.cpp RPC, vLLM + Ray, SGLang), (3) multi-tenant API keys with scopes, expiry and a per-key usage stream, (4) Prometheus metrics, OTLP traces and a typed event + usage stream, (5) Go single-binary install.
 
 **Does Opod train models?**
 No. Use Axolotl / Unsloth / torchtune for training. Bring back a LoRA adapter; Opod will serve it.
@@ -1564,10 +1572,10 @@ Workers no (no MLX, no native vLLM). Leader/CLI yes via WSL2. Native Windows isn
 Opod is a **self-hosted LLM gateway** and **inference router**. If you found this repo searching for an alternative to a hosted service or a frontend for a local engine, the answer is yes:
 
 - **LiteLLM alternative** (Go binary instead of Python) — one OpenAI-compatible gateway in front of your own engines, plus multi-node routing (no vendor proxying).
-- **Ollama frontend / multi-machine Ollama** — Opod orchestrates several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with auth, quotas, and audit.
+- **Ollama frontend / multi-machine Ollama** — Opod orchestrates several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with auth and audit.
 - **Private inference cluster / on-prem LLM gateway** — keep all inference on a trusted LAN or Tailscale; nothing leaves your network.
 - **Self-hosted Cursor / Aider / Continue backend** — drop-in OpenAI-compatible URL for IDE coding tools.
-- **AI gateway with per-user keys + quotas + audit** for teams of 10-50 spending $30k+/yr on Claude / GPT.
+- **AI gateway with per-user keys + usage records + audit** for teams of 10-50 spending $30k+/yr on Claude / GPT.
 - **Sharded inference orchestrator** — split a model larger than any single machine across multiple workers via `llama.cpp` RPC, vLLM + Ray, or SGLang's distributed launcher.
 
 Related concepts: local LLM, on-prem AI, private GPT, GGUF, multi-tenant inference, model placement, fallback chain.
@@ -1579,7 +1587,7 @@ Related concepts: local LLM, on-prem AI, private GPT, GGUF, multi-tenant inferen
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are accepted under the
 [Developer Certificate of Origin](https://developercertificate.org/) (`git commit -s`); there is no CLA.
 
-You can use Opod commercially, modify it, fork it, embed it, redistribute it, and compete with it. The only requirements are (a) keep the license + notice, (b) state significant changes you made. No copyleft, no usage limit. The control plane (`opodcp`) is a separate proprietary product with a free tier of 16 GPUs per cell.
+You can use Opod commercially, modify it, fork it, embed it, redistribute it, and compete with it. The only requirements are (a) keep the license + notice, (b) state significant changes you made. No copyleft, no usage limit. The control plane (`opodcp`) is a separate proprietary product with a free tier of 4 GPUs in one cell.
 
 ## Acknowledgments
 

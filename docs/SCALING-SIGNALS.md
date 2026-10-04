@@ -25,6 +25,7 @@ aggregated over the workers that hold the leader's model. The typed shape is
   "last_request_unix": 1758300000,
   "workers": 3,
   "reporting": 3,
+  "kv_busy_workers": 1.6,
   "ttft_p50_ms": 180,
   "ttft_p95_ms": 640,
   "engines_unhealthy": 0,
@@ -38,12 +39,14 @@ aggregated over the workers that hold the leader's model. The typed shape is
 | `queue_depth` | requests accepted and waiting, summed over workers | **the leading signal** — anything above zero means demand already exceeds capacity |
 | `kv_used_pct` | the busiest worker's KV-cache occupancy | **the ceiling** — grow before the cache fills, because a full cache means refused or preempted requests |
 | `in_flight` | requests being served right now | the smooth, proportional signal for ordinary growth |
-| `unavailable_1m` | responses the leader refused in the last minute because no worker was ready (`503 waking`) | **the wake signal** — how an endpoint scaled to zero asks to come back |
+| `unavailable_1m` | `/v1` requests answered with a 5xx in the last minute — chiefly `503 waking`, refused because no worker was ready | **the wake signal** — how an endpoint scaled to zero asks to come back |
 | `rpm_1m` | requests per minute | keeps one worker alive under a trickle |
 | `workers` / `reporting` | workers known / whose sample is under 30 s old | `reporting < workers` means the numbers are partial; prefer no decision over a wrong one |
+| `kv_busy_workers` | the mean KV-cache use across reporting workers × their count — "how many workers' worth of KV cache is in use"; always present, `0` when nothing reports | the **proportional** form of `kv_used_pct` for a scaler that computes replicas as `ceil(metric ÷ target)`; a maximum over workers can never ask for more than two |
 | `tokens_per_s`, `prefix_hit_pct` | throughput and prefix-cache hits | reporting, not scaling |
+| `prefix_index` | `{workers_reporting, blocks}`: how many workers report prefix-cache events and how many blocks the leader holds for them (feature `kv_block_events`); absent when none do | reporting, not scaling |
 | `ttft_p50_ms`, `ttft_p95_ms` | time to the first usable token over the last minute, **streamed answers only** | the number a user feels. Omitted, or zero, means *not measured* — never "instant". A good secondary target beside `queue_depth` |
-| `engines_unhealthy` | how many of `workers` are holding a card while their engine is **not** serving — crash-looping or stopped | **subtract it before you believe `workers`.** Those workers heartbeat like any other; a reader that counts them as capacity scales out too late, or not at all. `engine_issue` carries the worst one's own last word |
+| `engines_unhealthy` | how many workers are holding a card while their engine is **not** serving — crash-looping or stopped. A `stopped` one has already left `workers`; a crash-looping one is counted in both | **do not count a crash-looping worker as capacity.** Those workers heartbeat like any other; a reader that counts them as capacity scales out too late, or not at all. `engine_issue` carries the worst one's own last word |
 
 CPU and memory are **not** useful signals for a GPU worker and the leader does not publish them.
 

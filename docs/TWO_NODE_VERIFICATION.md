@@ -39,10 +39,10 @@ On the leader:
 
 You should see:
 
-- a version line: `opod <version> (darwin/arm64, go1.25)` — whatever you installed
-- Auto-detected engine + default model line
+- a hardware line: `▶ detected darwin/arm64 · 24 GB RAM · 8 cores` — whatever this box has
+- the default model and engine lines (`✔ engine: ollama at http://127.0.0.1:11434`)
 - **Admin key printed once** — copy it. You'll need it.
-- "✔ Listening on :8080"
+- a `listening` log line for `:8080`, then the "Opod is ready." banner with `API: http://localhost:8080/v1`
 
 In a second terminal on the leader:
 
@@ -82,9 +82,9 @@ unquoted `?` is a glob in zsh:
 
 You should see:
 
-- "✔ Registered with leader at http://192.0.2.42:8080"
-- "✔ Worker HTTP server listening on :8081"
-- Periodic "heartbeat OK" lines
+- "✔ joining cluster at http://192.0.2.42:8080 as n_…", then "▶ address: <this machine's LAN IP>:8081"
+- a `registered with leader` log line
+- nothing per heartbeat — only a failed one logs (`heartbeat failed`)
 
 ### Step 4 — verify from the leader
 
@@ -94,20 +94,20 @@ Back on the leader:
 ./opod node ls
 # Expect (the columns the CLI actually prints):
 # ID             HOSTNAME             OS/ARCH      ADDRESS                STATE      LAST HB
-# local          leader.local         darwin/arm64 127.0.0.1:8080         ready      2s ago
-# n_def456       worker.local         linux/amd64  192.0.2.50:8081        ready      3s ago
+# local          leader.local         darwin/arm64 127.0.0.1:8080         ready      2026-06-05T10:00:02Z
+# n_def456       worker.local         linux/amd64  192.0.2.50:8081        ready      2026-06-05T10:00:01Z
 ```
 
 ```bash
-./opod model add llama-3.2-3b     # if already installed on leader, will be a no-op
-# On the worker side this triggers an Ollama pull. Wait until it appears in `opod node show n_def456`.
+./opod model add llama-3.2-3b --node n_def456   # without --node, add installs to the leader's own engine
+# The worker pulls + loads it through its Ollama. Wait until it appears in `opod node show n_def456`.
 ```
 
 Wait ~30s for the worker's heartbeat to carry the new loaded model. Then:
 
 ```bash
 ./opod node show n_def456
-# Should list llama-3.2-3b under "loaded_models"
+# Should list llama-3.2-3b under "loadedModels"
 ```
 
 ### Step 5 — exercise cross-node routing
@@ -155,7 +155,7 @@ On the worker, re-run the `opod join` command. After one heartbeat:
 |---|---|---|
 | Join command says "connection refused" | Leader not reachable on that address (bound elsewhere, or a firewall) | Check `OPOD_LISTEN` (`:8080` binds every interface) and that the worker can reach `http://<lan-ip>:8080/healthz`. `OPOD_EXTERNAL_URL` only changes the URL the leader *prints* and embeds in snippets |
 | Join succeeds but no heartbeats | Worker can reach leader, leader can't reach worker (asymmetric firewall) | Worker's `Address:port` must be reachable from the leader. Check macOS Firewall / Linux iptables |
-| Worker registers but loaded_models is empty | Ollama isn't running on the worker | `pgrep -f "ollama serve"` then `curl http://127.0.0.1:11434/api/tags` |
+| Worker registers but `loadedModels` is empty | Ollama isn't running on the worker | `pgrep -f "ollama serve"` then `curl http://127.0.0.1:11434/api/tags` |
 | Cross-node request hangs, or answers 503 `worker_unreachable` | The worker's HTTP server isn't reachable from the leader | `curl http://<worker-ip>:8081/healthz` from the leader. A connection is given 3 s, then the leader re-picks another worker for the same model; with none left the answer is `503` + `Retry-After` |
 | Heartbeat returns 401 | Token revoked or wrong | Re-run `opod token create --node` on the leader, restart `opod join` on the worker |
 | Clock skew warning | NTP not synced | `sudo sntp -sS time.apple.com` (macOS) / `sudo systemctl restart systemd-timesyncd` (Linux) |

@@ -90,7 +90,7 @@ For per-model walkthroughs (with detailed install + client snippets), the curate
 
 ## How to choose
 
-Use the [picker table above](#-picker-table--what-to-install). It covers every model in the catalog with size, RAM, capability ratings, and license — pick the row that matches your hardware, then go by use case.
+Use the [picker table above](#-picker-table--what-to-install). It covers 41 of the 47 catalog entries with size, RAM, capability ratings, and license — the six left out are variants and test fixtures (`llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf`, `mimo-7b-ray`; `opod model info <id>` describes each) — pick the row that matches your hardware, then go by use case.
 
 The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-sdk/issues/new?template=catalog_request.yml) in the SDK repo, where the catalog lives, if you'd like a full walkthrough added.
 
@@ -506,7 +506,8 @@ opod shard create llama-3.3-70b-sharded 2
 # 2. POSTs /v1/process/start to each → launches `rpc-server -p 50052`
 # 3. waits for both rpc-servers to be TCP-reachable
 # 4. picks the COORDINATOR host — the part host with the most GPU memory (host RAM only
-#    for a worker with no card), or the one named by --head / OPOD_COORDINATOR_NODE; the
+#    for a worker with no card), or the one named by the admin API's `head` field /
+#    OPOD_COORDINATOR_NODE (the CLI has no --head flag); the
 #    leader only when the set has no workers — and launches there:
 #    `llama-server -m <gguf> --rpc w1:50052,w2:50052 --port 9001 --metrics`
 # 5. persists shard rows + a placements row pointing the model at that coordinator
