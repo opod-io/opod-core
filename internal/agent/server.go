@@ -303,6 +303,12 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		TopP        *float32            `json:"top_p,omitempty"`
 		MaxTokens   *int                `json:"max_tokens,omitempty"`
 		Stop        []string            `json:"stop,omitempty"`
+		// The leader re-serialises a chat through the OpenAI body builder
+		// before it reaches this worker, so anything the builder sends and
+		// this struct does not name is dropped HERE — one hop short of the
+		// engine, invisibly. response_format is carried for that reason
+		// (T10.14); the same applies to every field added to the builder.
+		ResponseFormat json.RawMessage `json:"response_format,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -325,6 +331,8 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:   req.MaxTokens,
 		Stop:        req.Stop,
 		Stream:      true,
+
+		ResponseFormat: req.ResponseFormat,
 	}
 	stream, err := s.Engine.Chat(r.Context(), engReq)
 	if err != nil {
