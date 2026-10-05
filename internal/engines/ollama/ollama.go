@@ -457,7 +457,41 @@ func buildChatBody(req engines.ChatRequest) map[string]any {
 	if len(options) > 0 {
 		body["options"] = options
 	}
+	if f := ollamaFormat(req.ResponseFormat); f != nil {
+		body["format"] = f
+	}
 	return body
+}
+
+// ollamaFormat translates an OpenAI `response_format` object into Ollama's
+// own `format` field, or returns nil when the caller asked for nothing in
+// particular (T10.14). Ollama takes either the string "json" or a JSON
+// schema object; OpenAI nests the schema one level down, under
+// `json_schema.schema`.
+func ollamaFormat(rf json.RawMessage) any {
+	if len(rf) == 0 {
+		return nil
+	}
+	var f struct {
+		Type       string `json:"type"`
+		JSONSchema *struct {
+			Schema json.RawMessage `json:"schema"`
+		} `json:"json_schema"`
+	}
+	if json.Unmarshal(rf, &f) != nil {
+		return nil
+	}
+	switch f.Type {
+	case "json_object":
+		return "json"
+	case "json_schema":
+		if f.JSONSchema != nil && len(f.JSONSchema.Schema) > 0 {
+			return f.JSONSchema.Schema
+		}
+		return "json" // a schema was asked for and none was given: JSON is the honest floor
+	default: // "text", or anything we do not know: let the engine answer normally
+		return nil
+	}
 }
 
 // ensure interface compliance at compile time

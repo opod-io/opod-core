@@ -16,10 +16,13 @@ import (
 // E-KV-SIGNAL, E-PD-ENGINE), so it refuses here too (PLAN T10.13).
 //
 // This is deliberately a REFUSAL and not an implementation. Carrying `tools`
-// down to the engine and `tool_calls` back up is T10.8; honouring
-// `response_format` is T10.14. Each one narrows this check rather than
-// deleting it: what is left afterwards is "this ENGINE cannot", which is the
-// shape every other capability refusal already has.
+// down to the engine and `tool_calls` back up is T10.8; it narrows this check
+// rather than deleting it, to "this ENGINE cannot", which is the shape every
+// other capability refusal already has.
+//
+// `response_format` was refused here too until T10.14 made every driver carry
+// it — the OpenAI-shaped servers verbatim, Ollama translated into its own
+// `format` field — so there is nothing left to refuse and the branch is gone.
 //
 // Executing a tool is never ours. We would carry the field and the call; the
 // caller runs the function. That line is the same one ADR-077 §5 draws for
@@ -32,10 +35,6 @@ import (
 type unsupportedChatFields struct {
 	Tools      []json.RawMessage `json:"tools"`
 	ToolChoice json.RawMessage   `json:"tool_choice"`
-
-	ResponseFormat *struct {
-		Type string `json:"type"`
-	} `json:"response_format"`
 }
 
 // refuseUnsupportedChatFields answers 400 and names the field when the body
@@ -46,8 +45,6 @@ type unsupportedChatFields struct {
 // What it does NOT refuse, because the request is then answered correctly:
 //   - `tool_choice: "none"` — the caller is saying "do not call a tool", and
 //     plain text is the right answer even with tools declared.
-//   - `response_format: {"type": "text"}` — that is what we return anyway.
-//     Only json_object / json_schema are refused.
 func refuseUnsupportedChatFields(w http.ResponseWriter, body []byte) bool {
 	var f unsupportedChatFields
 	if json.Unmarshal(body, &f) != nil {
@@ -58,13 +55,6 @@ func refuseUnsupportedChatFields(w http.ResponseWriter, body []byte) bool {
 			"`tools` is not supported by this gateway: the tools would be dropped before the model saw them "+
 				"and you would get plain text back. Remove `tools`, or send `\"tool_choice\": \"none\"` if a text "+
 				"answer is what you want.")
-		return true
-	}
-	if f.ResponseFormat != nil && f.ResponseFormat.Type != "" && f.ResponseFormat.Type != "text" {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request",
-			"`response_format: "+f.ResponseFormat.Type+"` is not supported by this gateway: the request would be "+
-				"answered as free text with no guarantee it parses. Remove `response_format`, or send "+
-				"`{\"type\": \"text\"}`.")
 		return true
 	}
 	return false

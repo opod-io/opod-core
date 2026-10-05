@@ -220,6 +220,13 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 	if len(req.Stop) > 0 {
 		body["stop"] = req.Stop
 	}
+	// Verbatim: the value is the caller's own JSON and every server behind
+	// this shape takes it as written (T10.14). json.RawMessage marshals
+	// through without a re-encode, so a schema the next OpenAI revision adds
+	// a field to still arrives whole.
+	if len(req.ResponseFormat) > 0 {
+		body["response_format"] = req.ResponseFormat
+	}
 	if req.Stream {
 		body["stream_options"] = map[string]bool{"include_usage": true}
 	}

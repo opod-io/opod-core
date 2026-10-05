@@ -23,9 +23,7 @@ func TestRefuseUnsupportedChatFields(t *testing.T) {
 		{"tools with tool_choice auto", `{"model":"m","tools":[{"type":"function"}],"tool_choice":"auto"}`, true, "`tools`"},
 		{"empty tools array", `{"model":"m","tools":[]}`, false, ""},
 		{"deprecated functions are ignored, not refused", `{"model":"m","functions":[{"name":"f"}]}`, false, ""},
-		{"response_format json_object", `{"model":"m","response_format":{"type":"json_object"}}`, true, "json_object"},
-		{"response_format json_schema", `{"model":"m","response_format":{"type":"json_schema"}}`, true, "json_schema"},
-		{"response_format text", `{"model":"m","response_format":{"type":"text"}}`, false, ""},
+		{"response_format is carried, not refused (T10.14)", `{"model":"m","response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}`, false, ""},
 		{"invalid json is left to the handler", `{"model":`, false, ""},
 	}
 	for _, tc := range cases {

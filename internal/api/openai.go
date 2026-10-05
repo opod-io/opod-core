@@ -153,6 +153,9 @@ type chatRequest struct {
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
 	Stop        []string      `json:"stop,omitempty"`
 	User        string        `json:"user,omitempty"`
+	// ResponseFormat asks for a shaped answer — {"type":"json_object"} or a
+	// full json_schema. Carried verbatim to the engine (T10.14).
+	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
 	// Opod is the namespaced bag for per-request routing overrides —
 	// fallbacks, retry count, retry backoff. Nested rather than top-level
 	// so we don't risk shadowing future OpenAI fields. Equivalent
@@ -297,6 +300,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:   req.MaxTokens,
 		Stop:        req.Stop,
 		Stream:      true, // we always stream from the engine; aggregate if needed
+
+		ResponseFormat: req.ResponseFormat,
 	}
 
 	// Per-request routing overrides (opod.fallbacks / opod.num_retries /

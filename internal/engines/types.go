@@ -11,7 +11,10 @@
 // engines.New / engines.NewWithAuth, exactly like database/sql drivers.
 package engines
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Engine is implemented by every inference backend driver.
 type Engine interface {
@@ -70,6 +73,18 @@ type ChatRequest struct {
 	MaxTokens   *int
 	Stop        []string
 	Stream      bool
+	// ResponseFormat is the caller's `response_format` object, carried
+	// verbatim: {"type":"json_object"} or a full
+	// {"type":"json_schema","json_schema":{...}}. Empty = the caller asked
+	// for nothing, which is plain text.
+	//
+	// It is raw rather than typed on purpose. The payload is a JSON schema
+	// the caller wrote; re-encoding it through a Go struct can only lose
+	// fields the next OpenAI revision adds, and every engine behind the
+	// OpenAI shape takes the object as it stands. The one driver that does
+	// not — Ollama, whose field is `format` — reads the type out of it and
+	// translates (PLAN T10.14).
+	ResponseFormat json.RawMessage
 }
 
 // Message is a single chat turn.
