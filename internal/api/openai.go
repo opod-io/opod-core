@@ -255,6 +255,12 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// Guardrail blocked the request; response already written.
 		return
 	}
+	// Refuse by name what we parse and cannot honour, instead of answering as
+	// if the field had never been sent (T10.13). After the guardrail chain, so
+	// a rewrite is what gets judged.
+	if refuseUnsupportedChatFields(w, rewritten) {
+		return
+	}
 	var req chatRequest
 	if err := json.Unmarshal(rewritten, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())

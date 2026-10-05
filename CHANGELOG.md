@@ -5,6 +5,22 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-05 — a request that asks for something we cannot do is refused by name
+
+- **`tools` and `response_format` are refused with `400` instead of being silently dropped.** Go's decoder
+  discards unknown fields, so a request carrying `tools` was answered as if it had never carried one: the engine
+  never saw the tools, the model never emitted a tool call, and the caller got prose where their client expected
+  a function call — with nothing in any log saying why. The gateway now names the field it cannot honour and
+  says what to send instead. **Two shapes are still served, because they are answered correctly:**
+  `tool_choice: "none"`, where plain text is what the caller asked for, and `response_format: {"type": "text"}`,
+  which is what we return anyway. Only `json_object` and `json_schema` are refused.
+- **Only the current chat schema is read.** The deprecated `functions` / `function_call` pair is not parsed,
+  not served and not refused — it is ignored like any other unknown field.
+- **This is a refusal, not a change of intent.** Carrying `tools` down to the engine and `tool_calls` back up,
+  and honouring `response_format`, are separate pieces of work. When they land, this check narrows to "this
+  engine cannot" rather than disappearing. Executing a tool is not this runtime's job either way: the caller
+  runs the function.
+
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
 - **One gang's stuck create no longer strands its sibling.** The guard against two creates of one model tearing each
