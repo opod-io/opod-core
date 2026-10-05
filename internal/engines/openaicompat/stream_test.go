@@ -129,3 +129,45 @@ func TestACancelledStreamLeavesNoGoroutine(t *testing.T) {
 		}
 	}
 }
+
+// A tool call arrives as `delta.tool_calls` fragments. The reader forwards
+// each one whole and invents nothing: merging is the aggregating caller's
+// job, and a streaming caller is owed the fragments as the engine sent them
+// (T10.8).
+func TestConsumeStreamForwardsToolCallFragments(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"role":"assistant"}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"f","arguments":""}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	evs := collect(context.Background(), sse, false)
+
+	var frags []string
+	var done *engines.StreamEvent
+	for i, ev := range evs {
+		if len(ev.ToolCalls) > 0 {
+			frags = append(frags, string(ev.ToolCalls))
+		}
+		if ev.Done {
+			done = &evs[i]
+		}
+		if ev.Delta != "" {
+			t.Fatalf("a tool-call chunk produced text: %q", ev.Delta)
+		}
+	}
+	if len(frags) != 2 {
+		t.Fatalf("got %d tool-call events, want 2: %+v", len(frags), evs)
+	}
+	if !strings.Contains(frags[0], `"name":"f"`) || !strings.Contains(frags[1], `"arguments":"{}"`) {
+		t.Fatalf("fragments were altered: %v", frags)
+	}
+	if done == nil || done.Reason != "tool_calls" {
+		t.Fatalf("the finish reason the caller branches on was lost: %+v", done)
+	}
+}

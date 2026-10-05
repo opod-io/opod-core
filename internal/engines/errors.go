@@ -75,3 +75,33 @@ func (e *UpstreamError) Is(target error) bool { return target == ErrUpstream }
 func Upstream(engine, op string, status int, body []byte) error {
 	return &UpstreamError{Engine: engine, Op: op, Status: status, Body: strings.TrimSpace(string(body))}
 }
+
+// ErrUnsupportedRequest classifies a request this ENGINE cannot serve as
+// asked — not a transport failure and not the engine's own error, but a
+// field the driver knows it cannot honour. The caller turns it into a 400
+// naming the field, so a capability gap is a refusal the caller can act on
+// rather than an answer that quietly ignored what they sent.
+var ErrUnsupportedRequest = errors.New("engine cannot serve this request as asked")
+
+// UnsupportedRequestError is the concrete error behind ErrUnsupportedRequest.
+type UnsupportedRequestError struct {
+	Engine string // the driver that cannot do it
+	Field  string // the request field, as the caller spelled it
+	Why    string // one clause, and what to send instead
+}
+
+func (e *UnsupportedRequestError) Error() string {
+	msg := fmt.Sprintf("%s cannot serve `%s`", e.Engine, e.Field)
+	if e.Why != "" {
+		msg += ": " + e.Why
+	}
+	return msg
+}
+
+// Is makes errors.Is(err, ErrUnsupportedRequest) true for every one of them.
+func (e *UnsupportedRequestError) Is(target error) bool { return target == ErrUnsupportedRequest }
+
+// Unsupported reports that engine cannot honour field, and why.
+func Unsupported(engine, field, why string) error {
+	return &UnsupportedRequestError{Engine: engine, Field: field, Why: why}
+}

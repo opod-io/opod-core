@@ -678,17 +678,38 @@ type ChatRequest struct {
 ```
 
 **What the narrow struct means, stated plainly:** a field that is not on `chatRequest` is
-dropped by `json.Unmarshal` before anything downstream can see it. So `tools` /
-`function_call` and `response_format` (JSON-schema structured output) **do not reach the
-engine today**, and the stream reader only decodes `choices[].delta.content` — no
-`tool_calls` come back either. Measured against a stub engine: a request carrying both
-leaves the leader as `{model, messages, stream, stream_options, temperature}`, and when the
-engine answers with a `tool_calls` delta the client receives `content: ""` with
-`finish_reason: "tool_calls"` — the reason survives (it is `StreamEvent.Reason`) while the
-payload has nowhere to live. That is the worst shape: a client is told a tool was called and
-given no call. Neither is a translation bug to fix in a driver; carrying them means widening
-`chatRequest`, `engines.ChatRequest`, `StreamEvent` and every driver together. A catalog entry's `capabilities: [chat, tools]` describes the model, not this
-gateway.
+dropped by `json.Unmarshal` before anything downstream can see it — silently, because Go's
+decoder ignores what it does not know. That is what used to happen to `tools` and
+`response_format`: a client was told a tool had been called (`finish_reason: "tool_calls"`
+survived, being `StreamEvent.Reason`) and handed no call, which is the worst shape an API
+can take.
+
+**Both are carried now** (2026-10-05). `chatRequest`, `engines.ChatRequest` and
+`StreamEvent` widened together, as they always had to: `Tools`, `ToolChoice` and
+`ResponseFormat` ride down as `json.RawMessage` — the payload is a schema the CALLER wrote,
+and re-encoding it through a struct of ours can only lose what the next OpenAI revision adds
+— and `StreamEvent.ToolCalls` carries each `delta.tool_calls` fragment back up whole. A
+streaming caller gets the fragments as the engine sent them, which is what the wire defines;
+an aggregating caller gets them merged by call index (`engines.ToolCallAccumulator`, shared
+by the leader's handler and the worker's so the fiddly loop exists once). `arguments` stays
+a string, because only the caller knows the schema they asked for.
+
+**Opod never executes a tool.** It carries the declaration down and the call back up; the
+caller runs the function, as with any OpenAI-compatible server.
+
+**An engine that cannot is refused by name, not answered anyway.** `engines.Unsupported`
+(the `ErrUnsupportedRequest` class) is how a driver says "not this field": Ollama's tool
+protocol is its own shape — no `tool_choice`, no index, no id, `arguments` an object where
+OpenAI has a string — so it refuses `tools` and the caller reads which field and why. A
+worker returns that as a `400` in the OpenAI error shape, which the leader relays unchanged
+rather than turning into a `502` that reads like our fault.
+
+**The hop that hides a field:** the leader re-serialises every chat through
+`openaicompat.BuildChatBody` before it reaches a worker, and the worker decodes into its own
+struct. A field the builder sends and that struct does not name dies there — one hop short
+of the engine, with nothing in any log. Anything added to the builder must be added to
+`agent.Server.chatCompletions` in the same change. A catalog entry's
+`capabilities: [chat, tools]` describes the model, not this gateway.
 
 Routing overrides travel in their own namespaced bag rather than as top-level fields:
 `opod.{fallbacks, num_retries, retry_backoff_ms, hedge, sort, cache.namespace}`, each

@@ -70,3 +70,97 @@ func TestWorkerCarriesResponseFormatToTheEngine(t *testing.T) {
 		t.Fatalf("response_format was invented: %q", eng.got.ResponseFormat)
 	}
 }
+
+type toolEngine struct {
+	engines.Engine
+	got    engines.ChatRequest
+	refuse bool
+}
+
+func (e *toolEngine) Name() string { return "tooler" }
+func (e *toolEngine) Chat(_ context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	e.got = req
+	if e.refuse {
+		return nil, engines.Unsupported("tooler", "tools", "not translated yet")
+	}
+	ch := make(chan engines.StreamEvent, 3)
+	ch <- engines.StreamEvent{ToolCalls: json.RawMessage(
+		`[{"index":0,"id":"call_1","type":"function","function":{"name":"f","arguments":"{\"a\""}}]`)}
+	ch <- engines.StreamEvent{ToolCalls: json.RawMessage(
+		`[{"index":0,"function":{"arguments":":1}"}}]`)}
+	ch <- engines.StreamEvent{Done: true, Reason: "tool_calls"}
+	close(ch)
+	return ch, nil
+}
+
+// The worker is the normal path under the control plane, so a tool call has
+// to survive its hop in both directions: the declaration down, and the
+// fragments back up merged into one call (T10.8).
+func TestWorkerCarriesToolsAndAggregatesTheCall(t *testing.T) {
+	eng := &toolEngine{}
+	s := &Server{Engine: eng}
+
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],` +
+		`"tools":[{"type":"function","function":{"name":"f"}}],"tool_choice":"auto"}`
+	w := httptest.NewRecorder()
+	s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if len(eng.got.Tools) == 0 || len(eng.got.ToolChoice) == 0 {
+		t.Fatalf("the worker dropped the declaration: tools=%q choice=%q", eng.got.Tools, eng.got.ToolChoice)
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("answer is not JSON: %v (%s)", err, w.Body.String())
+	}
+	calls := resp.Choices[0].Message.ToolCalls
+	if len(calls) != 1 {
+		t.Fatalf("got %d tool calls, want 1: %s", len(calls), w.Body.String())
+	}
+	if calls[0].ID != "call_1" || calls[0].Function.Name != "f" || calls[0].Function.Arguments != `{"a":1}` {
+		t.Fatalf("the fragments did not merge: %+v", calls[0])
+	}
+	if resp.Choices[0].FinishReason != "tool_calls" {
+		t.Fatalf("finish_reason = %q", resp.Choices[0].FinishReason)
+	}
+}
+
+// An engine that cannot do tools says so as a 400 the leader relays, not a
+// 502 that reads like our fault (T10.8).
+func TestWorkerAnswers400WhenTheEngineCannotDoTools(t *testing.T) {
+	s := &Server{Engine: &toolEngine{refuse: true}}
+	w := httptest.NewRecorder()
+	s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function"}]}`)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("not OpenAI-shaped, so the leader cannot relay it: %v", err)
+	}
+	if env.Error.Type != "unsupported_request" || !strings.Contains(env.Error.Message, "`tools`") {
+		t.Fatalf("the caller cannot tell which field: %+v", env.Error)
+	}
+}

@@ -156,6 +156,11 @@ type chatRequest struct {
 	// ResponseFormat asks for a shaped answer — {"type":"json_object"} or a
 	// full json_schema. Carried verbatim to the engine (T10.14).
 	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
+	// Tools declares the functions the model may call and ToolChoice how
+	// freely. Both verbatim to the engine; the model's calls come back in
+	// `tool_calls` and the CALLER runs the function (T10.8).
+	Tools      json.RawMessage `json:"tools,omitempty"`
+	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
 	// Opod is the namespaced bag for per-request routing overrides —
 	// fallbacks, retry count, retry backoff. Nested rather than top-level
 	// so we don't risk shadowing future OpenAI fields. Equivalent
@@ -190,6 +195,11 @@ type chatMessage struct {
 	//    {"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}]
 	// Parsed by toEngineMessages.
 	Content json.RawMessage `json:"content"`
+	// ToolCalls carries the model's calls on an ANSWER. Omitted when there
+	// are none rather than sent empty: a client that sees the key reasonably
+	// assumes there is a call in it (T10.8). It is not read on a request —
+	// the caller's tool RESULTS come back as ordinary messages.
+	ToolCalls []map[string]any `json:"tool_calls,omitempty"`
 }
 
 // chatContentPart is one element of the OpenAI multimodal content array.
@@ -258,12 +268,6 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// Guardrail blocked the request; response already written.
 		return
 	}
-	// Refuse by name what we parse and cannot honour, instead of answering as
-	// if the field had never been sent (T10.13). After the guardrail chain, so
-	// a rewrite is what gets judged.
-	if refuseUnsupportedChatFields(w, rewritten) {
-		return
-	}
 	var req chatRequest
 	if err := json.Unmarshal(rewritten, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
@@ -302,6 +306,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Stream:      true, // we always stream from the engine; aggregate if needed
 
 		ResponseFormat: req.ResponseFormat,
+		Tools:          req.Tools,
+		ToolChoice:     req.ToolChoice,
 	}
 
 	// Per-request routing overrides (opod.fallbacks / opod.num_retries /
@@ -314,6 +320,13 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
 		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
+		// A field the ENGINE cannot honour: the caller must see which one, and
+		// a 400 is the honest status — nothing upstream failed (T10.8).
+		var unsup *engines.UnsupportedRequestError
+		if errors.As(err, &unsup) {
+			writeJSONError(w, http.StatusBadRequest, "unsupported_request", unsup.Error())
+			return
+		}
 		if status, code, msg, ok := upstreamPassthrough(err); ok {
 			// The engine answered with a status the caller must see as-is
 			// (rate limit, not ready, bad request, unknown model): relay it —
@@ -418,6 +431,21 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			h.recordUsageTTFT(r.Context(), "openai", modelOut, ev.Usage, time.Since(start), ttft, "ok")
 			return
 		}
+		if len(ev.ToolCalls) > 0 {
+			// Relayed as the engine sent them: the OpenAI wire says a
+			// streaming caller merges the fragments themselves, and merging
+			// here would mean holding the answer back to do it (T10.8).
+			sendChunk(w, flusher, chatChunk{
+				ID: id, Object: "chat.completion.chunk", Created: created, Model: modelOut,
+				Choices: []chatChunkChoice{{
+					Index: 0,
+					Delta: map[string]any{"tool_calls": ev.ToolCalls},
+				}},
+			})
+			if ttft == 0 {
+				ttft = time.Since(start) // a tool call IS the answer: the clock stops here too
+			}
+		}
 		if ev.Delta != "" && ttft == 0 {
 			ttft = time.Since(start)
 		}
@@ -466,6 +494,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	// every token — quadratic, 91× slower at 2000 tokens — while the worker's
 	// half of this same function (agent.writeAggregate) already did it right.
 	var text strings.Builder
+	var tools engines.ToolCallAccumulator
 	var u *engines.Usage
 	reason := "stop"
 	done := false
@@ -483,6 +512,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 			}
 			break
 		}
+		tools.Add(ev.ToolCalls)
 		text.WriteString(ev.Delta)
 	}
 	if !done && r.Context().Err() != nil {
@@ -495,7 +525,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		ID: id, Object: "chat.completion", Created: created, Model: modelOut,
 		Choices: []chatChoice{{
 			Index:        0,
-			Message:      chatMessage{Role: "assistant", Content: jsonString(text.String())},
+			Message:      chatMessage{Role: "assistant", Content: jsonString(text.String()), ToolCalls: tools.Calls()},
 			FinishReason: reason,
 		}},
 	}

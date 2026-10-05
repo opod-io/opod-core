@@ -227,6 +227,14 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 	if len(req.ResponseFormat) > 0 {
 		body["response_format"] = req.ResponseFormat
 	}
+	// Tool declarations go down the same way and for the same reason: each
+	// function's parameters are a schema the caller wrote (T10.8).
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
+	}
+	if len(req.ToolChoice) > 0 {
+		body["tool_choice"] = req.ToolChoice
+	}
 	if req.Stream {
 		body["stream_options"] = map[string]bool{"include_usage": true}
 	}
@@ -297,6 +305,9 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 			Choices []struct {
 				Delta struct {
 					Content string `json:"content"`
+					// Forwarded whole: the fragments are merged by whoever
+					// needs one answer, never here (T10.8, engines.ToolCallAccumulator).
+					ToolCalls json.RawMessage `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
@@ -314,6 +325,11 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 			ch := ev.Choices[0]
 			if ch.Delta.Content != "" {
 				if !send(engines.StreamEvent{Delta: ch.Delta.Content}) {
+					return
+				}
+			}
+			if len(ch.Delta.ToolCalls) > 0 {
+				if !send(engines.StreamEvent{ToolCalls: ch.Delta.ToolCalls}) {
 					return
 				}
 			}

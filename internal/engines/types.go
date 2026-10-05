@@ -85,6 +85,17 @@ type ChatRequest struct {
 	// not — Ollama, whose field is `format` — reads the type out of it and
 	// translates (PLAN T10.14).
 	ResponseFormat json.RawMessage
+
+	// Tools is the caller's `tools` array and ToolChoice their `tool_choice`,
+	// both carried verbatim for the same reason as ResponseFormat: the JSON
+	// schema of each function is the caller's, and a struct of ours can only
+	// lose what it does not model (PLAN T10.8).
+	//
+	// Opod never EXECUTES a tool. It carries the declaration down and the
+	// model's call back up; running the function is the caller's job, as it
+	// is with any OpenAI-compatible server.
+	Tools      json.RawMessage
+	ToolChoice json.RawMessage
 }
 
 // Message is a single chat turn.
@@ -106,6 +117,14 @@ type StreamEvent struct {
 	Err    error
 	Usage  *Usage
 	Reason string // finish reason on the final event
+
+	// ToolCalls is one chunk's `delta.tool_calls` array, verbatim. A model
+	// emits a tool call in fragments: the first carries the index, the id and
+	// the function name, and the rest carry pieces of the argument string, so
+	// a consumer either forwards the fragments as they come (a streaming
+	// caller) or merges them by index (ToolCallAccumulator, for a caller that
+	// asked for one answer). Empty on an ordinary content event.
+	ToolCalls json.RawMessage
 }
 
 // Usage is the token accounting for a single completion.

@@ -309,6 +309,8 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		// engine, invisibly. response_format is carried for that reason
 		// (T10.14); the same applies to every field added to the builder.
 		ResponseFormat json.RawMessage `json:"response_format,omitempty"`
+		Tools          json.RawMessage `json:"tools,omitempty"`
+		ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -333,9 +335,23 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		Stream:      true,
 
 		ResponseFormat: req.ResponseFormat,
+		Tools:          req.Tools,
+		ToolChoice:     req.ToolChoice,
 	}
 	stream, err := s.Engine.Chat(r.Context(), engReq)
 	if err != nil {
+		// A field this engine cannot honour is the CALLER's problem, not a
+		// bad gateway: answer 400 in the OpenAI shape so the leader relays it
+		// verbatim (api.upstreamPassthrough) and the caller reads the field
+		// name rather than "502 engine" (T10.8).
+		if errors.Is(err, engines.ErrUnsupportedRequest) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+				"type": "unsupported_request", "message": err.Error(),
+			}})
+			return
+		}
 		http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -411,6 +427,18 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 				flusher.Flush()
 			}
 			return
+		}
+		if len(ev.ToolCalls) > 0 {
+			// Forwarded as the engine sent them — the leader merges or relays
+			// (T10.8). The map form is right here: a tool-call fragment is
+			// rare next to a token, so the fast appender buys nothing.
+			sendChunk(map[string]any{
+				"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []map[string]any{{
+					"index": 0,
+					"delta": map[string]any{"tool_calls": ev.ToolCalls},
+				}},
+			})
 		}
 		if ev.Delta != "" {
 			// The per-token chunk, appended by hand into one reused buffer
@@ -1096,6 +1124,7 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 	}()
 
 	var text strings.Builder
+	var tools engines.ToolCallAccumulator
 	var usage *engines.Usage
 	reason := "stop"
 	for ev := range stream {
@@ -1110,6 +1139,7 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 			}
 			break
 		}
+		tools.Add(ev.ToolCalls)
 		text.WriteString(ev.Delta)
 	}
 	resp := map[string]any{
@@ -1119,7 +1149,7 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 		"model":   model,
 		"choices": []map[string]any{{
 			"index":         0,
-			"message":       map[string]string{"role": "assistant", "content": text.String()},
+			"message":       assistantMessage(text.String(), &tools),
 			"finish_reason": reason,
 		}},
 	}
@@ -1185,4 +1215,16 @@ func (s *Server) sleepCall(w http.ResponseWriter, r *http.Request, sleep bool) {
 		status = "sleeping"
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "engine": s.Engine.Name()})
+}
+
+// assistantMessage is the aggregated answer's `message` object: content, and
+// `tool_calls` only when the model actually made one. The key is left out
+// otherwise rather than sent empty, because a client that sees the key
+// reasonably assumes there is a call in it (T10.8).
+func assistantMessage(content string, tools *engines.ToolCallAccumulator) map[string]any {
+	msg := map[string]any{"role": "assistant", "content": content}
+	if calls := tools.Calls(); len(calls) > 0 {
+		msg["tool_calls"] = calls
+	}
+	return msg
 }

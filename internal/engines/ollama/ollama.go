@@ -298,6 +298,15 @@ func (o *Driver) Delete(ctx context.Context, modelID string) error {
 // Chat runs a chat completion. Events are emitted on the returned channel
 // until Done or an error.
 func (o *Driver) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	// Ollama has tools, but in its own shape: no tool_choice, no call index,
+	// no id, and `arguments` as an object where OpenAI has a string. Carrying
+	// that across in both directions is its own piece of work, so until it is
+	// done this driver says so by name instead of dropping the field and
+	// answering prose (T10.8; the refusal class exists for exactly this).
+	if len(req.Tools) > 0 {
+		return nil, engines.Unsupported(name, "tools",
+			"this engine's tool protocol is not translated yet — serve the model through vLLM or SGLang, or send no tools")
+	}
 	ctx, span := engines.StartChatSpan(ctx, name, req.Model, o.endpoint, len(req.Messages))
 	// span.End() is deferred in the streaming goroutine so its duration
 	// covers the whole streamed response. Synchronous errors close it

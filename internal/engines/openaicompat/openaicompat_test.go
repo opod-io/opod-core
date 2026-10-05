@@ -37,3 +37,35 @@ func TestBuildChatBodyCarriesResponseFormat(t *testing.T) {
 		t.Fatal("response_format is on the body when the caller sent none")
 	}
 }
+
+// Tool declarations go down verbatim, and the model's call fragments come
+// back up the same way — the merge belongs to whoever needs one answer, not
+// to the stream reader (T10.8).
+func TestToolsDownAndToolCallsUp(t *testing.T) {
+	tools := `[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}]`
+	body := BuildChatBody(engines.ChatRequest{
+		Model:      "m",
+		Tools:      json.RawMessage(tools),
+		ToolChoice: json.RawMessage(`"auto"`),
+	})
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var sent struct {
+		Tools      json.RawMessage `json:"tools"`
+		ToolChoice json.RawMessage `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(raw, &sent); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(sent.Tools) != tools {
+		t.Fatalf("tools changed in flight:\n got %s\nwant %s", sent.Tools, tools)
+	}
+	if string(sent.ToolChoice) != `"auto"` {
+		t.Fatalf("tool_choice = %s", sent.ToolChoice)
+	}
+	if _, present := BuildChatBody(engines.ChatRequest{Model: "m"})["tools"]; present {
+		t.Fatal("tools is on the body when the caller declared none")
+	}
+}

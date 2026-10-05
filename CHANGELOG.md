@@ -5,23 +5,34 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## 2026-10-05 — structured output works, and what we cannot do is refused by name
+## 2026-10-05 — tool calling and structured output work, and what an engine cannot do is refused by name
 
 - **`response_format` works: ask for JSON and the engine is told to produce JSON.** `{"type":"json_object"}`
   and a full `{"type":"json_schema", …}` are carried to the engine — verbatim for every OpenAI-shaped server
   (vLLM, SGLang, llama-server, MLX), and translated into Ollama's own `format` field, whose schema sits one
   level higher. The object is passed as the caller wrote it rather than re-encoded through our own struct, so a
   field the next OpenAI revision adds still arrives whole.
-- **`tools` is refused with `400` instead of being silently dropped.** Go's decoder discards unknown fields, so
-  a request carrying `tools` was answered as if it had never carried one: the engine never saw the tools, the
-  model never emitted a tool call, and the caller got prose where their client expected a function call — with
-  nothing in any log saying why. The gateway now names the field and says what to send instead.
-  `tool_choice: "none"` is still served, because plain text is then what the caller asked for.
+- **Tool calling works: `tools` goes down to the model and `tool_calls` comes back.** Both the declaration and
+  the choice are carried verbatim, streaming and non-streaming. A streaming caller gets the model's fragments as
+  the engine sent them, which is what the OpenAI wire defines; a caller who asked for one answer gets them
+  merged by call index, with `arguments` left a string for them to parse. **Opod never executes a tool** — it
+  carries the declaration down and the call back up, and the caller runs the function, exactly as with any
+  OpenAI-compatible server.
+- **An engine that cannot do tools says so, by name.** Ollama's tool protocol is its own shape — no
+  `tool_choice`, no call index, no id, and `arguments` as an object where OpenAI has a string — so that driver
+  answers `400 unsupported_request` naming `tools` instead of dropping them and returning prose. The new
+  `ErrUnsupportedRequest` class is how any driver says "not this field", and a worker returns it as a `400` the
+  leader relays unchanged.
+- **Go's decoder discards unknown fields, which is what made this a silent failure.** Before this release a
+  request carrying `tools` was answered as if it had never carried one: the engine never saw them, the model
+  never emitted a call, and nothing in any log said why.
 - **Only the current chat schema is read.** The deprecated `functions` / `function_call` pair is not parsed,
   not served and not refused — it is ignored like any other unknown field.
-- **The `tools` refusal is a refusal, not a change of intent.** Carrying `tools` down to the engine and
-  `tool_calls` back up is separate work; when it lands, the check narrows to "this engine cannot" rather than
-  disappearing. Executing a tool is not this runtime's job either way: the caller runs the function.
+- **A field a worker does not name is dropped one hop short of the engine.** The leader re-serialises every
+  chat through the shared OpenAI body builder before it reaches a worker, and the worker's own request struct
+  named eight fields — so anything new worked against a leader-local engine and silently did nothing on the
+  normal path. The worker now carries `response_format`, `tools` and `tool_choice`, and the struct says why the
+  next field added has the same hole waiting for it.
 
 ## 2026-09-29 — a door trusts its leader, a budget is what the card loses, gangs take turns
 
