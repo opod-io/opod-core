@@ -151,9 +151,19 @@ func TestAuthSnapshotStaleBound(t *testing.T) {
 	if c, _ := call(""); c != http.StatusServiceUnavailable {
 		t.Fatalf("no key can be judged against a stale list, a missing one included: %d", c)
 	}
-	// Not demand: the refusal stays out of /loadz's counters.
-	if got := srv.load.sum(&srv.load.errRing, &srv.load.errSec, time.Now()); got != 0 {
-		t.Fatalf("a stale-auth refusal must not count in unavailable_1m: %d", got)
+	// Not demand: an inference POST refused for staleness stays out of
+	// /loadz's counters entirely — neither a request nor an unavailable one
+	// (load accounting counts only POSTs, so the GETs above prove nothing).
+	rec := httptest.NewRecorder()
+	post := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[]}`))
+	post.Header.Set("Authorization", "Bearer "+plain)
+	srv.routes().ServeHTTP(rec, post)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stale snapshot, inference POST: want 503, got %d", rec.Code)
+	}
+	now := time.Now()
+	if req, unavail := srv.load.sum(&srv.load.reqRing, &srv.load.reqSec, now), srv.load.sum(&srv.load.errRing, &srv.load.errSec, now); req != 0 || unavail != 0 {
+		t.Fatalf("a stale-auth refusal must not count as demand: rpm_1m %d, unavailable_1m %d", req, unavail)
 	}
 	st := srv.authSnapshotState(time.Now())
 	if st == nil || !st.Stale || st.AgeSec == nil || *st.AgeSec < 590 || st.MaxAgeSec != 60 || st.Revision != "r1" {
