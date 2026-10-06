@@ -376,11 +376,11 @@ func (s *Server) routes() http.Handler {
 	// accessLog middleware can still record the 500.
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	// Stash the kernel-reported peer address BEFORE RealIP rewrites
-	// RemoteAddr from forwarding headers — bootstrapAdminKey must check
-	// loopback against the real TCP peer, not a spoofable header.
+	// Stash the kernel-reported peer address BEFORE forwardedClientIP
+	// rewrites RemoteAddr from forwarding headers — bootstrapAdminKey must
+	// check loopback against the real TCP peer, not a spoofable header.
 	r.Use(stashRemoteAddr)
-	r.Use(middleware.RealIP)
+	r.Use(forwardedClientIP)
 	r.Use(s.accessLog)
 
 	// Public
@@ -557,12 +557,12 @@ func (s *Server) routes() http.Handler {
 	return r
 }
 
-// realRemoteAddrKey carries the pre-RealIP RemoteAddr on the request
+// realRemoteAddrKey carries the pre-rewrite RemoteAddr on the request
 // context. Unexported struct type — no collision with other packages.
 type realRemoteAddrKey struct{}
 
 // stashRemoteAddr records the kernel-reported peer address before
-// middleware.RealIP rewrites RemoteAddr from True-Client-IP /
+// forwardedClientIP rewrites RemoteAddr from True-Client-IP /
 // X-Real-IP / X-Forwarded-For. Loopback-gated handlers must trust only
 // this value.
 func stashRemoteAddr(next http.Handler) http.Handler {
@@ -580,6 +580,73 @@ func realRemoteAddr(r *http.Request) string {
 		return v
 	}
 	return r.RemoteAddr
+}
+
+// forwardedClientIP rewrites r.RemoteAddr to the client address a proxy
+// reports, so an access log behind an Ingress names the caller instead of
+// the proxy pod. It replaces chi's middleware.RealIP, which v5.3 deprecated
+// under three advisories for doing exactly this: the headers are attacker
+// controlled, so anything that TRUSTS the value is spoofable.
+//
+// Nothing here trusts it. The rewritten address is a LABEL — the access log
+// line and the request's span — and never a credential: the loopback gate on
+// the bootstrap admin key and the audit actor both read realRemoteAddr(r),
+// the TCP peer stashed one middleware earlier, and that is the invariant to
+// keep when either side of this file changes.
+//
+// Honouring the header only when the peer is a trusted proxy is the stronger
+// answer and needs a configured CIDR list, which is an addition to core's
+// environment contract and therefore not made here.
+func forwardedClientIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ip := clientIPFromHeaders(r); ip != "" {
+			r.RemoteAddr = ip
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// clientIPFromHeaders reads the first plausible address out of the three
+// headers a proxy may set, most specific first, and returns "" when none
+// holds one — an unparsable header leaves RemoteAddr as the kernel saw it
+// rather than replacing a real address with a bad string.
+func clientIPFromHeaders(r *http.Request) string {
+	if v := r.Header.Get("True-Client-IP"); v != "" {
+		if ip := parseClientIP(v); ip != "" {
+			return ip
+		}
+	}
+	if v := r.Header.Get("X-Real-IP"); v != "" {
+		if ip := parseClientIP(v); ip != "" {
+			return ip
+		}
+	}
+	// Leftmost entry of X-Forwarded-For: the client as the first proxy saw it.
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		if i := strings.Index(v, ","); i >= 0 {
+			v = v[:i]
+		}
+		if ip := parseClientIP(v); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+// parseClientIP accepts a bare address or host:port and answers the address,
+// or "" when it is not one.
+func parseClientIP(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if net.ParseIP(v) != nil {
+		return v
+	}
+	if host, _, err := net.SplitHostPort(v); err == nil && net.ParseIP(host) != nil {
+		return host
+	}
+	return ""
 }
 
 // Request-body caps on /v1, per route (PLAN T15.3, decided 2026-09-28):
