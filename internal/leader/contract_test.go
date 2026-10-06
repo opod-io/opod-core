@@ -111,6 +111,8 @@ var contractFeatureFloor = []string{
 	"shard_groups",
 	// ADR-085: key tombstones; the auth snapshot's age and its optional bound
 	"auth_tombstones", "auth_snapshot_age",
+	// ADR-082: the bounded hold before a 503
+	"admission_hold",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

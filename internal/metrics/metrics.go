@@ -221,3 +221,20 @@ func SetNodeUp(node, hostname string, up bool) {
 	}
 	nodeUp.WithLabelValues(node, hostname).Set(v)
 }
+
+var (
+	admissionHeldTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "opod_admission_held_total",
+		Help: "Requests that found no capacity and were handled by the admission hold (ADR-082), by outcome: served (capacity came back inside the budget), shed_deadline (503 at the budget), shed_cap (503 at once: too many already held), cancelled (the client went away).",
+	}, []string{"outcome"})
+	admissionHeld = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "opod_admission_held",
+		Help: "Requests held right now waiting for capacity (ADR-082).",
+	})
+)
+
+// ObserveAdmissionHold records how one held request ended.
+func ObserveAdmissionHold(outcome string) { admissionHeldTotal.WithLabelValues(outcome).Inc() }
+
+// SetAdmissionHeld sets the number of requests held right now.
+func SetAdmissionHeld(n int64) { admissionHeld.Set(float64(n)) }

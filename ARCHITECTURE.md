@@ -1538,8 +1538,9 @@ Mechanisms a manager drives through this surface:
   (`/etc/opod-auth/auth.json`, `OPOD_AUTH_FILE`: keys + `requireKeys`, key tombstones `revokedKeys` that a later
   snapshot never undoes, and `issuedAt`, `authfile.go`) and the policy snapshot
   (`/etc/opod-auth/policy.json`, `OPOD_POLICY_FILE`: `routing`, `logging.accessLog`, guardrail webhooks,
-  `auth.maxSnapshotAgeSec` — past it `/v1` answers 503 naming the stale snapshot, `authstale.go` —
-  `policyfile.go`). `/loadz` reports the auth snapshot's revision and age (`auth_snapshot`). No plan file = standalone; the auth and policy watchers keep looking for a file that appears after
+  `auth.maxSnapshotAgeSec` — past it `/v1` answers 503 naming the stale snapshot, `authstale.go` — and
+  `admission.holdMs`/`maxHeld` — a request that finds no capacity waits up to that long for some before the 503,
+  `admission.go` — `policyfile.go`). `/loadz` reports the auth snapshot's revision and age (`auth_snapshot`). No plan file = standalone; the auth and policy watchers keep looking for a file that appears after
   boot, and `off` disables them. A bad file keeps the last good snapshot.
 - **Probe header** (`probe_header`): a request carrying `X-Opod-Probe` is served like any other and counted like none
   — not in `/loadz`'s in-flight, `rpm_1m`, `unavailable_1m` or the idle clock — so a prover cannot move the number an

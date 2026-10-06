@@ -182,6 +182,10 @@ func contractFeatures() map[string]bool {
 		// its revision and age, and policy auth.maxSnapshotAgeSec > 0 refuses
 		// keyed /v1 traffic past that age with 503 + a reason (ADR-085).
 		"auth_snapshot_age": true,
+		// A request that finds no capacity is HELD up to policy
+		// admission.holdMs for some before the 503 + Retry-After, at most
+		// admission.maxHeld at once (ADR-082). 0 = the 503 at once.
+		"admission_hold": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once
 		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating

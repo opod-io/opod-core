@@ -76,6 +76,7 @@ func (s *Server) AddModel(ctx context.Context, req AddModelRequest) (ModelOutcom
 			return ModelOutcome{}, errors.Join(ErrUpstream, err)
 		}
 		s.router.InvalidateModel(req.ID)
+		s.capacityChanged()
 		s.record("model.added", req.ID, map[string]any{"kind": "sharded"})
 		s.record("shard.created", req.ID, map[string]any{"default_shards": entry.Sharding.DefaultShards})
 		return ModelOutcome{ID: req.ID, Kind: "sharded"}, nil
@@ -95,6 +96,7 @@ func (s *Server) AddModel(ctx context.Context, req AddModelRequest) (ModelOutcom
 		_ = s.store.Models().Upsert(ctx, store.Model{ID: entry.ID, CatalogID: entry.ID, Source: "node:" + strings.Join(req.Nodes, ","),
 			Status: "ready", SizeBytes: entry.SizeBytes, InstalledAt: time.Now()})
 		s.router.InvalidateModel(req.ID)
+		s.capacityChanged()
 		s.record("model.added", req.ID, map[string]any{"kind": "node", "nodes": req.Nodes})
 		return ModelOutcome{ID: req.ID, Kind: "node"}, nil
 	}
@@ -273,6 +275,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 		return errors.Join(ErrUpstream, err)
 	}
 	s.router.InvalidateModel(req.ModelID)
+	s.capacityChanged()
 	s.record("shard.created", req.ModelID, map[string]any{"nodes": req.Nodes, "count": req.Shards})
 	return nil
 }

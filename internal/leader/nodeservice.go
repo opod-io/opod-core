@@ -123,6 +123,7 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 		}
 	}
 	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address, "again": existing != nil, "boot_id": n.BootID})
+	s.capacityChanged()
 	return n, nil
 }
 
@@ -246,6 +247,10 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	if err := s.store.Nodes().Heartbeat(ctx, n.ID, time.Now(), n.BootID); err != nil {
 		return err
 	}
+	// Whatever this heartbeat changes — a lost worker alive again, an engine
+	// reporting again, a placement now ready — held requests look again once
+	// every row below is written (admission.go).
+	defer s.capacityChanged()
 	// A NULL loaded_models is "no report": the worker's engine did not answer
 	// it in time, so this heartbeat says the worker is alive and nothing about
 	// what it serves. The node's rows are left exactly as they are — statuses,
@@ -351,6 +356,7 @@ func (s *Server) setNodeState(ctx context.Context, id, state, event string) erro
 		return ErrUnknownNode
 	}
 	s.record(event, id, nil)
+	s.capacityChanged() // an undrain puts the node back in rotation
 	return nil
 }
 

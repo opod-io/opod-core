@@ -53,6 +53,23 @@ the last section.
 - Embeddings are unchanged: their `encoding_format` and `dimensions` are still not forwarded.
 - Feature key `openai_passthrough` on `/admin/v1/capabilities`.
 
+## 2026-10-06 — a request that finds no capacity can wait for some before the 503
+
+- **The admission hold** (`admission_hold`, policy `admission.holdMs` / `admission.maxHeld`). A request that finds
+  nothing able to take it — every holder drained, lost or silent, no gang ready, the endpoint waking — used to be
+  answered `503` + `Retry-After` at once, so under a burst every client retried at the same moment. With a budget
+  in the policy snapshot it now waits up to `holdMs` for capacity, is served the moment there is some, and gets
+  exactly the old `503` when the budget runs out. **`holdMs` 0 or absent is the old behaviour, unchanged.**
+- **Bounded.** At most `maxHeld` requests wait at once (64 when unset); past it a request is shed at once. The
+  budget counts from the moment the request reached dispatch, so a sleeping engine's wake spends from it rather
+  than adding to it. A client that disconnects releases its slot at once.
+- **First come, first served.** Nothing is ranked: no priority, no per-key share.
+- **A signal, not a poll.** The leader's own writes of who can serve — a heartbeat, a registration, an undrain, a
+  resume, a model or gang coming up — wake held requests to look again.
+- **Metrics:** `opod_admission_held` (waiting now) and `opod_admission_held_total{outcome}` with `served`,
+  `shed_deadline`, `shed_cap` and `cancelled`. A shed still counts in `/loadz` `unavailable_1m`, the autoscaler's
+  wake signal, as before.
+
 ## 2026-10-06 — a revoked key is a tombstone, and an endpoint can refuse keys from a stale auth snapshot
 
 - **A revocation can be appended, not only re-derived** (`auth_tombstones`). The auth snapshot carries

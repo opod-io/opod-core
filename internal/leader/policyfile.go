@@ -15,7 +15,10 @@ package leader
 //     fail posture, timeout) that become the guardrail chain the gateway
 //     walks on every request;
 //   - auth.maxSnapshotAgeSec: how old the AUTH snapshot may get before the
-//     gateway refuses keyed traffic (ADR-085; authstale.go). 0 = fail-static.
+//     gateway refuses keyed traffic (ADR-085; authstale.go). 0 = fail-static;
+//   - admission.holdMs / maxHeld: how long a request that finds no capacity
+//     waits for some before it is shed (ADR-082; admission.go). 0 = shed at
+//     once, as before.
 //
 // No file → no-op: standalone `opod up` keeps its config behaviour. A bad
 // file keeps the last good policy (never a half-applied one).
@@ -136,6 +139,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
 	}
 	s.policy.maxAuthAgeSec.Store(int64(max(doc.Auth.MaxSnapshotAgeSec, 0)))
+	s.admission.set(doc.Admission)
 	if doc.Logging.AccessLog != nil {
 		s.policy.accessLog.Store(*doc.Logging.AccessLog)
 	} else {

@@ -123,6 +123,7 @@ func (s *Server) resumeNode(n *store.Node, model string) bool {
 		}
 	}
 	s.router.InvalidateModel("")
+	s.capacityChanged()
 	s.record("worker.resume", n.ID, map[string]any{"node": n.ID, "by": "request", "model": model, "ms": time.Since(started).Milliseconds()})
 	return true
 }

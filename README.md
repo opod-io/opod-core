@@ -829,7 +829,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 |---|---|---|
 | `OPOD_PLAN_FILE` | leader | the mounted plan the leader serves within (default `/etc/opod/plan.json`; absent = standalone) |
 | `OPOD_AUTH_FILE` | leader | the mounted auth snapshot — keys, `requireKeys`, key tombstones (`revokedKeys`), `issuedAt`, the worker-certificate policy (default `/etc/opod-auth/auth.json`; `off` = no watcher) |
-| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, guardrail webhook rules, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
+| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, guardrail webhook rules, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission hold before a 503 (`admission.holdMs`, `admission.maxHeld`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
 | `OPOD_COORDINATOR_NODE` | leader | pin the llama.cpp RPC coordinator to a node id (`local` = the leader itself). Default: the worker with the most **GPU** memory, falling back to host RAM for a worker with no card |
 | `OPOD_OTLP_LOGS_ENDPOINT` | leader | the leader's own log records over OTLP/HTTP, beside stderr (URL or bare `host:port`). Bounded queue, never blocks. Empty = off |
 | `OPOD_ROLE` | leader | `leader` (default) or `gateway` — a front door that serves `/v1` only (`opod up --role gateway`) |

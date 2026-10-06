@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/opod-io/opod/internal/api"
 )
@@ -43,9 +44,17 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	// drained, lost or asleep is unavailable even while another model on this
 	// leader serves. The 503 itself is the autoscaler's wake signal (it shows
 	// up in /loadz unavailable_1m), and the message says which cause it is.
+	started := time.Now()
 	reason := s.unavailable(r.Context(), model)
 	if reason != "" && s.wakeForRequest(r.Context(), model) {
 		reason = "" // a sleeping engine was resumed for this request: serve it
+	}
+	if reason != "" {
+		// The admission hold (ADR-082, admission.go): with a budget in the
+		// policy, wait for capacity before giving up on it. Before the
+		// fallback, because the point is to serve HERE if capacity returns;
+		// the fallback is for when it does not. Budget 0 returns at once.
+		reason = s.holdForCapacity(r.Context(), model, reason, started)
 	}
 	if reason != "" {
 		// Policy fallback (P12-2): forward instead of 503 when the snapshot

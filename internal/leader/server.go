@@ -81,6 +81,8 @@ type Server struct {
 	plan           planFileState
 	authf          authFileState
 	policy         policyFileState
+	admission      admissionState // the policy's hold before a 503 (ADR-082)
+	capacity       capacitySignal // wakes held requests when who-can-serve changes
 
 	// movePoll / moveSettle shorten a model move's waits (modelmove.go); zero
 	// = the orchestrator's defaults. Only tests set them.
