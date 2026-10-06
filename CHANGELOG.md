@@ -5,6 +5,20 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-06 — `/v1/rerank` is back
+
+- **`POST /v1/rerank`** `{model, query, documents, top_n, return_documents}` answers `results` most relevant
+  first, each `{index, relevance_score, document: {text}}`, with `usage`. ADR-084 amends ADR-022, which removed
+  rerank on 2026-09-07: a retrieval stack asks for it and the engines already serve it.
+- **Served by vLLM, SGLang and llama.cpp** (llama-server started with `--reranking`), read from each engine's
+  source: all three serve `/v1/rerank`, SGLang answers a bare array and the others an object, and the leader
+  reads both. The engine only scores; the leader orders, truncates to `top_n` and attaches the text, so every
+  engine answers alike. The request crosses the leader→worker hop like embeddings do.
+- **An engine with no rerank route is refused by name** — Ollama and MLX-LM, or llama-server without
+  `--reranking` — as `501 rerank_not_supported`, never a 404 that reads like a wrong URL.
+- The route takes the embeddings body cap (8 MiB), runs the pre-call guardrails, and records a usage row like
+  embeddings. It is on the frozen leader contract, and the feature key is `rerank`.
+
 ## 2026-10-06 — every OpenAI chat field reaches the engine, and logprobs come back
 
 - **A chat request's fields that opod does not model are no longer dropped.** The gateway decoded the body into

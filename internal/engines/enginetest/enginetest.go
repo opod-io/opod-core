@@ -50,6 +50,7 @@ type Expect struct {
 	Usage    *engines.Usage // Usage on the Done event; nil = not asserted
 	Reason   string         // finish reason on the Done event; "" = not asserted
 	Embeds   bool           // driver implements engines.EmbedEngine; Backend answers one vector per input
+	Reranks  bool           // driver implements engines.RerankEngine (ADR-084); the wire is tested in openaicompat
 	Unloads  bool           // Unload against Backend returns nil; false ⇒ must return ErrUnloadNotSupported
 	Resident bool           // driver implements engines.ResidentLister and Backend serves it
 	Loads    bool           // driver implements engines.Loader and Backend serves it
@@ -207,6 +208,8 @@ func Run(t *testing.T, f Fixture) {
 			t.Error("Embed with no inputs must error")
 		}
 	})
+
+	t.Run("rerank", func(t *testing.T) { assertRerankClaim(t, eng, f.Expect.Reranks) })
 
 	t.Run("unload", func(t *testing.T) {
 		err := eng.Unload(ctx, model)
@@ -382,4 +385,14 @@ func OpenAIBackend(models, deltas []string, usage engines.Usage) http.Handler {
 		})
 	})
 	return mux
+}
+
+// assertRerankClaim checks only the claim: a driver that says it reranks and
+// whose engine has no route would turn a clear refusal into a 404. The wire is
+// tested once, in openaicompat.
+func assertRerankClaim(t *testing.T, eng engines.Engine, want bool) {
+	t.Helper()
+	if _, implements := eng.(engines.RerankEngine); implements != want {
+		t.Fatalf("implements RerankEngine = %v, fixture says %v", implements, want)
+	}
 }

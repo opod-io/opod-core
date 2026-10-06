@@ -426,8 +426,11 @@ func (s *Server) routes() http.Handler {
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)
-		// OpenAI chat + embeddings are the whole protocol surface (ADR-022 step 4,
-		// 2026-09-07: Anthropic Messages, audio and rerank left core).
+		r.Post("/rerank", s.openaiH.Rerank)
+		// OpenAI chat + embeddings, and rerank, are the whole protocol surface.
+		// ADR-022 step 4 (2026-09-07) removed Anthropic Messages, audio and
+		// rerank; ADR-084 (2026-10-06) brought rerank back. A new surface
+		// arrives by an amendment like that one, never by a quiet re-add.
 	})
 
 	// A GATEWAY serves /v1 and nothing else (T11.1, ADR-063). The admin surface
@@ -651,7 +654,8 @@ func parseClientIP(v string) string {
 
 // Request-body caps on /v1, per route (PLAN T15.3, decided 2026-09-28):
 // chat carries inline base64 images, so it gets the generous cap;
-// embeddings carry batches of text and get a quarter of it; anything else
+// embeddings and rerank carry batches of text and get a quarter of it
+// (rerank's documents are the same kind of batch, ADR-084); anything else
 // on the surface takes a body no larger than a megabyte. A body over its cap
 // answers 413 with an OpenAI-shaped error (api.BodyReadError) and the handler
 // is never reached. `max_body_bytes` / OPOD_MAX_BODY_BYTES overrides the CHAT
@@ -675,7 +679,7 @@ func (s *Server) limitRequestBody(next http.Handler) http.Handler {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			limit = chat
-		case strings.HasSuffix(r.URL.Path, "/embeddings"):
+		case strings.HasSuffix(r.URL.Path, "/embeddings"), strings.HasSuffix(r.URL.Path, "/rerank"):
 			limit = embeddingsMaxBodyBytes
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)

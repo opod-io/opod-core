@@ -63,6 +63,8 @@ var LeaderContract = []ContractRoute{
 	{Method: http.MethodPost, Path: "/admin/v1/nodes/{id}/drain"},
 	{Method: http.MethodPost, Path: "/admin/v1/nodes/{id}/undrain"},
 	{Method: http.MethodPost, Path: "/admin/v1/models/{id}/move"},
+	// gateway — API key (ADR-084, 2026-10-06: rerank returned to core)
+	{Method: http.MethodPost, Path: "/v1/rerank"},
 }
 
 // EnvContract is the process-environment half of the contract: every
@@ -122,6 +124,11 @@ func contractFeatures() map[string]bool {
 		// `messages`, `stream` and `stream_options` stay ours, and `n` or
 		// `best_of` above 1 is refused 400 (T17.1).
 		"openai_passthrough": true,
+		// POST /v1/rerank {model, query, documents, top_n, return_documents}
+		// → scores, most relevant first (ADR-084, amending ADR-022). Served by
+		// vLLM, SGLang and llama.cpp (--reranking) engines; an engine without a
+		// rerank route is refused 501 `rerank_not_supported`, never a 404.
+		"rerank": true,
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"kv_block_events":    true, // heartbeat kv_blocks → the leader's prefix-cache block index; policy routing.prefixBlockWeight scores a worker by the leading blocks it holds; /loadz prefix_index

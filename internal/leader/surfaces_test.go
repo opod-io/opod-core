@@ -81,10 +81,15 @@ func TestSurfacesOff(t *testing.T) {
 	if c, _ := get("/admin/v1/callbacks", true); c != http.StatusNotFound {
 		t.Errorf("GET /admin/v1/callbacks = %d, want 404 (callbacks left core, ADR-022)", c)
 	}
-	for _, p := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/rerank"} {
+	for _, p := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1/audio/speech", "/v1/audio/transcriptions"} {
 		if c := post(p); c != http.StatusNotFound {
 			t.Errorf("POST %s with protocols=openai = %d, want 404", p, c)
 		}
+	}
+	// Rerank came back with ADR-084 (amending ADR-022): the route exists, so an
+	// empty body is the caller's mistake (400), not an unknown route.
+	if c := post("/v1/rerank"); c != http.StatusBadRequest {
+		t.Errorf("POST /v1/rerank with an empty body = %d, want 400 (the route is served since ADR-084)", c)
 	}
 
 	// still on: the contract

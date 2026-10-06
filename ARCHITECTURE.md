@@ -238,6 +238,7 @@ Each worker runs a thin HTTP server bound to the address it reported at registra
 | `GET /v1/models` | Calls `Engine.List(ctx)` and emits the OpenAI `{"object":"list","data":[…]}` shape. |
 | `POST /v1/chat/completions` | Decodes the OpenAI request, calls `Engine.Chat(ctx, req)`, re-emits as SSE (stream=true) or aggregated JSON (stream=false). |
 | `POST /v1/embeddings` | The same for the embedding shape — the leader talks to a worker over the OpenAI wire, not only for chat. |
+| `POST /v1/rerank` | The same for rerank (ADR-084): the worker's engine scores, the worker answers in vLLM's shape, and an engine with no rerank route is a named `501 rerank_not_supported`. |
 | `POST /v1/model/load` · `/unload` | Pull + load a model on this worker, or let it go (`worker_unload`: the engine's unload, or a stop of the engine process the worker launched). |
 | `POST /v1/model/sleep` · `/resume` | Sleep tier (`worker_sleep`): the engine drops its GPU working set and keeps the process; `501 unsupported` on an engine without one. |
 | `GET /v1/adapters` · `POST /v1/adapters/load` · `/unload` | LoRA variants held, loaded and dropped at runtime (`lora`), served as `<base>:<name>`. |
@@ -656,7 +657,7 @@ A GGUF is one file (`opod fetch <repo> <file>`). A safetensors model is a direct
 
 ### Other protocol shapes
 
-None. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); a shim in front of the gateway is the place for them.
+Rerank only. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); `/v1/rerank` came back on 2026-10-06 (ADR-084, amending ADR-022) — one non-streaming POST the engines already serve, where the engine is a scorer and the gateway orders, truncates to `top_n` and attaches the text. The other shapes stay out; a shim in front of the gateway is the place for them.
 
 ### Internal request shape
 
@@ -1371,7 +1372,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 1. `cmd/opod/main.go` — switch statement over subcommand verbs
 2. `cmd/opod/cmd_*.go` — one file per CLI subcommand; each parses flags, calls a package and prints: model install/search → `internal/models` (`Install`, `Search`, `PersistUserCatalogEntry`), boot steps → `internal/control/bootstrap.go`, self-update → `internal/update`
 3. `internal/leader/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
-4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
+4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`; `/v1/rerank` in `rerank.go`)
 5. `internal/leader/contract.go` — the frozen `/admin/v1` surface, the feature keys and the environment contract: what an external manager may rely on
 6. `internal/config/env.go` — every environment variable a manager may set, as a table with the side that reads it
 7. `internal/control/` — the mutating operations the CLI and admin HTTP share (today connect/disconnect and the boot steps; see § Implemented examples for what has not moved there yet)
@@ -1557,5 +1558,5 @@ egress. They were removed, compatibly: the YAML decode is not strict, so a `conf
 carries the three keys loads as before (every file an older binary saved has them), and no code reads or
 warns about the variables, so a process started with `OPOD_UI=off` behaves exactly like one started
 without it (`internal/config/surfaces_test.go`). A manager may stop rendering them whenever it likes.
-The request surface itself is fixed — OpenAI chat, embeddings, models — since the Anthropic/audio/rerank
-adapters and their `protocols` switch left on 2026-09-07 (ADR-022 step 4).
+The request surface itself is fixed — OpenAI chat, embeddings, models, and rerank (back since ADR-084) — since
+the Anthropic/audio/rerank adapters and their `protocols` switch left on 2026-09-07 (ADR-022 step 4).

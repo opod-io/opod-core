@@ -105,6 +105,7 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
 	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))    // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
+	mux.HandleFunc("/v1/rerank", s.auth(s.rerank))            // and rerank (ADR-084): a route the worker does not expose is a 404 the leader cannot explain
 	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))     // leader-side placement: pull+load a model on this worker
 	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload)) // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
 	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))   // sleep tier (build item 13): engine drops its GPU working set, process stays
@@ -268,6 +269,66 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// rerank is the worker half of ADR-084: the leader dials a worker through the
+// vLLM driver, which posts to /v1/rerank, and the worker answers from its own
+// engine in the shape vLLM answers — so the leader reads a worker and an
+// engine the same way. An engine with no rerank route is a named 501, never a
+// 404 or a 502.
+func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		Model     string   `json:"model"`
+		Query     string   `json:"query"`
+		Documents []string `json:"documents"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request", "invalid body: "+err.Error())
+		return
+	}
+	re, ok := s.Engine.(engines.RerankEngine)
+	if !ok {
+		writeOpenAIError(w, http.StatusNotImplemented, "rerank_not_supported",
+			"engine "+s.Engine.Name()+" does not serve rerank")
+		return
+	}
+	res, err := re.Rerank(r.Context(), engines.RerankRequest{
+		Model: s.Aliases.Native(req.Model), Query: req.Query, Documents: req.Documents,
+	})
+	if err != nil {
+		var up *engines.UpstreamError
+		switch {
+		case errors.Is(err, engines.ErrRerankNotSupported):
+			writeOpenAIError(w, http.StatusNotImplemented, "rerank_not_supported", err.Error())
+		case errors.As(err, &up) && up.Status >= 400 && up.Status < 500:
+			// The caller's mistake as the engine saw it (an unknown model, a
+			// model that is not a reranker): relayed with its status so the
+			// leader can relay it again.
+			writeOpenAIError(w, up.Status, "upstream_"+strconv.Itoa(up.Status), err.Error())
+		default:
+			http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
+		}
+		return
+	}
+	results := make([]map[string]any, 0, len(res.Results))
+	for _, x := range res.Results {
+		results = append(results, map[string]any{"index": x.Index, "relevance_score": x.Score})
+	}
+	out := map[string]any{"model": req.Model, "results": results}
+	if res.Usage != nil {
+		out["usage"] = map[string]any{"prompt_tokens": res.Usage.PromptTokens, "total_tokens": res.Usage.TotalTokens}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// writeOpenAIError answers an OpenAI-shaped error, the shape the leader relays
+// with its status instead of reading it as a fault of its own.
+func writeOpenAIError(w http.ResponseWriter, status int, typ, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": typ, "message": msg}})
 }
 
 // decodeEmbedInput accepts both spellings OpenAI allows.

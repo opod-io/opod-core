@@ -357,7 +357,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Inference
 
-- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) — the only protocol surface (ADR-022)
+- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) and `/v1/rerank` — the only protocol surface (ADR-022; rerank returned with ADR-084)
 - SSE streaming with proper client-disconnect handling (no goroutine leaks; bounded drain on cancel)
 - Vision (image input) on multimodal models — `image_url` content blocks on `/v1/chat/completions` route through the Ollama engine path (the only driver that forwards images today)
 - **Tool / function calling and structured output work** (since 2026-10-05), as a loop rather than one exchange. `tools`, `tool_choice` and `response_format` are carried to the engine and the model's `tool_calls` come back — streamed as the engine sent them, or merged when you ask for one answer, with `arguments` left a string for you to parse and an `id` to echo back. Your next request carries the assistant turn's `tool_calls` and each result's `tool_call_id` through to the engine, which is what makes a second turn work at all. **Opod never runs a tool**: it carries the declaration down and the call back up, and your client runs the function, as with any OpenAI-compatible server. An engine that cannot do tools refuses by name rather than answering prose — Ollama does today, because its tool protocol is a different shape; serve that model through vLLM or SGLang. A catalog entry's `capabilities: [chat, tools]` describes the *model*, not this gateway
@@ -429,7 +429,7 @@ of these will be declined for the same reason, so the table is here to save you 
 | **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes and expiry, the usage stream and the audit log are the accountability story on a trusted network. |
 | **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
 | **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
-| **Non-chat protocol surfaces** (Anthropic Messages, `/v1/rerank`, audio transcription and speech) | one protocol, done properly. These were removed in the 2026-09 contraction (ADR-022). |
+| **Non-chat protocol surfaces** (Anthropic Messages, audio transcription and speech) | one protocol, done properly. These were removed in the 2026-09 contraction (ADR-022); `/v1/rerank` came back on 2026-10-06 (ADR-084) because a retrieval stack asks for it. |
 | **Content policies, output filtering, guardrail implementations** | the interface and the event stream stay; the policies belong where the request originates. |
 | **Kubernetes, Helm, operators, CRDs** | `opod` runs as a process. Anything that schedules processes across a fleet is an orchestrator's job, not the runtime's. |
 | **Training and fine-tuning** | use `axolotl`, `unsloth`, or `torchtune`. |
@@ -1285,8 +1285,9 @@ print(resp.choices[0].message.content)
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
+| `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. Every body field the gateway does not model (`seed`, `logprobs`, `top_k`, `user`, …) reaches a vLLM / SGLang / llama.cpp / MLX-LM engine verbatim and `logprobs` come back; `model`, `messages`, `stream` and `stream_options` stay opod's; `n` or `best_of` above 1 is refused `400`. |
 | `POST` | `/v1/embeddings` | Embedding models (e.g. `nomic-embed-text`): Ollama's own API, or the OpenAI `/v1/embeddings` of a vLLM / SGLang / MLX-LM / llama.cpp engine |
+| `POST` | `/v1/rerank` | `{model, query, documents, top_n, return_documents}` → `results` most relevant first, each `{index, relevance_score, document.text}`. Served by a reranker model on vLLM, SGLang, or llama.cpp started with `--reranking`; Ollama and MLX-LM have no rerank route and answer `501 rerank_not_supported` (ADR-084) |
 | `GET` | `/v1/models` | Lists the models a request can be answered for now: installed on the leader, or held by a worker that takes new work. A model held only by drained or lost workers is not listed; one that is merely asleep (sleeping workers, or a plan that scales to zero) is, because a request for it is how it wakes (`503` + `Retry-After`) |
 
 (Planned: `/v1/completions`.)

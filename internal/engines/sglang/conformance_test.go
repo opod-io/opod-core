@@ -16,11 +16,12 @@ func TestConformance(t *testing.T) {
 		Name:    "sglang",
 		Backend: enginetest.OpenAIBackend([]string{"Qwen/Qwen3-8B", "qwen3-8b"}, []string{"Hel", "lo"}, usage),
 		Expect: enginetest.Expect{
-			Models: []string{"Qwen/Qwen3-8B", "qwen3-8b"},
-			Chat:   "Hello",
-			Usage:  &usage,
-			Reason: "stop",
-			Embeds: true,
+			Models:  []string{"Qwen/Qwen3-8B", "qwen3-8b"},
+			Chat:    "Hello",
+			Usage:   &usage,
+			Reason:  "stop",
+			Embeds:  true,
+			Reranks: true,
 		},
 		NativeNames: []enginetest.NativeNameCase{
 			{Source: engines.Source{ID: "qwen3-8b", Repo: "Qwen/Qwen3-8B", OllamaName: "qwen3:8b"}, Want: "Qwen/Qwen3-8B"},

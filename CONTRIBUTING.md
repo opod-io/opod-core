@@ -26,7 +26,7 @@ make check             # lint + test + build (this is what CI runs)
 1. Bootstrap `~/.opod/state.db` (SQLite, pure Go — no CGO).
 2. Print an admin API key **once**, and save the plaintext to `~/.opod/admin.key` (mode 0600) so later CLI runs on this host authenticate without a copy-paste.
 3. Auto-pick a model based on hardware (run `opod model search` to see options).
-4. Start serving on `http://localhost:8080` — the OpenAI-shape gateway (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) plus `/admin/v1`. No other protocol shape and no UI (ADR-022).
+4. Start serving on `http://localhost:8080` — the OpenAI-shape gateway (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/rerank`) plus `/admin/v1`. No other protocol shape and no UI (ADR-022, amended by ADR-084 for rerank).
 
 From there: edit code → `make build` → restart `./opod up`. There is no watch mode; the binary boots in under a second.
 
@@ -55,7 +55,7 @@ Quick map. Deeper explanation in [ARCHITECTURE.md](ARCHITECTURE.md).
 | Add a new CLI subcommand | `cmd/opod/cmd_<name>.go` + a case in `cmd/opod/main.go` + a function in `internal/control/` first (the CLI and the admin HTTP endpoint must be two callers of that one function) |
 | Add a new admin HTTP endpoint | `internal/leader/admin_<name>.go` — decode request, authenticate, delegate to `internal/control/` |
 | Add a new inference engine | a package: `internal/engines/<name>/` implementing `Engine` from `types.go`, registered from its own `init` with `engines.Register(engines.Descriptor{…})` and blank-imported by `internal/engines/all`. Add a `conformance_test.go` calling `enginetest.Run`. Full steps in [ARCHITECTURE.md → Add a new inference engine](ARCHITECTURE.md#add-a-new-inference-engine) |
-| Add a route to the OpenAI surface (e.g. `/v1/completions`) | `internal/api/`, wired in `internal/leader/server.go`. A *second* wire shape (Anthropic Messages, audio, rerank) is out of scope for core — it belongs in a shim in front of the gateway (ADR-022) |
+| Add a route to the OpenAI surface (e.g. `/v1/completions`) | `internal/api/`, wired in `internal/leader/server.go`. A *second* wire shape (Anthropic Messages, audio) is out of scope for core — it belongs in a shim in front of the gateway (ADR-022). Rerank came back only by an amendment (ADR-084), which is the way any new surface arrives |
 | Add a model to the catalog | not here — `catalog/<id>.yaml` in [`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk) (schema in that repo's `catalog/README.md`). To add or override one locally instead, drop a file in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` |
 | Add a config field | extend `Config` in `internal/config/config.go`, add a default in `Default()`, optionally an env override in `applyEnv()`, document in [README.md → Full reference](README.md#full-reference). A variable a *manager* may set goes in `internal/config/env.go` instead — `TestEnvSurfaceOutsideConfigIsTheAllowlist` fails when library code reads one that is not on that list |
 | Add a container image | a row in **four** places, held together by `cmd/opod/images_drift_test.go`: `images/build.sh`, `.github/workflows/images.yml`, `images/images.yaml` and the table in `images/README.md` |

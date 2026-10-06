@@ -13,11 +13,12 @@ func TestConformance(t *testing.T) {
 		Name:    "vllm",
 		Backend: enginetest.OpenAIBackend([]string{"meta-llama/Llama-3.1-8B-Instruct", "llama-3-1-8b"}, []string{"Hel", "lo"}, usage),
 		Expect: enginetest.Expect{
-			Models: []string{"meta-llama/Llama-3.1-8B-Instruct", "llama-3-1-8b"},
-			Chat:   "Hello",
-			Usage:  &usage,
-			Reason: "stop",
-			Embeds: true,
+			Models:  []string{"meta-llama/Llama-3.1-8B-Instruct", "llama-3-1-8b"},
+			Chat:    "Hello",
+			Usage:   &usage,
+			Reason:  "stop",
+			Embeds:  true,
+			Reranks: true,
 		},
 		NativeNames: []enginetest.NativeNameCase{
 			{Source: engines.Source{ID: "llama-3-1-8b", Repo: "meta-llama/Llama-3.1-8B-Instruct", OllamaName: "llama3.1:8b"}, Want: "meta-llama/Llama-3.1-8B-Instruct"},

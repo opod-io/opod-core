@@ -12,17 +12,65 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Embed routes one embeddings request: the catalog chain, the retries, the
+// next worker on an unreachable one — everything Chat does but stream
+// (unary, below).
 func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
-	ctx, span := tracer.Start(ctx, "router.Embed",
+	var res engines.EmbedResponse
+	err := r.unary(ctx, embedOp, req.Model, unaryCall{
+		supported: func(eng engines.Engine) bool { _, ok := eng.(engines.EmbedEngine); return ok },
+		do: func(ctx context.Context, eng engines.Engine, model string) error {
+			attempt := req
+			attempt.Model = model
+			out, err := eng.(engines.EmbedEngine).Embed(ctx, attempt)
+			if err == nil {
+				res = out
+			}
+			return err
+		},
+	})
+	return res, err
+}
+
+var embedOp = unaryOp{
+	span:   "Embed",
+	metric: "embed",
+	unsupported: func(engine string) error {
+		return fmt.Errorf("engine %s does not support embeddings", engine)
+	},
+}
+
+// unaryOp names a non-streaming request kind for the spans, the metrics and
+// the refusal of an engine that cannot serve it.
+type unaryOp struct {
+	span        string // "Embed" → spans router.Embed and router.Embed.attempt
+	metric      string // the op label on opod_router_fallback_total
+	unsupported func(engine string) error
+}
+
+// unaryCall is one request kind's half of the dispatch: whether an engine can
+// serve it at all, and the call itself under the model name the chosen engine
+// serves.
+type unaryCall struct {
+	supported func(engines.Engine) bool
+	do        func(ctx context.Context, eng engines.Engine, model string) error
+}
+
+// unary is the one dispatch loop behind every non-streaming request kind —
+// embeddings and rerank (ADR-084) — so the second kind does not grow a second
+// copy of the chain walk, the retries and the next-worker rule. It returns the
+// first candidate's error when every candidate failed, as Embed always did.
+func (r *Router) unary(ctx context.Context, op unaryOp, model string, call unaryCall) error {
+	ctx, span := tracer.Start(ctx, "router."+op.span,
 		trace.WithAttributes(
-			attribute.String("opod.model.requested", req.Model),
+			attribute.String("opod.model.requested", model),
 		),
 	)
 	defer span.End()
 
 	ctx = withPickState(ctx) // what this request remembers between picks (nextworker.go)
 	ov := FromContext(ctx)
-	chain, source, chains := r.chainFor(req.Model, ov)
+	chain, source, chains := r.chainFor(model, ov)
 	switch {
 	case ov.Sort != "":
 		// Explicit per-request sort wins over the latency-pressure
@@ -53,11 +101,10 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 	classified := false
 	for i := 0; i < len(chain); i++ {
 		candidate := chain[i]
-		attempt := req
-		attempt.Model = candidate
+		attemptModel := candidate
 		attemptStart := time.Now()
 
-		attemptCtx, attemptSpan := tracer.Start(ctx, "router.Embed.attempt",
+		attemptCtx, attemptSpan := tracer.Start(ctx, "router."+op.span+".attempt",
 			trace.WithAttributes(
 				attribute.Int("opod.attempt", i),
 				attribute.String("opod.model.candidate", candidate),
@@ -88,12 +135,11 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 		// resolve step feeds both local and remote workers the right name. (Doing
 		// this BEFORE pick was the bug: it made the placement lookup miss.)
 		if r.localResolve != nil {
-			attempt.Model = r.localResolve(candidate)
+			attemptModel = r.localResolve(candidate)
 		}
-		ee, ok := eng.(engines.EmbedEngine)
-		if !ok {
-			err := fmt.Errorf("engine %s does not support embeddings", eng.Name())
-			attemptSpan.SetStatus(codes.Error, "engine missing Embed")
+		if !call.supported(eng) {
+			err := op.unsupported(eng.Name())
+			attemptSpan.SetStatus(codes.Error, "engine missing "+op.span)
 			attemptSpan.RecordError(err)
 			attemptSpan.End()
 			if i == 0 {
@@ -110,10 +156,10 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 					lastErr = err
 					break
 				}
-				metrics.ObserveRouterFallback("embed", "retry")
+				metrics.ObserveRouterFallback(op.metric, "retry")
 			}
 			r.incInflight(nodeID, candidate)
-			res, err := ee.Embed(attemptCtx, attempt)
+			err := call.do(attemptCtx, eng, attemptModel)
 			r.decInflight(nodeID, candidate)
 			r.recordOutcome(nodeID, err == nil)
 			if err == nil {
@@ -126,17 +172,17 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 					if source == "request" {
 						reason = "per-request"
 					}
-					r.logFallback(req.Model, candidate, "embed", primaryErr)
-					metrics.ObserveRouterFallback("embed", reason)
+					r.logFallback(model, candidate, op.metric, primaryErr)
+					metrics.ObserveRouterFallback(op.metric, reason)
 					span.SetAttributes(attribute.Int("opod.fallback.used_at", i))
 				}
 				span.SetAttributes(attribute.String("opod.model.served", candidate))
 				r.latency.record(candidate, time.Since(attemptStart), 0)
-				return res, nil
+				return nil
 			}
 			lastErr = err
 		}
-		attemptSpan.SetStatus(codes.Error, "embed failed")
+		attemptSpan.SetStatus(codes.Error, op.metric+" failed")
 		attemptSpan.RecordError(lastErr)
 		attemptSpan.End()
 		if i == 0 && primaryErr == nil {
@@ -145,7 +191,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 		// The worker was unreachable and got nothing: the same model, another worker.
 		if next, again := r.tryNextWorker(ctx, nodeID, lastErr); again {
 			ctx = next
-			metrics.ObserveRouterFallback("embed", "next-worker")
+			metrics.ObserveRouterFallback(op.metric, "next-worker")
 			i--
 			continue
 		}
@@ -157,14 +203,14 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 		// their chain.
 		if !classified && source == "catalog" {
 			classified = true
-			chain = r.maybeSwapTypedChain(chain, chains, lastErr, "embed", i, span)
+			chain = r.maybeSwapTypedChain(chain, chains, lastErr, op.metric, i, span)
 		}
 	}
 	span.SetStatus(codes.Error, "all candidates failed")
 	if primaryErr != nil {
 		span.RecordError(primaryErr)
 	}
-	return engines.EmbedResponse{}, primaryErr
+	return primaryErr
 }
 
 // maybeSwapTypedChain inspects `err`, classifies it, and (if the

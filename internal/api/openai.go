@@ -1,7 +1,7 @@
 // Package api implements the public HTTP surface: the OpenAI-compatible
-// routes (/v1/models, /v1/chat/completions, /v1/embeddings). Other protocol
-// shapes left core with ADR-022 (2026-09-07) — a shim in front of the
-// gateway is the place for them.
+// routes (/v1/models, /v1/chat/completions, /v1/embeddings) and /v1/rerank,
+// which returned with ADR-084. Other protocol shapes left core with ADR-022
+// (2026-09-07) — a shim in front of the gateway is the place for them.
 package api
 
 import (

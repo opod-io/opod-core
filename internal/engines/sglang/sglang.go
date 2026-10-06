@@ -125,3 +125,11 @@ func (s *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)
+
+// Rerank serves a reranker's scores through SGLang's /v1/rerank (ADR-084),
+// whose bare-array answer the shared decoder reads.
+func (s *Driver) Rerank(ctx context.Context, req engines.RerankRequest) (engines.RerankResponse, error) {
+	return openaicompat.Rerank(ctx, s.Client, req)
+}
+
+var _ engines.RerankEngine = (*Driver)(nil)

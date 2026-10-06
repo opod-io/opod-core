@@ -164,6 +164,16 @@ func (v *Driver) Sleeping(ctx context.Context) (bool, error) {
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)
 
+// Rerank serves a pooling (cross-encoder / reranker) model's scores through
+// vLLM's rerank route (ADR-084). It is also how a LEADER reaches a worker —
+// remote workers are dialled through this driver — and the worker serves the
+// same route, so the hop needs nothing else.
+func (v *Driver) Rerank(ctx context.Context, req engines.RerankRequest) (engines.RerankResponse, error) {
+	return openaicompat.Rerank(ctx, v.Client, req)
+}
+
+var _ engines.RerankEngine = (*Driver)(nil)
+
 // Tokenize asks vLLM for the prompt's token ids (POST /tokenize), the chat
 // template applied with the generation prompt — the ids the model is fed, and
 // so the ids its prefix cache is keyed by.

@@ -217,6 +217,17 @@ curl http://localhost:8080/v1/embeddings \
 
 You'll get back an OpenAI-shape `{"data":[{"embedding":[…768 floats…]}]}` response. Use it with any RAG library that talks OpenAI embeddings.
 
+The second pass of a retrieval stack is `/v1/rerank`, served by a reranker model on vLLM, SGLang, or llama.cpp started with `--reranking` (Ollama has no rerank route and answers `501 rerank_not_supported`):
+
+```bash
+curl http://localhost:8080/v1/rerank \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<your reranker>","query":"what is a gang?","documents":["one model split across GPUs","a group of people"],"top_n":1}'
+```
+
+The answer lists `results` most relevant first, each with its `index`, `relevance_score` and `document.text`.
+
 ---
 
 ## 👥 Share with your team

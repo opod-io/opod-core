@@ -199,3 +199,12 @@ func (l *Driver) totalSlots(ctx context.Context) int {
 
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)
+
+// Rerank serves a reranker GGUF's scores (ADR-084). llama-server must be
+// started with --reranking; without it the server answers 501, which comes
+// back as engines.ErrRerankNotSupported with the server's own words.
+func (l *Driver) Rerank(ctx context.Context, req engines.RerankRequest) (engines.RerankResponse, error) {
+	return openaicompat.Rerank(ctx, l.Client, req)
+}
+
+var _ engines.RerankEngine = (*Driver)(nil)
