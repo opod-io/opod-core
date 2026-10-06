@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/opod-io/opod/internal/engines"
 )
@@ -80,7 +81,7 @@ func Rerank(ctx context.Context, c Client, req engines.RerankRequest) (engines.R
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		up := engines.Upstream(c.Driver, op, resp.StatusCode, b)
 		if resp.StatusCode == http.StatusNotImplemented {
-			return engines.RerankResponse{}, fmt.Errorf("%w: %w", engines.ErrRerankNotSupported, up)
+			return engines.RerankResponse{}, notSupported(c.Driver, up, b)
 		}
 		return engines.RerankResponse{}, up
 	}
@@ -144,4 +145,34 @@ func decodeRerank(body []byte) ([]rerankItem, *engines.Usage, error) {
 		u = &engines.Usage{PromptTokens: obj.Usage.PromptTokens, TotalTokens: obj.Usage.TotalTokens}
 	}
 	return obj.Results, u, nil
+}
+
+// rerankRefusal is a 501 from the engine, said once. Its text is the engine's
+// own message — not the raw JSON body — and when that body is already a
+// refusal from an opod worker (the leader's hop) its words are passed through
+// rather than wrapped a second time. Both ErrRerankNotSupported and the
+// UpstreamError stay in the chain for errors.Is / errors.As.
+type rerankRefusal struct {
+	msg string
+	up  error
+}
+
+func (e *rerankRefusal) Error() string   { return e.msg }
+func (e *rerankRefusal) Unwrap() []error { return []error{engines.ErrRerankNotSupported, e.up} }
+
+func notSupported(driver string, up error, body []byte) error {
+	said := strings.TrimSpace(string(body))
+	var oe struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &oe) == nil && oe.Error.Message != "" {
+		said = oe.Error.Message
+	}
+	prefix := engines.ErrRerankNotSupported.Error()
+	if rest, nested := strings.CutPrefix(said, prefix+": "); nested {
+		return &rerankRefusal{msg: prefix + ": " + rest, up: up}
+	}
+	return &rerankRefusal{msg: prefix + ": " + driver + ": " + said, up: up}
 }
