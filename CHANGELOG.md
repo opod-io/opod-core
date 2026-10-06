@@ -5,6 +5,23 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-06 — building opod from source now needs Go 1.26, and the leader derives a client IP itself
+
+- **The minimum Go to build core rises from 1.25 to 1.26.** It is not a choice: the dependency group this
+  release takes in (`golang.org/x/*` at the current releases, `grpc-gateway/v2` 2.31, `otlp` 1.11.1) declares
+  `go 1.26.0` itself, and `go mod tidy` raises the directive on its own. A binary from a release is unaffected —
+  this is about compiling the module.
+- **Every workflow now reads its Go version from `go.mod`** instead of a literal, so the repository and its CI
+  cannot drift apart the way they just did: the dependency bump failed three jobs with
+  `go.mod requires go >= 1.26.0 (running go 1.25.14)` while nothing was wrong with the bump.
+- **The leader no longer uses chi's `middleware.RealIP`**, which v5.3 deprecated under three advisories because
+  forwarding headers are attacker-controlled. The behaviour is unchanged — `X-Forwarded-For`, `X-Real-IP` and
+  `True-Client-IP` still name the caller in the access log behind an Ingress — and the invariant that made it
+  safe is now written down and tested: the rewritten address is a LABEL, and every trust decision (the loopback
+  gate on the bootstrap admin key, the audit actor) reads the TCP peer stashed one middleware earlier. Honouring
+  the header only from a trusted proxy CIDR is the stronger answer and would be an addition to the environment
+  contract, so it is not made here.
+
 ## 2026-10-05 — an interrupted weight pull resumes instead of starting over
 
 - **A download that dies at 39 GB of 40 asks for the rest.** Pulls were exclusive, atomic and digest-checked,
