@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -340,6 +341,25 @@ func pollInterval(waited bool) time.Duration {
 // on the path a cold node takes to serve. SHA-256 itself is not the cost —
 // Go's is per-arch assembly at ~2 GB/s — the second pass over the disk was.
 func download(ctx context.Context, opt Options, repo, fileURL, target string, want int64) error {
+	wantSum := normalizeDigest(opt.SHA256)
+	tmp := partialPath(target)
+
+	// Resume only when the caller declared a digest, and that is not a
+	// limitation worth removing. Resumed bytes are bytes nobody re-read off
+	// the network: with a digest a bad partial is CAUGHT, and without one the
+	// only check is the length, which a corrupt tail passes. The case that
+	// matters has a digest — a snapshot takes the sha256 the Hub records for
+	// every LFS file (snapshot.go), and LFS is what a 40 GB weight file is.
+	var from int64
+	h := sha256.New()
+	if wantSum != "" {
+		if n, err := seedFromPartial(tmp, h); err != nil {
+			opt.Log.Info("partial unusable, starting over", "path", tmp, "err", err)
+		} else if n > 0 && (want <= 0 || n < want) {
+			from = n
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
 		return err
@@ -348,7 +368,10 @@ func download(ctx context.Context, opt Options, repo, fileURL, target string, wa
 	if opt.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+opt.Token)
 	}
-	opt.Log.Info("fetching file", "url", fileURL, "to", target)
+	if from > 0 {
+		req.Header.Set("Range", "bytes="+strconv.FormatInt(from, 10)+"-")
+	}
+	opt.Log.Info("fetching file", "url", fileURL, "to", target, "resume_from", from)
 	t0 := time.Now()
 	resp, err := opt.HTTP.Do(req)
 	if err != nil {
@@ -358,43 +381,81 @@ func download(ctx context.Context, opt Options, repo, fileURL, target string, wa
 	if err := hubRefusal(resp, opt, repo, fileURL); err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
+
+	// What the server did with the Range decides where we write. A server
+	// that ignores it answers 200 with the WHOLE file, and one that thinks we
+	// already have everything answers 416 — both mean start over, and neither
+	// is a failure.
+	expected := want
+	switch {
+	case resp.StatusCode == http.StatusPartialContent && from > 0:
+		start, total, ok := parseContentRange(resp.Header.Get("Content-Range"))
+		if !ok || start != from {
+			return fmt.Errorf("GET %s: asked to resume at %d, server answered Content-Range %q",
+				fileURL, from, resp.Header.Get("Content-Range"))
+		}
+		if total > 0 {
+			expected = total // on a 206 Content-Length is what REMAINS, not the file
+		}
+		opt.Log.Info("resuming download", "path", target, "from", from, "of", expected)
+	case resp.StatusCode == http.StatusOK:
+		if from > 0 {
+			opt.Log.Info("server ignored Range, starting over", "url", fileURL)
+			from, h = 0, sha256.New()
+		}
+		if resp.ContentLength > 0 {
+			expected = resp.ContentLength
+		}
+	case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && from > 0:
+		// The partial is at least as long as the file: it is not a resume
+		// point, it is junk. Drop it and let the next attempt fetch whole.
+		_ = os.Remove(tmp)
+		return fmt.Errorf("GET %s → %s (the partial file was longer than the file; it has been removed)", fileURL, resp.Status)
+	default:
 		return fmt.Errorf("GET %s → %s", fileURL, resp.Status)
 	}
-	expected := resp.ContentLength
-	if expected <= 0 {
-		expected = want
-	}
-	f, err := os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".partial-*")
+
+	f, err := openPartial(tmp, from)
 	if err != nil {
-		return fmt.Errorf("create temp for %s: %w", target, err)
+		return fmt.Errorf("open partial for %s: %w", target, err)
 	}
-	tmp := f.Name()
-	wantSum := normalizeDigest(opt.SHA256)
 	var sink io.Writer = f
-	h := sha256.New()
 	if wantSum != "" {
 		sink = io.MultiWriter(f, h)
 	}
 	n, copyErr := io.Copy(sink, resp.Body)
 	closeErr := f.Close()
+	total := from + n
 	if copyErr != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("download %s: %w", fileURL, copyErr)
+		// The partial stays ONLY when something could resume from it, which
+		// means a digest was declared — the next attempt reads these bytes
+		// back and asks for the rest, and the digest is what proves they were
+		// good. With no digest nothing will ever resume from this file, so
+		// keeping it is litter the sweeper has to clear, and the old
+		// behaviour (leave nothing behind) is the right one.
+		if wantSum == "" {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("download %s: %w", fileURL, copyErr)
+		}
+		return fmt.Errorf("download %s: %w (kept %d bytes at %s to resume from)", fileURL, copyErr, total, filepath.Base(tmp))
 	}
 	if closeErr != nil {
-		_ = os.Remove(tmp)
+		if wantSum == "" {
+			_ = os.Remove(tmp)
+		}
 		return fmt.Errorf("close %s: %w", tmp, closeErr)
 	}
-	if expected > 0 && n != expected {
+	if expected > 0 && total != expected {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("download %s: got %d bytes, expected %d (truncated)", fileURL, n, expected)
+		return fmt.Errorf("download %s: got %d bytes, expected %d (truncated)", fileURL, total, expected)
 	}
 	if wantSum != "" {
 		if got := hex.EncodeToString(h.Sum(nil)); got != wantSum {
 			// The file is wrong, so it must never reach its final name to be
 			// "found complete" by the next call. Removing it costs a
-			// re-download; keeping it would serve the wrong weights forever.
+			// re-download; keeping it would serve the wrong weights forever —
+			// and after a resume it would also make every later attempt
+			// resume from bytes we know are bad.
 			_ = os.Remove(tmp)
 			return fmt.Errorf("%w: %s hashes to sha256:%s, not the sha256:%s this version records",
 				errDigest, filepath.Base(target), got, wantSum)
@@ -404,8 +465,75 @@ func download(ctx context.Context, opt Options, repo, fileURL, target string, wa
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename %s → %s: %w", tmp, target, err)
 	}
-	opt.Log.Info("file fetched", "path", target, "bytes", n, "duration_s", time.Since(t0).Seconds())
+	opt.Log.Info("file fetched", "path", target, "bytes", total, "resumed", from, "duration_s", time.Since(t0).Seconds())
 	return nil
+}
+
+// partialPath is the ONE name a target's half-downloaded bytes live under. It
+// is deterministic, which is what makes a resume possible: a unique temp name
+// per attempt means the next attempt cannot find the last one's work. Two
+// callers cannot collide on it because a fetch is exclusive per target (the
+// .lock above), and the name still contains ".partial-" so the cache's
+// bookkeeping filter and SweepPartials keep treating it as scratch.
+func partialPath(target string) string { return target + ".partial-0" }
+
+// seedFromPartial hashes the bytes already on disk into h and returns how many
+// there were, so a resumed download keeps its single pass over the NETWORK.
+// Reading the partial back costs one local pass — seconds on a disk that does
+// GB/s — against minutes or hours of re-downloading, which is the trade this
+// row exists to make. Nothing on disk is not an error: 0 bytes, hash untouched.
+func seedFromPartial(tmp string, h io.Writer) (int64, error) {
+	f, err := os.Open(tmp)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer f.Close()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// openPartial opens the scratch file to append at from, or truncates it when
+// the download starts at zero.
+func openPartial(tmp string, from int64) (*os.File, error) {
+	flags := os.O_CREATE | os.O_WRONLY
+	if from > 0 {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	return os.OpenFile(tmp, flags, 0o644)
+}
+
+// parseContentRange reads "bytes <start>-<end>/<total>". total is 0 when the
+// server sent "*", which is legal and only means we keep the size we had.
+func parseContentRange(v string) (start, total int64, ok bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "bytes"))
+	v = strings.TrimSpace(v)
+	slash := strings.LastIndex(v, "/")
+	if slash < 0 {
+		return 0, 0, false
+	}
+	span, size := v[:slash], v[slash+1:]
+	dash := strings.Index(span, "-")
+	if dash < 0 {
+		return 0, 0, false
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(span[:dash]), 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	if size != "*" {
+		if t, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64); err == nil {
+			total = t
+		}
+	}
+	return start, total, true
 }
 
 // errDigest marks a download whose bytes did not hash to the digest the caller

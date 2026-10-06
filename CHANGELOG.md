@@ -5,6 +5,23 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-05 — an interrupted weight pull resumes instead of starting over
+
+- **A download that dies at 39 GB of 40 asks for the rest.** Pulls were exclusive, atomic and digest-checked,
+  but had no HTTP range resume, so one dropped connection cost the whole file again. The partial now lives under
+  one deterministic name, the bytes already on disk are hashed back in, and the request carries `Range`. **The
+  single pass over the network is kept**: reading the partial back is a local pass at disk speed, against
+  minutes or hours of re-downloading.
+- **Resume happens only when the caller declared a digest**, which is the case that matters — a snapshot takes
+  the sha256 the Hub records for every LFS file, and LFS is what a weight file is. Without a digest the only
+  check is the length, which a corrupt tail would pass, so those pulls start fresh and leave nothing behind,
+  exactly as before.
+- **Three answers a server can give, all handled:** `206` resumes and takes the total size from `Content-Range`
+  (on a partial response `Content-Length` is what remains, not the file); `200` means the server ignored the
+  range, so the download starts over and the stale bytes are not mixed into the hash; `416` means the partial is
+  longer than the file, so it is removed. A partial that fails its digest is removed too — otherwise every later
+  attempt would resume from bytes already known to be bad.
+
 ## 2026-10-05 — tool calling and structured output work, and what an engine cannot do is refused by name
 
 - **`response_format` works: ask for JSON and the engine is told to produce JSON.** `{"type":"json_object"}`
