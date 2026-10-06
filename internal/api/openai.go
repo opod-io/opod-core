@@ -153,7 +153,6 @@ type chatRequest struct {
 	TopP        *float32      `json:"top_p,omitempty"`
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
 	Stop        []string      `json:"stop,omitempty"`
-	User        string        `json:"user,omitempty"`
 	// ResponseFormat asks for a shaped answer — {"type":"json_object"} or a
 	// full json_schema. Carried verbatim to the engine (T10.14).
 	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
@@ -168,6 +167,13 @@ type chatRequest struct {
 	// `X-Opod-*` headers work too; body wins on conflict.
 	Opod *opodExtras `json:"opod,omitempty"`
 }
+
+// chatRequestKeys are the keys a decode into chatRequest consumes. Every other
+// key of the body — `user`, `seed`, `logprobs`, `top_k`, … — is carried to the
+// engine untouched (engines.ChatRequest.Extra, PLAN T17.1). `opod` is in this
+// set because it is a field above: the routing bag is ours and never reaches
+// an engine.
+var chatRequestKeys = engines.JSONFieldNames(chatRequest{})
 
 // opodExtras is the optional `opod.*` block carried inside an
 // otherwise OpenAI/Anthropic-shaped request. Each field is mirrored by
@@ -229,9 +235,10 @@ type chatResponse struct {
 }
 
 type chatChoice struct {
-	Index        int         `json:"index"`
-	Message      chatMessage `json:"message"`
-	FinishReason string      `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Message      chatMessage     `json:"message"`
+	Logprobs     json.RawMessage `json:"logprobs,omitempty"`
+	FinishReason string          `json:"finish_reason"`
 }
 
 type usage struct {
@@ -250,9 +257,10 @@ type chatChunk struct {
 }
 
 type chatChunkChoice struct {
-	Index        int            `json:"index"`
-	Delta        map[string]any `json:"delta"`
-	FinishReason *string        `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Delta        map[string]any  `json:"delta"`
+	Logprobs     json.RawMessage `json:"logprobs,omitempty"`
+	FinishReason *string         `json:"finish_reason"`
 }
 
 // ChatCompletions handles POST /v1/chat/completions, both streaming and not.
@@ -279,6 +287,17 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Messages) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "messages cannot be empty")
+		return
+	}
+	// The fields we do not model, from the same (possibly rewritten) bytes the
+	// struct came from: a guardrail rewrite drives what the engine sees.
+	extra, err := engines.ExtraFields(rewritten, chatRequestKeys)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
+		return
+	}
+	if err := engines.CheckSingleChoice(extra); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -312,6 +331,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		ResponseFormat: req.ResponseFormat,
 		Tools:          req.Tools,
 		ToolChoice:     req.ToolChoice,
+		Extra:          extra,
 	}
 
 	// Per-request routing overrides (opod.fallbacks / opod.num_retries /
@@ -453,6 +473,20 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 		if ev.Delta != "" && ttft == 0 {
 			ttft = time.Since(start)
 		}
+		if engines.HasJSON(ev.Logprobs) {
+			// The caller asked for logprobs (T17.1): the chunk carries them
+			// beside its content. Rare next to a plain token, so the struct
+			// encoder is fine here; the fast appender has no logprobs field.
+			delta := map[string]any{}
+			if ev.Delta != "" {
+				delta["content"] = ev.Delta
+			}
+			sendChunk(w, flusher, chatChunk{
+				ID: id, Object: "chat.completion.chunk", Created: created, Model: modelOut,
+				Choices: []chatChunkChoice{{Index: 0, Delta: delta, Logprobs: ev.Logprobs}},
+			})
+			continue
+		}
 		if ev.Delta != "" {
 			// The per-token chunk, appended by hand into one reused buffer:
 			// byte-identical to sendChunk(chatChunk{…}) and a fraction of its
@@ -499,6 +533,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	// half of this same function (agent.writeAggregate) already did it right.
 	var text strings.Builder
 	var tools engines.ToolCallAccumulator
+	var logprobs engines.LogprobsAccumulator
 	var u *engines.Usage
 	reason := "stop"
 	done := false
@@ -517,6 +552,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 			break
 		}
 		tools.Add(ev.ToolCalls)
+		logprobs.Add(ev.Logprobs)
 		text.WriteString(ev.Delta)
 	}
 	// Every client branches on `tool_calls` to decide whether to run a
@@ -541,6 +577,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		Choices: []chatChoice{{
 			Index:        0,
 			Message:      chatMessage{Role: "assistant", Content: jsonString(text.String()), ToolCalls: callsJSON(&tools)},
+			Logprobs:     logprobs.JSON(),
 			FinishReason: reason,
 		}},
 	}

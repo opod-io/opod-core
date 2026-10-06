@@ -5,6 +5,23 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-06 — every OpenAI chat field reaches the engine, and logprobs come back
+
+- **A chat request's fields that opod does not model are no longer dropped.** The gateway decoded the body into
+  a struct and re-serialised only what it named, so `seed`, `logprobs`, `top_logprobs`, `top_k`, `min_p`,
+  `presence_penalty`, `frequency_penalty`, `logit_bias`, `max_completion_tokens`, `reasoning_effort` and `user`
+  never reached vLLM, SGLang, llama.cpp or MLX. Every top-level key now rides through verbatim — across the
+  leader→worker hop too — and is merged last into the engine body, so a field the next OpenAI revision adds
+  works without a release. Ollama builds its own body and is unchanged.
+- **Four keys stay ours:** `model` (an endpoint is one model), `messages` (what the guardrails inspected),
+  `stream` and `stream_options` (it carries `include_usage`, which usage capture depends on). A caller's value
+  for one of them is ignored.
+- **`n` or `best_of` above 1 is refused with a 400** that says why. The answer carries one choice, so passing
+  them on would generate — and bill — several answers and return one.
+- **An answer's `logprobs` come back**, on each streamed chunk and merged into a non-streamed answer.
+- Embeddings are unchanged: their `encoding_format` and `dimensions` are still not forwarded.
+- Feature key `openai_passthrough` on `/admin/v1/capabilities`.
+
 ## 2026-10-06 — building opod from source now needs Go 1.26, and the leader derives a client IP itself
 
 - **The minimum Go to build core rises from 1.25 to 1.26.** It is not a choice: the dependency group this

@@ -194,3 +194,29 @@ func TestWorkerCarriesTheSecondTurnOfAToolLoop(t *testing.T) {
 		t.Fatalf("tool_call_id was dropped; the engine would refuse this: %+v", eng.got.Messages[2])
 	}
 }
+
+// The leader sends the caller's extra fields merged into the body it built
+// (T17.1), and the worker's own struct does not name them: this hop is where
+// they would vanish. They must reach the worker's engine as extras.
+func TestWorkerCarriesTheCallersExtraFieldsToTheEngine(t *testing.T) {
+	eng := &chatRecorder{}
+	s := &Server{Engine: eng}
+
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true,` +
+		`"stream_options":{"include_usage":true},"seed":7,"logprobs":true,"a_field_from_2027":{"x":1}}`
+	w := httptest.NewRecorder()
+	s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	for k, want := range map[string]string{"seed": `7`, "logprobs": `true`, "a_field_from_2027": `{"x":1}`} {
+		if string(eng.got.Extra[k]) != want {
+			t.Errorf("extra %s = %s, want %s", k, eng.got.Extra[k], want)
+		}
+	}
+	for _, k := range []string{"model", "messages", "stream", "stream_options"} {
+		if _, ok := eng.got.Extra[k]; ok {
+			t.Errorf("reserved key %q rode as an extra", k)
+		}
+	}
+}

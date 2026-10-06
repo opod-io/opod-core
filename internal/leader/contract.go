@@ -116,6 +116,12 @@ func contractFeatures() map[string]bool {
 		"pd_roles":        true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
 		"tool_calls":      true, // /v1/chat/completions carries `tools` + `tool_choice` to the engine and `tool_calls` back, streaming and aggregated, and reads them + `tool_call_id` back in on the next turn; an engine that cannot is refused 400 `unsupported_request` naming the field (T10.8)
 		"response_format": true, // /v1/chat/completions carries `response_format` (json_object | json_schema) to the engine — verbatim for OpenAI-shaped servers, translated for Ollama's `format` (T10.14)
+		// /v1/chat/completions carries every top-level body key it does not
+		// model (`seed`, `logprobs`, `top_k`, `user`, …) to an OpenAI-shaped
+		// engine verbatim, and the answer's `logprobs` back; `model`,
+		// `messages`, `stream` and `stream_options` stay ours, and `n` or
+		// `best_of` above 1 is refused 400 (T17.1).
+		"openai_passthrough": true,
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"kv_block_events":    true, // heartbeat kv_blocks → the leader's prefix-cache block index; policy routing.prefixBlockWeight scores a worker by the leading blocks it holds; /loadz prefix_index

@@ -292,38 +292,57 @@ func decodeEmbedInput(raw json.RawMessage) ([]string, error) {
 	return many, nil
 }
 
+// workerChatRequest is the chat body a worker reads from its leader.
+type workerChatRequest struct {
+	Model string `json:"model"`
+	// Typed, not map[string]string: the leader's body builder now sends
+	// `tool_calls` on an assistant turn, which is an ARRAY, and a
+	// map[string]string decode fails the whole request with "cannot
+	// unmarshal array into Go value of type string" (review finding,
+	// 2026-10-05). The worker is the normal path, so that would have been
+	// every tool loop under the control plane.
+	Messages []struct {
+		Role       string          `json:"role"`
+		Content    string          `json:"content"`
+		ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+		ToolCallID string          `json:"tool_call_id,omitempty"`
+	} `json:"messages"`
+	System      string   `json:"system,omitempty"`
+	Stream      bool     `json:"stream,omitempty"`
+	Temperature *float32 `json:"temperature,omitempty"`
+	TopP        *float32 `json:"top_p,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	Stop        []string `json:"stop,omitempty"`
+	// The leader re-serialises a chat through the OpenAI body builder
+	// before it reaches this worker, so anything the builder sends and
+	// this struct does not name is dropped HERE — one hop short of the
+	// engine, invisibly. response_format is carried for that reason
+	// (T10.14); the same applies to every field added to the builder.
+	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
+	Tools          json.RawMessage `json:"tools,omitempty"`
+	ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
+}
+
+// workerChatKeys are the keys workerChatRequest consumes. Every other key the
+// leader sent is the caller's, carried on to the engine (engines.ChatRequest.
+// Extra, PLAN T17.1) — the leader merged them into the body it sent, and this
+// hop is where a field the struct does not name used to vanish.
+var workerChatKeys = engines.JSONFieldNames(workerChatRequest{})
+
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	var req struct {
-		Model string `json:"model"`
-		// Typed, not map[string]string: the leader's body builder now sends
-		// `tool_calls` on an assistant turn, which is an ARRAY, and a
-		// map[string]string decode fails the whole request with "cannot
-		// unmarshal array into Go value of type string" (review finding,
-		// 2026-10-05). The worker is the normal path, so that would have been
-		// every tool loop under the control plane.
-		Messages []struct {
-			Role       string          `json:"role"`
-			Content    string          `json:"content"`
-			ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
-			ToolCallID string          `json:"tool_call_id,omitempty"`
-		} `json:"messages"`
-		System      string   `json:"system,omitempty"`
-		Stream      bool     `json:"stream,omitempty"`
-		Temperature *float32 `json:"temperature,omitempty"`
-		TopP        *float32 `json:"top_p,omitempty"`
-		MaxTokens   *int     `json:"max_tokens,omitempty"`
-		Stop        []string `json:"stop,omitempty"`
-		// The leader re-serialises a chat through the OpenAI body builder
-		// before it reaches this worker, so anything the builder sends and
-		// this struct does not name is dropped HERE — one hop short of the
-		// engine, invisibly. response_format is carried for that reason
-		// (T10.14); the same applies to every field added to the builder.
-		ResponseFormat json.RawMessage `json:"response_format,omitempty"`
-		Tools          json.RawMessage `json:"tools,omitempty"`
-		ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req workerChatRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	extra, err := engines.ExtraFields(raw, workerChatKeys)
+	if err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -351,6 +370,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		ResponseFormat: req.ResponseFormat,
 		Tools:          req.Tools,
 		ToolChoice:     req.ToolChoice,
+		Extra:          extra,
 	}
 	stream, err := s.Engine.Chat(r.Context(), engReq)
 	if err != nil {
@@ -453,6 +473,20 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 					"delta": map[string]any{"tool_calls": ev.ToolCalls},
 				}},
 			})
+		}
+		if engines.HasJSON(ev.Logprobs) {
+			// The caller asked for logprobs (T17.1): they ride on the chunk
+			// beside the content they describe. The map form, because the fast
+			// appender below has no field for them.
+			delta := map[string]any{}
+			if ev.Delta != "" {
+				delta["content"] = ev.Delta
+			}
+			sendChunk(map[string]any{
+				"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []map[string]any{{"index": 0, "delta": delta, "logprobs": ev.Logprobs}},
+			})
+			continue
 		}
 		if ev.Delta != "" {
 			// The per-token chunk, appended by hand into one reused buffer
@@ -1139,6 +1173,7 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 
 	var text strings.Builder
 	var tools engines.ToolCallAccumulator
+	var logprobs engines.LogprobsAccumulator
 	var usage *engines.Usage
 	reason := "stop"
 	for ev := range stream {
@@ -1154,6 +1189,7 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 			break
 		}
 		tools.Add(ev.ToolCalls)
+		logprobs.Add(ev.Logprobs)
 		text.WriteString(ev.Delta)
 	}
 	// A call with finish_reason "stop" is a call every client ignores, so an
@@ -1175,6 +1211,9 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 			"message":       assistantMessage(text.String(), &tools),
 			"finish_reason": reason,
 		}},
+	}
+	if lp := logprobs.JSON(); lp != nil {
+		resp["choices"].([]map[string]any)[0]["logprobs"] = lp
 	}
 	if usage != nil {
 		resp["usage"] = map[string]int{

@@ -249,6 +249,16 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 	if req.Stream {
 		body["stream_options"] = map[string]bool{"include_usage": true}
 	}
+	// Everything else the caller sent, LAST and verbatim (T17.1): an engine
+	// feature arrives without a change here. The reserved keys are skipped a
+	// second time on purpose — whoever filled Extra already dropped them, and
+	// this is the place where a slip would override the body we own.
+	for k, v := range req.Extra {
+		if engines.IsReservedChatKey(k) || !json.Valid(v) {
+			continue
+		}
+		body[k] = v
+	}
 	return body
 }
 
@@ -314,7 +324,9 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 		}
 		var ev struct {
 			Choices []struct {
-				Delta struct {
+				// Forwarded whole when the caller asked for it (T17.1).
+				Logprobs json.RawMessage `json:"logprobs"`
+				Delta    struct {
 					Content string `json:"content"`
 					// Forwarded whole: the fragments are merged by whoever
 					// needs one answer, never here (T10.8, engines.ToolCallAccumulator).
@@ -334,8 +346,15 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 		}
 		if len(ev.Choices) > 0 {
 			ch := ev.Choices[0]
-			if ch.Delta.Content != "" {
-				if !send(engines.StreamEvent{Delta: ch.Delta.Content}) {
+			// The logprobs ride on the event of the content they describe; a
+			// chunk with logprobs and no content (a server may send one) still
+			// carries them.
+			lp := ch.Logprobs
+			if !engines.HasJSON(lp) {
+				lp = nil
+			}
+			if ch.Delta.Content != "" || lp != nil {
+				if !send(engines.StreamEvent{Delta: ch.Delta.Content, Logprobs: lp}) {
 					return
 				}
 			}

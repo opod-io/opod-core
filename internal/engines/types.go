@@ -96,6 +96,14 @@ type ChatRequest struct {
 	// is with any OpenAI-compatible server.
 	Tools      json.RawMessage
 	ToolChoice json.RawMessage
+
+	// Extra is every top-level key of the caller's body that the fields above
+	// do not model, carried as the caller's raw JSON and merged into an
+	// OpenAI-shaped engine body last (PLAN T17.1): `seed`, `logprobs`, `top_k`,
+	// `min_p`, `presence_penalty`, … and whatever the next OpenAI revision
+	// adds. The reserved keys (IsReservedChatKey) never ride here. nil = the
+	// caller sent nothing else. Ollama builds its own body and ignores it.
+	Extra map[string]json.RawMessage
 }
 
 // Message is a single chat turn.
@@ -138,6 +146,12 @@ type StreamEvent struct {
 	// caller) or merges them by index (ToolCallAccumulator, for a caller that
 	// asked for one answer). Empty on an ordinary content event.
 	ToolCalls json.RawMessage
+
+	// Logprobs is one chunk's `choices[0].logprobs` object, verbatim — present
+	// only when the caller asked for logprobs (T17.1). A streaming consumer
+	// relays it on the chunk; an aggregating one merges it
+	// (LogprobsAccumulator).
+	Logprobs json.RawMessage
 }
 
 // Usage is the token accounting for a single completion.
