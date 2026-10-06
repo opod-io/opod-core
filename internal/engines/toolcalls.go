@@ -1,6 +1,10 @@
 package engines
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"strconv"
+)
 
 // Merging a model's tool call back into one object.
 //
@@ -19,9 +23,16 @@ import "encoding/json"
 // ToolCallAccumulator merges `delta.tool_calls` fragments into whole calls.
 // The zero value is ready to use.
 type ToolCallAccumulator struct {
-	order []int                  // indexes, in the order they first appeared
-	calls map[int]*toolCallBuild // by the fragment's own index
+	order   []int                  // indexes, in the order they first appeared
+	calls   map[int]*toolCallBuild // by the fragment's own index
+	skipped int                    // fragments that did not parse; see Skipped
 }
+
+// Skipped is how many fragments were dropped because they did not parse. A
+// caller logs it rather than guessing: a non-zero count beside a non-empty
+// answer means the merge is INCOMPLETE, which is worth a line in the log and
+// is invisible otherwise.
+func (a *ToolCallAccumulator) Skipped() int { return a.skipped }
 
 type toolCallBuild struct {
 	ID   string
@@ -47,12 +58,26 @@ type fragment struct {
 // half-understood tool call is worse than none, and the stream carries the
 // engine's own errors separately.
 func (a *ToolCallAccumulator) Add(raw json.RawMessage) {
-	if len(raw) == 0 {
+	if !HasJSON(raw) {
 		return
 	}
-	var frags []fragment
-	if json.Unmarshal(raw, &frags) != nil {
+	// Per ENTRY, not per array: one fragment an engine shapes differently
+	// (arguments as an object, say) used to discard every call in the chunk,
+	// and the caller then got `finish_reason: "tool_calls"` with no calls —
+	// the exact shape this feature exists to end. A bad entry is skipped; its
+	// siblings are kept (review finding, 2026-10-05).
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
 		return
+	}
+	frags := make([]fragment, 0, len(entries))
+	for _, e := range entries {
+		var f fragment
+		if json.Unmarshal(e, &f) != nil {
+			a.skipped++
+			continue
+		}
+		frags = append(frags, f)
 	}
 	for _, f := range frags {
 		idx := 0
@@ -97,24 +122,48 @@ func (a *ToolCallAccumulator) Calls() []map[string]any {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(a.order))
-	for _, idx := range a.order {
+	for n, idx := range a.order {
 		c := a.calls[idx]
 		typ := c.Type
 		if typ == "" {
 			typ = "function"
 		}
-		call := map[string]any{
-			"index": idx,
-			"type":  typ,
+		// `id` is REQUIRED on a response's tool call — the caller has to put
+		// it in `tool_call_id` on the result message, and the SDKs validate
+		// it — so one is synthesised when the engine sent none. `index`, by
+		// contrast, is a streaming-delta field and has no place here; it is
+		// the merge key, not part of the answer (review finding, 2026-10-05).
+		id := c.ID
+		if id == "" {
+			id = "call_" + strconv.Itoa(n)
+		}
+		out = append(out, map[string]any{
+			"id":   id,
+			"type": typ,
 			"function": map[string]any{
 				"name":      c.Name,
 				"arguments": string(c.Args),
 			},
-		}
-		if c.ID != "" {
-			call["id"] = c.ID
-		}
-		out = append(out, call)
+		})
 	}
 	return out
+}
+
+// HasJSON reports whether a raw field carries something worth sending on.
+//
+// `json.RawMessage` keeps the bytes it was given, so a client that serialises
+// an unset field rather than omitting it hands us the four bytes `null` — and
+// a bare length check then treats `"tools": null` as a tool declaration. Some
+// clients and proxies do exactly that, so every test of "did the caller ask
+// for this?" goes through here rather than through len() (review finding,
+// 2026-10-05).
+func HasJSON(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	switch {
+	case len(t) == 0:
+		return false
+	case bytes.Equal(t, []byte("null")), bytes.Equal(t, []byte("[]")):
+		return false
+	}
+	return true
 }

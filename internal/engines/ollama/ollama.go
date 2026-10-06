@@ -303,7 +303,7 @@ func (o *Driver) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	// that across in both directions is its own piece of work, so until it is
 	// done this driver says so by name instead of dropping the field and
 	// answering prose (T10.8; the refusal class exists for exactly this).
-	if len(req.Tools) > 0 {
+	if engines.HasJSON(req.Tools) {
 		return nil, engines.Unsupported(name, "tools",
 			"this engine's tool protocol is not translated yet — serve the model through vLLM or SGLang, or send no tools")
 	}
@@ -478,7 +478,7 @@ func buildChatBody(req engines.ChatRequest) map[string]any {
 // schema object; OpenAI nests the schema one level down, under
 // `json_schema.schema`.
 func ollamaFormat(rf json.RawMessage) any {
-	if len(rf) == 0 {
+	if !engines.HasJSON(rf) {
 		return nil
 	}
 	var f struct {

@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -149,7 +150,14 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			}
 			thisCancel()
 			r.decInflight(nodeID, candidate)
-			r.recordOutcome(nodeID, false)
+			// A capability refusal is the REQUEST's shape, not the worker's
+			// health: the same worker serves every other request perfectly.
+			// Counting it would let a client that keeps sending `tools` park
+			// a healthy node in cooldown for all traffic (review finding,
+			// 2026-10-05).
+			if !errors.Is(err, engines.ErrUnsupportedRequest) {
+				r.recordOutcome(nodeID, false)
+			}
 			lastErr = err
 		}
 		if inner == nil {

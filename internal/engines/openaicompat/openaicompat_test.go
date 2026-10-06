@@ -2,6 +2,7 @@ package openaicompat
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -67,5 +68,49 @@ func TestToolsDownAndToolCallsUp(t *testing.T) {
 	}
 	if _, present := BuildChatBody(engines.ChatRequest{Model: "m"})["tools"]; present {
 		t.Fatal("tools is on the body when the caller declared none")
+	}
+}
+
+// The loop's second turn on the wire: the assistant's calls and the result's
+// id must both reach the engine, or a correct request is refused as if the
+// caller had made a mistake.
+func TestBuildChatBodyCarriesTheToolLoop(t *testing.T) {
+	body := BuildChatBody(engines.ChatRequest{
+		Model: "m",
+		Messages: []engines.Message{
+			{Role: "user", Content: "weather?"},
+			{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]`)},
+			{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
+		},
+	})
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var sent struct {
+		Messages []struct {
+			Role       string          `json:"role"`
+			ToolCalls  json.RawMessage `json:"tool_calls"`
+			ToolCallID string          `json:"tool_call_id"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &sent); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(sent.Messages) != 3 {
+		t.Fatalf("got %d messages", len(sent.Messages))
+	}
+	if !strings.Contains(string(sent.Messages[1].ToolCalls), `"call_1"`) {
+		t.Fatalf("assistant tool_calls lost: %q", sent.Messages[1].ToolCalls)
+	}
+	if sent.Messages[2].ToolCallID != "call_1" {
+		t.Fatalf("tool_call_id lost: %+v", sent.Messages[2])
+	}
+	// A plain turn carries neither key.
+	plain, _ := json.Marshal(BuildChatBody(engines.ChatRequest{
+		Model: "m", Messages: []engines.Message{{Role: "user", Content: "hi"}},
+	}))
+	if strings.Contains(string(plain), "tool_call") {
+		t.Fatalf("a plain message grew a tool key: %s", plain)
 	}
 }

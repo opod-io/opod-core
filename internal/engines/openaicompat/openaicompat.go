@@ -201,7 +201,18 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
 	}
 	for _, m := range req.Messages {
-		msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
+		msg := map[string]any{"role": m.Role, "content": m.Content}
+		// The two fields that make tool calling a loop: the assistant turn's
+		// own calls, and the id a tool result answers. An engine rejects a
+		// tool-role message without the id, so dropping it turns the caller's
+		// correct request into what looks like their mistake (T10.8).
+		if engines.HasJSON(m.ToolCalls) {
+			msg["tool_calls"] = m.ToolCalls
+		}
+		if m.ToolCallID != "" {
+			msg["tool_call_id"] = m.ToolCallID
+		}
+		msgs = append(msgs, msg)
 	}
 	body := map[string]any{
 		"model":    req.Model,
@@ -224,15 +235,15 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 	// this shape takes it as written (T10.14). json.RawMessage marshals
 	// through without a re-encode, so a schema the next OpenAI revision adds
 	// a field to still arrives whole.
-	if len(req.ResponseFormat) > 0 {
+	if engines.HasJSON(req.ResponseFormat) {
 		body["response_format"] = req.ResponseFormat
 	}
 	// Tool declarations go down the same way and for the same reason: each
 	// function's parameters are a schema the caller wrote (T10.8).
-	if len(req.Tools) > 0 {
+	if engines.HasJSON(req.Tools) {
 		body["tools"] = req.Tools
 	}
-	if len(req.ToolChoice) > 0 {
+	if engines.HasJSON(req.ToolChoice) {
 		body["tool_choice"] = req.ToolChoice
 	}
 	if req.Stream {
@@ -328,7 +339,11 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 					return
 				}
 			}
-			if len(ch.Delta.ToolCalls) > 0 {
+			// HasJSON, not len: a server that includes the key with a null or
+			// empty value on every delta would otherwise produce one empty
+			// fragment event per token — and the first of them would stamp
+			// TTFT on protocol rather than on an answer.
+			if engines.HasJSON(ch.Delta.ToolCalls) {
 				if !send(engines.StreamEvent{ToolCalls: ch.Delta.ToolCalls}) {
 					return
 				}

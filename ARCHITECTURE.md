@@ -697,6 +697,15 @@ a string, because only the caller knows the schema they asked for.
 **Opod never executes a tool.** It carries the declaration down and the call back up; the
 caller runs the function, as with any OpenAI-compatible server.
 
+**The loop, not one exchange.** The call is only half of it: a client appends the assistant
+message it just received and a `tool`-role result beside it, so `engines.Message` carries
+`ToolCalls` and `ToolCallID` back IN as well. An engine rejects a tool-role message with no
+`tool_call_id`, so dropping it turns a correct request into what looks like the caller's
+mistake. Four places move together and did: `engines.Message`, the gateway's `chatMessage`
+and `toEngineMessages`, `BuildChatBody`, and the worker's own message struct — which was
+`[]map[string]string` and would have failed the whole request the moment an array arrived
+in it.
+
 **An engine that cannot is refused by name, not answered anyway.** `engines.Unsupported`
 (the `ErrUnsupportedRequest` class) is how a driver says "not this field": Ollama's tool
 protocol is its own shape — no `tool_choice`, no index, no id, `arguments` an object where

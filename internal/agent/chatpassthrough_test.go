@@ -164,3 +164,33 @@ func TestWorkerAnswers400WhenTheEngineCannotDoTools(t *testing.T) {
 		t.Fatalf("the caller cannot tell which field: %+v", env.Error)
 	}
 }
+
+// The SECOND request of a tool loop is the one that used to break: the client
+// appends the assistant message it just received and a tool result beside it.
+// Drop `tool_calls` or `tool_call_id` and the engine rejects a correct request
+// as if it were the caller's mistake (review finding, 2026-10-05).
+func TestWorkerCarriesTheSecondTurnOfAToolLoop(t *testing.T) {
+	eng := &chatRecorder{}
+	s := &Server{Engine: eng}
+
+	body := `{"model":"m","messages":[
+	  {"role":"user","content":"weather?"},
+	  {"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]},
+	  {"role":"tool","tool_call_id":"call_1","content":"sunny"}
+	]}`
+	w := httptest.NewRecorder()
+	s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if len(eng.got.Messages) != 3 {
+		t.Fatalf("got %d messages, want 3", len(eng.got.Messages))
+	}
+	if !json.Valid(eng.got.Messages[1].ToolCalls) {
+		t.Fatalf("the assistant turn's calls were dropped: %q", eng.got.Messages[1].ToolCalls)
+	}
+	if eng.got.Messages[2].ToolCallID != "call_1" {
+		t.Fatalf("tool_call_id was dropped; the engine would refuse this: %+v", eng.got.Messages[2])
+	}
+}

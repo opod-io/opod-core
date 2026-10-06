@@ -79,10 +79,48 @@ func TestToolCallAccumulatorEdges(t *testing.T) {
 	var b ToolCallAccumulator
 	b.Add(json.RawMessage(`[{"function":{"name":"only","arguments":"{}"}}]`))
 	calls := b.Calls()
-	if len(calls) != 1 || calls[0]["type"] != "function" || calls[0]["index"] != 0 {
+	if len(calls) != 1 || calls[0]["type"] != "function" {
 		t.Fatalf("defaults wrong: %v", calls)
 	}
-	if _, hasID := calls[0]["id"]; hasID {
-		t.Fatal("an id was invented for a fragment that carried none")
+	// `id` is REQUIRED on a response's tool call — the caller has to echo it
+	// back in `tool_call_id` — so one is synthesised when the engine sent
+	// none. `index` is a streaming-delta field and must NOT appear here.
+	if calls[0]["id"] != "call_0" {
+		t.Fatalf("no usable id for the caller to echo back: %v", calls[0])
+	}
+	if _, hasIndex := calls[0]["index"]; hasIndex {
+		t.Fatalf("the delta's index leaked into the response shape: %v", calls[0])
+	}
+}
+
+// One fragment an engine shapes differently must not take its siblings with
+// it: the caller would get `finish_reason: "tool_calls"` and no calls, which
+// is the shape this whole feature exists to end.
+func TestOneBadFragmentDoesNotDropTheRest(t *testing.T) {
+	var a ToolCallAccumulator
+	a.Add(json.RawMessage(`[{"index":0,"id":"a","function":{"name":"good","arguments":"{}"}},` +
+		`{"index":1,"function":{"arguments":{"not":"a string"}}}]`))
+	calls := a.Calls()
+	if len(calls) != 1 || calls[0]["id"] != "a" {
+		t.Fatalf("the good call was lost with the bad one: %v", calls)
+	}
+	if a.Skipped() != 1 {
+		t.Fatalf("Skipped() = %d, want 1 — a silent partial merge is the defect", a.Skipped())
+	}
+}
+
+// `json.RawMessage` keeps whatever bytes it was given, so a client that
+// serialises an unset field hands us `null`. That is not a declaration.
+func TestHasJSON(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{``, false}, {`null`, false}, {` null `, false}, {`[]`, false},
+		{`[{"type":"function"}]`, true}, {`"auto"`, true}, {`{"type":"json_object"}`, true},
+	} {
+		if got := HasJSON(json.RawMessage(tc.in)); got != tc.want {
+			t.Fatalf("HasJSON(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

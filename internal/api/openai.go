@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -195,11 +196,14 @@ type chatMessage struct {
 	//    {"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}]
 	// Parsed by toEngineMessages.
 	Content json.RawMessage `json:"content"`
-	// ToolCalls carries the model's calls on an ANSWER. Omitted when there
-	// are none rather than sent empty: a client that sees the key reasonably
-	// assumes there is a call in it (T10.8). It is not read on a request —
-	// the caller's tool RESULTS come back as ordinary messages.
-	ToolCalls []map[string]any `json:"tool_calls,omitempty"`
+	// ToolCalls carries the model's calls on an ANSWER, and is read back on
+	// the NEXT request: the standard client appends the assistant message it
+	// just received and then the tool result beside it. ToolCallID is what
+	// that `tool`-role result answers, and engines require it. Carrying the
+	// call out and not back in is single-turn tool calling, which is not what
+	// the API means (T10.8).
+	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
 }
 
 // chatContentPart is one element of the OpenAI multimodal content array.
@@ -431,7 +435,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			h.recordUsageTTFT(r.Context(), "openai", modelOut, ev.Usage, time.Since(start), ttft, "ok")
 			return
 		}
-		if len(ev.ToolCalls) > 0 {
+		if engines.HasJSON(ev.ToolCalls) {
 			// Relayed as the engine sent them: the OpenAI wire says a
 			// streaming caller merges the fragments themselves, and merging
 			// here would mean holding the answer back to do it (T10.8).
@@ -515,6 +519,17 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		tools.Add(ev.ToolCalls)
 		text.WriteString(ev.Delta)
 	}
+	// Every client branches on `tool_calls` to decide whether to run a
+	// function, so an answer that HAS calls and says "stop" is a call nobody
+	// acts on. An engine that sent no finish reason of its own gets the one
+	// its own content implies (review finding, 2026-10-05).
+	if !tools.Empty() && reason == "stop" {
+		reason = "tool_calls"
+	}
+	if n := tools.Skipped(); n > 0 {
+		slog.Warn("tool-call fragments did not parse; the merged answer is incomplete",
+			"skipped", n, "model", modelOut)
+	}
 	if !done && r.Context().Err() != nil {
 		// The caller left while the answer was being gathered: nobody is there
 		// to read a body, and the row must not claim the request succeeded.
@@ -525,7 +540,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		ID: id, Object: "chat.completion", Created: created, Model: modelOut,
 		Choices: []chatChoice{{
 			Index:        0,
-			Message:      chatMessage{Role: "assistant", Content: jsonString(text.String()), ToolCalls: tools.Calls()},
+			Message:      chatMessage{Role: "assistant", Content: jsonString(text.String()), ToolCalls: callsJSON(&tools)},
 			FinishReason: reason,
 		}},
 	}
@@ -587,7 +602,10 @@ func toEngineMessages(in []chatMessage) []engines.Message {
 	out := make([]engines.Message, 0, len(in))
 	for _, m := range in {
 		text, images := parseChatContent(m.Content)
-		out = append(out, engines.Message{Role: m.Role, Content: text, Images: images})
+		out = append(out, engines.Message{
+			Role: m.Role, Content: text, Images: images,
+			ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
+		})
 	}
 	return out
 }
@@ -795,4 +813,19 @@ func randID() string {
 	buf := make([]byte, 9)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+// callsJSON renders the merged tool calls as the response field, or nil when
+// the model made none — the key is then absent rather than empty, because a
+// client that sees it reasonably assumes there is a call in it.
+func callsJSON(a *engines.ToolCallAccumulator) json.RawMessage {
+	calls := a.Calls()
+	if len(calls) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(calls)
+	if err != nil {
+		return nil
+	}
+	return raw
 }

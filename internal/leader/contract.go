@@ -111,9 +111,11 @@ func contractFeatures() map[string]bool {
 		// revoked list are in the auth snapshot, so all three change on a
 		// serving leader. Without this key a manager must assume the join token
 		// is the only worker identity, which it was.
-		"mtls":         true,
-		"tls_listener": true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
-		"pd_roles":     true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
+		"mtls":            true,
+		"tls_listener":    true, // OPOD_TLS_CERT/KEY: the leader's one listener speaks TLS (gateway, /admin/v1, /readyz, the join path); a worker trusts it through OPOD_LEADER_CA (R9.5/R9.6 first step) // register/heartbeat carry the worker process's boot id; a changed one drops the previous incarnation's placements and shard rows at once (R10.1)
+		"pd_roles":        true, // workers register a prefill|decode role (OPOD_WORKER_ROLE, hardware_json.Role); the picker routes generation to decode workers when a pair is present; the KV handoff is TARGET (R9.7)
+		"tool_calls":      true, // /v1/chat/completions carries `tools` + `tool_choice` to the engine and `tool_calls` back, streaming and aggregated, and reads them + `tool_call_id` back in on the next turn; an engine that cannot is refused 400 `unsupported_request` naming the field (T10.8)
+		"response_format": true, // /v1/chat/completions carries `response_format` (json_object | json_schema) to the engine — verbatim for OpenAI-shaped servers, translated for Ollama's `format` (T10.14)
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"kv_block_events":    true, // heartbeat kv_blocks → the leader's prefix-cache block index; policy routing.prefixBlockWeight scores a worker by the leading blocks it holds; /loadz prefix_index

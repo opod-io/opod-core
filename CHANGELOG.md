@@ -29,12 +29,15 @@ the last section.
   (vLLM, SGLang, llama-server, MLX), and translated into Ollama's own `format` field, whose schema sits one
   level higher. The object is passed as the caller wrote it rather than re-encoded through our own struct, so a
   field the next OpenAI revision adds still arrives whole.
-- **Tool calling works: `tools` goes down to the model and `tool_calls` comes back.** Both the declaration and
-  the choice are carried verbatim, streaming and non-streaming. A streaming caller gets the model's fragments as
-  the engine sent them, which is what the OpenAI wire defines; a caller who asked for one answer gets them
-  merged by call index, with `arguments` left a string for them to parse. **Opod never executes a tool** — it
-  carries the declaration down and the call back up, and the caller runs the function, exactly as with any
-  OpenAI-compatible server.
+- **Tool calling works, as a LOOP and not one exchange.** `tools` and `tool_choice` go down to the model,
+  `tool_calls` comes back, and the next request carries the assistant's own calls plus the `tool_call_id` of
+  each tool result — the three fields a standard client sends on turn two. Streaming and non-streaming both:
+  a streaming caller gets the model's fragments as the engine sent them, which is what the OpenAI wire defines;
+  a caller who asked for one answer gets them merged, with `arguments` left a string for them to parse and an
+  `id` on every call for them to echo back. An answer carrying calls reports `finish_reason: "tool_calls"` even
+  when the engine named no reason, because that is the field every client branches on. **Opod never executes a
+  tool** — it carries the declaration down and the call back up, and the caller runs the function, exactly as
+  with any OpenAI-compatible server.
 - **An engine that cannot do tools says so, by name.** Ollama's tool protocol is its own shape — no
   `tool_choice`, no call index, no id, and `arguments` as an object where OpenAI has a string — so that driver
   answers `400 unsupported_request` naming `tools` instead of dropping them and returning prose. The new
@@ -45,6 +48,9 @@ the last section.
   never emitted a call, and nothing in any log said why.
 - **Only the current chat schema is read.** The deprecated `functions` / `function_call` pair is not parsed,
   not served and not refused — it is ignored like any other unknown field.
+- **A request field set to `null` is not a request.** A client that serialises an unset field rather than
+  omitting it sends `"tools": null`; that is now read as "no tools" rather than as a declaration, everywhere the
+  three new fields are tested.
 - **A field a worker does not name is dropped one hop short of the engine.** The leader re-serialises every
   chat through the shared OpenAI body builder before it reaches a worker, and the worker's own request struct
   named eight fields — so anything new worked against a leader-local engine and silently did nothing on the

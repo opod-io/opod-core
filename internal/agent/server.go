@@ -295,14 +295,25 @@ func decodeEmbedInput(raw json.RawMessage) ([]string, error) {
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req struct {
-		Model       string              `json:"model"`
-		Messages    []map[string]string `json:"messages"`
-		System      string              `json:"system,omitempty"`
-		Stream      bool                `json:"stream,omitempty"`
-		Temperature *float32            `json:"temperature,omitempty"`
-		TopP        *float32            `json:"top_p,omitempty"`
-		MaxTokens   *int                `json:"max_tokens,omitempty"`
-		Stop        []string            `json:"stop,omitempty"`
+		Model string `json:"model"`
+		// Typed, not map[string]string: the leader's body builder now sends
+		// `tool_calls` on an assistant turn, which is an ARRAY, and a
+		// map[string]string decode fails the whole request with "cannot
+		// unmarshal array into Go value of type string" (review finding,
+		// 2026-10-05). The worker is the normal path, so that would have been
+		// every tool loop under the control plane.
+		Messages []struct {
+			Role       string          `json:"role"`
+			Content    string          `json:"content"`
+			ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+			ToolCallID string          `json:"tool_call_id,omitempty"`
+		} `json:"messages"`
+		System      string   `json:"system,omitempty"`
+		Stream      bool     `json:"stream,omitempty"`
+		Temperature *float32 `json:"temperature,omitempty"`
+		TopP        *float32 `json:"top_p,omitempty"`
+		MaxTokens   *int     `json:"max_tokens,omitempty"`
+		Stop        []string `json:"stop,omitempty"`
 		// The leader re-serialises a chat through the OpenAI body builder
 		// before it reaches this worker, so anything the builder sends and
 		// this struct does not name is dropped HERE — one hop short of the
@@ -322,7 +333,10 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs := make([]engines.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		msgs = append(msgs, engines.Message{Role: m["role"], Content: m["content"]})
+		msgs = append(msgs, engines.Message{
+			Role: m.Role, Content: m.Content,
+			ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
+		})
 	}
 	engReq := engines.ChatRequest{
 		Model:       s.Aliases.Native(req.Model), // an adapter id "<base>:<name>" is vLLM's "<name>"
@@ -428,7 +442,7 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 			}
 			return
 		}
-		if len(ev.ToolCalls) > 0 {
+		if engines.HasJSON(ev.ToolCalls) {
 			// Forwarded as the engine sent them — the leader merges or relays
 			// (T10.8). The map form is right here: a tool-call fragment is
 			// rare next to a token, so the fast appender buys nothing.
@@ -1141,6 +1155,15 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 		}
 		tools.Add(ev.ToolCalls)
 		text.WriteString(ev.Delta)
+	}
+	// A call with finish_reason "stop" is a call every client ignores, so an
+	// engine that sent no reason of its own gets the one its content implies
+	// (review finding, 2026-10-05).
+	if !tools.Empty() && reason == "stop" {
+		reason = "tool_calls"
+	}
+	if n := tools.Skipped(); n > 0 {
+		slog.Warn("tool-call fragments did not parse; the merged answer is incomplete", "skipped", n, "model", model)
 	}
 	resp := map[string]any{
 		"id":      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),

@@ -108,6 +108,19 @@ type Message struct {
 	Role    string // system | user | assistant | tool
 	Content string
 	Images  []string // optional, for vision-capable models (Ollama, vLLM, MLX-LM)
+
+	// ToolCalls is an ASSISTANT turn's `tool_calls`, carried back in on the
+	// next request, and ToolCallID is what a `tool`-role message answers.
+	//
+	// These are what make tool calling a LOOP rather than one exchange. The
+	// standard client appends the assistant message it just received and then
+	// a tool result beside it; drop either field and the second request is
+	// either rejected by the engine (`tool_call_id` is required on a tool
+	// message) or silently missing the context the model needs. Carrying the
+	// call out and not back in is single-turn tool calling, which is not what
+	// the API means (PLAN T10.8).
+	ToolCalls  json.RawMessage
+	ToolCallID string
 }
 
 // StreamEvent is emitted by Engine.Chat as content arrives.
