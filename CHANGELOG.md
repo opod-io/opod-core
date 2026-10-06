@@ -53,6 +53,26 @@ the last section.
 - Embeddings are unchanged: their `encoding_format` and `dimensions` are still not forwarded.
 - Feature key `openai_passthrough` on `/admin/v1/capabilities`.
 
+## 2026-10-06 — a revoked key is a tombstone, and an endpoint can refuse keys from a stale auth snapshot
+
+- **A revocation can be appended, not only re-derived** (`auth_tombstones`). The auth snapshot carries
+  `revokedKeys`: ids the leader refuses even while a row for them is still in `keys`. Anyone with RBAC on the
+  mounted Secret can deliver one without rebuilding the allow list, so a revoke lands within one file sync even
+  while the manager is down. A tombstone seen once is never undone: a later snapshot that does not carry it — the
+  manager's next routine push — leaves the key revoked, and a tombstone for an id the leader has never seen keeps
+  that id from ever being created live. Tombstones reach only snapshot-owned keys, never one minted locally with
+  `opod token create`.
+- **The snapshot's age is tracked and reported** (`auth_snapshot_age`). `issuedAt` (RFC 3339) is what the age is
+  measured from — a file's mtime moves only when its content does. `/loadz` gains `auth_snapshot`: revision,
+  `issued_at`, `age_s`, the bound, whether it is `stale`, and the key and tombstone counts. Absent on a leader
+  with no snapshot; `age_s` absent when the snapshot does not say when it was written.
+- **An owner may bound that age** with the policy snapshot's `auth.maxSnapshotAgeSec`. Past it, `/v1` answers
+  `503` + `Retry-After` with a message naming the stale snapshot, until a fresher one arrives — 503 and not 401,
+  because the caller's key may be fine; it is the endpoint that can no longer vouch for any key. The refusal is
+  not counted as demand (`unavailable_1m` does not move), the admin surface and worker heartbeats are never
+  refused, and a keyless endpoint is untouched. **Unset, 0, or a snapshot with no `issuedAt` is exactly the
+  behaviour before**: the leader serves from whatever snapshot it holds, for as long as it holds it.
+
 ## 2026-10-06 — building opod from source now needs Go 1.26, and the leader derives a client IP itself
 
 - **The minimum Go to build core rises from 1.25 to 1.26.** It is not a choice: the dependency group this

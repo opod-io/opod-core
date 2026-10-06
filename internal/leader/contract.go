@@ -174,6 +174,14 @@ func contractFeatures() map[string]bool {
 		// once carried left with ADR-077). Without it a manager must keep every
 		// request on one front door.
 		"gateway_spend": true,
+		// A revocation is a TOMBSTONE (ADR-085): the auth snapshot's
+		// revokedKeys refuses a key id even while its row is still in keys,
+		// and a tombstone seen once is never undone by a later snapshot.
+		"auth_tombstones": true,
+		// The auth snapshot's issuedAt is tracked; /loadz auth_snapshot reports
+		// its revision and age, and policy auth.maxSnapshotAgeSec > 0 refuses
+		// keyed /v1 traffic past that age with 503 + a reason (ADR-085).
+		"auth_snapshot_age": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once
 		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating

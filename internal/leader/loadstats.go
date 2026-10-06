@@ -201,7 +201,7 @@ const loadSampleMaxAge = 30 * time.Second
 func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	rev, planModel := s.plan.get()
-	out := adminapi.Load{
+	out := loadResponse{Load: adminapi.Load{
 		PlanRevision:    rev,
 		PlanModel:       planModel,
 		InFlight:        atomic.LoadInt64(&s.load.inFlight),
@@ -209,11 +209,11 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 		Unavailable1m:   s.load.sum(&s.load.errRing, &s.load.errSec, now),
 		LastRequestUnix: atomic.LoadInt64(&s.load.lastReq),
 		TS:              now.Unix(),
-	}
+	}}
 	// Time to first token over the last minute of streamed answers (T16.3):
 	// both zero when nothing was streamed — "not measured", never "instant".
 	out.TTFTP50Ms, out.TTFTP95Ms = s.ttft.percentiles(now)
-	s.aggregateWorkerLoad(r.Context(), &out, now)
+	s.aggregateWorkerLoad(r.Context(), &out.Load, now)
 	// How much of the worker count above is actually serving (feature
 	// "engine_liveness"): a worker whose engine crash-loops heartbeats like any
 	// other and holds its card, and a scaler that believes the count scales out
@@ -224,7 +224,19 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// operator who set the weight can see that the sticky pin is still deciding.
 	s.prunePrefixIndex(r.Context())
 	out.PrefixIndex = s.prefix.state()
+	out.AuthSnapshot = s.authSnapshotState(now)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// loadResponse is adminapi.Load plus the fields that have not reached an SDK
+// tag yet (the capabilitiesResponse pattern): embedded, so the wire shape
+// only gains keys.
+type loadResponse struct {
+	adminapi.Load
+	// AuthSnapshot is the auth snapshot in force — revision, age, bound and
+	// whether keyed traffic is refused for its age (feature
+	// "auth_snapshot_age", ADR-085). Absent on a leader with no snapshot.
+	AuthSnapshot *authSnapshotStatus `json:"auth_snapshot,omitempty"`
 }
 
 // aggregateWorkerLoad folds the serving workers' engine samples into the

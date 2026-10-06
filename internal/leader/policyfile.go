@@ -13,7 +13,9 @@ package leader
 //     log line (noise control per endpoint);
 //   - guardrails: webhook rules (phase pre|post|logging_only, URL, bearer,
 //     fail posture, timeout) that become the guardrail chain the gateway
-//     walks on every request.
+//     walks on every request;
+//   - auth.maxSnapshotAgeSec: how old the AUTH snapshot may get before the
+//     gateway refuses keyed traffic (ADR-085; authstale.go). 0 = fail-static.
 //
 // No file → no-op: standalone `opod up` keeps its config behaviour. A bad
 // file keeps the last good policy (never a half-applied one).
@@ -41,6 +43,7 @@ type (
 	PolicyRouting  = adminapi.PolicyRouting
 	PolicyLogging  = adminapi.PolicyLogging
 	GuardrailRule  = adminapi.GuardrailRule
+	PolicyAuth     = adminapi.PolicyAuth
 )
 
 type policyFileState struct {
@@ -51,6 +54,9 @@ type policyFileState struct {
 
 	fallback  atomic.Pointer[PolicyRouting]
 	accessLog atomic.Value // bool; unset = config default
+	// maxAuthAgeSec is auth.maxSnapshotAgeSec; 0 = no bound. Read lock-free
+	// by the gateway on every keyed request.
+	maxAuthAgeSec atomic.Int64
 }
 
 // fallbackRouting returns the active fallback target, or nil.
@@ -129,6 +135,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
 	}
+	s.policy.maxAuthAgeSec.Store(int64(max(doc.Auth.MaxSnapshotAgeSec, 0)))
 	if doc.Logging.AccessLog != nil {
 		s.policy.accessLog.Store(*doc.Logging.AccessLog)
 	} else {

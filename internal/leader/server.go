@@ -413,7 +413,10 @@ func (s *Server) routes() http.Handler {
 
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
-		// Load accounting first so /loadz sees every inference request,
+		// A stale auth snapshot (ADR-085) is refused before anything counts
+		// the request: a refusal by policy is not demand (authstale.go).
+		r.Use(s.staleAuthGate)
+		// Load accounting next so /loadz sees every inference request,
 		// including ones a later middleware rejects.
 		r.Use(s.trackLoad)
 		// Cap request bodies first so nothing downstream (rate-limit

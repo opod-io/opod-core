@@ -109,6 +109,8 @@ var contractFeatureFloor = []string{
 	"heartbeat_no_report",
 	// several gangs of one model, and DELETE of one of them
 	"shard_groups",
+	// ADR-085: key tombstones; the auth snapshot's age and its optional bound
+	"auth_tombstones", "auth_snapshot_age",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

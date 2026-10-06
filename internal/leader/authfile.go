@@ -7,7 +7,13 @@ package leader
 //
 //   - requireKeys: whether the gateway demands an API key (flips at runtime);
 //   - keys: the endpoint's API keys as HASHES with per-key limits, model
-//     allowlist and expiry — the leader never sees a plaintext key.
+//     allowlist and expiry — the leader never sees a plaintext key;
+//   - revokedKeys: TOMBSTONES (ADR-085) — key ids this leader refuses even
+//     if a row for them is still in keys. An append is something a second
+//     writer with RBAC on the Secret can deliver while the manager is down;
+//   - issuedAt: when the manager wrote the snapshot, which is what its AGE
+//     is measured from. The policy snapshot's auth.maxSnapshotAgeSec, when
+//     set, refuses keyed traffic past that age (staleAuthGate).
 //
 // The store stays the rebuildable cache: every key from the file is upserted
 // into api_keys under its own id, limits and allowlist are kept in sync, and
@@ -44,6 +50,11 @@ type authFileState struct {
 	revision    string
 	requireKeys atomic.Bool
 	keys        int
+	revoked     int // tombstones in the last snapshot
+	// issuedAt is the snapshot's IssuedAt as unix nanoseconds, 0 = unknown.
+	// Atomic because the gateway reads it on every keyed request
+	// (staleAuthGate) and must never wait on a snapshot reload.
+	issuedAt atomic.Int64
 	// The node-mTLS policy (R9.6): the mode, the CA the handshake verifies a
 	// worker's certificate against, and the serials this leader must refuse
 	// even though that CA signed them. Held behind one pointer swapped as a
@@ -144,15 +155,23 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	for _, k := range existing {
 		byID[k.ID] = k
 	}
+	// Tombstones first, so a key that is both listed and revoked is never
+	// created live for the moment between the two loops.
+	tomb := map[string]bool{}
+	for _, id := range doc.RevokedKeys {
+		if id = strings.TrimSpace(id); id != "" {
+			tomb[snapshotKeyID(id)] = true
+		}
+	}
 	want := map[string]bool{}
 	created, updated, revoked := 0, 0, 0
 	for _, sk := range doc.Keys {
 		if sk.ID == "" || sk.Hash == "" {
 			continue
 		}
-		id := sk.ID
-		if !strings.HasPrefix(id, SnapshotKeyPrefix) {
-			id = SnapshotKeyPrefix + id
+		id := snapshotKeyID(sk.ID)
+		if tomb[id] {
+			continue // revoked below, whatever its row says
 		}
 		want[id] = true
 		scope := sk.Scope
@@ -183,26 +202,98 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 
 	}
 	for _, k := range existing {
-		if strings.HasPrefix(k.ID, SnapshotKeyPrefix) && !k.Revoked && !want[k.ID] {
+		if strings.HasPrefix(k.ID, SnapshotKeyPrefix) && !k.Revoked && !want[k.ID] && !tomb[k.ID] {
 			if err := keys.Revoke(ctx, k.ID); err == nil {
 				revoked++
 			}
 		}
 	}
+	revoked += s.applyKeyTombstones(ctx, keys, tomb, byID)
 	mtlsChanged := s.applyNodeMTLS(doc)
-	changed := !s.authf.present || s.authf.revision != doc.Revision || s.authf.requireKeys.Load() != doc.RequireKeys || mtlsChanged
+	// IssuedAt is deliberately NOT part of "changed": a manager that sets a
+	// staleness bound re-issues the snapshot on a period, and each re-issue
+	// would otherwise log a line and stream an auth.updated event that says
+	// nothing moved.
+	changed := !s.authf.present || s.authf.revision != doc.Revision || s.authf.requireKeys.Load() != doc.RequireKeys ||
+		s.authf.revoked != len(tomb) || mtlsChanged
 	s.authf.present = true
 	s.authf.revision = doc.Revision
 	s.authf.keys = len(doc.Keys)
+	s.authf.revoked = len(tomb)
 	s.authf.requireKeys.Store(doc.RequireKeys)
+	s.authf.issuedAt.Store(s.parseIssuedAt(doc.IssuedAt))
 	if changed || created+updated+revoked > 0 {
 		s.log.Info("auth snapshot applied", "revision", doc.Revision, "requireKeys", doc.RequireKeys, "keys", len(doc.Keys),
-			"created", created, "updated", updated, "revoked", revoked,
+			"created", created, "updated", updated, "revoked", revoked, "revokedKeys", len(tomb),
 			"nodeMtls", s.nodeMTLS().Mode, "revokedCerts", len(s.nodeMTLS().Revoked))
 		s.logEvent("auth.updated", doc.Revision, map[string]any{"requireKeys": doc.RequireKeys, "keys": len(doc.Keys),
-			"created": created, "updated": updated, "revoked": revoked})
+			"created": created, "updated": updated, "revoked": revoked, "revokedKeys": len(tomb)})
 	}
 	return nil
+}
+
+// snapshotKeyID is the api_keys row id a snapshot key id maps to. Only ids
+// under SnapshotKeyPrefix are the snapshot's to create or revoke, so a
+// tombstone can never reach a key the operator minted locally.
+func snapshotKeyID(id string) string {
+	if strings.HasPrefix(id, SnapshotKeyPrefix) {
+		return id
+	}
+	return SnapshotKeyPrefix + id
+}
+
+// tombstoneHash is the hash stored on a row created only to hold a
+// tombstone. The column is UNIQUE and NOT NULL, and no sha256 hex digest
+// contains a colon, so this never matches a presented key.
+func tombstoneHash(id string) string { return "tombstone:" + id }
+
+// applyKeyTombstones revokes every tombstoned id and reports how many rows it
+// newly revoked. Called with authf.mu held.
+//
+// Durability is the store's: a revoked row is never revived by a later
+// snapshot (applyAuthSnapshot skips it), so a tombstone seen ONCE outlives the
+// snapshot that carried it — which is what makes a break-glass revoke,
+// written to the Secret while the manager is down, survive the manager's next
+// push of a snapshot that never heard of it. A tombstone for an id this leader
+// has no row for yet gets a revoked row of its own: without one, a later
+// snapshot listing the key would create it live.
+func (s *Server) applyKeyTombstones(ctx context.Context, keys store.APIKeyStore, tomb map[string]bool, byID map[string]store.APIKey) int {
+	n := 0
+	for id := range tomb {
+		cur, ok := byID[id]
+		if ok && cur.Revoked {
+			continue
+		}
+		if !ok {
+			rec := store.APIKey{ID: id, Hash: tombstoneHash(id), Name: "revoked", Scope: "user", CreatedAt: time.Now()}
+			if err := keys.Create(ctx, rec); err != nil {
+				s.log.Warn("auth snapshot: tombstone row", "id", id, "err", err)
+				continue
+			}
+		}
+		if err := keys.Revoke(ctx, id); err != nil {
+			s.log.Warn("auth snapshot: revoke tombstoned key", "id", id, "err", err)
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// parseIssuedAt turns the snapshot's IssuedAt into unix nanoseconds, 0 when
+// it is absent or unreadable. An unreadable one is said once per snapshot and
+// then treated as absent: the age is unknown, and no bound is enforced on an
+// unknown age (the field's documented meaning).
+func (s *Server) parseIssuedAt(v string) int64 {
+	if v = strings.TrimSpace(v); v == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		s.log.Warn("auth snapshot: issuedAt is not RFC 3339 — its age is unknown and no staleness bound applies", "issuedAt", v)
+		return 0
+	}
+	return t.UnixNano()
 }
 
 // applyNodeMTLS installs the snapshot's mTLS half and reports whether anything
