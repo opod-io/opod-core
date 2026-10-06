@@ -52,6 +52,7 @@ type Server struct {
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
 	load      loadStats
+	ttft      ttftWindow // streamed answers' time to first token, for /loadz (ttftwindow.go)
 	// metricsH serves /metrics on both listeners: the opod_* names and this
 	// leader's vLLM-named aliases (vllmalias.go). Built once, on first use.
 	metricsOnce sync.Once
@@ -187,6 +188,8 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		gateways:   newGatewayFront(),
 		bus:        events.New(),
 	}
+	// Every streamed answer's time to first token feeds /loadz (T16.3).
+	openaiH.OnTTFT = s.observeTTFT
 	// A door's usage rows belong to the leader's store, not its own (ADR-063).
 	if s.isGateway() {
 		openaiH.OnUsage = s.recordUsageForGateway

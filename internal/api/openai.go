@@ -46,6 +46,10 @@ type Handler struct {
 	// queue the row for the push to the leader, which is the single writer
 	// (ADR-063); nil on a leader, where the local row IS the record.
 	OnUsage func(rec store.Usage, rowID string)
+	// OnTTFT sees the time to the first token of every streamed answer that
+	// finished well, with the request's context. The leader keeps a rolling
+	// window of them for /loadz (T16.3); nil = nobody is counting.
+	OnTTFT func(ctx context.Context, ttft time.Duration)
 
 	policy atomic.Pointer[Policy] // request-path policy, swapped by the owner (see policy.go)
 }

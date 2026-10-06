@@ -134,6 +134,11 @@ func contractFeatures() map[string]bool {
 		// opod_* names, so an inference pool whose picker reads vLLM's names
 		// can route to a leader unmodified (ADR-083, vllmalias.go).
 		"vllm_metric_aliases": true,
+		// /loadz fills ttft_p50_ms / ttft_p95_ms: nearest-rank over the streamed
+		// answers of the last 60 s (at most the last 4096), probes excluded
+		// (T16.3). Without it both fields are always absent, so a scaler must not
+		// render a latency-budget trigger.
+		"loadz_ttft": true,
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"kv_block_events":    true, // heartbeat kv_blocks → the leader's prefix-cache block index; policy routing.prefixBlockWeight scores a worker by the leading blocks it holds; /loadz prefix_index

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/engines/openaicompat"
@@ -147,5 +148,21 @@ func TestTheCallerCannotSetAReservedKey(t *testing.T) {
 	raw, _ := json.Marshal(openaicompat.BuildChatBody(*eng.got))
 	if !strings.Contains(string(raw), `"stream_options":{"include_usage":true}`) {
 		t.Fatalf("usage capture was switched off by the caller: %s", raw)
+	}
+}
+
+// OnTTFT hears every streamed answer that finished well and nothing else: a
+// non-streamed answer has no first token a person waited for (T16.3).
+func TestOnTTFTHearsStreamedAnswersOnly(t *testing.T) {
+	var heard []time.Duration
+	h := &Handler{Engine: &finishingEngine{cancelEngine{deltas: []string{"Hel", "lo"}}}, Store: usageTestStore(t), Default: "m",
+		OnTTFT: func(_ context.Context, d time.Duration) { heard = append(heard, d) }}
+	postChat(t, h, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	if len(heard) != 0 {
+		t.Fatalf("a non-streamed answer reported a TTFT: %v", heard)
+	}
+	postChat(t, h, `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	if len(heard) != 1 || heard[0] <= 0 {
+		t.Fatalf("a streamed answer reported %v, want one positive TTFT", heard)
 	}
 }

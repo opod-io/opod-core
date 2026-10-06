@@ -5,6 +5,14 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-06 — `/loadz` reports time to first token
+
+- **`ttft_p50_ms` and `ttft_p95_ms` on `/loadz` are now filled.** The leader measured time to first token on
+  every streamed answer and wrote it only into the usage row, so a scaler with a latency budget had nothing to
+  read. The figures are nearest-rank over the streamed answers of the last 60 seconds, held in a fixed ring of
+  the last 4096 (memory does not grow with traffic). Zero still means *not measured*; a request carrying
+  `X-Opod-Probe` is not counted. Feature key `loadz_ttft`.
+
 ## 2026-10-06 — a leader can sit behind an inference gateway that reads vLLM's metric names
 
 - **`/metrics` now also carries `vllm:num_requests_waiting`, `vllm:num_requests_running` and

@@ -66,6 +66,9 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 	}
 	metrics.ObserveRequest(metricsModel, protocol, outcome, latency, prompt, completion)
 	metrics.ObserveTTFT(metricsModel, ttft)
+	if h.OnTTFT != nil && ttft > 0 && outcome == "ok" {
+		h.OnTTFT(ctx, ttft)
+	}
 
 	rec := store.Usage{
 		TS:               time.Now(),

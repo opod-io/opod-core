@@ -90,8 +90,13 @@ func isProbe(r *http.Request) bool {
 // trackLoad wraps the /v1 gateway routes.
 func (s *Server) trackLoad(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || isProbe(r) {
+		if r.Method != http.MethodPost {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if isProbe(r) {
+			// Served, counted nowhere — including the TTFT window (observeTTFT).
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), probeCtxKey{}, true)))
 			return
 		}
 		now := time.Now()
@@ -205,6 +210,9 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 		LastRequestUnix: atomic.LoadInt64(&s.load.lastReq),
 		TS:              now.Unix(),
 	}
+	// Time to first token over the last minute of streamed answers (T16.3):
+	// both zero when nothing was streamed — "not measured", never "instant".
+	out.TTFTP50Ms, out.TTFTP95Ms = s.ttft.percentiles(now)
 	s.aggregateWorkerLoad(r.Context(), &out, now)
 	// How much of the worker count above is actually serving (feature
 	// "engine_liveness"): a worker whose engine crash-loops heartbeats like any
