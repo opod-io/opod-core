@@ -129,6 +129,11 @@ func contractFeatures() map[string]bool {
 		// vLLM, SGLang and llama.cpp (--reranking) engines; an engine without a
 		// rerank route is refused 501 `rerank_not_supported`, never a 404.
 		"rerank": true,
+		// /metrics (both listeners) carries vllm:num_requests_waiting,
+		// vllm:num_requests_running and vllm:kv_cache_usage_perc beside the
+		// opod_* names, so an inference pool whose picker reads vLLM's names
+		// can route to a leader unmodified (ADR-083, vllmalias.go).
+		"vllm_metric_aliases": true,
 		// adapters as variants of the plan's model: worker /v1/adapters/{load,unload}, OPOD_ADAPTERS, served as <model>:<adapter> (R9.2)
 		"routing_load_aware": true, // pick() scores workers by in-flight + queue + kvWeight × KV use from heartbeats; saturation rule; prefix affinity — policy.json routing.{kvWeight,kvSaturationPct,prefixAffinity} (R9.4)
 		"kv_block_events":    true, // heartbeat kv_blocks → the leader's prefix-cache block index; policy routing.prefixBlockWeight scores a worker by the leading blocks it holds; /loadz prefix_index

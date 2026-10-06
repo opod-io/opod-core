@@ -5,6 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-06 — a leader can sit behind an inference gateway that reads vLLM's metric names
+
+- **`/metrics` now also carries `vllm:num_requests_waiting`, `vllm:num_requests_running` and
+  `vllm:kv_cache_usage_perc`**, on the probe port and the main listener, beside the `opod_*` names (which do not
+  change). A Gateway API inference pool whose endpoint picker reads vLLM's names — llm-d's default mapping —
+  can select opod leaders as pool members with no custom mapping. Waiting is the workers' summed queue, running
+  is the leader's in-flight count less that queue, and KV use is the mean over the workers as a 0–1 fraction.
+  See `docs/SCALING-SIGNALS.md`. Feature key `vllm_metric_aliases`; a test fails the build if an alias goes.
+
 ## 2026-10-06 — `/v1/rerank` is back
 
 - **`POST /v1/rerank`** `{model, query, documents, top_n, return_documents}` answers `results` most relevant

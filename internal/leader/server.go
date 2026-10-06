@@ -28,7 +28,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -53,9 +52,13 @@ type Server struct {
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
 	load      loadStats
-	prefix    *prefixIndex // the blocks each worker's engine holds (prefixindex.go, feature "kv_block_events")
-	nodeLoad  sync.Map     // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
-	gangLoad  sync.Map     // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
+	// metricsH serves /metrics on both listeners: the opod_* names and this
+	// leader's vLLM-named aliases (vllmalias.go). Built once, on first use.
+	metricsOnce sync.Once
+	metricsH    http.Handler
+	prefix      *prefixIndex // the blocks each worker's engine holds (prefixindex.go, feature "kv_block_events")
+	nodeLoad    sync.Map     // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
+	gangLoad    sync.Map     // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
 	// gateways is the leader's view of its front doors (T11.1, ADR-063): who
 	// has pushed usage lately, and the row ids already recorded so a retry does
 	// not bill twice.
@@ -387,7 +390,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/healthz", s.healthz)
 	r.Get("/readyz", s.readyz)
 	r.Get("/loadz", s.loadz)
-	r.Handle("/metrics", promhttp.Handler())
+	r.Handle("/metrics", s.metrics())
 
 	// No dashboard in core (ADR-022): "/" is a 404. A console is a manager's surface, not core's.
 
@@ -704,6 +707,18 @@ func (s *Server) Addr() string {
 // TLS reports whether the listener speaks TLS.
 func (s *Server) TLS() bool { return s.cfg.TLSCert != "" && s.cfg.TLSKey != "" }
 
+// probeRoutes is the probe listener's whole router, built from scratch (see
+// serveProbes).
+func (s *Server) probeRoutes() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+	r.Get("/healthz", s.healthz)
+	r.Get("/readyz", s.readyz)
+	r.Get("/loadz", s.loadz)
+	r.Handle("/metrics", s.metrics())
+	return r
+}
+
 // serveProbes runs the second listener: /healthz, /readyz, /loadz and /metrics,
 // always plain HTTP, when OPOD_PROBE_LISTEN names an address.
 //
@@ -717,13 +732,7 @@ func (s *Server) serveProbes(ctx context.Context) func() {
 	if addr == "" {
 		return func() {}
 	}
-	r := chi.NewRouter()
-	r.Use(middleware.Recoverer)
-	r.Get("/healthz", s.healthz)
-	r.Get("/readyz", s.readyz)
-	r.Get("/loadz", s.loadz)
-	r.Handle("/metrics", promhttp.Handler())
-	srv := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: s.probeRoutes(), ReadHeaderTimeout: 30 * time.Second}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		s.log.Error("probe listener not started", "addr", addr, "err", err)

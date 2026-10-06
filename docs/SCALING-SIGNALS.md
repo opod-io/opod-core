@@ -77,6 +77,26 @@ one of those readers has to be handed the CA — or, in practice, told to skip v
 scaling decision ends up resting on a disabled check. Nothing authenticated is routed to that port and its
 router is built from scratch, so a new `/admin/v1` route cannot appear there by accident.
 
+### vLLM-named aliases on `/metrics` — a pool member for an inference gateway
+
+Beside the `opod_*` names, `/metrics` carries three gauges under the names a vLLM engine uses (feature
+`vllm_metric_aliases`), so a Gateway API inference pool whose endpoint picker reads vLLM's names — llm-d's
+default mapping for the `vllm` engine type — can select leaders as pool members with no mapping written for
+them. The leader is one pod to that picker; the leader still picks the worker inside.
+
+| Alias | What it is | Aggregate |
+|---|---|---|
+| `vllm:num_requests_waiting` | requests the endpoint's engines report queued | **sum** over the reporting workers and gang coordinators |
+| `vllm:num_requests_running` | requests the leader has in flight that its engines do not report queued | live in-flight − the queue above, floored at 0 |
+| `vllm:kv_cache_usage_perc` | KV-cache use, a **fraction 0–1** as vLLM publishes it despite the name | **mean** over the reporting samples — not the maximum `/loadz` carries, because one full worker beside idle ones is an endpoint with room |
+
+Each carries a `model_name` label set to the plan's model. The worker-derived part is recomputed at most once a
+second (the samples change on a heartbeat); in-flight is read live. Not published: `vllm:lora_requests_info`
+(the picker skips it when absent) and `vllm:cache_config_info` — an endpoint of several workers has no single
+block size, and a made-up one would steer prefix scoring wrongly; its absence costs one extract error per poll
+on the picker's side. A test fails the build if an alias disappears (ADR-083). The source of the names is cited
+in `internal/leader/vllmalias.go`.
+
 ### Scaling the front doors — `GET /gatewayz`
 
 An endpoint may have several **front doors** (`opod up --role gateway`), and a scaler for the doors must not

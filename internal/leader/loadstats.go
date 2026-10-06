@@ -235,10 +235,13 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 // at all, so without it every number here stayed 0 while the endpoint answered
 // requests, and an autoscaler reading kv_used_pct or queue_depth for a gang was
 // reading a constant (found on the design-partner cell, 2026-09-20).
-func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, now time.Time) {
+//
+// It returns the mean KV-cache use over the samples as a fraction 0–1 (0 with
+// none) — the figure the vLLM-named alias carries (vllmalias.go).
+func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, now time.Time) (kvMeanFrac float64) {
 	nodes, err := s.store.Nodes().List(ctx)
 	if err != nil {
-		return
+		return 0
 	}
 	gangNodes := map[string]bool{}
 	if shards, serr := s.store.Shards().List(ctx); serr == nil && len(shards) > 0 {
@@ -319,8 +322,25 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		// replicas as ceil(metric ÷ target), which only means anything for a
 		// metric that grows with the replica count; the maximum above can never
 		// ask for more than two. Always published, 0 with no sample.
-		out.KVBusyWorkers = kvSum / float64(prefixSamples) * float64(out.Workers)
+		kvMeanFrac = kvSum / float64(prefixSamples)
+		out.KVBusyWorkers = kvMeanFrac * float64(out.Workers)
 	}
+	return kvMeanFrac
+}
+
+// workerLoadView is the worker half of /loadz with the mean KV fraction beside
+// it, for a reader that is not /loadz (the vLLM-named aliases).
+type workerLoadView struct {
+	adminapi.Load
+	kvMeanFrac float64
+}
+
+// workerLoad aggregates the workers' samples for the plan's model.
+func (s *Server) workerLoad(ctx context.Context, now time.Time) workerLoadView {
+	rev, planModel := s.plan.get()
+	v := workerLoadView{Load: adminapi.Load{PlanRevision: rev, PlanModel: planModel}}
+	v.kvMeanFrac = s.aggregateWorkerLoad(ctx, &v.Load, now)
+	return v
 }
 
 // gangCoordinators is the coordinator row of every gang of model that can
