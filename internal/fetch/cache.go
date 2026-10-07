@@ -384,19 +384,25 @@ func Prune(req PruneRequest) (PruneResult, error) {
 	return res, nil
 }
 
-// lockForPrune takes a file's download lock, or says a pull holds it.
+// lockForPrune takes a file's download lock, or says a pull holds it. A lock
+// whose flocked holder is dead is taken over (lockfile.go); one written
+// without a flock is respected, as before — the sweep clears it once old.
 func lockForPrune(target string) (release func(), err error) {
 	lock := target + ".lock"
-	f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("a pull holds this file's lock: not pruned")
+	for attempt := 0; attempt < 2; attempt++ {
+		lf, ok, err := acquireLockFile(lock, "prune")
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		if ok {
+			return lf.release, nil
+		}
+		if attempt > 0 || !lockHolderGone(lock) {
+			break
+		}
+		_ = os.Remove(lock)
 	}
-	_, _ = fmt.Fprintf(f, "prune %d %s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
-	_ = f.Close()
-	return func() { _ = os.Remove(lock) }, nil
+	return nil, fmt.Errorf("a pull holds this file's lock: not pruned")
 }
 
 // trash renames a file out of the way and unlinks it, marker included.

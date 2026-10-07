@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/fetch"
@@ -58,6 +60,11 @@ func cmdFetch(args []string) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	env := config.FromEnv()
 	opt := fetch.Options{Log: log, Token: env.HFToken, Endpoint: env.HFEndpoint, Revision: *rev, SHA256: *sum}
+	// Ctrl-C, or the SIGTERM Kubernetes sends a prefetch Job's pod it deletes,
+	// cancels the pull instead of killing the process mid-write: the lock is
+	// released and the partial is kept, so the next attempt resumes at once.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	var path string
 	var err error
 	if *snap != "" {
@@ -71,9 +78,9 @@ func cmdFetch(args []string) {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(2)
 		}
-		path, err = fetch.Snapshot(context.Background(), repo, *dir, opt)
+		path, err = fetch.Snapshot(ctx, repo, *dir, opt)
 	} else {
-		path, err = fetch.GGUF(context.Background(), pos[0], pos[1], *dir, opt)
+		path, err = fetch.GGUF(ctx, pos[0], pos[1], *dir, opt)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

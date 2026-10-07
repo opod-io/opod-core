@@ -5,6 +5,21 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-06 — an interrupted pull resumes at once, not after six hours
+
+- **`opod fetch` stops cleanly on Ctrl-C and SIGTERM.** It used to die mid-write and leave its download lock
+  behind, so the next attempt — the one that should resume — sat behind that lock for `LockWait`, six hours.
+  SIGTERM is what Kubernetes sends a prefetch Job's pod it deletes, so this was the ordinary case, not a rare one.
+  Now the pull is cancelled, the lock is released and the partial file is kept.
+- **A lock whose holder died is recognised at once, however it died.** A holder now also takes `flock(2)` on the
+  lock file and marks the file `held-by-flock`; the kernel drops that flock when the process ends, including on
+  SIGKILL, an OOM kill or a lost node. A waiter that can take the flock takes the lock over immediately, and
+  `opod cache prune` does the same. A lock file without the marker was written by an older opod, which takes no
+  flock, so only the age rule applies to it — a mixed fleet never mistakes an older binary's live pull for a dead
+  one.
+- Proven on a real node: a `kill -9` 4 s into a 3 GB pull left the lock behind; the next run took it over in under
+  a second, resumed at 135 MB and finished with the Hub's digest.
+
 ## 2026-10-06 — `/loadz` reports time to first token
 
 - **`ttft_p50_ms` and `ttft_p95_ms` on `/loadz` are now filled.** The leader measured time to first token on

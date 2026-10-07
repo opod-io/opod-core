@@ -280,21 +280,22 @@ func expectedSize(ctx context.Context, opt Options, fileURL string) (int64, bool
 	return resp.ContentLength, true
 }
 
-// takeLock creates the lock file exclusively. When another caller holds it,
-// wait (polling) until the target is complete — then return a nil release —
-// or the lock disappears, then take it. A lock older than LockWait with the
-// target still absent is treated as stale and replaced.
+// takeLock creates the lock file exclusively (lockfile.go). When another
+// caller holds it, wait (polling) until the target is complete — then return a
+// nil release — or the lock disappears, then take it. A holder that flocked
+// the lock and has since died is taken over at once, whatever the lock's age:
+// that is what lets an interrupted pull resume on the next attempt instead of
+// after LockWait. A lock written without a flock (an older opod) is replaced
+// only once it is older than LockWait with the target still absent.
 func takeLock(ctx context.Context, lock, target string, want int64, known bool, opt Options) (func(), error) {
 	deadline := time.Now().Add(opt.LockWait)
 	for {
-		f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err == nil {
-			fmt.Fprintf(f, "pid %d at %s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
-			_ = f.Close()
-			return func() { _ = os.Remove(lock) }, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
+		lf, ok, err := acquireLockFile(lock, "fetch")
+		if err != nil {
 			return nil, fmt.Errorf("fetch: lock %s: %w", lock, err)
+		}
+		if ok {
+			return lf.release, nil
 		}
 		// Someone else is pulling. Wait for their result.
 		opt.Log.Info("another process is fetching the same file — waiting", "file", target)
@@ -305,6 +306,11 @@ func takeLock(ctx context.Context, lock, target string, want int64, known bool, 
 			}
 			if _, err := os.Stat(lock); errors.Is(err, os.ErrNotExist) {
 				break // the holder finished (or gave up) without a complete file: take the lock ourselves
+			}
+			if lockHolderGone(lock) {
+				opt.Log.Warn("the fetch lock's holder is gone — taking it over", "lock", lock)
+				_ = os.Remove(lock)
+				break
 			}
 			if st, err := os.Stat(lock); err == nil && time.Since(st.ModTime()) > opt.LockWait {
 				opt.Log.Warn("stale fetch lock — replacing it", "lock", lock, "age", time.Since(st.ModTime()).String())
