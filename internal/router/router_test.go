@@ -27,7 +27,7 @@ func TestGetOrCreateRemote_NoDuplicates(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
-			results[i] = r.getOrCreateRemote("node-A", "worker.local:7000", "tok")
+			results[i] = r.getOrCreateRemote("node-A", "worker.local:7000", "tok", "")
 		}()
 	}
 	wg.Wait()
@@ -57,8 +57,8 @@ func TestGetOrCreateRemote_DifferentNodes(t *testing.T) {
 		inflight: make(map[string]int),
 		remotes:  make(map[string]engines.Engine),
 	}
-	a := r.getOrCreateRemote("node-A", "a.local:7000", "")
-	b := r.getOrCreateRemote("node-B", "b.local:7000", "")
+	a := r.getOrCreateRemote("node-A", "a.local:7000", "", "")
+	b := r.getOrCreateRemote("node-B", "b.local:7000", "", "")
 	if a == b {
 		t.Fatal("different nodes returned same engine pointer")
 	}

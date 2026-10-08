@@ -41,7 +41,7 @@ func TestTheRouterSignsItsCallsToAWorker(t *testing.T) {
 	defer worker.Close()
 
 	rt := New(nil, nil)
-	eng := rt.getOrCreateRemote(nodeID, strings.TrimPrefix(worker.URL, "http://"), token)
+	eng := rt.getOrCreateRemote(nodeID, strings.TrimPrefix(worker.URL, "http://"), token, "")
 	if err := eng.Health(context.Background()); err != nil {
 		t.Fatalf("a signed call to an HMAC-only worker must be accepted: %v", err)
 	}

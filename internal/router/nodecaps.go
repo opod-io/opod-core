@@ -1,6 +1,8 @@
 package router
 
 import (
+	"encoding/json"
+
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
 )
@@ -17,6 +19,10 @@ type nodeCaps struct {
 	// from (Capabilities.KVTier "peer", ADR-089) — prefixblocks.go scores a
 	// sibling's blocks as a peer hit for it.
 	kvPeer bool
+	// engine: the engine the worker serves through (Capabilities.Engine,
+	// feature worker_engine) — what the leader's client for it is labelled
+	// in errors. "" for a worker that predates the field.
+	engine string
 }
 
 // capsOf returns a node's parsed capabilities, parsing the blob only when it
@@ -37,7 +43,7 @@ func (r *Router) capsOf(n *store.Node) nodeCaps {
 	if ok && c.raw == n.HardwareJSON {
 		return c
 	}
-	c = nodeCaps{raw: n.HardwareJSON, role: roleOf(n), revision: revisionOf(n), kvPeer: kvTierOf(n) == KVTierPeer}
+	c = nodeCaps{raw: n.HardwareJSON, role: roleOf(n), revision: revisionOf(n), kvPeer: kvTierOf(n) == KVTierPeer, engine: engineOf(n)}
 	r.mu.Lock()
 	if r.caps == nil {
 		r.caps = map[string]nodeCaps{}
@@ -45,6 +51,21 @@ func (r *Router) capsOf(n *store.Node) nodeCaps {
 	r.caps[n.ID] = c
 	r.mu.Unlock()
 	return c
+}
+
+// engineOf is the engine a node registered (Capabilities.Engine), "" when it
+// registered none.
+func engineOf(n *store.Node) string {
+	if n == nil || n.HardwareJSON == "" {
+		return ""
+	}
+	var caps struct {
+		Engine string `json:"Engine"`
+	}
+	if json.Unmarshal([]byte(n.HardwareJSON), &caps) != nil {
+		return ""
+	}
+	return caps.Engine
 }
 
 // idleCloser is what an evicted engine is asked for: the pooled sockets it

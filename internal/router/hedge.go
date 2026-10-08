@@ -168,7 +168,7 @@ func (r *Router) hedgePickWorkers(ctx context.Context, model string, n int) []he
 			continue
 		}
 		out = append(out, hedgeCandidate{
-			engine: r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken),
+			engine: r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken, r.capsOf(node).engine),
 			nodeID: node.ID,
 		})
 	}

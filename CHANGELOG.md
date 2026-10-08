@@ -5,6 +5,17 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-07 — no 502 from a connection the engine closed while idle
+
+- **The engine client retires an idle keep-alive connection after 2 s**, below the 5 s after which llama-server
+  (cpp-httplib), vLLM and SGLang (uvicorn) close one. With Go's default 90 s, a request could take a pooled
+  connection in the instant the engine closed it and fail with `server closed idle connection` — a 502 for an
+  engine that was fine (about one request in a few hundred under a batch). The race is removed rather than
+  retried: a request the engine may have received is never sent a second time.
+- **A worker's error names the engine it runs.** The leader reaches every worker through the OpenAI-wire client, and
+  a llama.cpp worker's failure read `vllm chat: 502 …`; it reads `llamacpp chat: 502 …` now (the engine the worker
+  registered, or `worker` when it registered none). Span names for the leader→worker hop change the same way.
+
 ## 2026-10-07 — a busy endpoint ranks callers: admission is governed by worker slots
 
 - **The leader dispatches to a worker only while it has a free slot** (feature `slot_admission`). Request classes

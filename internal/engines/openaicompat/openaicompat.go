@@ -43,11 +43,39 @@ type Client struct {
 // 20–30 s before the router could ask the next worker.
 const ConnectTimeout = 3 * time.Second
 
-// streamingHTTPClient has no overall deadline and a bounded connect. Everything
-// else is Go's default transport.
+// IdleConnTimeout is how long a pooled keep-alive connection may sit unused
+// before this client closes it. It must stay BELOW the keep-alive timeout of
+// every server this client talks to, so the client always retires an idle
+// connection first and never writes a request into one the server is closing.
+// The engines all close an idle connection after 5 s: llama-server through
+// cpp-httplib (CPPHTTPLIB_KEEPALIVE_TIMEOUT_SECOND 5, not overridden by the
+// server), vLLM through uvicorn (VLLM_HTTP_TIMEOUT_KEEP_ALIVE 5), SGLang
+// through uvicorn (SGLANG_TIMEOUT_KEEP_ALIVE 5). An opod worker — the leader
+// reaches its workers through this client too — sets no idle timeout at all.
+//
+// Go's default is 90 s, and a POST is not retried when the server closes the
+// connection under it: a request that took a connection from the pool at the
+// moment the engine's 5 s ran out failed with "server closed idle connection"
+// and the caller got a 502 for an engine that was fine. Retrying is not the
+// fix — from the client's side a connection the server closed before reading
+// the request looks the same as one it closed after reading it, and a
+// request the engine received must never be sent twice. So the race is
+// removed instead: 2 s leaves the engines' 5 s more than half its length as
+// margin, and the client's idle clock already starts later than the
+// server's (when the body has been read, not when it was written). What is
+// still retried is what Go retries by itself: a request none of whose bytes
+// reached the connection (GetBody is set, so the body can be replayed).
+// The cost is one new connection after a 2 s lull: microseconds on loopback,
+// one handshake to a worker under TLS.
+const IdleConnTimeout = 2 * time.Second
+
+// streamingHTTPClient has no overall deadline, a bounded connect and an idle
+// timeout below the engines' keep-alive. Everything else is Go's default
+// transport.
 func streamingHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DialContext = (&net.Dialer{Timeout: ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
+	tr.IdleConnTimeout = IdleConnTimeout
 	return &http.Client{Timeout: 0, Transport: tr}
 }
 
@@ -64,9 +92,10 @@ func NewClient(driver, endpoint string, auth func(*http.Request)) Client {
 // CloseIdleConnections releases the client's pooled sockets. Every driver owns
 // a private transport (streamingHTTPClient clones the default one), so an
 // engine the router evicts — a removed node, a torn-down gang, a coordinator
-// that moved — kept its idle connections and their reader goroutines alive for
-// the 90 s idle timeout, unbounded in aggregate while nodes churned (PLAN
-// T15.16). The router calls this at every eviction site.
+// that moved — kept its idle connections and their reader goroutines alive
+// until the idle timeout (90 s when this was written), unbounded in aggregate
+// while nodes churned (PLAN T15.16). The router calls this at every eviction
+// site.
 func (c *Client) CloseIdleConnections() {
 	if c.HTTP != nil {
 		c.HTTP.CloseIdleConnections()
@@ -81,6 +110,16 @@ func (c *Client) SignAsNode(nodeID, token string) {
 	c.Auth = func(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+token) // transition; the signature is the real auth
 		auth.SignRequest(req, nodeID, token)
+	}
+}
+
+// LabelAs renames the engine in this client's errors and span names. The
+// leader's client for a worker is the OpenAI-wire driver whatever the worker
+// runs behind it, so without this a llama.cpp worker's failure read "vllm
+// chat: 502" (engines.Labeled).
+func (c *Client) LabelAs(engine string) {
+	if engine != "" {
+		c.Driver = engine
 	}
 }
 

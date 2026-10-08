@@ -196,6 +196,14 @@ type NodeSigned interface {
 	SignAsNode(nodeID, token string)
 }
 
+// Labeled is a driver whose name in errors and span names can be set. The
+// leader reaches every worker through the OpenAI-wire driver, whatever engine
+// the worker runs behind it; the router labels that client with the engine
+// the worker registered, so a caller reads "llamacpp chat: 502", not "vllm".
+type Labeled interface {
+	LabelAs(engine string)
+}
+
 // StartHint returns the driver's operator hint for starting the engine, or
 // a generic line for unknown engines.
 func StartHint(name string) string {
