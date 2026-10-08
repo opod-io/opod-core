@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,12 +31,13 @@ func cmdUp(args []string) {
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (OPOD_UNLOAD_ON_EXIT=1 sets the default)")
 	exclusive := fs.Bool("exclusive", false,
 		"one resident model per machine: loading a model evicts every other non-pinned model first (OPOD_EXCLUSIVE=1 or placement.exclusive in config also set this)")
-	role := fs.String("role", "", "leader (default) or `gateway`. A gateway is an extra front door for one endpoint: it serves /v1 only — no /admin/v1, no join surface, no engine of its own — mirroring the leader's worker list and pushing its usage rows there (needs --leader / OPOD_LEADER_URL)")
+	role := fs.String("role", "", "leader (default), `gateway` or `door`. A gateway is an extra front door for one endpoint: it serves /v1 only — no /admin/v1, no join surface, no engine of its own — mirroring the leader's worker list and pushing its usage rows there (needs --leader / OPOD_LEADER_URL). A door is one URL for many endpoints: it forwards each request to the endpoint its model names (needs --routes / OPOD_DOOR_ROUTES)")
 	leaderURL := fs.String("leader", "", "the leader a --role=gateway door mirrors and pushes to (http://host:8080); OPOD_LEADER_URL also sets it")
+	routes := fs.String("routes", "", "the routes file a --role=door watches: {revision, routes[{alias, upstream, model, ca}]}; OPOD_DOOR_ROUTES also sets it")
 	help := helpSpec{
 		name:    "up",
 		summary: "start the local node (becomes the cluster leader on first run)",
-		usage:   "opod up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive] [--role gateway --leader <url>]",
+		usage:   "opod up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive] [--role gateway --leader <url>] [--role door --routes <file>]",
 		flags:   fs,
 		examples: []string{
 			"opod up",
@@ -45,11 +47,13 @@ func cmdUp(args []string) {
 			"opod up --auto-pull=false              # don't pre-pull the default model",
 			"opod up --no-wizard                    # skip the interactive 'install a starter?' prompt",
 			"opod up --role gateway --leader http://leader:8080   # an extra front door for the same endpoint",
+			"opod up --role door --routes /etc/opod-door/routes.json   # one URL for many endpoints, chosen by model",
 		},
 		notes: []string{
 			"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
 			"By default the leader is router-only: it loads no model of its own and serves from the workers that join it. OPOD_PULL_DEFAULT_MODEL=1 (router.pull_default_model) makes it pull and serve the default model too; the first-run prompt and --auto-pull apply only then.",
 			"--role gateway serves the OpenAI routes and the probes only: the worker registry, the join tokens and the shard calls stay with the one leader, whose store is the single writer for usage. A door polls the leader every 10s for the live door count; /gatewayz publishes that bound as spend_lag_bound_s (ADR-063).",
+			"--role door is a name lookup, not a router (ADR-087): it reads each request's model, finds the endpoint in the routes file (re-read every 10s) and forwards the request there unchanged, streaming included. It chooses no worker, retries nothing, falls back to nothing and holds no credential: Authorization goes through as received and the endpoint's leader checks it. GET /v1/models lists the models whose endpoint accepts the caller's key; an unknown model answers 404 model_not_found. It opens no store and starts no engine.",
 			"When engine.preferred=llamacpp, pull_default_model is on and no llama-server is listening on engine.llamacpp_endpoint, Opod auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
 		},
 	}
@@ -72,8 +76,11 @@ func cmdUp(args []string) {
 	if *leaderURL != "" {
 		cfg.Env.LeaderURL = *leaderURL
 	}
-	if cfg.Env.Role != "" && cfg.Env.Role != "leader" && cfg.Env.Role != "gateway" {
-		die("--role: %q is not a role (leader | gateway)", cfg.Env.Role)
+	if *routes != "" {
+		cfg.Env.DoorRoutes = *routes
+	}
+	if cfg.Env.Role != "" && cfg.Env.Role != "leader" && cfg.Env.Role != "gateway" && cfg.Env.Role != "door" {
+		die("--role: %q is not a role (leader | gateway | door)", cfg.Env.Role)
 	}
 	log := newLogger(cfg)
 	// The leader's own records also go to an OTLP collector when one is named
@@ -88,6 +95,13 @@ func cmdUp(args []string) {
 		defer cancel()
 		_ = stopLogExport(flushCtx)
 	}()
+	if cfg.Env.Role == "door" {
+		// A door is not a leader with parts switched off: it has no store, no
+		// engine, no catalog and no admin key, so it leaves before any of
+		// them is opened or minted (ADR-087).
+		runDoor(cfg, log)
+		return
+	}
 
 	// 2. Hardware detection
 	caps := agent.Detect()
@@ -385,4 +399,19 @@ func ensureDefaultModel(cfg *config.Config, cat []models.Entry, st store.Store, 
 	if out.Pulled {
 		ok(os.Stdout, "model ready: %s", cfg.Router.DefaultModel)
 	}
+}
+
+// runDoor serves the door role until SIGINT/SIGTERM.
+func runDoor(cfg *config.Config, log *slog.Logger) {
+	door, err := leader.NewCellDoor(cfg, log, cfg.Env.DoorRoutes)
+	if err != nil {
+		die("door: %v", err)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	note(os.Stdout, "role: door — forwarding /v1 by model name, routes from %s", cfg.Env.DoorRoutes)
+	if err := door.Run(ctx); err != nil {
+		die("door: %v", err)
+	}
+	ok(os.Stdout, "shutdown complete")
 }

@@ -11,6 +11,10 @@ import (
 )
 
 func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
+	// The request's arrival, before the body read and the admission gate: the
+	// time to first token and the usage row's latency are measured from here,
+	// so they include the wait for a slot (api/arrival.go).
+	r = r.WithContext(api.WithArrival(r.Context(), time.Now()))
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	if err != nil {
@@ -38,24 +42,21 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 			"this endpoint serves only "+planModel+" (requested "+model+")")
 		return
 	}
-	// Nothing can take this request right now: answer an honest 503 +
-	// Retry-After instead of the 502/404 the local-engine fallback would
-	// produce. Asked PER MODEL (capacity.go): a model whose every holder is
-	// drained, lost or asleep is unavailable even while another model on this
-	// leader serves. The 503 itself is the autoscaler's wake signal (it shows
-	// up in /loadz unavailable_1m), and the message says which cause it is.
+	// Admission (ADR-091, admission.go): the request takes a worker SLOT of
+	// its model's pool, or waits for one in its class queue (ADR-086), or is
+	// shed. Nothing able to serve at all is ADR-082's case and answers an
+	// honest 503 + Retry-After rather than the 502/404 the local-engine
+	// fallback would produce — asked PER MODEL (capacity.go), and the 503 is
+	// the autoscaler's wake signal (/loadz unavailable_1m). The request's
+	// class and flow are read on the way in, from memory.
 	started := time.Now()
-	reason := s.unavailable(r.Context(), model)
-	if reason != "" && s.wakeForRequest(r.Context(), model) {
-		reason = "" // a sleeping engine was resumed for this request: serve it
+	ctx := withAdmissionIdent(r.Context(), s.requestIdent(r))
+	if !s.capacityFor(ctx, model).servable() {
+		// A sleeping engine is resumed for this request (wakeonrequest.go);
+		// its resume signals capacityChanged, so the gate below sees it.
+		s.wakeForRequest(ctx, model)
 	}
-	if reason != "" {
-		// The admission hold (ADR-082, admission.go): with a budget in the
-		// policy, wait for capacity before giving up on it. Before the
-		// fallback, because the point is to serve HERE if capacity returns;
-		// the fallback is for when it does not. Budget 0 returns at once.
-		reason = s.holdForCapacity(r.Context(), model, reason, started)
-	}
+	release, reason := s.admit(ctx, model, started)
 	if reason != "" {
 		// Policy fallback (P12-2): forward instead of 503 when the snapshot
 		// names a target — after the pre guardrail chain, so a blocked prompt
@@ -73,6 +74,10 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 		writeJSONError(w, http.StatusServiceUnavailable, reason)
 		return
 	}
+	// The slot is the request's until its answer is written — for a stream,
+	// its last byte: the handler returns only then. That return is the
+	// completion that frees the slot for the next waiter.
+	defer release()
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	s.openaiH.ChatCompletions(w, r)
 }

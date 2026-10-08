@@ -47,6 +47,8 @@ func main() {
 		cmdCatalog(args)
 	case "fetch":
 		cmdFetch(args)
+	case "batch":
+		cmdBatch(args)
 	case "image":
 		cmdImage(args)
 	case "cache":
@@ -81,7 +83,7 @@ func main() {
 // topLevelCommands is the set of verbs main() dispatches. Kept here so both
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
-	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog", "fetch", "image",
+	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog", "fetch", "batch", "image",
 	"token", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
@@ -197,6 +199,7 @@ Commands:
   fetch <repo> <file>      Make one GGUF present in --dir / $OPOD_MODELS_DIR (exclusive, atomic; a control plane's prefetch)
   fetch --snapshot <repo>[@rev]
                            The same for a safetensors model: the file set vLLM / SGLang loads, under <dir>/<repo>@<rev>/
+  batch run                Send an OpenAI batch file (JSONL) to an OpenAI URL at bounded concurrency; resumable, never sends a line twice
   cache ls|prune           List the node's weight cache, or remove what no plan references (never a file it did not fetch; --apply to delete)
   image ls                 The container images opod publishes: engine, vendor, platforms, gang, proven (--json)
   image show <image>       One image: what the node must provide, its limits, how to pin it

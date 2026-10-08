@@ -16,9 +16,14 @@ package leader
 //     walks on every request;
 //   - auth.maxSnapshotAgeSec: how old the AUTH snapshot may get before the
 //     gateway refuses keyed traffic (ADR-085; authstale.go). 0 = fail-static;
-//   - admission.holdMs / maxHeld: how long a request that finds no capacity
-//     waits for some before it is shed (ADR-082; admission.go). 0 = shed at
-//     once, as before.
+//   - admission.holdMs / maxHeld: how long a request that finds no worker
+//     slot waits for one before it is shed, and how many may wait (ADR-082,
+//     ADR-091; admission.go). 0 = no wait when nothing can serve; a busy
+//     endpoint's queue has no deadline then;
+//   - admission.classes: one queue per request class, dispatched strictly in
+//     class order and fairly per flow inside a class, each class capped at
+//     its maxShare of the slots (ADR-086, ADR-091; admission_classes.go).
+//     None = one class, standard, on the same gate.
 //
 // No file → no-op: standalone `opod up` keeps its config behaviour. A bad
 // file keeps the last good policy (never a half-applied one).

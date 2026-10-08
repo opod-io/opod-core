@@ -83,6 +83,15 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 		id:     id,
 	}
 	s.front.mirror.Trust(trust)
+	// The workers' slot counts ride the mirrored registry; this door counts
+	// its own dispatches against them (ADR-091, /gatewayz slot_scope).
+	s.front.mirror.OnSlots = func(id string, n int) {
+		if old, _ := s.slotsOfKey(id); old == n {
+			return
+		}
+		s.noteSlots(id, n)
+		s.capacityChanged()
+	}
 	s.front.push.Trust(trust)
 	s.front.spend.Trust(trust)
 	// A door never receives a heartbeat, so the heartbeat-AGE rule is not a
@@ -174,7 +183,37 @@ func (s *Server) gatewayz(w http.ResponseWriter, _ *http.Request) {
 		"live_for_s":         int(gatewayLiveFor.Seconds()),
 		"spend_lag_bound_s":  spendLagBoundMS / 1000,
 		"gateways":           s.gateways.seenDoors(now),
+		"admission":          s.admissionFairness(live),
 	})
+}
+
+// admissionFairness states what request classes and worker slots promise
+// across doors (ADR-086 §6, ADR-091), beside the spend bound and for the same
+// reason: each door — the leader's own front included — ranks only the
+// requests it holds and counts only the requests it dispatched. Inside one
+// door class order is strict, two flows of one class are served within one
+// request of each other, and no worker gets more requests than its slots.
+// Across N doors a flow that reaches every door can be served up to N times as
+// often as a flow of its class that reaches one, a lower class held at one
+// door can be served while a higher class waits at another, and a worker can
+// be sent up to N times its slots at once (the excess waits in its engine's
+// queue). With one door every bound is exact. Doors do not coordinate.
+func (s *Server) admissionFairness(doors int) map[string]any {
+	if doors < 1 {
+		doors = 1
+	}
+	out := map[string]any{
+		"classes":                     s.admission.config().classed,
+		"scope":                       "per_door",
+		"flow_share_skew_max":         doors,
+		"class_order_across_doors":    doors == 1,
+		"slot_scope":                  "per_door",
+		"worker_slots_overcommit_max": doors,
+	}
+	for k, v := range s.admissionGovernance() {
+		out[k] = v
+	}
+	return out
 }
 
 // ratePerDoor is a total divided by the doors carrying it, rounded UP: a
@@ -207,6 +246,7 @@ func (s *Server) GatewayStatus() map[string]any {
 		"spend_age_s":       int(spendAge.Seconds()),
 		"spend_lag_bound_s": int(bound.Seconds()),
 		"doors":             doors,
+		"admission":         s.admissionFairness(doors),
 	}
 	for k, v := range map[string]string{"registry_error": mirrorErr, "usage_error": pushErr, "spend_error": spendErr} {
 		if v != "" {

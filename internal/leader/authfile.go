@@ -7,7 +7,9 @@ package leader
 //
 //   - requireKeys: whether the gateway demands an API key (flips at runtime);
 //   - keys: the endpoint's API keys as HASHES with per-key limits, model
-//     allowlist and expiry — the leader never sees a plaintext key;
+//     allowlist and expiry — the leader never sees a plaintext key — and
+//     each key's request class and team (ADR-086), held in memory for the
+//     admission hold (admission_classes.go), never written to the store;
 //   - revokedKeys: TOMBSTONES (ADR-085) — key ids this leader refuses even
 //     if a row for them is still in keys. An append is something a second
 //     writer with RBAC on the Secret can deliver while the manager is down;
@@ -61,6 +63,10 @@ type authFileState struct {
 	// whole (atomic.Pointer) because the join path reads it on every heartbeat
 	// of every worker and must never block on a snapshot reload.
 	mtls atomic.Pointer[nodeMTLSPolicy]
+	// ranks is each snapshot key's request class and team (ADR-086), by
+	// api_keys row id. Swapped whole on each snapshot; read only when a
+	// request is about to be held, never from the store.
+	ranks atomic.Pointer[map[string]keyRank]
 }
 
 // nodeMTLSPolicy is the snapshot's mTLS half, as the join path reads it.
@@ -164,6 +170,7 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		}
 	}
 	want := map[string]bool{}
+	ranks := map[string]keyRank{}
 	created, updated, revoked := 0, 0, 0
 	for _, sk := range doc.Keys {
 		if sk.ID == "" || sk.Hash == "" {
@@ -174,6 +181,9 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 			continue // revoked below, whatever its row says
 		}
 		want[id] = true
+		if sk.Class != "" || sk.Team != "" {
+			ranks[id] = keyRank{class: sk.Class, team: strings.TrimSpace(sk.Team)}
+		}
 		scope := sk.Scope
 		if scope == "" {
 			scope = "user"
@@ -209,6 +219,7 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		}
 	}
 	revoked += s.applyKeyTombstones(ctx, keys, tomb, byID)
+	s.authf.ranks.Store(&ranks)
 	mtlsChanged := s.applyNodeMTLS(doc)
 	// IssuedAt is deliberately NOT part of "changed": a manager that sets a
 	// staleness bound re-issues the snapshot on a period, and each re-issue

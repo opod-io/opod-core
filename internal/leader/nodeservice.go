@@ -62,6 +62,9 @@ type HeartbeatRequest struct {
 	// KVBlocks (feature "kv_block_events"): what changed in the engine's
 	// prefix cache since the previous heartbeat, as block hashes only.
 	KVBlocks *nodeapi.KVBlocks `json:"kv_blocks"`
+	// Slots (feature "slot_admission", ADR-091): how many requests the
+	// engine serves at once; 0 = it cannot say (ungoverned).
+	Slots int `json:"slots"`
 }
 
 // Caller is who is calling: admin keys pass every binding; a node key owns
@@ -225,6 +228,7 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	if req.Load != nil {
 		s.nodeLoad.Store(req.ID, nodeLoadSample{EngineLoad: *req.Load, at: time.Now()})
 	}
+	s.noteSlots(req.ID, req.Slots) // ADR-091: none = ungoverned from now on
 	if incarnation(n.BootID, req.BootID) == incarnationNew {
 		s.prefix.forget(req.ID) // a new process holds a new cache
 	}
@@ -356,7 +360,7 @@ func (s *Server) setNodeState(ctx context.Context, id, state, event string) erro
 		return ErrUnknownNode
 	}
 	s.record(event, id, nil)
-	s.capacityChanged() // an undrain puts the node back in rotation
+	s.capacityChanged() // an undrain adds the node's slots back to its pools; a drain takes them out
 	return nil
 }
 
@@ -372,6 +376,7 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 		}
 	}
 	s.forgetNode(ctx, id)
+	s.capacityChanged() // its slots leave every pool (ADR-091)
 	s.record("node.removed", id, nil)
 	return nil
 }
@@ -388,6 +393,7 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 // id and simply repopulates.
 func (s *Server) forgetNode(ctx context.Context, id string) {
 	s.nodeLoad.Delete(id)
+	s.noteSlots(id, 0)
 	s.prefix.forget(id)
 	s.nodeEngine.Delete(id)
 	s.reconcileNodes.Delete(id)
@@ -406,6 +412,7 @@ func (s *Server) forgetNode(ctx context.Context, id string) {
 // driver's connection pool (T15.16).
 func (s *Server) forgetGang(shardID string) {
 	s.gangLoad.Delete(shardID)
+	s.gangSlotsAsked.Delete(shardID)
 	if v, ok := s.gangEng.LoadAndDelete(shardID); ok {
 		releaseEngine(v.(gangCoordEngine).eng)
 	}
@@ -422,7 +429,7 @@ func releaseEngine(e engines.Engine) {
 // HoldsNode reports whether any per-node map on the leader still names the
 // node — what forgetNode is expected to leave empty. For tests.
 func (s *Server) HoldsNode(id string) bool {
-	for _, m := range []*sync.Map{&s.nodeLoad, &s.nodeEngine, &s.reconcileNodes, &s.engineSilentTold} {
+	for _, m := range []*sync.Map{&s.nodeLoad, &s.slots, &s.nodeEngine, &s.reconcileNodes, &s.engineSilentTold} {
 		if _, ok := m.Load(id); ok {
 			return true
 		}

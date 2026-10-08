@@ -344,7 +344,10 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// router reads.
 	ctx := overridesContext(r, req.Opod, h.Store, requested, sortHint)
 
-	start := time.Now()
+	// From the request's arrival, not from here: on a leader the admission
+	// gate may have held it for a slot (arrival.go), and that wait is part of
+	// both the time to first token and the latency the caller saw.
+	start := arrivalOf(r.Context())
 	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
 		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")

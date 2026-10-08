@@ -331,6 +331,12 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		out.TokensPerSec += ld.TokensPerSec
 		prefixSum += ld.PrefixHitPct
 	}
+	// The leader's own queue IS the endpoint's queue since ADR-091: a request
+	// past the workers' slots waits in the admission gate, not in an engine,
+	// so the engines' queues read ~0 on every governed worker. An autoscaler
+	// that scales on queue_depth (the control plane's, a KEDA trigger, the
+	// vLLM-named alias) must see those requests, so they are added here.
+	out.QueueDepth += s.admission.held.Load()
 	// The mean is over the SAMPLES, not the workers: one gang's sample speaks
 	// for every part of it, so dividing by the worker count would read a gang's
 	// prefix-cache hit rate as a fraction of itself.

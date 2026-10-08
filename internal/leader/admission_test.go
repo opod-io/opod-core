@@ -165,10 +165,9 @@ func TestAdmissionHoldCapAndCancel(t *testing.T) {
 
 	// maxHeld 0 means the default cap, not "no holds".
 	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "p2", Admission: PolicyAdmission{HoldMs: 50}})
-	if !srv.admission.acquire() {
-		t.Fatal("maxHeld 0 must mean the default cap")
+	if got := srv.admission.config().total; got != defaultMaxHeld {
+		t.Fatalf("maxHeld 0 must mean the default cap, got %d", got)
 	}
-	srv.admission.release()
 }
 
 // The common way capacity returns is a heartbeat: a worker whose engine now

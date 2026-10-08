@@ -62,6 +62,7 @@ type planGang struct {
 	PP      int
 	Devices int
 	Flags   map[string]string // the gang's engine knobs, reaching the coordinator (T14.26)
+	Expert  bool              // an expert-parallel gang (shard_expert)
 }
 
 // gangs copies out the gangs the plan declares.
@@ -116,7 +117,7 @@ func (s *Server) healGangs(ctx context.Context, absent map[string]time.Time) {
 	}
 	s.log.Info("healing within the plan: forming the gang the plan declares",
 		"model", model, "gang", id, "parts", g.Parts, "free_workers", free)
-	req := CreateShardsRequest{ModelID: model, Shards: g.Parts, Gang: g.ID, TP: g.TP, PP: g.PP, Devices: g.Devices, Flags: g.Flags}
+	req := CreateShardsRequest{ModelID: model, Shards: g.Parts, Gang: g.ID, TP: g.TP, PP: g.PP, Devices: g.Devices, Flags: g.Flags, Expert: g.Expert}
 	if err := s.CreateShards(ctx, req); err != nil {
 		if errors.Is(err, scheduler.ErrCreateInFlight) {
 			// Somebody is already forming it — a manager doing its job,

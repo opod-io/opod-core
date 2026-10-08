@@ -225,16 +225,90 @@ func SetNodeUp(node, hostname string, up bool) {
 var (
 	admissionHeldTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_admission_held_total",
-		Help: "Requests that found no capacity and were handled by the admission hold (ADR-082), by outcome: served (capacity came back inside the budget), shed_deadline (503 at the budget), shed_cap (503 at once: too many already held), cancelled (the client went away).",
+		Help: "Requests that found no capacity and were handled by the admission hold (ADR-082), by outcome: served (capacity came back inside the budget), shed_deadline (503 at the budget), shed_cap (503 at once: too many already held), shed_evicted (503: shed to make room for a higher request class, ADR-086), cancelled (the client went away).",
 	}, []string{"outcome"})
-	admissionHeld = promauto.NewGauge(prometheus.GaugeOpts{
+	admissionHeld = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "opod_admission_held",
-		Help: "Requests held right now waiting for capacity (ADR-082).",
-	})
+		Help: "Requests held right now waiting for capacity, by request class (ADR-082, ADR-086). Without classes in the policy every held request is standard.",
+	}, []string{"class"})
+	admissionShedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "opod_admission_shed_total",
+		Help: "Held requests shed with 503 + Retry-After, by request class and reason: deadline (the class's budget ran out), cap (the hold or the class was full), evicted (shed to make room for a higher class) (ADR-086), unavailable (every worker stopped serving while it waited for a slot with no budget of its class, ADR-091).",
+	}, []string{"class", "reason"})
+	admissionWaitedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "opod_admission_slot_waits_total",
+		Help: "Requests dispatched only after they waited for a free worker slot (ADR-091), by request class: the leader held them while every slot their class may use was busy.",
+	}, []string{"class"})
+	// The wait itself (ADR-091), from the moment the request reached the
+	// gate to the slot it was granted — 0 for one that found a slot free. Every
+	// admitted request is observed, so _count is the admitted requests and a
+	// percentile is over all of them; a shed request is not (it is counted in
+	// opod_admission_shed_total). The time to first token includes this wait.
+	admissionWaitSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "opod_admission_wait_seconds",
+		Help:    "Seconds an admitted request waited at the admission gate for a worker slot (ADR-091), by request class; 0 when a slot was free.",
+		Buckets: []float64{0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60},
+	}, []string{"class"})
+	admissionInUse = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "opod_admission_in_flight",
+		Help: "Requests the admission gate has dispatched and not yet seen complete, by model and request class (ADR-091). Compare with opod_admission_slots.",
+	}, []string{"model", "class"})
+	admissionSlots = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "opod_admission_slots",
+		Help: "Worker slots a model can serve at once across the workers that take its requests now (ADR-091); 0 while none can serve. Ungoverned workers add none: see opod_admission_ungoverned_workers.",
+	}, []string{"model"})
+	admissionUngoverned = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "opod_admission_ungoverned_workers",
+		Help: "Workers (or gangs) serving a model that report no slot count (ADR-091). While any is serving, the model's admission is unbounded: requests are held only when no worker can serve, and classes rank nothing on a busy endpoint.",
+	}, []string{"model"})
+	workerSlots = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "opod_worker_slots",
+		Help: "Requests a worker's engine serves at once, as its heartbeat reports it (ADR-091); compare with opod_router_inflight for the same node. Absent for a worker that reports none (ungoverned).",
+	}, []string{"node"})
 )
+
+// ObserveAdmissionSlotWait records one request dispatched after waiting for a slot.
+func ObserveAdmissionSlotWait(class string) { admissionWaitedTotal.WithLabelValues(class).Inc() }
+
+// ObserveAdmissionWait records how long one admitted request waited for its slot.
+func ObserveAdmissionWait(class string, d time.Duration) {
+	admissionWaitSeconds.WithLabelValues(class).Observe(max(d, 0).Seconds())
+}
+
+// SetAdmissionInUse sets the gate's dispatched-not-completed count of one class.
+func SetAdmissionInUse(model, class string, n int) {
+	admissionInUse.WithLabelValues(model, class).Set(float64(n))
+}
+
+// SetAdmissionCapacity sets a model's governed slots and its ungoverned workers.
+func SetAdmissionCapacity(model string, slots, ungoverned int) {
+	admissionSlots.WithLabelValues(model).Set(float64(slots))
+	admissionUngoverned.WithLabelValues(model).Set(float64(ungoverned))
+}
+
+// ForgetAdmissionModel drops a model's admission series (its pool is gone).
+func ForgetAdmissionModel(model string) {
+	admissionSlots.DeleteLabelValues(model)
+	admissionUngoverned.DeleteLabelValues(model)
+	admissionInUse.DeletePartialMatch(prometheus.Labels{"model": model})
+}
+
+// SetWorkerSlots sets one worker's slot count; n ≤ 0 removes the series.
+func SetWorkerSlots(node string, n int) {
+	if n <= 0 {
+		workerSlots.DeleteLabelValues(node)
+		return
+	}
+	workerSlots.WithLabelValues(node).Set(float64(n))
+}
 
 // ObserveAdmissionHold records how one held request ended.
 func ObserveAdmissionHold(outcome string) { admissionHeldTotal.WithLabelValues(outcome).Inc() }
 
-// SetAdmissionHeld sets the number of requests held right now.
-func SetAdmissionHeld(n int64) { admissionHeld.Set(float64(n)) }
+// ObserveAdmissionShed records one held request shed, by class and reason.
+func ObserveAdmissionShed(class, reason string) {
+	admissionShedTotal.WithLabelValues(class, reason).Inc()
+}
+
+// SetAdmissionHeld sets the number of requests of class held right now.
+func SetAdmissionHeld(class string, n int64) { admissionHeld.WithLabelValues(class).Set(float64(n)) }

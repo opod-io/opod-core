@@ -111,16 +111,29 @@ func (f EngineFlags) vllmShellOverrides() (overrides string, extraArgs string) {
 	if n, ok := f.posInt("max_model_len", 512, 1<<22); ok {
 		args = append(args, "--max-model-len", strconv.Itoa(n))
 	}
-	if n, ok := f.posInt("max_num_seqs", 1, 4096); ok {
-		args = append(args, "--max-num-seqs", strconv.Itoa(n))
-	}
 	if v, ok := f.get("kv_cache_dtype"); ok && isToken(v) {
 		args = append(args, "--kv-cache-dtype", v)
+	}
+	// --max-num-seqs is ALWAYS on the line (ADR-091): it is the slot count the
+	// worker reports and the leader governs dispatch by, so the engine and the
+	// leader must agree on it by construction. vLLM's own default depends on
+	// the release and the card; ours is stated and fixed.
+	if _, inExtra := f.extraInt("--max-num-seqs"); !inExtra {
+		args = append(args, "--max-num-seqs", strconv.Itoa(f.vllmMaxNumSeqs()))
 	}
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
 	}
 	return strings.Join(sh, " "), shellQuoteAll(args)
+}
+
+// VLLMShellOverrides is vllmShellOverrides for a caller outside the agent: the
+// scheduler's expert-parallel gang (PLAN T18.5), whose ranks are `vllm serve`
+// processes the leader launches — so a gang's max_model_len, utilisation or
+// extra args reach every rank the way a worker's do. The `TP=` assignment it
+// may carry is inert there: the gang writes its tensor width itself.
+func (f EngineFlags) VLLMShellOverrides() (overrides string, extraArgs string) {
+	return f.vllmShellOverrides()
 }
 
 // LlamaServerArgs is llamaArgs for a caller outside the agent: the
@@ -259,4 +272,79 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 		args = append(args, splitExtra(v)...)
 	}
 	return strings.Join(sh, " "), shellQuoteAll(args)
+}
+
+// DefaultVLLMMaxNumSeqs is the --max-num-seqs a vLLM worker starts with when
+// the plan pins none (ADR-091): vLLM's own default on cards below 70 GiB, the
+// cards most fleets run. vLLM picks 1024 by itself on larger cards; a plan that
+// wants that says max_num_seqs: 1024. Pinned rather than left to vLLM so the
+// slot count the worker reports is the one the engine enforces.
+const DefaultVLLMMaxNumSeqs = 256
+
+// vllmMaxNumSeqs is the plan's max_num_seqs, else the default.
+func (f EngineFlags) vllmMaxNumSeqs() int {
+	if n, ok := f.posInt("max_num_seqs", 1, 4096); ok {
+		return n
+	}
+	return DefaultVLLMMaxNumSeqs
+}
+
+// extraInt reads a numeric flag out of the plan's raw `extra` arguments, in
+// either spelling ("--flag N" or "--flag=N"). ok = the flag is there at all,
+// even with a value that is not a number — the engine will refuse that itself.
+func (f EngineFlags) extraInt(names ...string) (n int, ok bool) {
+	v, has := f.get("extra")
+	if !has {
+		return 0, false
+	}
+	toks := strings.Fields(v)
+	for i, t := range toks {
+		for _, name := range names {
+			val := ""
+			switch {
+			case t == name:
+				ok = true
+				if i+1 < len(toks) {
+					val = toks[i+1]
+				}
+			case strings.HasPrefix(t, name+"="):
+				ok = true
+				val = strings.TrimPrefix(t, name+"=")
+			default:
+				continue
+			}
+			if x, err := strconv.Atoi(val); err == nil && x > 0 {
+				n = x
+			}
+		}
+	}
+	return n, ok
+}
+
+// LaunchSlots is how many requests an engine this worker launches is told to
+// serve at once (ADR-091), by engine id: the flag on the launch line, or 0
+// when the line carries none and only the engine itself can say (llama.cpp's
+// -np default, SGLang's KV-derived limit — both drivers read the engine's own
+// number, engines.SlotReporter, which wins over this one).
+func (f EngineFlags) LaunchSlots(engine string) int {
+	switch engine {
+	case "vllm":
+		if n, ok := f.extraInt("--max-num-seqs"); ok {
+			return n
+		}
+		return f.vllmMaxNumSeqs()
+	case "sglang":
+		if n, ok := f.extraInt("--max-running-requests"); ok {
+			return n
+		}
+		n, _ := f.posInt("max_running_requests", 1, 4096)
+		return n
+	case "llamacpp":
+		if n, ok := f.extraInt("-np", "--parallel"); ok {
+			return n
+		}
+		n, _ := f.posInt("parallel", 1, 256)
+		return n
+	}
+	return 0
 }

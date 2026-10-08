@@ -31,6 +31,16 @@ type LoadReporter interface {
 	Load(ctx context.Context) (EngineLoad, error)
 }
 
+// SlotReporter is implemented by engines that can say how many requests they
+// serve at once (feature "slot_admission", ADR-091): the number the leader
+// governs dispatch by. It is a property of the running process, not a sample
+// — an engine fixes it at start — so a driver may read it once and keep it.
+// ok = false when the engine does not say; the worker then falls back to the
+// number it launched the engine with, or reports none.
+type SlotReporter interface {
+	Slots(ctx context.Context) (n int, ok bool)
+}
+
 // ParsePromText reads Prometheus text exposition into name → value. Labels
 // are stripped; several series of one name (one per model label) are
 // summed, which is right for a worker that serves one model. Histograms and

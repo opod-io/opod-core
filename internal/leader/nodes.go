@@ -38,7 +38,15 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		// when the node holds nothing, so the shape a pre-gateway client reads
 		// is unchanged.
 		Placements []store.Placement `json:"placements,omitempty"`
+		// Slots is how many requests the worker's engine serves at once, as
+		// its last heartbeat said (ADR-091); omitted = it reports none
+		// (ungoverned). A door mirrors it to count its own dispatches against.
+		Slots int `json:"slots,omitempty"`
+		// InFlight is the requests THIS process's router has on the worker
+		// now — not the doors' (ADR-091: a door counts its own).
+		InFlight int `json:"in_flight,omitempty"`
 	}
+	inflight := s.router.Inflight()
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	out := make([]nodeView, 0, len(nodes))
 	for _, n := range nodes {
@@ -56,6 +64,8 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		if ps, perr := s.store.Placements().GetByNode(r.Context(), n.ID); perr == nil && len(ps) > 0 {
 			v.Placements = ps
 		}
+		v.Slots, _ = s.slotsOfKey(n.ID)
+		v.InFlight = inflight[n.ID]
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)

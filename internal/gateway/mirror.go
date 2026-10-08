@@ -63,6 +63,10 @@ type leaderNode struct {
 	// door holds nothing it cannot rebuild from the leader (ADR-063), and this
 	// is rebuilt on every sync like the rest of the row.
 	WorkerToken string `json:"WorkerToken"`
+	// Slots is how many requests the worker's engine serves at once, as its
+	// heartbeat told the leader (ADR-091); 0 = it reports none. A door counts
+	// its own dispatches against it.
+	Slots int `json:"slots"`
 }
 
 // Mirror keeps a gateway's local (in-memory) store looking like the leader's
@@ -73,6 +77,11 @@ type Mirror struct {
 	http      *http.Client
 	st        store.Store
 	now       func() time.Time
+
+	// OnSlots, when set, receives each mirrored worker's slot count on every
+	// sync (0 = it reports none), so the door's admission gate and picker
+	// govern by the same numbers as the leader's (ADR-091).
+	OnSlots func(nodeID string, slots int)
 
 	mu      sync.Mutex
 	lastOK  time.Time
@@ -146,6 +155,9 @@ func (m *Mirror) Sync(ctx context.Context) error {
 		// worker that unloaded it and every one of those requests fails.
 		if err := m.st.Placements().ReplaceForNode(ctx, n.ID, n.Placements); err != nil {
 			return fmt.Errorf("mirror placements of %s: %w", n.ID, err)
+		}
+		if m.OnSlots != nil {
+			m.OnSlots(n.ID, n.Slots)
 		}
 		m.mu.Lock()
 		m.known[n.ID] = true

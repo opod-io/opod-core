@@ -106,7 +106,7 @@ _opod() {
     local subsub=${words[2]:-}
 
     # Top-level subcommands
-    local cmds="up down status join node model shard image catalog fetch cache token config doctor update upgrade connect disconnect completion version help"
+    local cmds="up down status join node model shard image catalog fetch batch cache token config doctor update upgrade connect disconnect completion version help"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
@@ -221,6 +221,7 @@ _opod() {
         'image:container images, and which one serves a model'
         'catalog:list or export the bundled catalog'
         'fetch:make model weights present in the models dir'
+        'batch:send an OpenAI batch file to an OpenAI URL'
         'cache:list or prune the weight cache of this node'
         'token:manage API keys'
                 'config:show / edit runtime config'
@@ -299,7 +300,7 @@ end
 complete -c opod -f
 
 # Top-level
-complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard image catalog fetch cache token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard image catalog fetch cache token config doctor update upgrade connect disconnect completion version help"
+complete -c opod -n "not __fish_seen_subcommand_from up down status join node model shard image catalog fetch batch cache token config doctor update upgrade connect disconnect completion version help" -a "up down status join node model shard image catalog fetch batch cache token config doctor update upgrade connect disconnect completion version help"
 
 # model subcommands
 complete -c opod -n "__opod_using_command model" -a "add ls list ps search info load unload move remove rm"

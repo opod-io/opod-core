@@ -90,3 +90,40 @@ func TestAcceleratorPresent(t *testing.T) {
 		}
 	}
 }
+
+// The vLLM line always carries --max-num-seqs (ADR-091): the plan's value, else
+// the stated default — unless the plan's raw extra args set it themselves —
+// and LaunchSlots reports the number that is on the line.
+func TestVLLMMaxNumSeqsIsAlwaysOnTheLine(t *testing.T) {
+	cases := []struct {
+		flags, wantArg string
+		want           int
+	}{
+		{`{}`, "'--max-num-seqs' '256'", DefaultVLLMMaxNumSeqs},
+		{`{"max_num_seqs":32}`, "'--max-num-seqs' '32'", 32},
+		{`{"extra":"--max-num-seqs 48"}`, "'--max-num-seqs' '48'", 48},
+		{`{"extra":"--max-num-seqs=12"}`, "'--max-num-seqs=12'", 12},
+	}
+	for _, c := range cases {
+		f := ParseEngineFlags(c.flags)
+		_, extra := f.vllmShellOverrides()
+		if !strings.Contains(extra, c.wantArg) || strings.Count(extra, "--max-num-seqs") != 1 {
+			t.Errorf("%s: want exactly one %s on the line, got %q", c.flags, c.wantArg, extra)
+		}
+		if got := f.LaunchSlots("vllm"); got != c.want {
+			t.Errorf("%s: LaunchSlots(vllm) = %d, want %d", c.flags, got, c.want)
+		}
+	}
+	if got := ParseEngineFlags(`{"parallel":6}`).LaunchSlots("llamacpp"); got != 6 {
+		t.Errorf("llama.cpp -np 6: LaunchSlots = %d", got)
+	}
+	if got := ParseEngineFlags(`{}`).LaunchSlots("llamacpp"); got != 0 {
+		t.Errorf("llama.cpp with no -np: only the engine can say, got %d", got)
+	}
+	if got := ParseEngineFlags(`{"max_running_requests":64}`).LaunchSlots("sglang"); got != 64 {
+		t.Errorf("sglang: LaunchSlots = %d", got)
+	}
+	if got := ParseEngineFlags(`{}`).LaunchSlots("ollama"); got != 0 {
+		t.Errorf("ollama has no slot count: got %d", got)
+	}
+}

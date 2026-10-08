@@ -138,6 +138,7 @@ func engineNameFor(engine string, entry *models.Entry) string {
 // DeleteModel tears a sharded model down through the orchestrator, or
 // removes a local model from the engine, its placements and the store.
 func (s *Server) DeleteModel(ctx context.Context, id string) (ModelOutcome, error) {
+	defer s.capacityChanged() // a pool that loses its workers must not admit against them (ADR-091)
 	shards, _ := s.store.Shards().GetByModel(ctx, id)
 	if len(shards) > 0 {
 		if s.orch == nil {
@@ -176,6 +177,7 @@ func sourceName(source, fallback string) string {
 // (engines.ErrUnloadNotSupported when the engine cannot — a soft no-op).
 // The lifecycle manager owns it when attached.
 func (s *Server) UnloadModel(ctx context.Context, id, actor string) error {
+	defer s.capacityChanged() // a pool that loses its workers must not admit against them (ADR-091)
 	if s.lifecycle != nil {
 		if err := s.lifecycle.Unload(ctx, id, actor); err != nil {
 			return err
@@ -225,6 +227,13 @@ type CreateShardsRequest struct {
 	// (T14.26): ctx, ngl, parallel, kv_cache_type, tensor_split, extra — the
 	// same allowlist and validation a worker's OPOD_ENGINE_FLAGS get.
 	Flags map[string]string `json:"flags,omitempty"`
+	// Expert asks for expert parallelism (feature shard_expert, PLAN T18.5):
+	// every part runs vLLM's own data-parallel ranks with the model's experts
+	// spread over every device of the gang, and the head serves the API. TP
+	// is then the tensor width inside one part and PP must be unset. A leader
+	// older than the field ignores it, which is why a manager reads the
+	// feature before it asks.
+	Expert bool `json:"expert,omitempty"`
 }
 
 // CreateShards builds the gang through the orchestrator. A failed create is
@@ -245,7 +254,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	// The head rides the request (Parallelism.Head), never the orchestrator's
 	// shared field: a create used to write it there for every later create to
 	// read, including a sibling gang's running at the same time.
-	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices, Flags: req.Flags, Head: req.Head}); err != nil {
+	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices, Flags: req.Flags, Head: req.Head, Expert: req.Expert}); err != nil {
 		if errors.Is(err, scheduler.ErrUnplaceable) {
 			// Refused before anything was touched: the gang this create would
 			// have replaced is still serving, and the cleanup below would
@@ -282,6 +291,7 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 
 // RemoveShards tears down every gang of the model.
 func (s *Server) RemoveShards(ctx context.Context, modelID string) error {
+	defer s.capacityChanged() // a pool that loses its workers must not admit against them (ADR-091)
 	if s.orch == nil {
 		return ErrNoOrchestrator
 	}
@@ -297,6 +307,7 @@ func (s *Server) RemoveShards(ctx context.Context, modelID string) error {
 // Taking the last gang away leaves the model with no placement, exactly as
 // removing the whole shard does.
 func (s *Server) RemoveGang(ctx context.Context, modelID, gangID string) error {
+	defer s.capacityChanged() // a pool that loses its workers must not admit against them (ADR-091)
 	if s.orch == nil {
 		return ErrNoOrchestrator
 	}

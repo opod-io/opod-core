@@ -19,11 +19,45 @@ package router
 // saturated worker still sorts behind every worker with headroom — a cache
 // hit is not worth a queue — and when no candidate holds any of the request's
 // blocks the prefix pin decides, as it did before.
+//
+// A worker whose engine keeps a PEER tier (feature "kv_peer_hits", ADR-089)
+// can fetch blocks a sibling's tier holds instead of computing them, so a hit
+// has three kinds, scored in that order:
+//
+//   local  the worker's own leading blocks          blockWeight each
+//   peer   the further leading blocks the best
+//          sibling with a peer tier holds           blockWeight × peerBlockShare each
+//   none                                            nothing
+//
+// A peer hit is real but slower than a local one — the blocks still cross
+// the network — so it is credited at a fraction, which is what lets load
+// outweigh affinity: a busy worker holding the prefix no longer beats an idle
+// sibling that can fetch it. Only workers that BOTH state a peer tier share
+// blocks; with no peer tier among the candidates the score is exactly the
+// local one, block for block.
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/store"
+)
+
+// KVTierPeer is the Capabilities.KVTier a worker registers when its engine's
+// KV cache tier is shared with its siblings (OPOD_KV_TIER=peer).
+const KVTierPeer = "peer"
+
+// peerBlockShare is what a block fetched from a sibling's tier is worth
+// against one the worker holds itself. A fixed half until a measured TTFT with
+// the peer tier on and off says better: below 1 so a local hit outranks a
+// peer hit at equal load, above 0 so a peer hit outranks a cold worker.
+const peerBlockShare = 0.5
+
+// Hit kinds (blockHit.kind).
+const (
+	hitLocal = "local"
+	hitPeer  = "peer"
 )
 
 // BlockResolver answers the chain of block hashes for a request's prompt, or
@@ -74,16 +108,85 @@ func prefixBlocksFrom(ctx context.Context) []string {
 	return h
 }
 
-// blockCredit is what the block index takes off a worker's score for this
-// request, and how many blocks that was. Caller holds r.mu (read).
+// blockCredit is what the block index takes off one worker's score for this
+// request, and how many blocks that was, with no sibling to fetch from: the
+// local half of blockCredits. Caller holds r.mu (read).
 func (r *Router) blockCredit(ctx context.Context, nodeID string) (credit float64, blocks int) {
+	h := r.blockCredits(ctx, []string{nodeID}, func(string) bool { return false })[nodeID]
+	return h.credit, h.blocks
+}
+
+// blockHit is one candidate's credit against the request's block chain, and
+// which kind of hit earned it ("" = none).
+type blockHit struct {
+	credit float64
+	blocks int // the candidate's own leading blocks
+	peer   int // further leading blocks a sibling's peer tier holds for it
+	kind   string
+}
+
+// blockCredits scores every candidate against the request's chain, with the
+// peer view: a candidate that states a peer tier is credited, beyond its own
+// blocks, for the further leading blocks the best OTHER peer candidate holds.
+// Caller holds r.mu (read). nil when block scoring is off or the request has
+// no chain — every lookup then reads the zero hit, which is today's score.
+func (r *Router) blockCredits(ctx context.Context, ids []string, peer func(id string) bool) map[string]blockHit {
 	if r.blockWeight <= 0 || r.blockHeld == nil {
-		return 0, 0
+		return nil
 	}
 	hashes := prefixBlocksFrom(ctx)
 	if len(hashes) == 0 {
-		return 0, 0
+		return nil
 	}
-	blocks = r.blockHeld(nodeID, hashes)
-	return r.blockWeight * float64(blocks), blocks
+	out := make(map[string]blockHit, len(ids))
+	// The two longest chains among peer candidates: a candidate's best
+	// sibling is the first unless that is itself.
+	var best, second int
+	bestID := ""
+	for _, id := range ids {
+		n := r.blockHeld(id, hashes)
+		out[id] = blockHit{blocks: n}
+		if !peer(id) {
+			continue
+		}
+		switch {
+		case n > best:
+			second, best, bestID = best, n, id
+		case n > second:
+			second = n
+		}
+	}
+	for id, h := range out {
+		if peer(id) {
+			sib := best
+			if id == bestID {
+				sib = second
+			}
+			h.peer = max(0, sib-h.blocks)
+		}
+		h.credit = r.blockWeight * (float64(h.blocks) + peerBlockShare*float64(h.peer))
+		switch {
+		case h.blocks > 0:
+			h.kind = hitLocal
+		case h.peer > 0:
+			h.kind = hitPeer
+		}
+		out[id] = h
+	}
+	return out
+}
+
+// kvTierOf reads the KV cache tier a worker registered (capabilities JSON,
+// field KVTier); "" = VRAM only, or a worker that predates the field.
+func kvTierOf(n *store.Node) string {
+	if n == nil || n.HardwareJSON == "" {
+		return ""
+	}
+	var caps struct {
+		KVTier string `json:"KVTier"`
+	}
+	if json.Unmarshal([]byte(n.HardwareJSON), &caps) != nil {
+		return ""
+	}
+	return caps.KVTier
 }

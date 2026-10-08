@@ -179,6 +179,26 @@ func TestPlanWatcherReadsTheGangsItDeclares(t *testing.T) {
 	}
 }
 
+// An expert gang's degrees (tensor 1, pipeline 1 over two parts) are not a
+// tensor/pipeline shape: a heal that dropped `expert` would ask for a gang the
+// plan never declared. The flag rides to the create (PLAN T18.5).
+func TestPlanWatcherReadsAnExpertGang(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plan.json")
+	plan := `{"revision": 1, "model": {"id": "moe", "engine": "vllm"},
+	  "shardGroups": [{"id": "g0", "engine": "vllm",
+	    "parts": [{"node": "node-b", "gpu": 0}, {"node": "node-c", "gpu": 0}],
+	    "parallelism": {"tensor": 1, "pipeline": 1, "data": 2, "expert": true}}]}`
+	if err := os.WriteFile(path, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := planWatcherServer(t, path)
+	srv.StartPlanWatcher(t.Context())
+	specs := srv.plan.gangSpecs()
+	if len(specs) != 1 || !specs[0].Expert || specs[0].Parts != 2 {
+		t.Fatalf("the expert gang must be read as one: %+v", specs)
+	}
+}
+
 // The loop runs on every leader, including a standalone `opod up` with no plan
 // and no orchestrator. It must be a no-op there rather than a panic.
 func TestHealGangsIsANoOpWithoutAPlan(t *testing.T) {

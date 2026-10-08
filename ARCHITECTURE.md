@@ -105,12 +105,13 @@ A control-plane DB outage does **not** kill in-flight requests — the router ke
 
 ## Process model
 
-One binary, six modes determined by subcommand (and by `--role` on `opod up`):
+One binary, seven modes determined by subcommand (and by `--role` on `opod up`):
 
 | Mode | What runs in-process |
 |---|---|
 | `opod up` | **Leader**: HTTP gateway · Router · Control plane (`/admin/v1`) · embedded SQLite · local engine adapter. No UI: `/` answers 404 (ADR-022) |
 | `opod up --role gateway --leader <url>` | **Gateway (front door)**: the same HTTP gateway and Router, and nothing else. No `/admin/v1`, no join surface, no engine of its own: the worker registry, the join tokens, the gang calls and the plan revision belong to exactly ONE process. Its worker list (nodes, placements, gang parts) is mirrored from the leader every 10 s and a stale list keeps workers but adopts none; its usage rows are pushed to the leader — the single writer — and deduplicated there by a row id the door mints; every 10 s it polls a spend snapshot back (`GET /admin/v1/spend`: the doors the leader has heard from and the published lag bound, 10 s, also on `/gatewayz`) — the per-key quota and rate-limit shares that snapshot once carried left core with the per-key policy on 2026-09-28. Serves the probes (`/healthz`, `/readyz`, `/loadz`, `/metrics`) plus `/gatewayz`, which is its staleness and backlog. Every push doubles as a heartbeat carrying the door's own load, so an idle door still counts as a door and the LEADER's `/gatewayz` can publish the endpoint's total across doors — the only aggregate a scaler for the doors can honestly read, since keep-alive pins a client to one door |
+| `opod up --role door --routes <file>` | **Door (one URL for many endpoints, ADR-087)**: an HTTP surface and a watched routes file (`adminapi.DoorRoutes`), nothing else — no store, no engine, no catalog, no key, no Router. Reads each request's `model`, looks the alias up and forwards the request to that endpoint through the stdlib reverse proxy, headers and body as sent (`Authorization` included; the one change is `model`, rewritten to the route's `model` when it differs from the alias, because a leader routes by its own model id) and every stream chunk flushed as it arrives. Chooses no worker, judges no load, retries nothing, falls back to nothing: there is still one router per endpoint, its leader. The endpoint's leader verifies the caller's key, so a key for A sent with B's model is refused by B. `GET /v1/models` asks every endpoint with the caller's key and lists the aliases answered 200, cached 10 s per SHA-256 of the key. Unknown / empty / `auto` model → `404 model_not_found`; an unreachable endpoint → `502 upstream_unavailable` for that model only. Body caps are the leader's per route. An https upstream is trusted through the route's `ca` PEM only. Serves `/healthz`, `/readyz` (ready once a routes file has been read) and `/gatewayz` (`role: door`, routes revision and age) |
 | `opod join "<url>?token=…"` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `opod <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
 | `opod doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
@@ -422,10 +423,12 @@ no rpc parts at all, and the coordinator override is ignored.
 - Live shard migration / rebalancing. (Moving a whole, unsharded model between workers is built — "Live model move" under Scheduler; a gang is rebuilt, not moved.)
 - Dynamic shard count change.
 
-#### Three gang backends, chosen by the catalog's `sharding.engine`
+#### Four gang backends: three chosen by the catalog's `sharding.engine`, one by the request
 
 A gang is formed by one of three schemes, and the catalog entry picks it
-(`Orchestrator.gangBackend`, `internal/scheduler/sharding.go`):
+(`Orchestrator.gangBackend`, `internal/scheduler/sharding.go`) — unless the create asks for **expert
+parallelism** (`expert: true`, feature `shard_expert`), which is a shape and not an engine and has its own
+backend (below the table):
 
 | `sharding.engine` | Scheme | What runs on each machine |
 |---|---|---|
@@ -439,6 +442,20 @@ them". A `TP` wider than one machine is **allowed and logged loudly** rather tha
 the rule that a tensor group never crosses a fabric, because SGLang's native scheme *is* that shape and the
 honest answer is to say what it costs (every all-reduce of every token on the wire) instead of having no
 multi-node path for the engine at all. Pipeline is still the cheap shape on ordinary networking.
+
+**Expert parallelism** (`vllmexpert.go`, PLAN T18.5): a create with `expert: true` on a `sharding.engine: vllm`
+entry runs vLLM's own data-parallel launcher, one `vllm serve` per part with no Ray. Every device is an
+attention data-parallel rank (or every `tp` devices inside a part are one), and `--enable-expert-parallel`
+spreads the mixture-of-experts model's experts over all of them. Rank 0 runs
+`--data-parallel-size <parts × devices ÷ tp> --data-parallel-size-local <devices ÷ tp>
+--data-parallel-address <rank 0> --data-parallel-rpc-port <port>` and serves the API — it is the coordinator
+row the router dials; every other part runs the same line with `--headless --data-parallel-start-rank
+<part × local>`. One part is the in-machine shape: `--data-parallel-size <devices> --enable-expert-parallel`,
+nothing to dial. `pp` is refused (an expert gang has no pipeline), `tp` must divide a part's devices, and any
+other `sharding.engine` is refused before anything is torn down. Each rank gets `VLLM_HOST_IP` (its own
+address); the collective libraries' interface pins come from the worker's own environment, which whoever
+renders the worker sets — the line only makes Gloo follow `NCCL_SOCKET_IFNAME` when Gloo's own pin is unset. The two-part shape is what ran on two one-card machines over ethernet; the
+one-process shape has not run on a machine with several cards yet.
 
 No bundled catalog entry sets `sharding.engine: sglang` yet — the SGLang gang is reached through an override
 entry (`~/.opod/catalog`, `$OPOD_CATALOG_DIR`) or a control-plane plan. `images.yaml`'s `gang` column knows
@@ -1219,7 +1236,7 @@ opod/
 │   └── …   (no cmd_usage.go / cmd_audit.go — the query APIs left with ADR-022)
 │
 ├── internal/
-│   ├── leader/                # leader HTTP server + admin API + middlewares + plan/auth/policy watchers
+│   ├── leader/                # leader HTTP server + admin API + middlewares + plan/auth/policy watchers + the door role (doorrole.go)
 │   ├── gateway/               # the front-door role (`--role gateway`): registry mirror, usage push, spend poll
 │   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
 │   ├── api/                   # the OpenAI protocol adapter + request overrides, usage recording, guardrail hook
@@ -1476,7 +1493,7 @@ localhost:8080/admin/v1/capabilities | jq .features`. Each key is commented at i
 promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `policy_file`,
 `events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`,
 `engine_liveness`, `worker_goodbye`, `worker_sleep`, `request_wake`, `kv_block_events`, `node_drain`, `placement_drain`, `model_move`,
-`shards`, `shard_head`, `shard_groups`, `shard_sglang`, `plan_heal_gangs`, `gateway_spend`, `mtls`,
+`shards`, `shard_head`, `shard_groups`, `shard_sglang`, `shard_expert`, `plan_heal_gangs`, `gateway_spend`, `mtls`,
 `tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.
 
 The wire types of this surface — `Load`, the usage and lifecycle stream batches, the auth and policy
@@ -1525,6 +1542,9 @@ Mechanisms a manager drives through this surface:
   block hashes) and `internal/agent/kvblocks.go` (the engine flag, the tokenize route); leader
   `internal/leader/prefixindex.go` (the per-worker sets, the resolver) and `internal/router/prefixblocks.go` (the
   score). Off until a worker is started with `OPOD_KV_EVENTS=1` and the policy gives `routing.prefixBlockWeight`.
+  **Peer hits** (`kv_peer_hits`): a worker started with `OPOD_KV_TIER=peer` is credited, beyond its own leading
+  blocks, for the further ones the best other `peer` candidate holds, at half a block's weight
+  (`router.peerBlockShare`) — local > peer > none, so load can outweigh affinity when a sibling can lend the prefix.
 - **Request wake** (`request_wake`, `internal/leader/wakeonrequest.go`): a request for a model whose only
   holders sleep resumes one of them from the request path, single-flight per worker, holds the caller for up to
   3 s and serves; past that budget the caller gets `503` + `Retry-After` and the resume finishes for the next.
@@ -1539,9 +1559,44 @@ Mechanisms a manager drives through this surface:
   snapshot never undoes, and `issuedAt`, `authfile.go`) and the policy snapshot
   (`/etc/opod-auth/policy.json`, `OPOD_POLICY_FILE`: `routing`, `logging.accessLog`, guardrail webhooks,
   `auth.maxSnapshotAgeSec` — past it `/v1` answers 503 naming the stale snapshot, `authstale.go` — and
-  `admission.holdMs`/`maxHeld` — a request that finds no capacity waits up to that long for some before the 503,
-  `admission.go` — `policyfile.go`). `/loadz` reports the auth snapshot's revision and age (`auth_snapshot`). No plan file = standalone; the auth and policy watchers keep looking for a file that appears after
+  `admission.holdMs`/`maxHeld` — a request that finds no worker slot waits up to that long for one before the 503,
+  `admission.go` — and `admission.classes` — one queue per request class, `critical` before `standard` before
+  `sheddable`, deficit round robin per flow (the key, or its `team`) inside a class, each class capped at its
+  `maxShare` of the slots, the lowest class shed first; the class is the auth snapshot key's and `X-Opod-Class` may
+  only lower it, `admission_classes.go` — `policyfile.go`). See "Admission" below. `/loadz` reports the auth snapshot's revision and age (`auth_snapshot`). No plan file = standalone; the auth and policy watchers keep looking for a file that appears after
   boot, and `off` disables them. A bad file keeps the last good snapshot.
+- **Admission** (`slot_admission`, `admission_hold`, `admission_classes`; `internal/leader/admission.go`,
+  `admission_classes.go`, `admission_slots.go`): the leader dispatches a chat request to a worker only while that
+  worker has a free SLOT, and holds the rest in memory, ranked by class. A worker states how many requests its
+  engine serves at once on every heartbeat (`slots`): the engine's own number where it gives one (llama.cpp
+  `/props` `total_slots`; SGLang's effective running-request limit from `/server_info`), else the number on the line
+  the worker launched it with (vLLM `--max-num-seqs`, which the worker always sets — the plan's `max_num_seqs`, else
+  256). A gang's slots are its head's: the coordinator is asked once, the head worker's heartbeat stands in. Per
+  model the leader keeps a pool — the slots of the workers and gangs that take its requests now (cached, recomputed
+  on every capacity change and at least each second) and the requests it has dispatched and not seen complete. A
+  request takes a slot when one is free for its class and nobody waits ahead of it; otherwise it waits in its class
+  queue. A completion (the answer's last byte) frees one slot and grants exactly one waiter: the highest class below
+  its share first, deficit round robin by flow inside it. Each class may hold at most `maxShare` of the slots at once
+  (`max(1, floor(share × slots))`; default critical 1, standard 1, sheddable 0.25), so headroom stays free for the
+  classes above it. The picker never lands a request on a worker whose slots are all in flight while another has
+  one free, and a sticky or prefix pin yields the same way. Budgets: `holdMs` bounds every wait; with `holdMs` 0 a
+  request that finds no worker able to serve gets the 503 + `Retry-After` at once (as before), and one that finds
+  every slot busy waits with no deadline of the leader's — the queue the engine kept before — bounded by `maxHeld`
+  (default 64) and the client's own timeout. A worker that reports no slots is ungoverned: its pool is unbounded,
+  which is the old rule (hold only while nothing can serve). The requests waiting in the gate are added to `/loadz`
+  `queue_depth` (and the `vllm:num_requests_waiting` alias): past a governed worker's slots the queue is the
+  leader's, and an autoscaler scaling on queue depth must still see it. `/gatewayz` `admission.ungoverned_workers` names such
+  workers and `opod_admission_ungoverned_workers` counts them. With no classes in the policy every request is
+  `standard` with share 1, on the same gate. Only `/v1/chat/completions` passes the gate; embeddings and rerank do
+  not. A hedged request counts one slot in the pool and occupies one per replica on the workers. Each
+  `--role gateway` door counts only its own dispatches against the slots it mirrors from the leader's registry, so
+  with N doors a worker can be sent up to N times its slots (`/gatewayz` `slot_scope: per_door`,
+  `worker_slots_overcommit_max`). Metrics: `opod_admission_in_flight{model,class}`, `opod_admission_slots{model}`,
+  `opod_worker_slots{node}` beside `opod_router_inflight{node}`, `opod_admission_held{class}`,
+  `opod_admission_shed_total{class,reason}`, `opod_admission_slot_waits_total{class}`, and the wait itself,
+  `opod_admission_wait_seconds{class}` (every admitted request; 0 when a slot was free). The time to first token and
+  the usage row's latency are measured from the request's arrival at the leader, before the gate, so both include
+  that wait — and so does `/loadz` `ttft_p50_ms` / `ttft_p95_ms`.
 - **Probe header** (`probe_header`): a request carrying `X-Opod-Probe` is served like any other and counted like none
   — not in `/loadz`'s in-flight, `rpm_1m`, `unavailable_1m` or the idle clock — so a prover cannot move the number an
   autoscaler reads (`internal/leader/loadstats.go`).

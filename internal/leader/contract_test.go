@@ -113,6 +113,16 @@ var contractFeatureFloor = []string{
 	"auth_tombstones", "auth_snapshot_age",
 	// ADR-082: the bounded hold before a 503
 	"admission_hold",
+	// ADR-086: request classes and fair share in that hold
+	"admission_classes",
+	// ADR-091: admission governed by worker slots, with a share per class
+	"slot_admission",
+	// ADR-087: the cell door, one URL for many endpoints
+	"door",
+	// ADR-089: a sibling's prefix is a peer hit for a worker with a peer KV tier
+	"kv_peer_hits",
+	// ADR-090: expert-parallel gangs on vLLM's own launcher
+	"shard_expert",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

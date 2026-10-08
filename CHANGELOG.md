@@ -5,6 +5,151 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-07 — a busy endpoint ranks callers: admission is governed by worker slots
+
+- **The leader dispatches to a worker only while it has a free slot** (feature `slot_admission`). Request classes
+  used to act only while NO worker could serve; on a busy endpoint every request went straight into the engine's
+  own first-come queue, so classes ranked nothing — with a batch at 8 in flight against a 4-slot llama.cpp worker,
+  critical p95 time to first token went from 22 ms to 535 ms. Now each model has a pool of worker slots; a request
+  that finds none free for its class waits in the leader, ranked, and every completion grants exactly one waiter,
+  the highest class first, fair by flow inside it.
+- **A worker states its slots on every heartbeat** (`slots`): llama.cpp's `/props` `total_slots`, SGLang's effective
+  running-request limit (`/server_info`), or the number on the launch line — vLLM always starts with
+  `--max-num-seqs` now: the plan's `max_num_seqs`, else **256**, so the worker and the engine agree on it. (vLLM picks
+  1024 by itself on cards of 70 GiB and more; a plan that wants that sets `max_num_seqs: 1024`.) A gang's slots are
+  its head's. A worker that states none is **ungoverned**: its model is admitted without a bound, the old rule, and
+  `/gatewayz` `admission.ungoverned_workers` plus `opod_admission_ungoverned_workers` say so.
+- **Each class may hold at most its share of the slots** (policy `admission.classes[].maxShare`, default critical 1,
+  standard 1, **sheddable 0.25**; the cap is `max(1, floor(share × slots))`). A class at its share waits even while
+  slots are free, so a critical request finds one at once instead of waiting for a whole batch answer. A quarter,
+  not half: on a 4-slot llama.cpp worker, critical p95 time to first token beside a batch measured +114 % at 0.5 and
+  −4 % at 0.25.
+- **Time to first token includes the wait for a slot.** It is measured from the request's arrival at the leader,
+  before the gate, in the usage row (`ttft_ms`, and `latency_ms` likewise), `opod_time_to_first_token_seconds` and
+  `/loadz` `ttft_p50_ms` / `ttft_p95_ms`. Measured from after the gate, all three hid the queueing the gate moved
+  out of the engine. The wait itself is `opod_admission_wait_seconds{class}`.
+- **One path.** With no classes in the policy every request is `standard`, share 1, on the same gate; the old
+  "hold only when nothing can serve" path is gone.
+- **Behaviour changes on every endpoint, including ones with no policy.** `holdMs` 0 still answers `503` +
+  `Retry-After` at once when no worker can serve; a request that finds every slot BUSY now waits in the leader with
+  no deadline of its own — the queue the engine used to keep — and `maxHeld` (64 when unset) now bounds that queue
+  too: past slots + 64 waiting, a request is shed with `503` + `Retry-After` instead of queueing in the engine.
+  Raise `maxHeld` for a deeper queue.
+- **The picker lands each request on a free slot:** a worker whose slots are all in flight ranks behind every worker
+  with one free, and a sticky or prefix pin yields the same way.
+- **Doors** (`--role gateway`) mirror each worker's slots from the leader's registry (`GET /admin/v1/nodes` now
+  carries `slots` and the leader's own `in_flight` per worker) and count only their own dispatches; with N doors a
+  worker can be sent up to N times its slots. `/gatewayz` states `slot_scope: per_door` and
+  `worker_slots_overcommit_max`.
+- **`/loadz` `queue_depth` includes the requests waiting in the leader** for a slot (and so does the vLLM-named
+  `vllm:num_requests_waiting` alias): past a governed worker's slots the queue is the leader's now, not the engine's,
+  and an autoscaler that scales on queue depth must keep seeing it.
+- **Not governed:** `/v1/embeddings` and `/v1/rerank` (they never passed admission); a hedged request takes one pool
+  slot but one engine slot per replica.
+- **Metrics:** `opod_admission_in_flight{model,class}`, `opod_admission_slots{model}`,
+  `opod_admission_ungoverned_workers{model}`, `opod_worker_slots{node}`, `opod_admission_slot_waits_total{class}`,
+  `opod_admission_wait_seconds{class}`, and `opod_admission_shed_total` gains the reason `unavailable`.
+
+## 2026-10-07 — expert-parallel gangs on vLLM's own launcher
+
+- **`POST /admin/v1/shards/create` accepts `expert: true`** (feature `shard_expert`): a mixture-of-experts model's
+  experts are spread over every device of the gang and attention runs data-parallel beside them, on vLLM's own
+  launcher — no Ray. One `vllm serve` per part: the head runs `--data-parallel-size <parts × devices ÷ tp>
+  --data-parallel-size-local <devices ÷ tp> --data-parallel-address <head> --data-parallel-rpc-port <port>
+  --enable-expert-parallel` and serves the API; every other part runs the same line with `--headless
+  --data-parallel-start-rank <part × local>`. The router dials the head only. One part holding every device is the
+  in-machine shape, one process with nothing to dial.
+- **Refused before anything is torn down:** a catalog entry whose `sharding.engine` is not `vllm`, `pp > 1`, and a
+  `tp` that does not divide a part's devices (409, like any shape the fleet cannot hold).
+- **The gang's engine flags reach every rank** (`max_model_len`, `gpu_memory_utilization`, `extra`, …), with the
+  part's VRAM budget deciding the memory fraction as on every other start path.
+- **Heal within the plan carries it:** a plan-declared gang with `parallelism.expert` is re-formed as an expert gang.
+- A leader without the feature ignores the field, so a manager reads `shard_expert` before it asks.
+
+## 2026-10-07 — a prefix a sibling holds counts as a peer hit
+
+- **A worker states its KV cache tier** (feature `kv_peer_hits`, ADR-089): `OPOD_KV_TIER=cpu|peer` on `opod join`
+  is registered as `hardware_json.KVTier`; any other value refuses to start. Unset = VRAM only, as before.
+- **The prefix score has three kinds of hit: local > peer > none.** With `routing.prefixBlockWeight` on, a worker
+  that states `peer` is credited, beyond its own leading blocks, for the further leading blocks the best OTHER
+  worker that also states `peer` holds — at half a local block's weight, because those blocks still cross the
+  network. So an idle worker that can fetch a prefix outranks a busy one that holds it, while at equal load the
+  holder still wins. Saturation is judged first, as before.
+- **No peer tier = today's score, block for block.** A worker can fetch only from a sibling that shares its tier,
+  so a peer tier on one side changes nothing. The engine's peer connector is started by the manager's engine flags;
+  core only scores.
+
+## 2026-10-07 — `opod batch run`: a generic OpenAI batch client
+
+- **`opod batch run --input <file|url> --base-url <url> --dir <work dir>`** reads an input in OpenAI's batch line
+  format (`custom_id`, `method`, `url`, `body`), sends each line to any OpenAI-compatible server at bounded
+  concurrency (`--concurrency`, default 8), and writes OpenAI's batch output shape: `output.jsonl` for the 2xx
+  answers, `errors.jsonl` for the rest — a non-2xx answer keeps its status and body (a model the server does not
+  serve is its `404`), a line that does not parse or a transport failure carries an error code.
+- **The work directory is the progress record, and a line is never sent twice.** Each line is marked in
+  `sent.jsonl` and fsynced BEFORE its request leaves; each result carries `batch_req_<line>`. A run started again on
+  the same directory skips what is finished, and a line marked sent with no result — in flight when the previous run
+  was killed — is written to the error file as `interrupted` rather than sent again: at-most-once, because a resend
+  could run (and bill) an inference that already ran. A partial line left by a kill is cut on the next open.
+- **A cancel is asked for; a SIGTERM alone is not one.** SIGINT, or a SIGTERM while the OpenAI batch object at
+  `--status-url` (`GET …/v1/batches/<id>`, read once with the key) is no longer `validating`/`in_progress` — or no
+  longer opens with the key — cancels at the next line: nothing new is sent, what is in flight gets `--drain` (20 s)
+  and is then written as `cancelled`, and the run exits 0 with `state: cancelled`. Any other SIGTERM (an eviction, a
+  node drain, a deleted pod, or no `--status-url`) is an INTERRUPTION: the same stop and drain, lines cut short are
+  written as `interrupted`, and when lines remain unsent the run exits **75** with `state: interrupted`, so a Job
+  restarts it and the run on the same directory continues, sending no line twice. Found on a cell: a deleted batch
+  pod used to exit 0 as "cancelled" and its batch ended `completed` with 285 of 1000 lines never sent.
+- `--model-map alias=id` rewrites a line's `model`; `--ca` trusts exactly one certificate for an https `--base-url`;
+  `--ready-timeout` waits for `GET /v1/models` to accept the key before the first line. stdout carries
+  `{"progress":{…}}` lines and a last `{"batch":{…}}` with the counts, the state and which result files were written.
+- **Inputs and results through URLs that carry their own authorization.** `--input-url` reads the input from a
+  presigned (signed) GET without sending the key — a store refuses a request with two credentials — and
+  `--output-url` / `--error-url` PUT `output.jsonl` / `errors.jsonl` when the run ends, cancelled or not, with their
+  length stated (a presigned PUT takes no chunked body); an empty file is not written. Each defaults to
+  `$OPOD_BATCH_INPUT_URL`, `$OPOD_BATCH_OUTPUT_URL`, `$OPOD_BATCH_ERROR_URL`, so a URL that is a credential need not
+  be on the command line, and a URL's signature is cut from any error the runner prints. A resumed run writes again
+  and replaces what the interrupted one wrote.
+- No store, no server and no control-plane concept: what runs it decides where the files go.
+
+## 2026-10-07 — one URL for many endpoints: the door
+
+- **`opod up --role door --routes <file>`** (feature `door`). A cell of five endpoints used to be five base URLs.
+  A door is one: it reads each request's `model`, finds the endpoint in a routes file
+  (`{revision, routes[{alias, upstream, model, ca}]}`, re-read every 10 s like the plan, auth and policy files; a
+  file that does not parse or repeats an alias keeps the last good routes) and forwards the request there.
+- **A name lookup, not a router.** The body and headers go through as sent — `Authorization` included — and a
+  stream is flushed chunk by chunk. The door chooses no worker, judges no load, retries nothing and falls back to
+  nothing; the endpoint's leader still picks the worker. The one change it makes: when a route's `model` differs from
+  its alias, the request's `model` is rewritten to it, because a leader routes by its own model id.
+- **No credential of its own.** The endpoint's leader checks the caller's key, so a key for endpoint A sent with B's
+  model is refused by B. `GET /v1/models` asks every endpoint with the caller's key and lists the aliases whose
+  endpoint answered 200, cached 10 s per key under the key's SHA-256 (never the key).
+- **OpenAI's answers.** An unknown model, no model and `auto` are `404` with `code: model_not_found`; an endpoint
+  that does not answer is `502 upstream_unavailable` for that model alone. Body caps are the leader's, per route.
+- **An https endpoint is trusted through the route's `ca`** (PEM), exactly that certificate, as a worker trusts its
+  leader. `/readyz` is ready once a routes file has been read; `/gatewayz` says `role: door`, the routes revision and
+  its age. A door opens no store, starts no engine and mints no key.
+
+## 2026-10-07 — a full endpoint can rank callers and share fairly between teams
+
+- **Request classes** (`admission_classes`, policy `admission.classes[]{name, holdMs, maxHeld}`). An API key in the
+  auth snapshot may carry a `class` — `critical`, `standard` or `sheddable`, `standard` when absent — and a `team`.
+  When the policy lists classes, a request that finds no capacity is held in its class's queue: the turn always goes
+  to the highest class waiting, and inside a class to the next flow by deficit round robin, a flow being the key's
+  team or else the key. A flow sending a thousand requests and a flow sending one are served one for one.
+- **Each class has its own budget and cap.** A class not listed takes `admission.holdMs` and no cap of its own;
+  `admission.maxHeld` caps every class together. A request that finds the hold full takes the place of a request of
+  a lower class, which is shed; with nothing lower, it is shed itself. Every shed is the same `503` + `Retry-After`.
+- **`X-Opod-Class` may lower a request's class, never raise it.** A higher class in the header is ignored.
+- **No classes in the policy = the first-come hold, unchanged.** Nothing is metered: the class ranks requests, it
+  does not count them, and nothing on the request path reads the store for it.
+- **Per door.** With `--role gateway` replicas each door ranks the requests it holds. `/gatewayz` says so under
+  `admission`: `scope: per_door`, and `flow_share_skew_max` — across N doors a flow can be served up to N times as
+  often as a flow of its class that reaches one door, and class order holds within a door only.
+- **Metrics:** `opod_admission_held` now carries a `class` label (`standard` for every request when no classes are
+  set, so the sum over classes is the old number), and `opod_admission_shed_total{class,reason}` counts sheds by
+  `deadline`, `cap` and `evicted`. `opod_admission_held_total{outcome}` gains the outcome `shed_evicted`.
+
 ## 2026-10-06 — an interrupted pull resumes at once, not after six hours
 
 - **`opod fetch` stops cleanly on Ctrl-C and SIGTERM.** It used to die mid-write and leave its download lock

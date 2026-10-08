@@ -60,6 +60,13 @@ type Server struct {
 	prefix      *prefixIndex // the blocks each worker's engine holds (prefixindex.go, feature "kv_block_events")
 	nodeLoad    sync.Map     // node id → nodeLoadSample: the worker's engine load from its last heartbeat (build item 14)
 	gangLoad    sync.Map     // coordinator shard id → nodeLoadSample: a gang's pressure, scraped from the process that holds its KV cache (loadstats.go)
+	// slots: node id (or router.GangKey) → int, how many requests that
+	// worker's engine (or gang's head) serves at once (ADR-091,
+	// admission_slots.go). Absent = ungoverned.
+	slots sync.Map
+	// gangSlotsAsked: coordinator shard id → gangSlotsAnswer, what a gang's
+	// coordinator said about its slots, asked once per address.
+	gangSlotsAsked sync.Map
 	// gateways is the leader's view of its front doors (T11.1, ADR-063): who
 	// has pushed usage lately, and the row ids already recorded so a retry does
 	// not bill twice.
@@ -81,8 +88,7 @@ type Server struct {
 	plan           planFileState
 	authf          authFileState
 	policy         policyFileState
-	admission      admissionState // the policy's hold before a 503 (ADR-082)
-	capacity       capacitySignal // wakes held requests when who-can-serve changes
+	admission      admissionState // the slot gate: dispatch while slots are free, hold the rest by class (ADR-091)
 
 	// movePoll / moveSettle shorten a model move's waits (modelmove.go); zero
 	// = the orchestrator's defaults. Only tests set them.
@@ -199,6 +205,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
 	// policy snapshot switches the weights on.
 	routed.SetLoadSource(s.loadSignal)
+	// The picker never sends a request to a worker whose slots are all in
+	// flight while another has one free (ADR-091): the gate admits against
+	// the pool's total, the picker lands each admitted request on a free slot.
+	routed.SetSlotSource(s.slotsOfKey)
 	// The blocks each worker's engine holds (prefixindex.go): wired always,
 	// scored only when the policy gives the weight.
 	s.prefix = newPrefixIndex()
@@ -686,16 +696,21 @@ func (s *Server) limitRequestBody(next http.Handler) http.Handler {
 		chat = defaultMaxBodyBytes
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		limit := otherMaxBodyBytes
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
-			limit = chat
-		case strings.HasSuffix(r.URL.Path, "/embeddings"), strings.HasSuffix(r.URL.Path, "/rerank"):
-			limit = embeddingsMaxBodyBytes
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyCapFor(r.URL.Path, chat))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// bodyCapFor is a /v1 route's body cap, given the chat cap in force. The
+// leader and the cell door (doorrole.go) answer one way for one route.
+func bodyCapFor(path string, chat int64) int64 {
+	switch {
+	case strings.HasSuffix(path, "/chat/completions"):
+		return chat
+	case strings.HasSuffix(path, "/embeddings"), strings.HasSuffix(path, "/rerank"):
+		return embeddingsMaxBodyBytes
+	}
+	return otherMaxBodyBytes
 }
 
 // dispatchOpenAIChat inspects the request body's "model" field. If it names

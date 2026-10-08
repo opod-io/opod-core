@@ -20,7 +20,10 @@ package sglang
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -44,6 +47,9 @@ func init() {
 type Driver struct {
 	openaicompat.Client
 	genRate engines.RateTracker // gen_throughput / generation_tokens_total → tokens/s between Load samples
+	// slots is the server's running-request limit, read once (Slots).
+	slotsMu sync.Mutex
+	slots   int
 }
 
 // New returns a driver for an SGLang server at endpoint (e.g. http://gpu:30000).
@@ -122,6 +128,64 @@ func (s *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	}
 	return ld, nil
 }
+
+// Slots is how many requests SGLang runs at once: its scheduler's EFFECTIVE
+// max running requests, which it derives from the KV pool when
+// --max-running-requests is not given — so the number read back is the one the
+// scheduler enforces, not the flag. Read once from /server_info (the older
+// spelling /get_server_info answers the same body), summed over its
+// data-parallel ranks: `internal_states[i].effective_max_running_requests_per_dp`,
+// or `max_running_requests` on a release that predates that key.
+func (s *Driver) Slots(ctx context.Context) (int, bool) {
+	s.slotsMu.Lock()
+	defer s.slotsMu.Unlock()
+	if s.slots > 0 {
+		return s.slots, true
+	}
+	for _, path := range []string{"/server_info", "/get_server_info"} {
+		if n := s.readSlots(ctx, path); n > 0 {
+			s.slots = n
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func (s *Driver) readSlots(ctx context.Context, path string) int {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.BaseURL+path, nil)
+	if err != nil {
+		return 0
+	}
+	resp, err := s.HTTP.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	var info struct {
+		InternalStates []struct {
+			Effective int `json:"effective_max_running_requests_per_dp"`
+			Max       int `json:"max_running_requests"`
+		} `json:"internal_states"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&info) != nil {
+		return 0
+	}
+	total := 0
+	for _, st := range info.InternalStates {
+		switch {
+		case st.Effective > 0:
+			total += st.Effective
+		case st.Max > 0:
+			total += st.Max
+		}
+	}
+	return total
+}
+
+var _ engines.SlotReporter = (*Driver)(nil)
 
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)

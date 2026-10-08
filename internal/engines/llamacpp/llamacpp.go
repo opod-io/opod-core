@@ -197,6 +197,16 @@ func (l *Driver) totalSlots(ctx context.Context) int {
 	return l.slots
 }
 
+// Slots is the server's slot count (`total_slots` in /props, set by `-np`):
+// how many requests llama-server decodes at once. Anything past it waits in
+// llama-server's own queue, where no class can rank it (ADR-091).
+func (l *Driver) Slots(ctx context.Context) (int, bool) {
+	n := l.totalSlots(ctx)
+	return n, n > 0
+}
+
+var _ engines.SlotReporter = (*Driver)(nil)
+
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)
 

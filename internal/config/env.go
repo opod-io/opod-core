@@ -28,9 +28,13 @@ type Env struct {
 	// gateway (T11.1, ADR-063) — a copied FRONT of a leader: it serves /v1 and
 	// nothing of /admin/v1, mirrors the leader's worker registry, pushes its
 	// usage rows there and enforces from the spend snapshot it polls back.
-	Role      string `env:"OPOD_ROLE" side:"leader" doc:"leader (default) | gateway. A gateway serves /v1 only: no join surface, no engine of its own, its worker list mirrored from the leader and its usage pushed there (T11.1)"`
+	Role      string `env:"OPOD_ROLE" side:"leader" doc:"leader (default) | gateway | door. A gateway serves /v1 only: no join surface, no engine of its own, its worker list mirrored from the leader and its usage pushed there (T11.1). A door is one URL for a cell's endpoints: it forwards each request to the endpoint its model names (ADR-087)"`
 	LeaderURL string `env:"OPOD_LEADER_URL" side:"leader" doc:"the leader a GATEWAY mirrors and pushes to (http://host:8080); required when OPOD_ROLE=gateway"`
 	GatewayID string `env:"OPOD_GATEWAY_ID" side:"leader" doc:"this door's name in the leader's door count, which sets each key's 1/N rate share; unset = the hostname"`
+	// cell door (ADR-087) — a name lookup in front of a cell's endpoints: it
+	// reads a request's model, finds the endpoint in the routes file and
+	// forwards the request there. No store, no engine, no credential.
+	DoorRoutes string `env:"OPOD_DOOR_ROUTES" side:"leader" doc:"the routes file a DOOR watches: {revision, routes[{alias, upstream, model, ca}]}; required when OPOD_ROLE=door"`
 	// worker
 	Accelerator   string `env:"OPOD_ACCELERATOR" side:"worker" doc:"the vendor the manager placed the worker on (nvidia | amd | intel | tt | none); unset = what the worker detects"`
 	EngineFlags   string `env:"OPOD_ENGINE_FLAGS" side:"worker" doc:"JSON map of engine flags from the plan (tp, max_model_len, ctx, ngl, …)"`
@@ -39,6 +43,7 @@ type Env struct {
 	KVEvents      bool   `env:"OPOD_KV_EVENTS" side:"worker" doc:"1 = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds"`
 	SleepMode     bool   `env:"OPOD_SLEEP_MODE" side:"worker" doc:"1 = vLLM starts with sleep mode on (the sleep autoscale tier)"`
 	WorkerRole    string `env:"OPOD_WORKER_ROLE" side:"worker" doc:"prefill | decode for disaggregated serving; unset = a whole worker"`
+	KVTier        string `env:"OPOD_KV_TIER" side:"worker" doc:"cpu | peer: the tier below VRAM the engine keeps its KV cache in, stated on registration; with peer the leader counts a prefix a sibling peer holds as a peer hit for this worker. Unset = VRAM only"`
 	PlanRevision  string `env:"OPOD_PLAN_REVISION" side:"worker" doc:"the plan revision this worker process was started for; the leader routes a share of traffic per revision (R15.17)"`
 	AdvertiseAddr string `env:"OPOD_ADVERTISE_ADDR" side:"worker" doc:"the host:port the leader should dial (overlay / multi-NIC hosts)"`
 	NodeID        string `env:"OPOD_NODE_ID" side:"worker" doc:"a stable node id across restarts (else node.yaml, else POD_NAME, else random)"`

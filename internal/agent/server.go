@@ -72,6 +72,10 @@ type Server struct {
 	// Log is where the worker's own load (SelfLoad) reports; nil = slog's
 	// default. The HTTP surface answers its caller and needs none.
 	Log *slog.Logger
+	// launchedSlots is the slot count on the line of the engine this worker
+	// last launched (EngineFlags.LaunchSlots); 0 = none launched, or the line
+	// named none. The heartbeat reports it when the engine cannot say itself.
+	launchedSlots atomic.Int64
 	// ModelRevision / ModelSHA256 pin the model VERSION this worker serves
 	// (R15.16): the Hub revision to fetch and the digest the file must hash to.
 	// Empty revision = "main", which moves between pulls; a manager that cares
@@ -703,6 +707,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 	if err != nil {
 		return err
 	}
+	s.launchedSlots.Store(int64(s.EngineFlags.LaunchSlots("vllm")))
 	_ = s.Supervisor.Stop("vllm-serve") // exclusive: one model per worker
 	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
 	if len(s.Adapters) > 0 {
@@ -904,6 +909,7 @@ func (s *Server) launchSGLang(model, servedName string) error {
 	if err != nil {
 		return err
 	}
+	s.launchedSlots.Store(int64(s.EngineFlags.LaunchSlots("sglang")))
 	_ = s.Supervisor.Stop("sglang-serve") // exclusive: one model per worker
 	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{
 		ID:          "sglang-serve",
@@ -974,7 +980,8 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 	flags := s.EngineFlags
 	args = append(args, flags.llamaArgs()...)                     // plan flags: ctx, ngl, parallel, kv cache type, extra
 	args = append(args, flags.llamaOffloadArgs(s.Accelerated)...) // offload to the card this worker reserved, unless the plan pinned ngl
-	_ = s.Supervisor.Stop("llama-server")                         // exclusive: one model per worker
+	s.launchedSlots.Store(int64(flags.LaunchSlots("llamacpp")))
+	_ = s.Supervisor.Stop("llama-server") // exclusive: one model per worker
 	// Launch via a login shell + exec, NOT a bare exec.Command: the direct
 	// supervisor launch (new process group, null stdin) makes the Intel CPU
 	// llama-server SEGFAULT, but it runs fine from a shell (same fix as the vLLM
@@ -1351,3 +1358,7 @@ func assistantMessage(content string, tools *engines.ToolCallAccumulator) map[st
 	}
 	return msg
 }
+
+// LaunchedSlots is the slot count on the launch line of the engine this worker
+// last started (ADR-091), 0 when it started none or the line named none.
+func (s *Server) LaunchedSlots() int { return int(s.launchedSlots.Load()) }

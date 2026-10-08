@@ -111,16 +111,22 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		score     float64
 	}
 	rank := make(map[string]ranked, len(workers))
-	warm := false // some candidate holds blocks of this request's prefix
+	warm := false // some candidate holds blocks of this request's prefix, or can fetch them from a peer
+	ids := make([]string, len(workers))
+	for i, w := range workers {
+		ids[i] = w.NodeID
+	}
+	// Blocks the workers' engines actually hold for this prompt, their own
+	// and — for a worker with a peer tier — a sibling's (prefixblocks.go): a
+	// warm cache outweighs a little load, a peer-warm one less of it.
+	hits := r.blockCredits(ctx, ids, func(id string) bool { return caps[id].kvPeer })
 	for _, w := range workers {
 		sat, sc := r.loadRank(w.NodeID)
-		// Blocks the worker's engine actually holds for this prompt
-		// (prefixblocks.go): a warm cache outweighs a little load.
-		credit, blocks := r.blockCredit(ctx, w.NodeID)
-		if blocks > 0 {
+		hit := hits[w.NodeID]
+		if hit.kind != "" {
 			warm = true
 		}
-		rank[w.NodeID] = ranked{sat, sc - credit}
+		rank[w.NodeID] = ranked{sat, sc - hit.credit}
 	}
 	sort.SliceStable(workers, func(i, j int) bool {
 		a, b := rank[workers[i].NodeID], rank[workers[j].NodeID]
@@ -146,8 +152,11 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// it to the front of the sorted slice so it's tried before the
 	// least-loaded candidate. KV-cache locality outweighs a small
 	// inflight delta on the alternative.
+	// A pin never lands a request on a worker whose slots are all in flight
+	// while another has one free: it would queue in that engine, where no
+	// request class ranks it (ADR-091).
 	stickyNode := r.stickyPick(ctx, model)
-	if stickyNode != "" {
+	if stickyNode != "" && !r.slotsFullLocked(stickyNode) {
 		workers = preferNode(workers, stickyNode)
 	}
 
@@ -355,9 +364,16 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 // machinery — a gang is not a worker and must not be benched like one.
 func gangKey(modelID, gangID string) string { return "shard:" + modelID + ":" + gangID }
 
+// GangKey is gangKey for the leader, which publishes a gang's slot count
+// under the key the picker counts the gang's requests by (ADR-091).
+func GangKey(modelID, gangID string) string { return gangKey(modelID, gangID) }
+
 // gangRank scores one gang for the pick. Caller holds r.mu.
 func (r *Router) gangRank(gangID, modelID string, coord store.Shard) (saturated bool, score float64) {
 	score = float64(r.inflight[gangKey(modelID, gangID)])
+	if r.slotsFull(gangKey(modelID, gangID)) {
+		return true, score // the head's slots are all in flight (ADR-091)
+	}
 	if r.loadSource == nil || coord.NodeID == "" || coord.NodeID == "local" {
 		return false, score
 	}

@@ -182,10 +182,53 @@ func contractFeatures() map[string]bool {
 		// its revision and age, and policy auth.maxSnapshotAgeSec > 0 refuses
 		// keyed /v1 traffic past that age with 503 + a reason (ADR-085).
 		"auth_snapshot_age": true,
-		// A request that finds no capacity is HELD up to policy
-		// admission.holdMs for some before the 503 + Retry-After, at most
-		// admission.maxHeld at once (ADR-082). 0 = the 503 at once.
+		// A request that finds no worker slot is HELD up to policy
+		// admission.holdMs for one before the 503 + Retry-After, at most
+		// admission.maxHeld at once (ADR-082, ADR-091). With holdMs 0 a
+		// request that finds NO worker able to serve gets the 503 at once,
+		// and one that finds every slot busy waits with no leader deadline.
 		"admission_hold": true,
+		// With policy admission.classes, the hold is one queue per request
+		// class — critical, standard, sheddable — served strictly in that
+		// order and by deficit round robin per flow (the key, or its team)
+		// inside a class; each class has its own holdMs, maxHeld and
+		// maxShare, and a full hold sheds the lowest class first. The class
+		// is the auth snapshot key's; X-Opod-Class may only lower it
+		// (ADR-086). No classes = one class, standard, on the same gate.
+		"admission_classes": true,
+		// Admission is governed by worker SLOTS (ADR-091): the heartbeat's
+		// `slots` is how many requests a worker's engine serves at once; the
+		// leader dispatches to a model's workers only while its requests in
+		// flight are below their total, grants exactly one held request per
+		// completion, caps each class at policy maxShare of the slots
+		// (default critical 1, standard 1, sheddable 0.25), and lands each
+		// request on a worker with a free slot. A worker that reports no
+		// slots is ungoverned (unbounded); /gatewayz admission names it and
+		// opod_admission_ungoverned_workers counts it. Chat completions only.
+		"slot_admission": true,
+		// `opod up --role door --routes <file>`: one URL for a cell's
+		// endpoints. The door reads a request's model, looks the alias up in
+		// the watched routes file (adminapi.DoorRoutes) and forwards the
+		// request unchanged to that endpoint; it holds no credential, so the
+		// endpoint's leader verifies the key. GET /v1/models lists the aliases
+		// whose endpoint accepts the caller's key (ADR-087).
+		"door": true,
+		// A worker may state a KV cache tier on registration (OPOD_KV_TIER,
+		// hardware_json.KVTier). When two candidates both state `peer`, the
+		// picker counts the leading blocks one holds as a PEER hit for the
+		// other — credited below a block of its own and above none — so an idle
+		// worker that can fetch a prefix outranks a busy one that holds it
+		// (ADR-089). With no peer tier the prefix score is kv_block_events'.
+		"kv_peer_hits": true,
+		// POST /admin/v1/shards/create accepts expert: true (PLAN T18.5): the
+		// gang is a mixture-of-experts model's expert-parallel shape on vLLM's
+		// own launcher — one `vllm serve` per part, data-parallel attention
+		// over every device (tp inside a part, no pp), the experts spread over
+		// all of them, rank 0 serving the API and the others headless. The
+		// router dials rank 0 only. Without this key a leader ignores the
+		// field and would form a tensor/pipeline gang, so a manager must not
+		// ask it for one.
+		"shard_expert": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once
 		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating

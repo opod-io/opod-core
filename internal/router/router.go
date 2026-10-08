@@ -176,6 +176,7 @@ type Router struct {
 	// Load-aware choice (load.go, R9.4): the workers' own engine samples,
 	// the policy's weights, and the prefix-affinity pins.
 	loadSource      LoadSource
+	slotSource      SlotSource
 	kvWeight        float64
 	kvSaturationPct int
 	prefixAffinity  bool

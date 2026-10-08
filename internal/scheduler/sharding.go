@@ -218,6 +218,11 @@ type Parallelism struct {
 	// named, fell back to the default, and the two gangs collided on a port.
 	// Empty = the leader's own OPOD_COORDINATOR_NODE, else its picker.
 	Head string
+	// Expert asks for expert parallelism (vllmexpert.go): a mixture-of-experts
+	// model's experts spread over every device of the gang, attention
+	// data-parallel beside them. TP is then the tensor width inside one part
+	// and PP must be unset — the split is expertSplit's, not resolve's.
+	Expert bool
 }
 
 // resolve fills in the defaults and checks the product against the GPU count.
@@ -289,6 +294,9 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	if err != nil {
 		return err
 	}
+	if err := checkExpertCreate(entry, shardCount, par); err != nil { // before the teardown: refusing replaces nothing
+		return err
+	}
 	// One create of this model's gangs at a time (createGuard): a second one
 	// would tear down this one's parts before they are on record.
 	release, err := o.forms.claim(entry.ID, gangID)
@@ -337,7 +345,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	// Backend fork, chosen by the catalog's sharding.engine: everything below
 	// this point is llama.cpp's rpc-server + coordinator, and an engine that
 	// brings its own multi-node scheme skips all of it.
-	if backend := o.gangBackend(entry.Sharding.Engine); backend != nil {
+	if backend := o.gangBackend(entry.Sharding.Engine, par.Expert); backend != nil {
 		return backend(ctx, entry, gangID, workers, par, ports)
 	}
 	// llama.cpp's RPC backend has NO tensor split — it only cuts layers. Silently
@@ -702,8 +710,14 @@ type gangBuilder func(ctx context.Context, entry models.Entry, gangID string, wo
 // manager refuses a gang for an engine with no backend at plan time, and the
 // CLI's own error below says which engines have one. This function only maps
 // the name.
-func (o *Orchestrator) gangBackend(engine string) gangBuilder {
+//
+// Expert parallelism is the one scheme a REQUEST picks (vllmexpert.go): it is
+// a shape of a vLLM gang, not an engine, and checkExpertCreate has already
+// held the entry to vLLM before anything was torn down.
+func (o *Orchestrator) gangBackend(engine string, expert bool) gangBuilder {
 	switch {
+	case expert:
+		return o.createShardedVLLMExpert
 	case isVLLMRayBackend(engine):
 		return o.createShardedVLLMRay
 	case isSGLangBackend(engine):

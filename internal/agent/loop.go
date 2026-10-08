@@ -51,6 +51,10 @@ type Agent struct {
 	// Blocks is the prefix-cache translator the Server feeds (feature
 	// "kv_block_events"); nil = the worker reports no blocks.
 	Blocks *kvevents.Translator
+	// LaunchedSlots is the slot count the worker launched its engine with
+	// (Server.LaunchedSlots), reported when the engine cannot state its own
+	// (engines.SlotReporter). nil = this worker launched nothing.
+	LaunchedSlots func() int
 
 	HTTP              *http.Client
 	HeartbeatInterval time.Duration
@@ -163,6 +167,14 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 			hb["load"] = ld
 		}
 		cancel()
+	}
+	// How many requests the engine serves at once (feature "slot_admission",
+	// ADR-091): the leader dispatches to this worker only below it. The
+	// engine's own word wins; the number on the launch line is the fallback;
+	// with neither the field is omitted and the leader treats the worker as
+	// unbounded — and says so.
+	if n := a.slots(ctx); n > 0 {
+		hb["slots"] = n
 	}
 	// What changed in the engine's prefix cache since the last heartbeat, as
 	// block hashes (feature "kv_block_events"). Drained only when the post
@@ -405,4 +417,20 @@ func engineSeverity(status string) int {
 	default:
 		return 0
 	}
+}
+
+// slots is the engine's slot count: its own word, else the launch line's.
+func (a *Agent) slots(ctx context.Context) int {
+	if sr, ok := a.Engine.(engines.SlotReporter); ok && a.Engine != nil {
+		sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		n, ok := sr.Slots(sctx)
+		cancel()
+		if ok && n > 0 {
+			return n
+		}
+	}
+	if a.LaunchedSlots != nil {
+		return a.LaunchedSlots()
+	}
+	return 0
 }

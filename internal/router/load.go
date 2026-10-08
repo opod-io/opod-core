@@ -42,6 +42,38 @@ type LoadSignal struct {
 // LoadSource answers the current signal for a worker node.
 type LoadSource func(nodeID string) (LoadSignal, bool)
 
+// SlotSource answers how many requests a worker (its node id) or a gang
+// (GangKey) serves at once; ok=false = it reports none (ADR-091).
+type SlotSource func(key string) (int, bool)
+
+// SetSlotSource wires the leader's slot counts into the picker: a worker
+// whose requests in flight reach its slots ranks behind every worker with a
+// free slot, and a sticky or prefix pin never lands a request on it while
+// another has one (ADR-091). The leader's gate admits against the pool's
+// total; this is what lands each admitted request on a free slot.
+func (r *Router) SetSlotSource(fn SlotSource) {
+	r.mu.Lock()
+	r.slotSource = fn
+	r.mu.Unlock()
+}
+
+// slotsFull reports whether key's requests in flight have reached the slots
+// it reports. Caller holds r.mu (read). False when it reports none.
+func (r *Router) slotsFull(key string) bool {
+	if r.slotSource == nil {
+		return false
+	}
+	n, ok := r.slotSource(key)
+	return ok && n > 0 && r.inflight[key] >= n
+}
+
+// slotsFullLocked is slotsFull for a caller that does not hold r.mu.
+func (r *Router) slotsFullLocked(key string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.slotsFull(key)
+}
+
 // SetLoadSource wires the leader's heartbeat samples into the picker.
 func (r *Router) SetLoadSource(fn LoadSource) {
 	r.mu.Lock()
@@ -79,6 +111,9 @@ func (r *Router) LoadAware() (kvWeight float64, saturationPct int, prefixAffinit
 // after every unsaturated one, then by score. Caller holds r.mu (read).
 func (r *Router) loadRank(nodeID string) (saturated bool, score float64) {
 	score = float64(r.inflight[nodeID])
+	if r.slotsFull(nodeID) {
+		return true, score // every slot busy: a request here waits in the engine's queue
+	}
 	if r.loadSource == nil {
 		return false, score
 	}

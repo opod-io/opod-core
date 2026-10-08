@@ -13,6 +13,10 @@ type nodeCaps struct {
 	raw      string
 	role     string
 	revision int
+	// kvPeer: the worker's engine keeps a KV cache tier its siblings read
+	// from (Capabilities.KVTier "peer", ADR-089) — prefixblocks.go scores a
+	// sibling's blocks as a peer hit for it.
+	kvPeer bool
 }
 
 // capsOf returns a node's parsed capabilities, parsing the blob only when it
@@ -33,7 +37,7 @@ func (r *Router) capsOf(n *store.Node) nodeCaps {
 	if ok && c.raw == n.HardwareJSON {
 		return c
 	}
-	c = nodeCaps{raw: n.HardwareJSON, role: roleOf(n), revision: revisionOf(n)}
+	c = nodeCaps{raw: n.HardwareJSON, role: roleOf(n), revision: revisionOf(n), kvPeer: kvTierOf(n) == KVTierPeer}
 	r.mu.Lock()
 	if r.caps == nil {
 		r.caps = map[string]nodeCaps{}

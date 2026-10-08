@@ -35,6 +35,14 @@ type Capabilities struct {
 	// to load another, an engine that holds several does not. Empty = a worker
 	// that predates the field; the leader then assumes nothing.
 	Engine string `json:"Engine,omitempty"`
+	// KVTier (feature kv_peer_hits) is the tier below VRAM this worker's
+	// engine keeps its KV cache in, from OPOD_KV_TIER: "" = VRAM only, "cpu"
+	// = host memory of its own, "peer" = host memory its siblings read from
+	// too. The leader scores a prefix held by a sibling that also states
+	// "peer" as a peer hit for this worker (router/prefixblocks.go). The
+	// engine's own connector is started by the manager's engine flags; this
+	// field only tells the leader it is there.
+	KVTier string `json:"KVTier,omitempty"`
 }
 
 // GPU describes a single GPU device.

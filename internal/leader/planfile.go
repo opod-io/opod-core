@@ -99,6 +99,9 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 				Parallelism struct {
 					Tensor   int `json:"tensor"`
 					Pipeline int `json:"pipeline"`
+					// Expert: a heal re-forms an expert gang as one, never as
+					// the tensor/pipeline gang its degrees would otherwise read as.
+					Expert bool `json:"expert"`
 				} `json:"parallelism"`
 				DevicesPerPart int `json:"devicesPerPart"`
 				// Flags are the gang's engine knobs (the manager's plan carries
@@ -128,7 +131,7 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 				continue // a gang with no parts is not a gang to form
 			}
 			gangs = append(gangs, planGang{ID: g.ID, Parts: len(g.Parts),
-				TP: g.Parallelism.Tensor, PP: g.Parallelism.Pipeline, Devices: g.DevicesPerPart, Flags: g.Flags})
+				TP: g.Parallelism.Tensor, PP: g.Parallelism.Pipeline, Devices: g.DevicesPerPart, Flags: g.Flags, Expert: g.Parallelism.Expert})
 		}
 		s.plan.revision, s.plan.modelID, s.plan.adapters, s.plan.gangs = doc.Revision, doc.Model.ID, names, gangs
 		s.plan.present = true

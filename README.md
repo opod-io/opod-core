@@ -379,7 +379,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - **Memory lifecycle** — admission control against live engine residency (a machine is never overcommitted), `opod model load --swap` with LRU evict-and-drain, `--pin` to protect a model, desired placements restored on restart, `opod down` releases engine memory by default, `--exclusive` for one-model-per-machine
 - Heterogeneous sharding for a model larger than any single node — `opod shard create <model> [N]` orchestrates every part end to end. Three backends, picked by the catalog entry's `sharding.engine`: llama.cpp **RPC parts** (layer-split, the default), a **vLLM + Ray** cluster (tensor and pipeline parallel), and **SGLang's own distributed launcher** (rank 0 serves the group). A model may run **several gangs** under one leader (`--gang <id>`) and the router picks the least loaded ready one
 - Live model migration — **built**: `opod model move <id> --from <node> --to <node>` hands a whole model to another worker by overlap, so no request fails and none waits for a cold load (no KV-cache transfer; a gang is rebuilt, not moved)
+- **Admission by worker slots, ranked by request class** (`slot_admission`, `admission_classes`): each worker states how many requests its engine serves at once (llama.cpp slots, SGLang's running-request limit, vLLM `--max-num-seqs`); the leader dispatches only into a free slot and holds the rest — `critical` before `standard` before `sheddable`, fair per key or team inside a class, each class capped at its `maxShare` of the slots (sheddable a quarter by default) — so a batch cannot push interactive callers into the engine's own queue. A worker that states no slot count is ungoverned and named on `/gatewayz`.
 - **Front doors** (`opod up --role gateway --leader <url>`): extra copies of the gateway for one endpoint. A door serves `/v1` only — no `/admin/v1`, no join surface, no engine — mirrors the leader's worker list, pushes its usage rows to the leader (the single writer) and polls back the leader's door count and lag bound (`/admin/v1/spend`)
+- **One URL for many endpoints** (`opod up --role door --routes <file>`): a door reads each request's `model`, finds the endpoint that answers it in a watched routes file (`{revision, routes[{alias, upstream, model, ca}]}`) and forwards the request there unchanged, streaming included. It is a name lookup, not a router — no worker choice, no retry, no fallback — and it holds no credential: the endpoint's leader checks the caller's key. `GET /v1/models` lists the models whose endpoint accepts the caller's key; an unknown model is OpenAI's `404 model_not_found`
 - Cross-platform workers: Mac (MLX), Linux+NVIDIA (vLLM, SGLang, llama.cpp), Linux+AMD (llama.cpp ROCm and vLLM ROCm both proven on a Radeon host; SGLang ROCm is an Instinct-only upstream build), Linux+Intel Arc (llama.cpp SYCL proven), Tenstorrent (vLLM on tt-metal, proven), CPU (llama.cpp)
 - HA leader (planned)
 
@@ -829,12 +831,13 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 |---|---|---|
 | `OPOD_PLAN_FILE` | leader | the mounted plan the leader serves within (default `/etc/opod/plan.json`; absent = standalone) |
 | `OPOD_AUTH_FILE` | leader | the mounted auth snapshot — keys, `requireKeys`, key tombstones (`revokedKeys`), `issuedAt`, the worker-certificate policy (default `/etc/opod-auth/auth.json`; `off` = no watcher) |
-| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, guardrail webhook rules, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission hold before a 503 (`admission.holdMs`, `admission.maxHeld`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
+| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, guardrail webhook rules, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission gate — a request waits for a free worker slot, ranked by class (`admission.holdMs`, `admission.maxHeld`, and per request class `admission.classes[]{name, holdMs, maxHeld, maxShare}`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
 | `OPOD_COORDINATOR_NODE` | leader | pin the llama.cpp RPC coordinator to a node id (`local` = the leader itself). Default: the worker with the most **GPU** memory, falling back to host RAM for a worker with no card |
 | `OPOD_OTLP_LOGS_ENDPOINT` | leader | the leader's own log records over OTLP/HTTP, beside stderr (URL or bare `host:port`). Bounded queue, never blocks. Empty = off |
-| `OPOD_ROLE` | leader | `leader` (default) or `gateway` — a front door that serves `/v1` only (`opod up --role gateway`) |
+| `OPOD_ROLE` | leader | `leader` (default), `gateway` — a front door that serves `/v1` only for one endpoint (`opod up --role gateway`) — or `door`, one URL for many endpoints chosen by `model` (`opod up --role door`) |
 | `OPOD_LEADER_URL` | leader | the leader a **gateway** mirrors and pushes to (`http://host:8080`); required with `OPOD_ROLE=gateway` (`--leader`) |
 | `OPOD_GATEWAY_ID` | leader | this door's name in the leader's door count, which sets each key's 1/N rate share; unset = the hostname |
+| `OPOD_DOOR_ROUTES` | leader | the routes file a **door** watches, `{revision, routes[{alias, upstream, model, ca}]}`; required with `OPOD_ROLE=door` (`--routes`) |
 | `OPOD_ACCELERATOR` | worker | the vendor the manager placed this worker on (`nvidia\|amd\|intel\|tt\|none`); unset = what the worker detects |
 | `OPOD_ENGINE_FLAGS` | worker | JSON map of engine flags from the plan (`tp`, `max_model_len`, `ctx`, `ngl`, …) |
 | `OPOD_ADAPTERS` | worker | JSON list of LoRA adapters `[{name, source, rank}]`, served as `<model>:<name>` |
@@ -842,6 +845,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_KV_EVENTS` | worker | `1` = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds |
 | `OPOD_SLEEP_MODE` | worker | `1` = vLLM starts with sleep mode on (the sleep autoscale tier) |
 | `OPOD_WORKER_ROLE` | worker | `prefill` \| `decode` for disaggregated serving; unset = a whole worker |
+| `OPOD_KV_TIER` | worker | `cpu` \| `peer`: the tier below VRAM the engine keeps its KV cache in, stated on registration; with `peer` the leader counts a prefix a sibling peer holds as a peer hit for this worker. Unset = VRAM only |
 | `OPOD_PLAN_REVISION` | worker | the plan revision this worker process was started for; the leader splits traffic per revision |
 | `OPOD_ADVERTISE_ADDR` | worker | the `host:port` the leader should dial (overlay / multi-NIC hosts) |
 | `OPOD_NODE_ID` | worker | a stable node id across restarts (else `node.yaml`, else `POD_NAME`, else random) |
@@ -1362,6 +1366,7 @@ The CLI is the whole interface: every admin action is a command here, and each o
 # --- lifecycle ---
 opod up [--no-wizard] [--auto-pull=false] [--exclusive] [--unload-on-exit]
         [--config PATH] [--role gateway --leader http://leader:8080]
+        [--role door --routes FILE]
                                   Start the local node (first-run wizard picker
                                   installs a starter model unless --no-wizard is
                                   set — only with router.pull_default_model /
@@ -1370,7 +1375,10 @@ opod up [--no-wizard] [--auto-pull=false] [--exclusive] [--unload-on-exit]
                                   --role gateway starts a FRONT DOOR for another
                                   leader's endpoint: /v1 only, no /admin/v1, no join
                                   surface, no engine — its worker list mirrored from
-                                  --leader and its usage pushed there
+                                  --leader and its usage pushed there.
+                                  --role door is one URL for many endpoints: each
+                                  request goes to the endpoint its model names in
+                                  --routes; no store, no engine, no credential
 opod down [--no-unload]          Stop the local node and release engine memory
                                   (--no-unload leaves models resident)
 opod status [--json]             Show local + cluster status
@@ -1448,6 +1456,26 @@ opod cache prune [--dir D] [--keep a.gguf,repo@rev] [--min-age 24h] [--target-fr
                                   Reclaim space; a dry run unless --apply, and never
                                   a file this binary did not fetch; --sweep also clears
                                   crashed pulls older than that (0 = off)
+
+# --- offline batches (a generic OpenAI batch client) ---
+opod batch run (--input <file|url> | --input-url <signed url>) --base-url <url>
+               --dir D [--concurrency 8] [--model-map alias=id] [--ca PEM]
+               [--ready-timeout 5m] [--drain 20s]
+               [--output-url <signed PUT>] [--error-url <signed PUT>]
+               [--status-url <…/v1/batches/<id>>]
+                                  Send an OpenAI batch input (JSONL: custom_id,
+                                  method, url, body) at bounded concurrency and
+                                  write OpenAI's output.jsonl + errors.jsonl in D.
+                                  D is the progress record: run again to resume.
+                                  A line is NEVER sent twice — one in flight at a
+                                  kill lands in errors.jsonl as "interrupted".
+                                  SIGINT cancels at the next line; SIGTERM cancels
+                                  only when the --status-url batch is no longer
+                                  in_progress, else exits 75 to be resumed.
+                                  --output-url/--error-url PUT the (partial)
+                                  results either way, with no key (the URL is
+                                  the credential; $OPOD_BATCH_*_URL by default).
+                                  Key: $OPOD_API_KEY
 
 # --- sharded models (one model split across N machines) ---
 opod shard create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID]

@@ -37,6 +37,7 @@ type MoveModelRequest struct {
 
 // MoveModel resolves the model and runs the move, journalling each step.
 func (s *Server) MoveModel(ctx context.Context, id string, req MoveModelRequest) (scheduler.MoveResult, error) {
+	defer s.capacityChanged() // the source drains and is released: its slots leave the pool (ADR-091)
 	if s.orch == nil {
 		return scheduler.MoveResult{}, ErrNoOrchestrator
 	}

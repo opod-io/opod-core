@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # opod container entrypoint — one image, two roles. Env contract (set by the opod control
 # plane's executor, or by hand):
-#   OPOD_ROLE=leader|gateway|worker
+#   OPOD_ROLE=leader|gateway|door|worker
 #   leader:  OPOD_LISTEN, OPOD_JOIN_TOKEN, OPOD_REQUIRE_KEYS, OPOD_PULL_DEFAULT_MODEL, OPOD_ENGINE (all optional)
 #   gateway: OPOD_LEADER_URL (required), OPOD_ADMIN_TOKEN (required — the registry and spend reads are
 #            admin-keyed), OPOD_GATEWAY_ID (defaults to the hostname), OPOD_LISTEN (optional)
+#   door:    OPOD_DOOR_ROUTES (required — the routes file it forwards by), OPOD_LISTEN (optional)
 #   worker:  OPOD_LEADER_URL (required), OPOD_JOIN_TOKEN (required unless OPOD_NODE_CERT), OPOD_ENGINE=llamacpp|vllm|sglang,
 #            OPOD_LOAD_MODEL=<catalog id> (+ OPOD_LOAD_REPO / OPOD_LOAD_FILE overrides), OPOD_MODELS_DIR,
 #            OPOD_ENGINE_FLAGS (json), POD_IP / POD_NAME (Kubernetes downward API)
@@ -40,7 +41,7 @@ DATA="${OPOD_DATA_DIR:-/var/lib/opod}"
 # CONFIGURED models directory whatever the role. So a door's (unused) models
 # directory lives under its writable data dir. The path is never read: what a
 # door needs is the registry it mirrors and the auth snapshot it is given.
-if [ "$ROLE" = gateway ]; then
+if [ "$ROLE" = gateway ] || [ "$ROLE" = door ]; then
   MODELS="${OPOD_MODELS_DIR:-$DATA/models}"
 else
   MODELS="${OPOD_MODELS_DIR:-/data/models}"
@@ -91,6 +92,17 @@ if [ "$ROLE" = gateway ]; then
     sleep 5
   done
   log "gateway: listen=$OPOD_LISTEN leader=$OPOD_LEADER_URL id=${OPOD_GATEWAY_ID:-$(hostname)}"
+  exec opod up --config "$DATA/config.yaml" --no-wizard
+fi
+
+# A CELL DOOR is one URL for many endpoints (ADR-087): it forwards each request
+# to the endpoint its model names, from a routes file it watches. It has no
+# leader to wait for — the endpoints come and go behind it, and a route whose
+# endpoint is not up answers 502 for that model alone.
+if [ "$ROLE" = door ]; then
+  : "${OPOD_DOOR_ROUTES:?OPOD_DOOR_ROUTES is required for a door (the routes file it forwards by)}"
+  export OPOD_LISTEN="${OPOD_LISTEN:-:8080}"
+  log "door: listen=$OPOD_LISTEN routes=$OPOD_DOOR_ROUTES"
   exec opod up --config "$DATA/config.yaml" --no-wizard
 fi
 

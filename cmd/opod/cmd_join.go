@@ -144,6 +144,15 @@ func cmdJoin(args []string) {
 	default:
 		die("OPOD_WORKER_ROLE %q: use prefill or decode, or leave it unset", role)
 	}
+	// ADR-089: the KV cache tier the manager started the engine with. The
+	// leader reads it to score a sibling's prefix as a peer hit; a value it
+	// would not understand is refused here rather than silently routed as none.
+	switch tier := strings.TrimSpace(env.KVTier); tier {
+	case "", "cpu", "peer":
+		caps.KVTier = tier
+	default:
+		die("OPOD_KV_TIER %q: use cpu or peer, or leave it unset", tier)
+	}
 	// R15.17: the plan revision this process serves. A manager that splits
 	// traffic between revisions sets it; a bad value is ignored rather than
 	// fatal, because a worker that will not start is worse than one the leader
@@ -272,6 +281,9 @@ func cmdJoin(args []string) {
 		ModelSHA256:   env.ModelSHA256,
 		Log:           log,
 	}
+	// The heartbeat's slot count falls back to what this server put on the
+	// engine's launch line (ADR-091) when the engine cannot state its own.
+	a.LaunchedSlots = srv.LaunchedSlots
 	defer sup.StopAll()
 
 	ok(os.Stdout, "joining cluster at %s as %s", leader, nodeID)
