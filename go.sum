@@ -48,8 +48,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
-github.com/opod-io/opod-sdk v0.3.1 h1:zFNaRsxZGfjWGfiQhIE/RDXSQgGjh5LsftMxcHtB5nw=
-github.com/opod-io/opod-sdk v0.3.1/go.mod h1:3QDlAYpLBKLhkJCX1GNswOqjZVAMu54tWEEVqW3IKHU=
+github.com/opod-io/opod-sdk v0.4.0 h1:oC/1CJZH/A+QAqN89o2BBjqSQ3ipDHrmGHR3NnrXt3A=
+github.com/opod-io/opod-sdk v0.4.0/go.mod h1:3QDlAYpLBKLhkJCX1GNswOqjZVAMu54tWEEVqW3IKHU=
 github.com/prometheus/client_golang v1.24.1 h1:JnJkREXzWxUdCuPFpIWZiPispT9xVV59uiuyR2bPlnU=
 github.com/prometheus/client_golang v1.24.1/go.mod h1:F+oSRECHg4sse5ucfYpYDeIv/hu68Zo0uoHKetWnzcE=
 github.com/prometheus/client_model v0.6.2 h1:oBsgwpGs7iVziMvrGhE53c/GrLUsZdHnqNwqPLxwZyk=

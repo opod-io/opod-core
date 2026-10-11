@@ -43,7 +43,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/opod-io/opod-sdk v0.3.1
+	github.com/opod-io/opod-sdk v0.4.0
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1
 	github.com/prometheus/procfs v0.21.1 // indirect
