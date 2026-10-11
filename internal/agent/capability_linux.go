@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/opod-io/opod-sdk/nodeapi"
 )
 
 // detectMemAndGPU returns (ramGB, gpus). NVIDIA GPUs are detected via
@@ -42,4 +44,19 @@ func detectMemAndGPU() (int, []GPU) {
 		}
 	}
 	return ramGB, gpus
+}
+
+// detectGivenDevices reads the accelerators this process was given from the
+// container's own /dev and the host's /sys (givendevices.go).
+func detectGivenDevices() *[]nodeapi.GivenDevice {
+	devs := givenDevices(deviceSources{
+		devRoot: "/dev",
+		sysRoot: "/sys",
+		nvidiaSMI: func() (string, error) {
+			out, err := exec.Command("nvidia-smi", "--query-gpu=index,uuid,pci.bus_id", "--format=csv,noheader").Output()
+			return string(out), err
+		},
+		procRoot: "/proc",
+	})
+	return &devs
 }

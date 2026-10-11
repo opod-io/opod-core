@@ -3,6 +3,8 @@
 package agent
 
 import (
+	"github.com/opod-io/opod-sdk/nodeapi"
+
 	"os/exec"
 	"strconv"
 	"strings"
@@ -25,3 +27,7 @@ func detectMemAndGPU() (int, []GPU) {
 	gpus := []GPU{{Name: chip + " (unified memory)", VRAMGB: ramGB}}
 	return ramGB, gpus
 }
+
+// detectGivenDevices: no device plugin hands this platform a subset of its
+// accelerators, so there is nothing to state — nil, never an empty list.
+func detectGivenDevices() *[]nodeapi.GivenDevice { return nil }

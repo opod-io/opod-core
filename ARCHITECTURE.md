@@ -577,8 +577,17 @@ There is no message-bus subscription — everything is direct HTTP (`internal/ag
 - Linux + NVIDIA: `/proc/meminfo`, `nvidia-smi --query-gpu=name,memory.total`
 - Linux + AMD/Intel/Tenstorrent: no GPU probe — the GPU list is empty, and the control plane states the vendor in `OPOD_ACCELERATOR` (§ Engine placement on the accelerator)
 - Generic: GOOS, GOARCH, hostname, `runtime.NumCPU()`
+- **The devices this process was given** (Linux, feature `worker_devices`, `internal/agent/givendevices.go`): read from
+  inside the worker's own sandbox, never from a host-wide list. NVIDIA: `nvidia-smi --query-gpu=index,uuid,pci.bus_id`
+  (NVML enumerates only what the container runtime exposed), else `/proc/driver/nvidia/gpus/<pci>/information`, which
+  the runtime narrows to the same cards. AMD and Intel:
+  each DRM node in the container's `/dev/dri`, resolved to its PCI device through `/sys/class/drm/<node>/device`.
+  Tenstorrent: each `/dev/tenstorrent/N`, through `/sys/class/tenstorrent`. sysfs is the host's and lists every card,
+  so the device NODES are what scope the answer; sysfs only turns a node into an address. Each device is stated by
+  PCI address (canonical `0000:03:00.0`) and UUID where the vendor has one; its index is the container's own and
+  names nothing on the host. An empty list means "looked, given none"; macOS and other platforms state nothing.
 
-Output: a `Capabilities{}` struct (`internal/agent/capability.go`) with hostname, OS, arch, CPU cores, RAM, GPUs (name, VRAM), and the worker's `Role`, `PlanRevision` and `Engine`.
+Output: a `Capabilities{}` struct (`internal/agent/capability.go`) with hostname, OS, arch, CPU cores, RAM, GPUs (name, VRAM), the worker's `Role`, `PlanRevision` and `Engine`, and `GivenDevices`. It travels once per process, inside the register body's `hardware_json`, and `GET /admin/v1/nodes` serves it back as stored.
 
 ---
 

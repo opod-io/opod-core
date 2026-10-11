@@ -229,6 +229,15 @@ func contractFeatures() map[string]bool {
 		// field and would form a tensor/pipeline gang, so a manager must not
 		// ask it for one.
 		"shard_expert": true,
+		// A worker states the accelerators it was GIVEN (hardware_json.
+		// GivenDevices): read from inside its own sandbox, so under a device
+		// plugin it is the subset handed to the container, each by PCI address
+		// or UUID. The leader stores it with the rest of the capability
+		// document and serves it on GET /admin/v1/nodes; it routes nothing by
+		// it. A manager that asked a device plugin for N devices reads which N
+		// it got here instead of inferring it. Absent = a worker that predates
+		// the field; an empty list = a worker given none.
+		"worker_devices": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once
 		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating

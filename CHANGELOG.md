@@ -5,6 +5,17 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-10 — a worker says which accelerators it was given
+
+- **A worker states the devices its process was given** (feature `worker_devices`, `hardware_json.GivenDevices`,
+  opod-sdk `v0.4.1`). Under a device plugin a worker asks for N devices and is handed N, and nothing upstream is
+  told which. The worker reads it from inside its own sandbox — NVIDIA through `nvidia-smi` (index, UUID, PCI
+  address), AMD and Intel from the DRM nodes in its `/dev/dri`, Tenstorrent from `/dev/tenstorrent/N`, each resolved
+  to a PCI address through sysfs — and registers it with the rest of its capabilities. The device nodes scope the
+  answer; sysfs, which lists every card on the host, only turns a node into an address. `GET /admin/v1/nodes`
+  serves it back as stored, so a manager can say which card a whole-card worker holds instead of inferring it.
+  An empty list is a worker given none; a worker that predates the field states nothing.
+
 ## 2026-10-07 — no 502 from a connection the engine closed while idle
 
 - **The engine client retires an idle keep-alive connection after 2 s**, below the 5 s after which llama-server

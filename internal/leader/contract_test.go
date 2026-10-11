@@ -123,6 +123,8 @@ var contractFeatureFloor = []string{
 	"kv_peer_hits",
 	// ADR-090: expert-parallel gangs on vLLM's own launcher
 	"shard_expert",
+	// a worker states the accelerators it was given (hardware_json.GivenDevices)
+	"worker_devices",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

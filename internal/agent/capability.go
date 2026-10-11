@@ -7,6 +7,8 @@ import (
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/opod-io/opod-sdk/nodeapi"
 )
 
 // Capabilities summarizes the host machine's resources.
@@ -43,6 +45,13 @@ type Capabilities struct {
 	// engine's own connector is started by the manager's engine flags; this
 	// field only tells the leader it is there.
 	KVTier string `json:"KVTier,omitempty"`
+	// GivenDevices (feature worker_devices) is the accelerators this worker
+	// PROCESS was given, read from inside its own sandbox (givendevices.go):
+	// under a device plugin, the subset handed to the container, which is
+	// what lets a manager say which card a whole-card worker holds instead of
+	// guessing. nil = not read (a platform with no reader); an empty list =
+	// read, and none given.
+	GivenDevices *[]nodeapi.GivenDevice `json:"GivenDevices,omitempty"`
 }
 
 // GPU describes a single GPU device.
@@ -80,5 +89,6 @@ func Detect() Capabilities {
 		CPUCores: runtime.NumCPU(),
 	}
 	c.RAMGB, c.GPUs = detectMemAndGPU()
+	c.GivenDevices = detectGivenDevices()
 	return c
 }
