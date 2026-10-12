@@ -462,6 +462,26 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// inBandError is the error object of the chunk that ends a stream whose
+// engine failed after the 200. Its type tells the leader what happened
+// (engines.StreamBrokenType): the engine's stream broke in transport — the
+// leader may still ask a sibling if nothing had been sent — or the engine sent
+// an error of its own, relayed with the engine's own message and type, which
+// the leader shows and never replays. A leader older than the type ignores
+// the whole chunk, as it always did.
+func inBandError(err error) map[string]any {
+	var own *engines.StreamErroredError
+	switch {
+	case errors.Is(err, engines.ErrStreamBroken):
+		return map[string]any{"message": err.Error(), "type": engines.StreamBrokenType}
+	case errors.As(err, &own) && own.Type != "":
+		return map[string]any{"message": own.Message, "type": own.Type}
+	case errors.As(err, &own):
+		return map[string]any{"message": own.Message}
+	}
+	return map[string]any{"message": err.Error()}
+}
+
 func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.StreamEvent, model string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -499,7 +519,7 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 			return
 		}
 		if ev.Err != nil {
-			sendChunk(map[string]any{"error": map[string]any{"message": ev.Err.Error()}})
+			sendChunk(map[string]any{"error": inBandError(ev.Err)})
 			return
 		}
 		if ev.Done {

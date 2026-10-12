@@ -431,7 +431,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 		}
 		if ev.Err != nil {
 			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
-			writeSSEError(w, flusher, h.Engine, ev.Err)
+			writeSSEError(w, flusher, h.Engine, servedBy(r.Context(), ev.Err))
 			return
 		}
 		if ev.Done {
@@ -547,7 +547,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	for ev := range stream {
 		if ev.Err != nil {
 			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
-			writeJSONError(w, http.StatusBadGateway, "upstream_error", ev.Err.Error())
+			writeJSONError(w, http.StatusBadGateway, "upstream_error", servedBy(r.Context(), ev.Err).Error())
 			return
 		}
 		if ev.Done {
@@ -743,6 +743,13 @@ func writeSSEError(w http.ResponseWriter, flusher http.Flusher, eng engines.Engi
 // + start-hint so the API consumer (and their UI) can show something
 // better than "engine error: dial tcp …".
 func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
+	// A stream that had started and then failed — the engine sent an error
+	// in it, or it broke — came from an engine that WAS reached: "not
+	// reachable" and a hint to start the leader's own engine would be two
+	// wrong things, and a worker relaying its engine's break carries "EOF".
+	if errors.Is(err, engines.ErrStreamErrored) || errors.Is(err, engines.ErrStreamBroken) {
+		return "upstream_error", err.Error()
+	}
 	s := strings.ToLower(err.Error())
 	unreachable := errors.Is(err, engines.ErrUnreachable) ||
 		strings.Contains(s, "connection refused") ||
@@ -757,6 +764,21 @@ func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
 	hint := engineRestartHint(eng.Name())
 	return "engine_unreachable", fmt.Sprintf("%s at %s is not reachable (%v). %s",
 		eng.Name(), eng.Endpoint(), err, hint)
+}
+
+// servedBy names the worker or gang a failed stream came from, when it was
+// not the leader's own engine, so a caller reading "stream error: …" knows
+// where to look. The error's type is kept (errors.Is still holds).
+func servedBy(ctx context.Context, err error) error {
+	node := router.NodeFrom(ctx)
+	if node == "" || node == "local" {
+		return err
+	}
+	who := "worker " + node
+	if strings.HasPrefix(node, "shard:") {
+		who = "gang " + node
+	}
+	return fmt.Errorf("%w (from %s)", err, who)
 }
 
 // gangGone is workerGone for a SHARDED model: the coordinator the router

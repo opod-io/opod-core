@@ -102,6 +102,41 @@ func StreamBroken(engine string, err error) error {
 	return &StreamBrokenError{Engine: engine, Err: err}
 }
 
+// ErrStreamErrored classifies a stream in which the server, having answered
+// 200, sent an error event of its own — an OpenAI-shaped `data: {"error":
+// {...}}` chunk — instead of the rest of the answer. It is the server's
+// answer, not a transport break: it is never replayed on another worker, and
+// the caller sees it as an error, never as a clean end.
+var ErrStreamErrored = errors.New("engine reported an error in its stream")
+
+// StreamBrokenType is the `type` a worker puts on the in-band error chunk it
+// relays when its OWN engine's stream broke in transport (ErrStreamBroken):
+// `data: {"error":{"message":"stream: unexpected EOF","type":"stream_broken"}}`.
+// The leader's stream reader reads that chunk back as a StreamBrokenError, so
+// a worker whose engine broke before the first event is retried on a sibling
+// exactly like a worker whose connection broke. Any other type, or none (a
+// worker older than this field), is a StreamErroredError: shown, never
+// replayed. An older leader ignores the field.
+const StreamBrokenType = "stream_broken"
+
+// StreamErroredError is the concrete error behind ErrStreamErrored: the error
+// event's message and type as the server sent them.
+type StreamErroredError struct {
+	Engine  string
+	Type    string // the event's error.type, when it had one
+	Message string
+}
+
+func (e *StreamErroredError) Error() string {
+	if e.Type != "" {
+		return "stream error (" + e.Type + "): " + e.Message
+	}
+	return "stream error: " + e.Message
+}
+
+// Is makes errors.Is(err, ErrStreamErrored) true for every StreamErroredError.
+func (e *StreamErroredError) Is(target error) bool { return target == ErrStreamErrored }
+
 // ErrBrokeBeforeFirstEvent classifies a stream that broke (ErrStreamBroken)
 // before it produced its FIRST event. Nothing of the answer exists anywhere
 // yet — no token was sent to the caller, no byte written — so the router may

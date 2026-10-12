@@ -378,9 +378,19 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 				CompletionTokens int `json:"completion_tokens"`
 				TotalTokens      int `json:"total_tokens"`
 			} `json:"usage"`
+			// The server's own error, sent in the stream after its 200
+			// (vLLM, llama-server, and a worker relaying its engine's).
+			Error json.RawMessage `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			send(engines.StreamEvent{Err: fmt.Errorf("decode openai chunk: %w", err)})
+			return
+		}
+		if engines.HasJSON(ev.Error) {
+			// The answer ends here, as an error — never as the clean end the
+			// close that follows would otherwise synthesize (T8.18: a worker
+			// whose engine broke mid-stream answered 200 with an empty body).
+			send(engines.StreamEvent{Err: streamError(ev.Error)})
 			return
 		}
 		if len(ev.Choices) > 0 {
@@ -437,6 +447,33 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 	}
 	// stream ended without explicit [DONE] — synthesize one
 	emitFinal(nil)
+}
+
+// streamError types an error event a server sent in its stream. A worker
+// relaying its own engine's transport break marks it engines.StreamBrokenType,
+// and it reads back as that break (engines.ErrStreamBroken), so the router
+// can still ask a sibling before the first event; anything else is the
+// server's own error (engines.ErrStreamErrored). The event is OpenAI-shaped,
+// {"error":{"message","type","code"}} — code an integer from llama-server, a
+// string from others, and not read — or, from some servers, a bare string.
+func streamError(raw json.RawMessage) error {
+	var obj struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+	}
+	var msg string
+	if json.Unmarshal(raw, &obj) == nil {
+		msg = obj.Message
+	} else if json.Unmarshal(raw, &msg) != nil {
+		msg = ""
+	}
+	if msg == "" {
+		msg = string(raw)
+	}
+	if obj.Type == engines.StreamBrokenType {
+		return engines.StreamBroken("openai", fmt.Errorf("the server's engine stream broke (%s)", msg))
+	}
+	return &engines.StreamErroredError{Engine: "openai", Type: obj.Type, Message: msg}
 }
 
 // ConsumeStreamWithSpan is ConsumeStream plus the span: it records the

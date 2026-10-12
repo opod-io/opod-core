@@ -11,6 +11,16 @@ the last section.
   replaced while the leader was still reading the start answer ended with the bare reason ("the worker behind node
   … was replaced") and no process; one lost while the create polled the process named it. Both now read the same:
   the process being started, on which node, and that no status had been polled yet.
+- **A worker whose own engine fails mid-stream is an error, not an empty `200`.** A worker relays its engine's
+  failure as an in-band chunk, `data: {"error":{…}}`, and closes cleanly; the leader's stream reader skipped the
+  chunk and synthesized a normal end, so the caller got `200` with an empty or cut-short answer and the usage row
+  said `ok`. The reader now ends the stream on that chunk as an error (vLLM's and llama-server's own in-band error
+  events too). The worker marks its engine's transport break `"type":"stream_broken"`: before the first event a
+  sibling serves the request (the T8.17 path, same budget; `503` + `Retry-After` when none can); after it the
+  caller gets an SSE `error` event (a non-streamed request a `502`) naming the worker, and the usage row says
+  `error`. Any other in-band error, or one from a worker older than the field, is shown and never replayed. A
+  stream that fails after it started is `upstream_error`, no longer `engine_unreachable` with a hint to start the
+  leader's own engine. Wire: additive — an older leader ignores the chunk as before.
 
 ## 2026-10-12 — gang creates and teardowns touch only their own incarnation
 
@@ -40,9 +50,8 @@ the last section.
   aside — the path an unreachable worker already took, within the same budget. When every one breaks, the answer is
   `503` + `Retry-After` (`gang_unreachable` / `worker_unreachable`), not a fault of the leader's own engine. A stream
   that breaks after an event is never replayed. Response headers now go out with the first token rather than when
-  the engine answers. Scope: a gang head is dialled directly, so its break is caught; for a plain worker only the
-  leader↔worker connection breaking is caught — a worker relays its own engine's break as an in-band SSE error
-  chunk, which the leader's reader does not read as an error yet.
+  the engine answers. A gang head is dialled directly, so its break is caught; a plain worker's own engine break
+  is caught by the entry above.
 
 ## 2026-10-12 — a failing heal backs off and says why on the event stream
 

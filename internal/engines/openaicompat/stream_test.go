@@ -199,3 +199,52 @@ func TestAStreamThatBreaksIsClassifiedAsBroken(t *testing.T) {
 type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// A server's own error event in the stream ends it as an error, never as the
+// clean end the close that follows would otherwise synthesize (PLAN T8.18).
+func TestAnInBandErrorEventEndsTheStreamAsAnError(t *testing.T) {
+	const role = `data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}` + "\n\n"
+	for name, tc := range map[string]struct {
+		chunk  string
+		broken bool // read back as a transport break (engines.ErrStreamBroken)
+		says   string
+	}{
+		"a worker's relayed engine break": {`data: {"error":{"message":"stream: unexpected EOF","type":"stream_broken"}}`, true, "unexpected EOF"},
+		"a worker older than the type":    {`data: {"error":{"message":"stream: unexpected EOF"}}`, false, "unexpected EOF"},
+		"llama-server's shape, int code":  {`data: {"error":{"code":500,"message":"slot failed","type":"server_error"}}`, false, "slot failed"},
+		"vLLM's shape, string code":       {`data: {"error":{"object":"error","message":"boom","type":"InternalServerError","code":"500"}}`, false, "boom"},
+		"a bare string":                   {`data: {"error":"out of memory"}`, false, "out of memory"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := make(chan engines.StreamEvent, 4)
+			ConsumeStream(context.Background(), io.NopCloser(strings.NewReader(role+tc.chunk+"\n\n")), out)
+			var evs []engines.StreamEvent
+			for ev := range out {
+				evs = append(evs, ev)
+			}
+			if len(evs) != 1 || evs[0].Done || evs[0].Err == nil {
+				t.Fatalf("want exactly one error event and no clean end, got %+v", evs)
+			}
+			err := evs[0].Err
+			if errors.Is(err, engines.ErrStreamBroken) != tc.broken || errors.Is(err, engines.ErrStreamErrored) == tc.broken {
+				t.Fatalf("broken=%v expected, got %v", tc.broken, err)
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("the server's words must survive: %v", err)
+			}
+		})
+	}
+	// "error": null is no error.
+	out := make(chan engines.StreamEvent, 4)
+	ConsumeStream(context.Background(), io.NopCloser(strings.NewReader(`data: {"error":null,"choices":[{"delta":{"content":"x"}}]}`+"\n\ndata: [DONE]\n\n")), out)
+	var text string
+	for ev := range out {
+		if ev.Err != nil {
+			t.Fatalf("a null error is no error: %v", ev.Err)
+		}
+		text += ev.Delta
+	}
+	if text != "x" {
+		t.Fatalf("the content beside a null error is kept: %q", text)
+	}
+}
