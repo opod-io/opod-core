@@ -399,6 +399,8 @@ placement while any gang is left.
 
 - **Which rows are workers is one rule** — `scheduler.WorkerFor` — asked by the CLI's shard-count picker (`WorkerMemoryFacts`), by the leader's own pick for a count without nodes (`pickWorkers`) and by the check of a named list (`pickWorkersByID`, which `model add --node` uses too): state `ready` (so never a draining node), an address, a heartbeat within `router.heartbeat_max_age_seconds` (60 s when that check is off), and never the leader's own `local` row — it reads ready and has an address, but that address is the gateway, which has no `/v1/process/start`. A create that cannot find its workers is refused **before** the gang it would replace is torn down and before any process starts (`scheduler.ErrUnplaceable` → `409`), and the message carries the numbers: `need 3 ready workers, have 1 (w1); not counted: local — the leader's own row, not a worker; w2 — state draining; w3 — last heartbeat 4m0s ago`.
 - If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the caller (the CLI, or whoever called `/admin/v1/shards/create`).
+- A create also ends at once, with a reason, when the leader learns a part's worker went away while the gang formed (a new boot id, a stale part, the node removed — `scheduler.ErrPartLost`, `partlost.go`). The HTTP answer is a `502` whose `error.code` says which failure it is (feature `shard_create_error_codes`): `gang_part_lost` is definite — the gang did not form, its parts were stopped — while `gang_create_in_flight` is a refusal because another create of the gang (or the whole model) holds its guard, and says nothing about the gang. A manager keys on the code, never the message.
+- A teardown (a reincarnated worker, a stale part, `DELETE` of one gang) removes the gang **as it read it**: rows are deleted only while they still match what was read (`ShardStore.DeleteRows`), because a gang formed again under the same id reuses its part ids, and a stop that waits on a dead pod address must not let the late delete take the new gang with it.
 - If a shard process crashes *after* CreateSharded returns, the supervisor auto-restarts it up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s; capped at 30s for any longer chain). After 5 the process enters `crashloop` state and stays there — the admin must intervene. Both `rpc-server` (per-shard) and the `llama-server` coordinator are restart-enabled; the policy is set on the `agent.ProcessSpec` at launch time in `internal/scheduler/sharding.go`. Explicit `Stop()` suppresses any pending restart.
 
 #### Where the coordinator runs
@@ -1492,7 +1494,7 @@ list is:
   `DELETE /admin/v1/adapters/{name}`, `/shards/{model_id}`, `/shards/{model_id}/{gang_id}`
 
 The list is additive-only — a route on it is never removed, renamed or given another method, and its
-response shape only gains fields. `GET /admin/v1/capabilities` serves it together with the **47 feature
+response shape only gains fields. `GET /admin/v1/capabilities` serves it together with the **63 feature
 keys** a manager may probe for instead of sniffing behaviour, and `TestLeaderContract` walks the real router
 so a change that drops one of these routes fails `go test`. Everything else under `/admin/v1` — and
 `GET /gatewayz`, which is deliberately not frozen — may change between releases.
@@ -1502,7 +1504,7 @@ localhost:8080/admin/v1/capabilities | jq .features`. Each key is commented at i
 promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `policy_file`,
 `events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`,
 `engine_liveness`, `worker_goodbye`, `worker_sleep`, `request_wake`, `kv_block_events`, `node_drain`, `placement_drain`, `model_move`,
-`shards`, `shard_head`, `shard_groups`, `shard_sglang`, `shard_expert`, `plan_heal_gangs`, `gateway_spend`, `mtls`,
+`shards`, `shard_head`, `shard_groups`, `shard_sglang`, `shard_expert`, `plan_heal_gangs`, `shard_create_error_codes`, `gateway_spend`, `mtls`,
 `tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.
 
 The wire types of this surface — `Load`, the usage and lifecycle stream batches, the auth and policy
