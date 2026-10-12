@@ -20,6 +20,11 @@ the last section.
   node must still be the worker process it was when the stops began (same boot id and address) and the row must
   still be the one read; otherwise the stop is skipped with an INFO line saying why. Whole-model teardown and a
   failed create's rollback stop parts through the same path.
+- **A part that gives up while its gang forms is a definite answer with its own `error.code`**: `gang_part_failed`
+  (feature `shard_create_error_codes`, additive). A coordinator, rpc-server or rank whose process reports `failed`,
+  or `crashloop` once its restarts run out, ends the create with the process, its status and the engine's own last
+  lines, without the `upstream` prefix; the heal loop's `shard.heal_failed` carries the same code. Before, the 502
+  had no code, so a manager could not tell it from a create still forming.
 
 ## 2026-10-12 — a failing heal backs off and says why on the event stream
 

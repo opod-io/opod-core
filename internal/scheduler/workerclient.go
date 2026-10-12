@@ -59,9 +59,10 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 // old synchronous start blew the client deadline every time and reported a failed
 // create for a healthy, still-loading process.
 //
-// A "failed" process is returned as an error carrying ProcessInfo.ExitErr, which
-// already embeds the engine's own output (supervisor logTail) — so llama.cpp's
-// actual complaint reaches `opod shard create` instead of a bare 502.
+// A "failed" or "crashloop" process is returned as a PartFailedError carrying
+// ProcessInfo.ExitErr, which already embeds the engine's own output (supervisor
+// logTail) — so llama.cpp's actual complaint reaches `opod shard create`
+// instead of a bare 502, and a manager reads it as definite (gang_part_failed).
 //
 // A poll error is a blip only while the worker is still the process the part
 // was started on. When the leader knows otherwise — the create's context was
@@ -113,7 +114,7 @@ func (o *Orchestrator) awaitWorkerReady(ctx context.Context, node store.Node, sp
 		case "running":
 			return info, nil
 		case "failed", "crashloop":
-			return nil, fmt.Errorf("process %s on %s %s: %s", spec.ID, node.ID, info.Status, info.ExitErr)
+			return nil, &PartFailedError{Process: spec.ID, Node: node.ID, Status: info.Status, Restarts: info.Restarts, ExitErr: info.ExitErr}
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("process %s on %s still %q after %s (never became ready)",

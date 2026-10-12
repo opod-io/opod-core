@@ -215,6 +215,59 @@ func (o *Orchestrator) partGone(ctx context.Context, node store.Node) (what stri
 	return ""
 }
 
+// ErrPartFailed marks a create that ended because one of its parts' processes
+// gave up while the gang was forming: its supervisor reported "failed", or
+// "crashloop" once its restarts ran out. Like ErrPartLost it is definite — the
+// create's parts are rolled back and the gang will not form on its own.
+var ErrPartFailed = errors.New("a part's process failed while the gang was forming")
+
+// PartFailedError is the reason a create ended on a part that gave up: which
+// gang, which process on which node, the status it reported and the engine's
+// own last lines (the supervisor's log tail rides ExitErr).
+type PartFailedError struct {
+	Model, Gang   string
+	Process, Node string
+	Status        string // "failed" or "crashloop"
+	Restarts      int
+	ExitErr       string
+}
+
+func (e *PartFailedError) Unwrap() error { return ErrPartFailed }
+
+func (e *PartFailedError) Error() string {
+	var b strings.Builder
+	if e.Gang != "" || e.Model != "" {
+		gang := "the gang"
+		if e.Gang != "" {
+			gang = "gang " + e.Gang
+		}
+		if e.Model != "" {
+			gang += " of " + e.Model
+		}
+		fmt.Fprintf(&b, "%s did not form: ", gang)
+	}
+	fmt.Fprintf(&b, "process %s on %s %s", e.Process, e.Node, e.Status)
+	if e.Restarts > 0 {
+		fmt.Fprintf(&b, " after %d restart(s)", e.Restarts)
+	}
+	if e.ExitErr != "" {
+		fmt.Fprintf(&b, ": %s", e.ExitErr)
+	}
+	return b.String()
+}
+
+// withGang names the gang on a PartFailedError anywhere in err's chain; any
+// other error is returned unchanged.
+func withGang(err error, model, gang string) error {
+	var pf *PartFailedError
+	if !errors.As(err, &pf) {
+		return err
+	}
+	c := *pf
+	c.Model, c.Gang = model, gang
+	return &c
+}
+
 // asPartLost turns a create's failure into the PartLostError that caused it,
 // filled with the gang, when the create ended because a part was lost; else
 // it returns err unchanged. The failure may carry the reason itself (the wait

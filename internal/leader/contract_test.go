@@ -125,7 +125,7 @@ var contractFeatureFloor = []string{
 	"shard_expert",
 	// a worker states the accelerators it was given (hardware_json.GivenDevices)
 	"worker_devices",
-	// a failed shard create names its cause in error.code (gang_part_lost, gang_create_in_flight)
+	// a failed shard create names its cause in error.code (gang_part_lost, gang_part_failed, gang_create_in_flight)
 	"shard_create_error_codes",
 	// a failed heal records shard.heal_failed {gang, revision, code, reason} and backs off
 	"shard_heal_failed_event",

@@ -38,6 +38,7 @@ type formingWorker struct {
 	mu      sync.Mutex
 	started chan string // the process id of each start, as it lands
 	gone    bool        // the process died with the worker's previous incarnation
+	crashed string      // non-empty: the process reports "crashloop" with these last lines
 	srv     *httptest.Server
 }
 
@@ -58,10 +59,14 @@ func newFormingWorker(t *testing.T) *formingWorker {
 			w.started <- body.ID
 		case strings.HasSuffix(r.URL.Path, "/v1/process/get"):
 			w.mu.Lock()
-			gone := w.gone
+			gone, crashed := w.gone, w.crashed
 			w.mu.Unlock()
 			if gone {
 				http.Error(rw, `process "`+r.URL.Query().Get("id")+`" not found`, http.StatusNotFound)
+				return
+			}
+			if crashed != "" {
+				_ = json.NewEncoder(rw).Encode(map[string]any{"id": r.URL.Query().Get("id"), "status": "crashloop", "restarts": 5, "exit_err": crashed})
 				return
 			}
 			_ = json.NewEncoder(rw).Encode(map[string]any{"id": r.URL.Query().Get("id"), "status": "starting"})

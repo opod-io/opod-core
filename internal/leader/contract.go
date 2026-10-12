@@ -243,7 +243,12 @@ func contractFeatures() map[string]bool {
 		// did not form because a part's worker went away while it was forming
 		// (replaced, removed, or its process gone); the create's parts were
 		// stopped, it will not finish on its own, and the message names the
-		// gang, the node and the last output polled — and
+		// gang, the node and the last output polled — "gang_part_failed" —
+		// the gang did not form because one of its parts' processes reported
+		// failed (or crashloop once its restarts ran out) while it was
+		// forming; definite in the same way, and the message carries the
+		// engine's own last lines (added 2026-10-12; a manager that does not
+		// know a code keeps reading the failure as it did before) — and
 		// "gang_create_in_flight" — refused because another create of this
 		// gang (or of the whole model) is running; nothing was touched, and the
 		// running create is what decides. A manager keys on the code, never on
@@ -255,8 +260,8 @@ func contractFeatures() map[string]bool {
 		// create's error.code ("" when its cause has none), reason, retry_in_s},
 		// and the leader backs that gang's heal off (15 s → 30 s → 60 s) so a
 		// manager's own create gets the guard in between. A manager reads
-		// code "gang_part_lost" for its gang and revision as the leader's
-		// definite "this gang did not form".
+		// code "gang_part_lost" or "gang_part_failed" for its gang and
+		// revision as the leader's definite "this gang did not form".
 		"shard_heal_failed_event": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once

@@ -325,7 +325,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	fctx, endFormation := o.formations.begin(ctx, entry.ID, gangID, workers)
 	defer endFormation()
 	err = o.formGang(fctx, entry, gangID, replaceModel, shardCount, nodeIDs, workers, par)
-	return asPartLost(fctx, err, entry.ID, gangID)
+	return withGang(asPartLost(fctx, err, entry.ID, gangID), entry.ID, gangID)
 }
 
 // formGang is CreateSharded past the guard and the worker pick: it replaces
