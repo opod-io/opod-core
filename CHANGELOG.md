@@ -7,6 +7,15 @@ the last section.
 
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 
+- **A worker whose own engine is down is "nothing answered", and a sibling serves the request.** When a worker's
+  engine process was dead or restarting, the worker's dial to it was refused and it answered a plain-text `502`;
+  the leader read every non-2xx from a worker as the engine's own error, so no sibling was asked, and the caller
+  was told to start the LEADER's llama-server. The worker now answers that case `502`
+  `{"error":{"type":"engine_unreachable_on_worker",…}}` (chat and embeddings); the leader's client reads it back as
+  `engines.ErrUnreachable`, so the router asks a sibling under the existing budget and, when none can take it, the
+  caller gets `503` + `Retry-After` naming the worker's engine. Any typed engine error from a worker is now
+  `upstream_error` without the leader-engine start hint. Wire: additive both ways — an older leader still reads a
+  `502`; an older worker's plain-text `502` is read as before (shown, not replayed).
 - **A part lost while its start call is in flight names the process.** A gang create whose part's worker was
   replaced while the leader was still reading the start answer ended with the bare reason ("the worker behind node
   … was replaced") and no process; one lost while the create polled the process named it. Both now read the same:

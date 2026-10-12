@@ -259,7 +259,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := ee.Embed(r.Context(), engines.EmbedRequest{Model: s.Aliases.Native(req.Model), Inputs: inputs})
 	if err != nil {
-		http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
+		writeEngineFailure(w, err)
 		return
 	}
 	// The OpenAI shape, in the caller's order (ADR-025).
@@ -451,7 +451,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			}})
 			return
 		}
-		http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
+		writeEngineFailure(w, err)
 		return
 	}
 
@@ -460,6 +460,21 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeAggregate(w, stream, req.Model)
 	}
+}
+
+// writeEngineFailure answers a request whose engine call failed before any
+// answer: 502, as always. An engine that could not be reached at all — its
+// process dead or restarting — is said in a typed body
+// (engines.EngineUnreachableType) so the leader reads it as "nothing
+// answered" and asks a sibling worker, instead of an engine error it must
+// show. A leader older than the type still reads a 502; every other failure
+// keeps the plain-text body an older leader has always read.
+func writeEngineFailure(w http.ResponseWriter, err error) {
+	if errors.Is(err, engines.ErrUnreachable) {
+		writeOpenAIError(w, http.StatusBadGateway, engines.EngineUnreachableType, "engine: "+err.Error())
+		return
+	}
+	http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
 }
 
 // inBandError is the error object of the chunk that ends a stream whose

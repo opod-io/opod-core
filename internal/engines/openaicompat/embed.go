@@ -64,7 +64,7 @@ func (c Client) Embed(ctx context.Context, req engines.EmbedRequest) (engines.Em
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return engines.EmbedResponse{}, engines.Upstream(c.Driver, "POST /v1/embeddings", resp.StatusCode, b)
+		return engines.EmbedResponse{}, engines.FromWorkerAnswer(c.Driver, c.BaseURL, "POST /v1/embeddings", resp.StatusCode, b)
 	}
 
 	var out embedResponse

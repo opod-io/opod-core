@@ -750,6 +750,13 @@ func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
 	if errors.Is(err, engines.ErrStreamErrored) || errors.Is(err, engines.ErrStreamBroken) {
 		return "upstream_error", err.Error()
 	}
+	// A typed non-2xx answer came from a server that WAS reached — a worker
+	// relaying its own engine's failure among them, whose text may well say
+	// "connection refused" about the worker's engine. The hint to start the
+	// leader's own engine would be wrong by construction.
+	if errors.Is(err, engines.ErrUpstream) {
+		return "upstream_error", err.Error()
+	}
 	s := strings.ToLower(err.Error())
 	unreachable := errors.Is(err, engines.ErrUnreachable) ||
 		strings.Contains(s, "connection refused") ||
@@ -813,6 +820,9 @@ func gangGone(node string, err error) (string, bool) {
 func workerGone(node string, err error) (string, bool) {
 	if node == "" || node == "local" || strings.HasPrefix(node, "shard:") || !nothingAnswered(err) {
 		return "", false
+	}
+	if errors.Is(err, engines.ErrWorkerEngineUnreachable) {
+		return fmt.Sprintf("the engine on worker %s is not answering (it may be restarting) and no other worker can take this request right now; retry shortly (%v)", node, err), true
 	}
 	return fmt.Sprintf("worker %s could not be reached and no other worker can take this request right now; retry shortly (%v)", node, err), true
 }

@@ -216,7 +216,9 @@ func (c Client) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engin
 		span.MarkError(resp.Status, nil)
 		span.End()
 		close(out)
-		return nil, engines.Upstream(c.Driver, "chat", resp.StatusCode, b)
+		// An opod worker whose own engine is down says so in a typed answer;
+		// that is nothing answered, not the engine's error (FromWorkerAnswer).
+		return nil, engines.FromWorkerAnswer(c.Driver, c.BaseURL, "chat", resp.StatusCode, b)
 	}
 	span.SetHTTPStatus(resp.StatusCode)
 

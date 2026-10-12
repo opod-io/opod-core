@@ -1,6 +1,7 @@
 package engines
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -188,4 +189,39 @@ func (e *UnsupportedRequestError) Is(target error) bool { return target == ErrUn
 // Unsupported reports that engine cannot honour field, and why.
 func Unsupported(engine, field, why string) error {
 	return &UnsupportedRequestError{Engine: engine, Field: field, Why: why}
+}
+
+// EngineUnreachableType is the error `type` a worker puts on its answer when
+// its OWN engine could not be reached at all — the engine process is dead or
+// restarting, so the worker's dial to it was refused (ErrUnreachable):
+// 502 {"error":{"message":"engine: …","type":"engine_unreachable_on_worker"}}.
+// The leader reads that answer back as an UnreachableError wrapping
+// ErrWorkerEngineUnreachable, so the request goes to a sibling worker exactly
+// as if the worker itself could not be dialled: nothing of an answer exists.
+// A leader older than the field reads the 502 as it always did (an engine
+// error); a worker older than the field answers plain text, which a newer
+// leader reads as before (Upstream). Like StreamBrokenType it is a word
+// between two opod processes, never sent to a client.
+const EngineUnreachableType = "engine_unreachable_on_worker"
+
+// ErrWorkerEngineUnreachable is what a worker's EngineUnreachableType answer
+// reads back as, inside an UnreachableError: the worker was reached and said
+// its engine is not. errors.Is(err, ErrUnreachable) holds as well.
+var ErrWorkerEngineUnreachable = errors.New("the worker answered that its engine is not answering")
+
+// FromWorkerAnswer classifies a non-2xx answer to op from the server at
+// endpoint: an opod worker's EngineUnreachableType answer is an
+// UnreachableError (the worker's engine is down; nothing answered), and
+// anything else is an UpstreamError, as every non-2xx always was.
+func FromWorkerAnswer(engine, endpoint, op string, status int, body []byte) error {
+	var shaped struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &shaped) == nil && shaped.Error.Type == EngineUnreachableType {
+		return Unreachable(engine, endpoint, fmt.Errorf("%w: %s", ErrWorkerEngineUnreachable, shaped.Error.Message))
+	}
+	return Upstream(engine, op, status, body)
 }
