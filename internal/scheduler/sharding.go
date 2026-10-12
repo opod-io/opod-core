@@ -680,34 +680,8 @@ func (o *Orchestrator) RemoveSharded(ctx context.Context, modelID string) error 
 	if err != nil {
 		return err
 	}
-	for _, s := range shards {
-		switch s.Role {
-		case "coordinator":
-			if s.NodeID == "" || s.NodeID == "local" {
-				if err := o.Supervisor.Stop(s.ProcessID); err != nil {
-					o.Log.Warn("coordinator stop failed", "id", s.ID, "err", err)
-				}
-			} else {
-				node, err := o.Store.Nodes().Get(ctx, s.NodeID)
-				if err != nil || node == nil {
-					o.Log.Warn("coordinator's node not found", "id", s.ID, "node", s.NodeID)
-					continue
-				}
-				if err := o.callWorkerStop(ctx, *node, s.ProcessID); err != nil {
-					o.Log.Warn("remote coordinator stop failed", "id", s.ID, "err", err)
-				}
-			}
-		case "rpc", "rank":
-			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
-			if err != nil || node == nil {
-				o.Log.Warn("rpc shard's node not found", "id", s.ID, "node", s.NodeID)
-				continue
-			}
-			if err := o.callWorkerStop(ctx, *node, s.ProcessID); err != nil {
-				o.Log.Warn("rpc shard stop failed", "id", s.ID, "err", err)
-			}
-		}
-	}
+	// Each stop reaches only the incarnation read here (stopGangProcesses).
+	o.stopGangProcesses(ctx, shards)
 	if err := o.Store.Shards().DeleteByModel(ctx, modelID); err != nil {
 		return err
 	}

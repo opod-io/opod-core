@@ -157,27 +157,87 @@ func rowsOfGang(all []store.Shard, key store.GangKey) []store.Shard {
 // stopGangProcesses stops the processes behind a set of shard rows. It stops by
 // the ProcessID the row RECORDS, never by a prefix — which is what lets a gang
 // created before gang ids existed be torn down by exactly the same path.
+//
+// Each stop reaches only the incarnation the caller READ. The stops run one
+// after another and one can take 30 s (a dial to a pod address that died with
+// its worker), and a part's process id is its gang's, so it comes back the
+// moment the gang is formed again. A stop still queued behind the slow one
+// used to reach a sibling node at its current address and stop the NEW gang's
+// part of the same id. So, right before each stop:
+//   - the node must still be the worker process it was when the stops began
+//     (same boot id and address): a replaced worker took the part's process
+//     with it, and the process there now is not the one read;
+//   - the row must still be the one read (store.Shard.SameIncarnation): a row
+//     that is gone was torn down by someone else, who stopped its process
+//     first, and a row that changed is a gang formed again under the same id.
 func (o *Orchestrator) stopGangProcesses(ctx context.Context, shards []store.Shard) {
+	asRead := o.workersAsRead(ctx, shards)
 	for _, s := range shards {
-		switch s.Role {
-		case "coordinator":
-			if s.NodeID == "" || s.NodeID == "local" {
-				if err := o.Supervisor.Stop(s.ProcessID); err != nil {
-					o.Log.Warn("coordinator stop failed", "id", s.ID, "err", err)
-				}
-				continue
+		o.stopPart(ctx, s, func(node store.Node) string {
+			if was, ok := asRead[s.NodeID]; ok && (was.BootID != node.BootID || was.Address != node.Address) {
+				return "its worker was replaced since the teardown read it; the process went with the old one"
 			}
-			fallthrough
-		case "rpc", "rank":
-			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
-			if err != nil || node == nil {
-				o.Log.Warn("shard's node not found", "id", s.ID, "node", s.NodeID)
-				continue
+			now, err := o.Store.Shards().Get(ctx, s.ID)
+			switch {
+			case err != nil:
+				return "" // the store says nothing: stop as read
+			case now == nil:
+				return "its row was removed since the teardown read it, and whoever removed it stopped the process"
+			case !now.SameIncarnation(s):
+				return "its gang was formed again under the same id since the teardown read it"
 			}
-			if err := o.callWorkerStop(ctx, *node, s.ProcessID); err != nil {
-				o.Log.Warn("shard stop failed", "id", s.ID, "err", err)
-			}
+			return ""
+		})
+	}
+}
+
+// workersAsRead reads, once and before any stop, the node row behind every
+// part that runs on a worker: the incarnation each stop must still find.
+func (o *Orchestrator) workersAsRead(ctx context.Context, shards []store.Shard) map[string]store.Node {
+	out := map[string]store.Node{}
+	for _, s := range shards {
+		if s.NodeID == "" || s.NodeID == "local" {
+			continue
 		}
+		if _, ok := out[s.NodeID]; ok {
+			continue
+		}
+		if n, err := o.Store.Nodes().Get(ctx, s.NodeID); err == nil && n != nil {
+			out[s.NodeID] = *n
+		}
+	}
+	return out
+}
+
+// stopPart stops one part's process: on the leader's own supervisor for a
+// leader-hosted coordinator, else on its worker at the node's address. skip,
+// when given, is asked right before the dial with the node as it is now; a
+// non-empty answer is why the stop is not sent.
+func (o *Orchestrator) stopPart(ctx context.Context, s store.Shard, skip func(store.Node) string) {
+	switch s.Role {
+	case "coordinator", "rpc", "rank":
+	default:
+		return
+	}
+	if s.Role == "coordinator" && (s.NodeID == "" || s.NodeID == "local") {
+		if err := o.Supervisor.Stop(s.ProcessID); err != nil {
+			o.Log.Warn("coordinator stop failed", "id", s.ID, "err", err)
+		}
+		return
+	}
+	node, err := o.Store.Nodes().Get(ctx, s.NodeID)
+	if err != nil || node == nil {
+		o.Log.Warn("shard's node not found", "id", s.ID, "node", s.NodeID)
+		return
+	}
+	if skip != nil {
+		if why := skip(*node); why != "" {
+			o.Log.Info("shard stop skipped", "id", s.ID, "node", s.NodeID, "process", s.ProcessID, "why", why)
+			return
+		}
+	}
+	if err := o.callWorkerStop(ctx, *node, s.ProcessID); err != nil {
+		o.Log.Warn("shard stop failed", "id", s.ID, "err", err)
 	}
 }
 

@@ -283,6 +283,15 @@ func (s Shard) Gang() string {
 	return s.GangID
 }
 
+// SameIncarnation reports whether o is the same incarnation of the part as s:
+// the same id, node, address, process and creation time (whole seconds, as
+// stored). Status and last_seen change on a live row and say nothing about
+// which incarnation it is. It is the rule ShardStore.DeleteRows matches by.
+func (s Shard) SameIncarnation(o Shard) bool {
+	return s.ID == o.ID && s.NodeID == o.NodeID && s.Address == o.Address &&
+		s.ProcessID == o.ProcessID && s.CreatedAt.Unix() == o.CreatedAt.Unix()
+}
+
 type ShardStore interface {
 	Create(ctx context.Context, s Shard) error
 	Get(ctx context.Context, id string) (*Shard, error)

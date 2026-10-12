@@ -153,27 +153,15 @@ func (o *Orchestrator) pickWorkers(ctx context.Context, n int) ([]store.Node, er
 func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
+	// "rank" as well as "rpc" (stopPart stops every kind of part): every
+	// backend that names its parts ranks — vLLM's Ray daemons and SGLang's
+	// launcher processes — had them left RUNNING by a half-failed create when
+	// this loop knew only "rpc".
+	//
+	// No incarnation check here: the create still holds the gang's guard, so
+	// no other create can have started a process under these ids.
 	for _, s := range created {
-		switch s.Role {
-		case "coordinator":
-			if s.NodeID == "" || s.NodeID == "local" {
-				_ = o.Supervisor.Stop(s.ProcessID)
-			} else if node, err := o.Store.Nodes().Get(ctx, s.NodeID); err == nil && node != nil {
-				_ = o.callWorkerStop(ctx, *node, s.ProcessID)
-			}
-		// "rank" as well as "rpc": every backend that names its parts ranks —
-		// vLLM's Ray daemons and SGLang's launcher processes — had them left
-		// RUNNING by a half-failed create, because this switch was written when
-		// "rpc" was the only kind of part there was. Everywhere else that stops a
-		// gang (stopGangProcesses, the node-loss teardown) was widened for ranks;
-		// this one was missed, so the rollback that exists to leave nothing behind
-		// left a whole cluster behind.
-		case "rpc", "rank":
-			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
-			if err == nil && node != nil {
-				_ = o.callWorkerStop(ctx, *node, s.ProcessID)
-			}
-		}
+		o.stopPart(ctx, s, nil)
 	}
 	// The rows as this create wrote them, never by id: an id is free again the
 	// moment a sweep has removed the row, and a gang formed again under it

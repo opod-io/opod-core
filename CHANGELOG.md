@@ -13,6 +13,13 @@ the last section.
   `shards/create cleanup failed … has no gang` at ERROR. The create's own rollback — which already stopped the parts
   it started, under the guard — is now the whole cleanup, and it deletes the rows the create wrote as written
   (`ShardStore.DeleteRows`), never by id.
+- **A late stop in a gang teardown reaches only the incarnation the teardown read.** The stops run one after
+  another and one can take 30 s (a dial to a pod address that died with its worker); a part's process id is its
+  gang's, so the same ids come back the moment the gang is formed again, and a stop still queued behind the slow
+  one reached a sibling node at its current address and stopped the NEW gang's part. Right before each stop the
+  node must still be the worker process it was when the stops began (same boot id and address) and the row must
+  still be the one read; otherwise the stop is skipped with an INFO line saying why. Whole-model teardown and a
+  failed create's rollback stop parts through the same path.
 
 ## 2026-10-12 — a failing heal backs off and says why on the event stream
 
