@@ -78,3 +78,19 @@ func BenchmarkAggregateResponse(b *testing.B) {
 		h.aggregateResponse(httptest.NewRecorder(), req, stream, "id", 1, "m", time.Now())
 	}
 }
+
+// A non-streamed answer whose stream broke after its first event is a 502 with
+// the break, as it always was: the router replays only a stream that broke
+// before any event (router.firstEvent), and this one had started.
+func TestAggregateResponseReportsABreakAfterTheFirstEvent(t *testing.T) {
+	h := &Handler{Store: usageTestStore(t), Default: "m"}
+	stream := make(chan engines.StreamEvent, 2)
+	stream <- engines.StreamEvent{Delta: "half an ans"}
+	stream <- engines.StreamEvent{Err: engines.StreamBroken("openai", fmt.Errorf("unexpected EOF"))}
+	close(stream)
+	rec := httptest.NewRecorder()
+	h.aggregateResponse(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), stream, "chatcmpl-1", 1, "m", time.Now())
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "stream: unexpected EOF") {
+		t.Fatalf("want 502 carrying the break, got %d %s", rec.Code, rec.Body.String())
+	}
+}

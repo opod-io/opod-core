@@ -2,6 +2,7 @@ package openaicompat
 
 import (
 	"context"
+	"errors"
 	"io"
 	"runtime"
 	"strings"
@@ -171,3 +172,30 @@ data: [DONE]
 		t.Fatalf("the finish reason the caller branches on was lost: %+v", done)
 	}
 }
+
+// A body that ends in a transport failure is classified, so the router can
+// tell "the engine's stream broke" from an engine's own error.
+func TestAStreamThatBreaksIsClassifiedAsBroken(t *testing.T) {
+	out := make(chan engines.StreamEvent, 4)
+	ConsumeStream(context.Background(), io.NopCloser(io.MultiReader(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n"), errReader{io.ErrUnexpectedEOF})), out)
+	var last engines.StreamEvent
+	for ev := range out {
+		last = ev
+	}
+	if !errors.Is(last.Err, engines.ErrStreamBroken) || !strings.HasPrefix(last.Err.Error(), "stream: ") {
+		t.Fatalf("want a broken-stream error that still reads \"stream: …\", got %v", last.Err)
+	}
+	// A chunk that does not decode is the engine's own fault, not a break.
+	out = make(chan engines.StreamEvent, 4)
+	ConsumeStream(context.Background(), io.NopCloser(strings.NewReader("data: {not json\n")), out)
+	for ev := range out {
+		last = ev
+	}
+	if last.Err == nil || errors.Is(last.Err, engines.ErrStreamBroken) {
+		t.Fatalf("a decode error is not a broken stream: %v", last.Err)
+	}
+}
+
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }

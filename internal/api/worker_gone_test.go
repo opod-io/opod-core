@@ -69,3 +69,21 @@ func TestAGangStillFormingIsNoCapacityNotALocalEngineFault(t *testing.T) {
 		}
 	}
 }
+
+// A stream that broke before its first event, on every worker or gang the
+// router could ask, is no capacity right now — the same answer as a worker or
+// coordinator that could not be dialled — never the leader's own engine.
+func TestAStreamBrokenBeforeItsFirstEventIsNoCapacity(t *testing.T) {
+	broke := &engines.BrokeBeforeFirstEventError{Err: &engines.StreamBrokenError{Engine: "llamacpp", Err: errors.New("unexpected EOF")}}
+	if msg, ok := gangGone("shard:m:g1", broke); !ok || strings.Contains(msg, "llama-server") {
+		t.Fatalf("a gang whose stream broke before answering: want no capacity, got %q %v", msg, ok)
+	}
+	if msg, ok := workerGone("n_pod-abc", broke); !ok || !strings.Contains(msg, "n_pod-abc") {
+		t.Fatalf("a worker whose stream broke before answering: want no capacity, got %q %v", msg, ok)
+	}
+	// A break after the first event never reaches here as a dispatch error:
+	// it is in the stream. A bare broken stream is not "nothing can take it".
+	if _, ok := gangGone("shard:m:g1", &engines.StreamBrokenError{Engine: "llamacpp", Err: errors.New("unexpected EOF")}); ok {
+		t.Fatal("only a break before the first event is no capacity")
+	}
+}

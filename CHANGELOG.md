@@ -25,6 +25,17 @@ the last section.
   or `crashloop` once its restarts run out, ends the create with the process, its status and the engine's own last
   lines, without the `upstream` prefix; the heal loop's `shard.heal_failed` carries the same code. Before, the 502
   had no code, so a manager could not tell it from a create still forming.
+- **A stream that breaks before its first event is served by a sibling gang or worker.** A gang head being
+  replaced answered `200` and then dropped the connection before any event; the stream ended `stream: unexpected
+  EOF` and the caller got a `502` although a sibling gang was serving. The router now reads a stream's first event
+  before it hands the stream on, so nothing has reached the caller yet, and a transport break at that point
+  (`engines.ErrStreamBroken` → `engines.ErrBrokeBeforeFirstEvent`) re-picks the model with that worker or gang set
+  aside — the path an unreachable worker already took, within the same budget. When every one breaks, the answer is
+  `503` + `Retry-After` (`gang_unreachable` / `worker_unreachable`), not a fault of the leader's own engine. A stream
+  that breaks after an event is never replayed. Response headers now go out with the first token rather than when
+  the engine answers. Scope: a gang head is dialled directly, so its break is caught; for a plain worker only the
+  leader↔worker connection breaking is caught — a worker relays its own engine's break as an in-band SSE error
+  chunk, which the leader's reader does not read as an error yet.
 
 ## 2026-10-12 — a failing heal backs off and says why on the event stream
 

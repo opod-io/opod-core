@@ -76,6 +76,55 @@ func Upstream(engine, op string, status int, body []byte) error {
 	return &UpstreamError{Engine: engine, Op: op, Status: status, Body: strings.TrimSpace(string(body))}
 }
 
+// ErrStreamBroken classifies a stream that ended in a transport failure after
+// the engine had answered 200: the connection dropped or the body was cut
+// short (`unexpected EOF`) before the stream's own end. Not the engine's own
+// error — a chunk that does not decode, or an error the engine sent in the
+// stream, is something else.
+var ErrStreamBroken = errors.New("engine stream broke")
+
+// StreamBrokenError is the concrete error behind ErrStreamBroken. Its text is
+// "stream: <transport error>", what a broken stream has always read.
+type StreamBrokenError struct {
+	Engine string
+	Err    error
+}
+
+func (e *StreamBrokenError) Error() string { return "stream: " + e.Err.Error() }
+
+func (e *StreamBrokenError) Unwrap() error { return e.Err }
+
+// Is makes errors.Is(err, ErrStreamBroken) true for every StreamBrokenError.
+func (e *StreamBrokenError) Is(target error) bool { return target == ErrStreamBroken }
+
+// StreamBroken wraps the transport failure that cut engine's stream short.
+func StreamBroken(engine string, err error) error {
+	return &StreamBrokenError{Engine: engine, Err: err}
+}
+
+// ErrBrokeBeforeFirstEvent classifies a stream that broke (ErrStreamBroken)
+// before it produced its FIRST event. Nothing of the answer exists anywhere
+// yet — no token was sent to the caller, no byte written — so the router may
+// ask another worker or gang for the same request, exactly as it does for an
+// engine it could not reach (ErrUnreachable). A stream that broke after an
+// event is never classified so: the caller already has part of an answer.
+var ErrBrokeBeforeFirstEvent = errors.New("engine stream broke before its first event")
+
+// BrokeBeforeFirstEventError is the concrete error behind
+// ErrBrokeBeforeFirstEvent; Err is the StreamBrokenError it carries.
+type BrokeBeforeFirstEventError struct {
+	Err error
+}
+
+func (e *BrokeBeforeFirstEventError) Error() string {
+	return "the engine answered and its stream broke before the first event: " + e.Err.Error()
+}
+
+func (e *BrokeBeforeFirstEventError) Unwrap() error { return e.Err }
+
+// Is makes errors.Is(err, ErrBrokeBeforeFirstEvent) true for every one of them.
+func (e *BrokeBeforeFirstEventError) Is(target error) bool { return target == ErrBrokeBeforeFirstEvent }
+
 // ErrUnsupportedRequest classifies a request this ENGINE cannot serve as
 // asked — not a transport failure and not the engine's own error, but a
 // field the driver knows it cannot honour. The caller turns it into a 400

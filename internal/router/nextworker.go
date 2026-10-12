@@ -18,8 +18,9 @@ import (
 // was serving the same model: one lost request per worker move.
 //
 // An unreachable worker received nothing (engines.ErrUnreachable is a
-// transport failure before any byte of an answer), so asking another worker
-// repeats nothing. The failed node is set aside FOR THIS REQUEST ONLY — the
+// transport failure before any byte of an answer), and a worker whose stream
+// broke before its first event (engines.ErrBrokeBeforeFirstEvent) sent the
+// caller nothing, so asking another worker repeats nothing the caller saw. The failed node is set aside FOR THIS REQUEST ONLY — the
 // cooldown counters (recordOutcome) are what keep later requests away — and
 // the same model is picked again. Each worker can be set aside once, so the
 // walk ends; when none is left the pick says so and the fallback chain goes
@@ -117,13 +118,22 @@ func (r *Router) tryNextWorker(ctx context.Context, nodeID string, err error) (c
 	// the same answer. Before this the walk stopped at the first gang and one
 	// request in flight failed per lost part (design-partner cell, T8.7:
 	// 59 of 60).
-	if st == nil || !errors.Is(err, engines.ErrUnreachable) || nodeID == "" || nodeID == r.localNode {
+	if st == nil || !nothingAnswered(err) || nodeID == "" || nodeID == r.localNode {
 		return ctx, false
 	}
 	st.mu.Lock()
 	st.skipped[nodeID] = true
 	st.mu.Unlock()
 	return ctx, true
+}
+
+// nothingAnswered says whether a failed start produced no part of an answer:
+// the worker could not be reached (engines.ErrUnreachable), or it answered
+// and its stream broke before the first event
+// (engines.ErrBrokeBeforeFirstEvent). Asking another worker repeats nothing
+// the caller has seen.
+func nothingAnswered(err error) bool {
+	return errors.Is(err, engines.ErrUnreachable) || errors.Is(err, engines.ErrBrokeBeforeFirstEvent)
 }
 
 // skippedGang says whether this request already found the gang unreachable.

@@ -115,8 +115,10 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		}
 
 		// Retry loop wraps the engine.Chat call. Retries only apply to
-		// synchronous start failures (engine couldn't begin the stream).
-		// Once a stream is open, mid-stream errors are NOT retried — the
+		// failures before the stream's first event: the engine could not
+		// begin the stream, or it answered 200 and the stream broke before
+		// any event (firstEvent) — either way nothing of the answer exists
+		// yet. Once an event is out, mid-stream errors are NOT retried — the
 		// client has already begun seeing tokens.
 		//
 		// streamCancel is the cancel for the cancellable child context
@@ -125,6 +127,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		// future readers) can see no context.CancelFunc leaks across the
 		// loop boundary.
 		var inner <-chan engines.StreamEvent
+		var first *engines.StreamEvent // the stream's first event, read before it is handed on
 		var streamCancel context.CancelFunc
 		var lastErr error
 		for retry := 0; retry <= ov.NumRetries; retry++ {
@@ -138,6 +141,17 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			r.incInflight(nodeID, candidate)
 			thisCtx, thisCancel := context.WithCancel(attemptCtx)
 			s, err := eng.Chat(thisCtx, attempt)
+			if err == nil {
+				// The engine answered; nothing has gone to the caller yet.
+				// A stream that breaks before its first event is a failed
+				// start like any other (engines.ErrBrokeBeforeFirstEvent).
+				var ev *engines.StreamEvent
+				if ev, err = firstEvent(thisCtx, s); err != nil {
+					go drainWithTimeout(s, 30*time.Second)
+				} else {
+					first = ev
+				}
+			}
 			if err == nil {
 				inner = s
 				streamCancel = thisCancel
@@ -167,7 +181,8 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			if i == 0 && primaryErr == nil {
 				primaryErr = lastErr
 			}
-			// The worker was unreachable and got nothing: the same model, another worker.
+			// The worker gave the caller nothing — it was unreachable, or its
+			// stream broke before the first event: the same model, another worker.
 			if next, again := r.tryNextWorker(ctx, nodeID, lastErr); again {
 				ctx = next
 				metrics.ObserveRouterFallback("chat", "next-worker")
@@ -203,7 +218,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			defer close(out)
 			defer span.End() // duration covers full streamed response
 			var tokenCount, completionTokens int
-			for ev := range inner {
+			forward := func(ev engines.StreamEvent) bool {
 				if ev.Delta != "" {
 					tokenCount++
 				}
@@ -212,10 +227,19 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 				}
 				select {
 				case out <- ev:
+					return true
 				case <-ctx.Done():
 					span.SetStatus(codes.Error, "client disconnected")
 					streamCancel()
 					go drainWithTimeout(inner, 30*time.Second)
+					return false
+				}
+			}
+			if first != nil && !forward(*first) {
+				return
+			}
+			for ev := range inner {
+				if !forward(ev) {
 					return
 				}
 			}
@@ -255,3 +279,32 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 //     reorder, and typed fallback. The operator already accepted the
 //     N× cost.
 //   - Local-only deployments fall back to a single local call.
+
+// firstEvent waits for a stream's first event, so the router can still act on
+// a stream that broke before anything of the answer existed. It returns that
+// event (nil when the stream closed with none, or ctx ended first — the
+// caller's own loop then sees the same thing), or an
+// engines.BrokeBeforeFirstEventError when the first thing the stream produced
+// was a transport break (engines.ErrStreamBroken): the engine answered 200
+// and the connection dropped. That request reached no caller and is asked of
+// another worker or gang (tryNextWorker), as a head that could not be dialled
+// is (design-partner cell, 2026-10-11: a gang head being replaced answered 200
+// and cut the stream; the client got a 502 while a sibling gang served).
+//
+// The wait costs nothing a caller can use: the first token reaches it at the
+// same moment. The response headers do go out at that moment instead of when
+// the engine answered.
+func firstEvent(ctx context.Context, s <-chan engines.StreamEvent) (*engines.StreamEvent, error) {
+	select {
+	case ev, open := <-s:
+		if !open {
+			return nil, nil
+		}
+		if ev.Err != nil && errors.Is(ev.Err, engines.ErrStreamBroken) && ctx.Err() == nil {
+			return nil, &engines.BrokeBeforeFirstEventError{Err: ev.Err}
+		}
+		return &ev, nil
+	case <-ctx.Done():
+		return nil, nil
+	}
+}

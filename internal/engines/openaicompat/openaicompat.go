@@ -430,7 +430,9 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 		}
 	}
 	if err := sc.Err(); err != nil {
-		send(engines.StreamEvent{Err: fmt.Errorf("stream: %w", err)})
+		// A transport failure, typed so the router can tell it from the
+		// engine's own error (and, before the first event, ask a sibling).
+		send(engines.StreamEvent{Err: engines.StreamBroken("openai", err)})
 		return
 	}
 	// stream ended without explicit [DONE] — synthesize one

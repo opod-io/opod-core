@@ -411,7 +411,7 @@ func (o *Driver) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			}
 		}
 		if err := sc.Err(); err != nil {
-			send(engines.StreamEvent{Err: fmt.Errorf("stream: %w", err)})
+			send(engines.StreamEvent{Err: engines.StreamBroken("ollama", err)})
 		}
 	}()
 

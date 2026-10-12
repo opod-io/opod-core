@@ -775,7 +775,7 @@ func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
 // something the caller can act on. It is a wake in progress: 503 +
 // Retry-After, in the gang's name.
 func gangGone(node string, err error) (string, bool) {
-	if !strings.HasPrefix(node, "shard:") || !errors.Is(err, engines.ErrUnreachable) {
+	if !strings.HasPrefix(node, "shard:") || !nothingAnswered(err) {
 		return "", false
 	}
 	return fmt.Sprintf("the gang serving this model is not answering yet: its coordinator has been formed but may still be loading the model, or a part went away. Nothing else can take this request right now; retry shortly (%v)", err), true
@@ -789,10 +789,18 @@ func gangGone(node string, err error) (string, bool) {
 // or died and still looks alive for a heartbeat or two. The caller answers 503
 // + Retry-After, the same thing a leader with no live worker says.
 func workerGone(node string, err error) (string, bool) {
-	if node == "" || node == "local" || strings.HasPrefix(node, "shard:") || !errors.Is(err, engines.ErrUnreachable) {
+	if node == "" || node == "local" || strings.HasPrefix(node, "shard:") || !nothingAnswered(err) {
 		return "", false
 	}
 	return fmt.Sprintf("worker %s could not be reached and no other worker can take this request right now; retry shortly (%v)", node, err), true
+}
+
+// nothingAnswered is the router's own test for "the worker or gang gave the
+// caller nothing": it could not be reached, or it answered and its stream
+// broke before the first event. Either way the dispatch had no other to ask,
+// and the honest answer is no capacity right now (workerGone, gangGone).
+func nothingAnswered(err error) bool {
+	return errors.Is(err, engines.ErrUnreachable) || errors.Is(err, engines.ErrBrokeBeforeFirstEvent)
 }
 
 // upstreamPassthrough decides whether an engine's non-2xx answer is relayed
