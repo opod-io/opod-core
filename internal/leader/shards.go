@@ -48,6 +48,18 @@ func (s *Server) listShardProcesses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.orch.Supervisor.List())
 }
 
+// The error.code values a failed POST /admin/v1/shards/create carries (feature
+// shard_create_error_codes). Part of the frozen contract: a value is never
+// renamed or reused for another cause.
+const (
+	// ShardCreatePartLost: the gang did not form — a part's worker went away
+	// while it was forming. Definite; the create will not finish on its own.
+	ShardCreatePartLost = "gang_part_lost"
+	// ShardCreateInFlight: refused, another create of this gang (or of the
+	// whole model) is running. Not an answer about the gang; retry.
+	ShardCreateInFlight = "gang_create_in_flight"
+)
+
 func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req CreateShardsRequest
@@ -64,6 +76,22 @@ func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, scheduler.ErrUnplaceable):
 		// Not an upstream fault: the fleet cannot hold the shape asked for.
 		writeJSONError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, scheduler.ErrPartLost):
+		// A definite answer: this gang did not form, its parts were stopped,
+		// and asking again is a new create. The code lets a manager stop
+		// waiting on it without parsing the message (feature
+		// shard_create_error_codes); the message is the PartLostError itself,
+		// which names the gang, the node and the last output polled.
+		msg := err.Error()
+		var pl *scheduler.PartLostError
+		if errors.As(err, &pl) {
+			msg = pl.Error()
+		}
+		writeJSONErrorCode(w, http.StatusBadGateway, ShardCreatePartLost, msg)
+	case errors.Is(err, scheduler.ErrCreateInFlight):
+		// NOT an answer about the gang: another create of it is running and
+		// decides. Same status as before; the code says it was a collision.
+		writeJSONErrorCode(w, http.StatusBadGateway, ShardCreateInFlight, err.Error())
 	case err != nil:
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 	default:

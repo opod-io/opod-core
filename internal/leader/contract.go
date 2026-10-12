@@ -238,6 +238,17 @@ func contractFeatures() map[string]bool {
 		// it got here instead of inferring it. Absent = a worker that predates
 		// the field; an empty list = a worker given none.
 		"worker_devices": true,
+		// A failed POST /admin/v1/shards/create says WHY in error.code, beside
+		// the unchanged message, status and type: "gang_part_lost" — the gang
+		// did not form because a part's worker went away while it was forming
+		// (replaced, removed, or its process gone); the create's parts were
+		// stopped, it will not finish on its own, and the message names the
+		// gang, the node and the last output polled — and
+		// "gang_create_in_flight" — refused because another create of this
+		// gang (or of the whole model) is running; nothing was touched, and the
+		// running create is what decides. A manager keys on the code, never on
+		// the English, to tell a definite answer from a collision to retry.
+		"shard_create_error_codes": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once
 		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating

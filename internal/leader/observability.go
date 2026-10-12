@@ -120,6 +120,14 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": errorTypeFor(status)}})
 }
 
+// writeJSONErrorCode is writeJSONError with error.code set: a machine-readable
+// cause a manager can switch on, where the message is for a person. The
+// status, type and message are exactly what writeJSONError writes, so a
+// caller that does not know the code reads the same error as before.
+func writeJSONErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": errorTypeFor(status), "code": code}})
+}
+
 // errorTypeFor names the error class the way OpenAI-style clients switch on
 // it: a waking / not-configured 503 is "unavailable", never "invalid_request"
 // (the client did nothing wrong and should retry after Retry-After).

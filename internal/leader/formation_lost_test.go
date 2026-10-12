@@ -204,3 +204,75 @@ func TestACreateEndsWhenItsPartsNodeIsRemoved(t *testing.T) {
 		t.Fatalf("a create whose node was removed must end naming the gang and why: %v", err)
 	}
 }
+
+// The create's HTTP answer says which of the two it is in error.code (feature
+// shard_create_error_codes): a definite "this gang did not form" a manager
+// stops waiting on, or a collision with a running create it retries. On the
+// cell (2026-10-11) the manager could only read the English, kept retrying the
+// definite answer, collided with the leader's own heal create eleven times,
+// and failed eight minutes later carrying the collision's text.
+func TestAFailedShardCreateNamesItsCauseInTheCode(t *testing.T) {
+	srv, _, w, entry := formationFixture(t)
+	ctx := context.Background()
+	body := `{"model_id":"` + entry.ID + `","gang":"g1","shards":1,"nodes":["n1"]}`
+	post := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.createShards(rec, httptest.NewRequest(http.MethodPost, "/admin/v1/shards/create", strings.NewReader(body)))
+		return rec
+	}
+	type apiErr struct {
+		Error struct {
+			Message, Type, Code string
+		} `json:"error"`
+	}
+	read := func(rec *httptest.ResponseRecorder) apiErr {
+		t.Helper()
+		var e apiErr
+		if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+			t.Fatalf("the error body must be JSON: %v: %s", err, rec.Body.String())
+		}
+		return e
+	}
+
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- post() }()
+	select {
+	case <-w.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the coordinator was never started")
+	}
+
+	// A second create of the same gang while the first forms: refused, and
+	// the code says it was a collision — not an answer about the gang.
+	busy := post()
+	if busy.Code != http.StatusBadGateway {
+		t.Fatalf("the collision keeps its status: %d %s", busy.Code, busy.Body.String())
+	}
+	if e := read(busy); e.Error.Code != ShardCreateInFlight || e.Error.Type != "server_error" {
+		t.Fatalf("a collision must carry code %q (type unchanged): %+v", ShardCreateInFlight, e.Error)
+	}
+
+	// The first create's part's worker is replaced: a definite answer.
+	w.mu.Lock()
+	w.gone = true
+	w.mu.Unlock()
+	if err := srv.HeartbeatNode(ctx, HeartbeatRequest{ID: "n1", BootID: "boot-b"}, Caller{Admin: true}); err != nil {
+		t.Fatal(err)
+	}
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-first:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the create was still forming after its part's worker went away")
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("the definite answer keeps its status: %d %s", rec.Code, rec.Body.String())
+	}
+	e := read(rec)
+	if e.Error.Code != ShardCreatePartLost || e.Error.Type != "server_error" {
+		t.Fatalf("a gang that did not form must carry code %q (type unchanged): %+v", ShardCreatePartLost, e.Error)
+	}
+	if !strings.HasPrefix(e.Error.Message, "gang g1 of "+entry.ID+" did not form") || !strings.Contains(e.Error.Message, "n1") {
+		t.Fatalf("the message must be the reason itself, naming the gang and the node: %q", e.Error.Message)
+	}
+}

@@ -125,6 +125,8 @@ var contractFeatureFloor = []string{
 	"shard_expert",
 	// a worker states the accelerators it was given (hardware_json.GivenDevices)
 	"worker_devices",
+	// a failed shard create names its cause in error.code (gang_part_lost, gang_create_in_flight)
+	"shard_create_error_codes",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

@@ -5,6 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-11 — a failed gang create says why in a code
+
+- **A failed `POST /admin/v1/shards/create` names its cause in `error.code`** (feature `shard_create_error_codes`),
+  beside the unchanged status (502), `type` and message. `gang_part_lost`: the gang did not form because a part's
+  worker went away while it was forming; the create's parts were stopped and it will not finish on its own, and the
+  message is now the reason itself (gang, node, last output polled) without the `upstream` prefix.
+  `gang_create_in_flight`: refused because another create of this gang (or of the whole model) is running; nothing
+  was touched. A manager can now tell a definite answer from a collision to retry without reading the English.
+
 ## 2026-10-11 — a gang create ends when a part's worker goes away
 
 - **A gang create stops the moment the leader knows one of its parts' workers is gone**, instead of polling the dead
