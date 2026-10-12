@@ -236,8 +236,9 @@ type CreateShardsRequest struct {
 	Expert bool `json:"expert,omitempty"`
 }
 
-// CreateShards builds the gang through the orchestrator. A failed create is
-// torn down on a fresh context so no half-shard lingers.
+// CreateShards builds the gang through the orchestrator. A failed create
+// leaves no half-shard behind: the orchestrator rolls back what that create
+// started before it releases the gang's guard.
 func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) error {
 	// The request's own shape first: a managed gang's coordinator is a worker
 	// rank, never the leader (D4), whatever model is being asked for.
@@ -255,31 +256,20 @@ func (s *Server) CreateShards(ctx context.Context, req CreateShardsRequest) erro
 	// shared field: a create used to write it there for every later create to
 	// read, including a sibling gang's running at the same time.
 	if err := s.orch.CreateSharded(ctx, *entry, req.Gang, req.Shards, req.Nodes, scheduler.Parallelism{TP: req.TP, PP: req.PP, DevicesPerRank: req.Devices, Flags: req.Flags, Head: req.Head, Expert: req.Expert}); err != nil {
-		if errors.Is(err, scheduler.ErrUnplaceable) {
-			// Refused before anything was touched: the gang this create would
-			// have replaced is still serving, and the cleanup below would
-			// take it down for a request that changed nothing.
+		if errors.Is(err, scheduler.ErrUnplaceable) || errors.Is(err, scheduler.ErrCreateInFlight) {
+			// Refused before anything was touched — the fleet cannot hold the
+			// shape, or another create of this gang holds its guard — so the
+			// error is the caller's to read as is, not an upstream failure.
 			return err
 		}
-		if errors.Is(err, scheduler.ErrCreateInFlight) {
-			// Same reason, and it matters more: the parts being built right
-			// now belong to the create that holds the guard. Cleaning up here
-			// would tear down ITS work — which is the very cycle the guard
-			// exists to end.
-			return err
-		}
-		cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		// Clean up only what this create was building. A create of ONE gang
-		// that fails must not tear down the model's other gangs: they are
-		// serving, they were not touched, and the caller asked about one gang.
-		if req.Gang != "" {
-			if rmErr := s.orch.RemoveGang(cleanCtx, req.ModelID, req.Gang); rmErr != nil {
-				s.log.Error("shards/create cleanup failed", "model", req.ModelID, "gang", req.Gang, "err", rmErr)
-			}
-		} else if rmErr := s.orch.RemoveSharded(cleanCtx, req.ModelID); rmErr != nil {
-			s.log.Error("shards/create cleanup failed", "model", req.ModelID, "err", rmErr)
-		}
-		cancel()
+		// No cleanup here. The create rolled back exactly the parts it had
+		// started and the rows it had written (scheduler rollback), while it
+		// still held the gang's create guard. A teardown from here would run
+		// after the guard is released and read the gang's CURRENT rows: on the
+		// design-partner cell (2026-10-12) the leader's reincarnation sweep had
+		// already removed them, so it logged a failed cleanup at ERROR, and
+		// the same read could as well remove a gang the heal loop had just
+		// formed again under the same id.
 		s.router.InvalidateModel(req.ModelID)
 		return errors.Join(ErrUpstream, err)
 	}

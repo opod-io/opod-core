@@ -5,6 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-12 — gang creates and teardowns touch only their own incarnation
+
+- **A failed gang create no longer cleans up after its guard is released.** `CreateShards` used to tear down the
+  gang's CURRENT rows once the create had failed and let go of the gang's guard: a gang the heal loop had just
+  formed again under the same id could go with them, and when a sweep had already removed the rows it logged
+  `shards/create cleanup failed … has no gang` at ERROR. The create's own rollback — which already stopped the parts
+  it started, under the guard — is now the whole cleanup, and it deletes the rows the create wrote as written
+  (`ShardStore.DeleteRows`), never by id.
+
 ## 2026-10-12 — a failing heal backs off and says why on the event stream
 
 - **The heal-within-plan loop backs a gang off after a heal that failed** — 15 s, then 30 s, then 60 s at most;

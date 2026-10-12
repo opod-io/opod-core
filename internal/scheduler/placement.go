@@ -142,7 +142,9 @@ func (o *Orchestrator) pickWorkers(ctx context.Context, n int) ([]store.Node, er
 }
 
 // rollback stops every successfully-launched process so failed creates
-// don't leave orphan rpc-servers running on workers.
+// don't leave orphan rpc-servers running on workers, and deletes the rows the
+// create wrote. It runs before the create releases its guard, so it is the
+// whole of a failed create's cleanup (Server.CreateShards adds none).
 //
 // It runs detached from ctx's cancellation: a create that ends because its
 // context was cancelled — a part's worker went away (partlost.go), or the
@@ -172,7 +174,12 @@ func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
 				_ = o.callWorkerStop(ctx, *node, s.ProcessID)
 			}
 		}
-		_ = o.Store.Shards().Delete(ctx, s.ID)
+	}
+	// The rows as this create wrote them, never by id: an id is free again the
+	// moment a sweep has removed the row, and a gang formed again under it
+	// reuses it (ShardStore.DeleteRows). A row already gone is not an error.
+	if _, err := o.Store.Shards().DeleteRows(ctx, created); err != nil {
+		o.Log.Warn("rollback: deleting the create's shard rows failed", "err", err)
 	}
 }
 
