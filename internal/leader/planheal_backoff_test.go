@@ -107,6 +107,12 @@ func TestAFailedHealBacksOffAndRecordsWhy(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the heal never started the gang's coordinator")
 	}
+	// A new plan lands while the create runs (a rollout or a rollback). The
+	// event must still carry the revision the heal READ: a manager waiting on
+	// revision 8 must be able to tell this failure belongs to revision 7.
+	srv.plan.mu.Lock()
+	srv.plan.revision = 8
+	srv.plan.mu.Unlock()
 	// The worker's pod is recreated while the gang forms: a definite failure.
 	w.mu.Lock()
 	w.gone = true
@@ -138,7 +144,7 @@ func TestAFailedHealBacksOffAndRecordsWhy(t *testing.T) {
 		t.Fatalf("a failed heal must record shard.heal_failed; events: %+v", evs)
 	}
 	if failed["gang"] != "g1" || failed["code"] != ShardCreatePartLost || failed["revision"] != float64(7) {
-		t.Errorf("the event must carry gang, code %q and the plan revision: %v", ShardCreatePartLost, failed)
+		t.Errorf("the event must carry gang, code %q and the plan revision the heal read (7, not the 8 that landed during the create): %v", ShardCreatePartLost, failed)
 	}
 	if r, _ := failed["reason"].(string); r == "" || !strings.Contains(r, "gang g1") || !strings.Contains(r, "n1") {
 		t.Errorf("the event's reason must name the gang and the node: %q", failed["reason"])
