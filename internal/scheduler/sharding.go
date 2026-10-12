@@ -831,11 +831,17 @@ func (o *Orchestrator) RemoveShardsOn(ctx context.Context, nodeID string) (remov
 		}
 	}
 	for key := range gone {
-		if err := o.RemoveGang(ctx, key.Model, key.Gang); err != nil {
+		// The gang as read above, never as it is by the time this reaches
+		// it: the stops can be slow, and a gang formed again under the same
+		// id meanwhile is not this one (removeGangRows).
+		n, err := o.removeGangRows(ctx, key.Model, rowsOfGang(all, key))
+		if err != nil {
 			o.Log.Warn("stale gang removal failed", "model", key.Model, "gang", key.Gang, "node", nodeID, "err", err)
 			continue
 		}
-		removed = append(removed, key)
+		if n > 0 {
+			removed = append(removed, key)
+		}
 	}
 	sortGangKeys(removed)
 	return removed, nil
@@ -887,11 +893,15 @@ func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (remo
 		// A gang still forming whose recorded part is gone cannot form: end
 		// its create with the reason rather than let it wait out its budget.
 		o.endFormationOf(key, node.ID, lostProcess)
-		if err := o.RemoveGang(ctx, key.Model, key.Gang); err != nil {
+		// As read before the process list was asked, for the reason above.
+		n, err := o.removeGangRows(ctx, key.Model, rowsOfGang(all, key))
+		if err != nil {
 			o.Log.Warn("stale gang removal failed", "model", key.Model, "gang", key.Gang, "node", node.ID, "err", err)
 			continue
 		}
-		removed = append(removed, key)
+		if n > 0 {
+			removed = append(removed, key)
+		}
 	}
 	sortGangKeys(removed)
 	return removed, nil

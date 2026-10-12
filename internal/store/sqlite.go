@@ -301,6 +301,12 @@ type ShardStore interface {
 	DeleteByModel(ctx context.Context, modelID string) error
 	// DeleteByGang removes one gang, leaving the model's other gangs alone.
 	DeleteByGang(ctx context.Context, modelID, gangID string) error
+	// DeleteRows removes exactly the rows given, each only while the stored
+	// row is still the one that was read — same id, node, address, process
+	// and creation time — and returns the ones it removed. A gang formed
+	// again under the same id after the rows were read reuses their ids, so
+	// deleting by id or by gang would take the NEW gang with it.
+	DeleteRows(ctx context.Context, rows []Shard) ([]Shard, error)
 }
 
 // Usage records a single completed inference request.

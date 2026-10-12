@@ -93,6 +93,9 @@ func (o *Orchestrator) stopOrphanGangProcs(ctx context.Context, entry models.Ent
 // Unlike RemoveSharded it does not delete the model row, and it removes the
 // model's placement only when the gang it took away was the last one — a model
 // with a gang still up is still placed.
+//
+// It removes the gang AS IT READ IT (removeGangRows): a gang formed again
+// under the same id while this teardown runs is not touched.
 func (o *Orchestrator) RemoveGang(ctx context.Context, modelID, gangID string) error {
 	if gangID == "" {
 		gangID = store.DefaultGangID
@@ -104,9 +107,29 @@ func (o *Orchestrator) RemoveGang(ctx context.Context, modelID, gangID string) e
 	if len(shards) == 0 {
 		return fmt.Errorf("model %s has no gang %q", modelID, gangID)
 	}
-	o.stopGangProcesses(ctx, shards)
-	if err := o.Store.Shards().DeleteByGang(ctx, modelID, gangID); err != nil {
-		return err
+	_, err = o.removeGangRows(ctx, modelID, shards)
+	return err
+}
+
+// removeGangRows tears down one gang as it was read: it stops the processes
+// behind the rows given, then deletes those rows only while they are still the
+// ones read (ShardStore.DeleteRows). It returns how many rows it deleted — 0
+// when another teardown got there first.
+//
+// The delete must not be by gang. A stop can take long — a dial to a pod
+// address that died with its worker waits out a 30 s i/o timeout — and the
+// gang id is free again the moment another teardown has removed the rows: the
+// heal loop or a manager forms the gang again under the same id, and the new
+// rows reuse the old ids. A delete by gang after the stops took that NEW
+// gang's rows with it, measured on the design-partner cell (2026-10-11): a
+// teardown read g1 at 18:30:52, dialled a dead address for 30 s, and its
+// delete at 18:31:22 removed the g1 formed at 18:31:14, which went on running
+// with no row to route it by.
+func (o *Orchestrator) removeGangRows(ctx context.Context, modelID string, rows []store.Shard) (int, error) {
+	o.stopGangProcesses(ctx, rows)
+	removed, err := o.Store.Shards().DeleteRows(ctx, rows)
+	if err != nil {
+		return 0, err
 	}
 	// Only the LAST gang takes the placement with it. Removing it while another
 	// gang serves would hide a servable model from /v1/models and from every
@@ -117,7 +140,18 @@ func (o *Orchestrator) RemoveGang(ctx context.Context, modelID, gangID string) e
 			o.Log.Warn("placement delete failed", "err", err)
 		}
 	}
-	return nil
+	return len(removed), nil
+}
+
+// rowsOfGang picks one gang's rows out of a list read once.
+func rowsOfGang(all []store.Shard, key store.GangKey) []store.Shard {
+	var out []store.Shard
+	for _, s := range all {
+		if s.ModelID == key.Model && s.Gang() == key.Gang {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // stopGangProcesses stops the processes behind a set of shard rows. It stops by

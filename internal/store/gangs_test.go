@@ -118,3 +118,47 @@ func TestUnnamedGangIsStoredAsTheDefault(t *testing.T) {
 		t.Errorf("an empty gang argument means the default gang: %d %v", len(parts), err)
 	}
 }
+
+// DeleteRows removes a row only while it is still the one that was read: a
+// gang formed again under the same id reuses the row ids, and a delete of the
+// old rows must leave the new ones.
+func TestDeleteRowsRemovesOnlyTheRowsAsRead(t *testing.T) {
+	st, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	old := gangPart("m", "g1", "coordinator", "n1")
+	old.CreatedAt = time.Now().Add(-time.Minute)
+	keep := gangPart("m", "g0", "coordinator", "n2")
+	for _, sh := range []Shard{old, keep} {
+		if err := st.Shards().Create(ctx, sh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Shards().UpdateStatus(ctx, old.ID, "lost"); err != nil {
+		t.Fatal(err)
+	}
+	// Status changes on a live row; it is still the row that was read.
+	removed, err := st.Shards().DeleteRows(ctx, []Shard{old})
+	if err != nil || len(removed) != 1 {
+		t.Fatalf("the row as read is removed: %v %v", removed, err)
+	}
+
+	// The gang is formed again: same id, new address and creation time.
+	again := old
+	again.Address, again.CreatedAt = "n1:9002", time.Now()
+	if err := st.Shards().Create(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := st.Shards().DeleteRows(ctx, []Shard{old}); err != nil || len(removed) != 0 {
+		t.Fatalf("the old row is gone; the new one under its id must not be removed in its place: %v %v", removed, err)
+	}
+	if got, _ := st.Shards().Get(ctx, again.ID); got == nil || got.Address != "n1:9002" {
+		t.Fatalf("the new row survives: %+v", got)
+	}
+	if got, _ := st.Shards().Get(ctx, keep.ID); got == nil {
+		t.Fatal("a row not named is never touched")
+	}
+}

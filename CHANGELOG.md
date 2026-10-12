@@ -5,6 +5,16 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-11 — a slow gang teardown no longer deletes the gang formed after it
+
+- **A gang teardown removes the gang it read, never one formed again under the same id while it ran.** A teardown
+  (a worker's new boot id, a stale part, `DELETE` of one gang) stopped the parts and then deleted the rows by gang.
+  A stop can take 30 s when it dials a pod address that died with its worker, and in that time another teardown
+  could remove the gang and a create form it again — new rows under the same ids — which the late delete then took
+  with it, leaving the new gang running with no row to route it by. Rows are now deleted only while they are still
+  the rows read (same id, node, address, process and creation time; `ShardStore.DeleteRows`), and a teardown that
+  found its rows already gone no longer reports the gang removed.
+
 ## 2026-10-11 — a failed gang create says why in a code
 
 - **A failed `POST /admin/v1/shards/create` names its cause in `error.code`** (feature `shard_create_error_codes`),

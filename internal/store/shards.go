@@ -154,6 +154,44 @@ func (s *sqliteShards) DeleteByGang(ctx context.Context, modelID, gangID string)
 	return err
 }
 
+// DeleteRows is a compare-and-delete per row, in one transaction: a row is
+// removed only while it still matches what the caller read. Status and
+// last_seen are left out of the match on purpose — they change on a live row
+// (UpdateStatus) and say nothing about which incarnation it is.
+//
+// What tells two incarnations of one part apart is the rest: a gang formed
+// again gets new rows under the SAME ids (gangShardID), normally at a new pod
+// address and always at a later creation time. created_at is whole seconds,
+// so a re-form at the same address within the second the rows were read
+// would match; a create takes several seconds (it starts its parts one after
+// another), so that window is theoretical.
+func (s *sqliteShards) DeleteRows(ctx context.Context, rows []Shard) ([]Shard, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var removed []Shard
+	for _, r := range rows {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM shards WHERE id = ? AND node_id = ? AND address = ? AND process_id = ? AND created_at = ?`,
+			r.ID, r.NodeID, r.Address, r.ProcessID, r.CreatedAt.Unix())
+		if err != nil {
+			return nil, fmt.Errorf("delete shard %s: %w", r.ID, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			removed = append(removed, r)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return removed, nil
+}
+
 // GangKey identifies one gang globally. The MODEL is part of it on purpose:
 // gang ids are per model, so "g0" alone names a different gang for every
 // sharded model, and a map keyed on it would silently merge them.
