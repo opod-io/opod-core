@@ -7,10 +7,43 @@ import (
 	"github.com/opod-io/opod/internal/metrics"
 )
 
-func (r *Router) inCooldown(nodeID string) bool {
-	if r.placementCooldownDur <= 0 {
-		return false
+// setAsideFor is how long a worker that gave a request NOTHING — it could not
+// be dialled, its engine was down (engines.ErrWorkerEngineUnreachable), or its
+// stream broke before the first event — is kept from new requests. One
+// heartbeat interval: by then the worker's own report says whether its engine
+// is gone (engineDownWhy, which then keeps it out for as long as that lasts),
+// and a worker that was only restarting its engine is back in rotation.
+const setAsideFor = 5 * time.Second
+
+// setAside puts a worker that gave a request nothing in the penalty box for
+// setAsideFor, whether or not the configured breaker (SetPlacementCooldown) is
+// on: one such answer is a statement about the worker, not a strike. Without
+// it, a worker whose engine had just died answered in milliseconds, looked the
+// least loaded, and was picked for most new requests until its heartbeat said
+// otherwise — each of them asked it first and then a sibling (design-partner
+// cell, PLAN T8.18). The same map and gauge as the breaker; a longer cooldown
+// already running is kept. A gang and the local engine are never benched here
+// (recordOutcome's rule).
+func (r *Router) setAside(nodeID string) {
+	if nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
+		return
 	}
+	until := time.Now().Add(setAsideFor)
+	r.mu.Lock()
+	if cur, ok := r.cooldowns[nodeID]; !ok || cur.Before(until) {
+		r.cooldowns[nodeID] = until
+	}
+	n := len(r.cooldowns)
+	r.mu.Unlock()
+	metrics.SetRouterCooldownsActive(n)
+	if r.log != nil {
+		r.log.Info("router set a worker aside: it answered nothing", "node", nodeID, "for", setAsideFor)
+	}
+}
+
+// inCooldown reads the penalty box, which the configured breaker and setAside
+// both write.
+func (r *Router) inCooldown(nodeID string) bool {
 	r.mu.RLock()
 	until, ok := r.cooldowns[nodeID]
 	r.mu.RUnlock()
@@ -40,9 +73,6 @@ func (r *Router) inCooldown(nodeID string) bool {
 // pin is fresh, or "" when there's nothing to suggest. Bypassed for
 // requests with no user_id and for the synthetic `auto` model id.
 func (r *Router) CooldownUntil(nodeID string) time.Time {
-	if r.placementCooldownDur <= 0 {
-		return time.Time{}
-	}
 	r.mu.RLock()
 	until, ok := r.cooldowns[nodeID]
 	r.mu.RUnlock()
@@ -62,10 +92,20 @@ func (r *Router) CooldownUntil(nodeID string) time.Time {
 // workers. (A flaky local engine is a different operational problem;
 // restart it.)
 func (r *Router) recordOutcome(nodeID string, ok bool) {
-	if r.placementCooldownDur <= 0 || r.placementAllowedFails <= 0 {
+	if nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
 		return
 	}
-	if nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
+	if ok {
+		// A worker in the box served a request — it was the only one left to
+		// ask (takingRequests): it answers again, so it is back in rotation.
+		r.mu.Lock()
+		if _, boxed := r.cooldowns[nodeID]; boxed {
+			delete(r.cooldowns, nodeID)
+			metrics.SetRouterCooldownsActive(len(r.cooldowns))
+		}
+		r.mu.Unlock()
+	}
+	if r.placementCooldownDur <= 0 || r.placementAllowedFails <= 0 {
 		return
 	}
 	r.mu.Lock()

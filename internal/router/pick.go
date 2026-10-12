@@ -69,7 +69,8 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// node is not touched — it finishes on the engine it started on.
 	workers, nodes := r.takingRequests(ctx, model, workers)
 	if len(workers) == 0 {
-		// Every holder is draining, lost or cooling down. Fall back to local —
+		// Every holder is draining or lost (one only in the penalty box is
+		// still asked: takingRequests). Fall back to local —
 		// it will surface its own "model not loaded" error.
 		metrics.ObserveRouterPick("fallback-to-local", "all-workers-stale")
 		return r.local, r.localNode, nil
@@ -233,6 +234,7 @@ func (r *Router) staleEpisode(nodeID string, stale bool) (began bool) {
 func (r *Router) takingRequests(ctx context.Context, model string, ps []store.Placement) ([]store.Placement, map[string]*store.Node) {
 	now := time.Now()
 	out := ps[:0:0]
+	var cooling []store.Placement // refused only for the penalty box
 	nodes := make(map[string]*store.Node, len(ps))
 	for _, p := range ps {
 		n, err := r.store.Nodes().Get(ctx, p.NodeID)
@@ -246,10 +248,25 @@ func (r *Router) takingRequests(ctx context.Context, model string, ps []store.Pl
 		}
 		if !ok {
 			metrics.ObserveRouterPick("worker", why)
+			if why == "cooldown" {
+				cooling = append(cooling, p)
+				nodes[p.NodeID] = n
+			}
 			continue
 		}
 		nodes[p.NodeID] = n
 		out = append(out, p)
+	}
+	// The penalty box is a preference, not a verdict: when every worker that
+	// is otherwise live is in it, asking one is better than answering from the
+	// leader's own engine, which does not hold the model. A worker whose engine
+	// restarted in two seconds is served again at once; one still down answers
+	// "nothing" and the request ends as no capacity (503 + Retry-After).
+	if len(out) == 0 && len(cooling) > 0 {
+		return cooling, nodes
+	}
+	for _, p := range cooling {
+		delete(nodes, p.NodeID)
 	}
 	return out, nodes
 }

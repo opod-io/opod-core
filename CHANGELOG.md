@@ -7,6 +7,14 @@ the last section.
 
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 
+- **A worker that gave a request nothing is set aside for new requests too.** After a worker's engine died, the
+  request at hand went to a sibling, but the next one picked the dead worker again — it answered in milliseconds and
+  so looked the least loaded — because the per-worker penalty box was only written by the opt-in breaker
+  (`placement_allowed_fails` + `placement_cooldown_seconds`, off by default). A worker that could not be dialled,
+  whose engine was down, or whose stream broke before its first event now goes into the box for one heartbeat
+  interval (5 s) regardless; a worker that answers again leaves it at once. The box is a preference: when every
+  otherwise-live worker of a model is in it they are still asked — before, the configured breaker parking the last
+  worker sent the request to the leader's own engine, which does not hold the model.
 - **A worker whose own engine is down is "nothing answered", and a sibling serves the request.** When a worker's
   engine process was dead or restarting, the worker's dial to it was refused and it answered a plain-text `502`;
   the leader read every non-2xx from a worker as the engine's own error, so no sibling was asked, and the caller

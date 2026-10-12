@@ -20,9 +20,11 @@ import (
 // An unreachable worker received nothing (engines.ErrUnreachable is a
 // transport failure before any byte of an answer), and a worker whose stream
 // broke before its first event (engines.ErrBrokeBeforeFirstEvent) sent the
-// caller nothing, so asking another worker repeats nothing the caller saw. The failed node is set aside FOR THIS REQUEST ONLY — the
-// cooldown counters (recordOutcome) are what keep later requests away — and
-// the same model is picked again. Each worker can be set aside once, so the
+// caller nothing, so asking another worker repeats nothing the caller saw.
+// The failed node is set aside for this request — and, briefly, from new
+// requests too (setAside: one heartbeat interval in the penalty box, whether
+// or not the configured breaker is on) — and the same model is picked again.
+// Each worker can be set aside once, so the
 // walk ends; when none is left the pick says so and the fallback chain goes
 // on as before. An answer from an engine, a refusal included, is never
 // replayed elsewhere.
@@ -124,6 +126,7 @@ func (r *Router) tryNextWorker(ctx context.Context, nodeID string, err error) (c
 	st.mu.Lock()
 	st.skipped[nodeID] = true
 	st.mu.Unlock()
+	r.setAside(nodeID)
 	return ctx, true
 }
 
