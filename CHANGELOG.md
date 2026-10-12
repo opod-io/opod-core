@@ -5,6 +5,21 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-11 — a gang create ends when a part's worker goes away
+
+- **A gang create stops the moment the leader knows one of its parts' workers is gone**, instead of polling the dead
+  process until the 15-minute formation budget runs out while holding the gang's create guard (so every heal attempt
+  was refused with `a create is already forming this gang`). The signals are ones the leader already acts on: the
+  worker registered or heartbeated with a new boot id (a recreated pod or restarted container), the stale-part check
+  found a recorded part's process gone, or the node was removed. A failed status poll also reads the node's row
+  again, so a new boot id ends the wait even without the notification; a poll error from the same worker process is
+  still waited out as a blip. The create rolls back what it started, releases the guard, and returns an error that
+  wraps `ErrPartLost` and names the gang, the node, what happened to it and the last status and engine output the
+  leader polled for the process it was waiting on (or says plainly that the worker reported none). Rollback and
+  worker stop calls now run detached from the create's cancellation, so a cancelled create still stops its parts.
+  Not covered: a coordinator whose worker stays up and that neither opens its port nor exits still waits for its
+  ready timeout.
+
 ## 2026-10-10 — a worker says which accelerators it was given
 
 - **A worker states the devices its process was given** (feature `worker_devices`, `hardware_json.GivenDevices`,

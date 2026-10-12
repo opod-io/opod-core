@@ -376,6 +376,11 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 		}
 	}
 	s.forgetNode(ctx, id)
+	if s.orch != nil {
+		// A gang create forming a part on the node cannot finish on it: end
+		// it now with the reason, and free its guard for the next create.
+		s.orch.EndFormationsOn(id)
+	}
 	s.capacityChanged() // its slots leave every pool (ADR-091)
 	s.record("node.removed", id, nil)
 	return nil

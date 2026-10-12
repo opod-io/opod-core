@@ -58,8 +58,10 @@ type Orchestrator struct {
 	// (router.heartbeat_max_age_seconds, set by `opod up`); 0 = DefaultHeartbeatMaxAge.
 	HeartbeatMaxAge time.Duration
 
-	moves moveGuard   // one move at a time per model and per node (move.go)
-	forms createGuard // one gang create at a time per model (below)
+	moves      moveGuard     // one move at a time per model and per node (move.go)
+	forms      createGuard   // one gang create at a time per model (below)
+	formations formationSet  // the creates forming now and their nodes, so a lost worker ends its create (partlost.go)
+	pollEvery  time.Duration // awaitWorkerReady's tick; 0 = 2 s (tests shorten it)
 }
 
 // createGuard keeps two creates of one model's gangs from running at once.
@@ -316,6 +318,20 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnplaceable, err)
 	}
+	// From here the create is forming parts on these workers. It forms under
+	// a context the leader cancels when one of them goes away (partlost.go),
+	// and then it returns that reason instead of polling a dead process for
+	// the whole formation budget — releasing the guard above with it.
+	fctx, endFormation := o.formations.begin(ctx, entry.ID, gangID, workers)
+	defer endFormation()
+	err = o.formGang(fctx, entry, gangID, replaceModel, shardCount, nodeIDs, workers, par)
+	return asPartLost(fctx, err, entry.ID, gangID)
+}
+
+// formGang is CreateSharded past the guard and the worker pick: it replaces
+// the prior gang and starts the parts, on ctx — which is cancelled with a
+// PartLostError when one of the workers goes away.
+func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID string, replaceModel bool, shardCount int, nodeIDs []string, workers []store.Node, par Parallelism) error {
 	// IDEMPOTENT REPLACE: tear down the prior shard before (re)creating. Without
 	// this, re-running `shard create` (new --nodes, or after a worker was
 	// recreated with a fresh overlay IP) left the OLD coordinator / rpc-server
@@ -596,6 +612,10 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 		}
 	} else {
 		if _, err := o.callWorkerStart(ctx, *coordHost.node, coordSpec); err != nil {
+			// The coordinator may have started and be the part that failed to
+			// become ready (or its sibling's worker went): stop it too, as the
+			// other backends do with a rank that would not come up.
+			_ = o.callWorkerStop(ctx, *coordHost.node, coordID)
 			o.rollback(ctx, created)
 			return fmt.Errorf("launch coordinator on %s: %w", coordHost.nodeID, err)
 		}
@@ -800,6 +820,10 @@ func (o *Orchestrator) RemoveShardsOn(ctx context.Context, nodeID string) (remov
 	// Per GANG. A part lost on this node takes ITS gang down — the others are
 	// whole and serving, and tearing the model down would have stopped them
 	// for a fault they did not have.
+	// A create forming a part on this node is waiting on a process that died
+	// with the previous incarnation — a part with no row yet (a coordinator
+	// not yet ready) included. End it now, with the reason (partlost.go).
+	o.endFormationsOn(nodeID, lostReplaced)
 	gone := map[store.GangKey]bool{}
 	for _, s := range all {
 		if s.NodeID == nodeID {
@@ -860,6 +884,9 @@ func (o *Orchestrator) ReconcileNode(ctx context.Context, node store.Node) (remo
 		}
 	}
 	for key := range gone {
+		// A gang still forming whose recorded part is gone cannot form: end
+		// its create with the reason rather than let it wait out its budget.
+		o.endFormationOf(key, node.ID, lostProcess)
 		if err := o.RemoveGang(ctx, key.Model, key.Gang); err != nil {
 			o.Log.Warn("stale gang removal failed", "model", key.Model, "gang", key.Gang, "node", node.ID, "err", err)
 			continue

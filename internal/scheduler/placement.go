@@ -143,7 +143,14 @@ func (o *Orchestrator) pickWorkers(ctx context.Context, n int) ([]store.Node, er
 
 // rollback stops every successfully-launched process so failed creates
 // don't leave orphan rpc-servers running on workers.
+//
+// It runs detached from ctx's cancellation: a create that ends because its
+// context was cancelled — a part's worker went away (partlost.go), or the
+// caller gave up — is exactly the create whose started parts must still be
+// stopped and whose rows must still go.
 func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
 	for _, s := range created {
 		switch s.Role {
 		case "coordinator":

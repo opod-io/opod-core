@@ -62,20 +62,45 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 // A "failed" process is returned as an error carrying ProcessInfo.ExitErr, which
 // already embeds the engine's own output (supervisor logTail) — so llama.cpp's
 // actual complaint reaches `opod shard create` instead of a bare 502.
+//
+// A poll error is a blip only while the worker is still the process the part
+// was started on. When the leader knows otherwise — the create's context was
+// cancelled with a PartLostError, or the node's row is gone or names a new
+// boot id — the wait ends at once with the reason and the last status it
+// polled (partlost.go).
 func (o *Orchestrator) awaitWorkerReady(ctx context.Context, node store.Node, spec agent.ProcessSpec) (*agent.ProcessInfo, error) {
 	timeout := spec.ReadyTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	every := o.pollEvery
+	if every <= 0 {
+		every = 2 * time.Second
+	}
 	deadline := time.Now().Add(timeout)
+	var last *agent.ProcessInfo // the last status the worker reported for the process
+	var lastAt time.Time
+	ended := func() error {
+		if pl := partLostCause(ctx); pl != nil {
+			return pl.waitingOn(spec.ID, node.ID, last, lastAt)
+		}
+		return ctx.Err()
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(2 * time.Second):
+			return nil, ended()
+		case <-time.After(every):
 		}
 		info, err := o.callWorkerGet(ctx, node, spec.ID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ended()
+			}
+			if what := o.partGone(ctx, node); what != "" {
+				lost := &PartLostError{Node: node.ID, What: what}
+				return nil, lost.waitingOn(spec.ID, node.ID, last, lastAt)
+			}
 			// Transient worker blip: keep waiting until the deadline rather than
 			// tearing down a process that may be loading fine.
 			if time.Now().After(deadline) {
@@ -83,6 +108,7 @@ func (o *Orchestrator) awaitWorkerReady(ctx context.Context, node store.Node, sp
 			}
 			continue
 		}
+		last, lastAt = info, time.Now()
 		switch info.Status {
 		case "running":
 			return info, nil
@@ -170,7 +196,13 @@ func (o *Orchestrator) callWorkerList(ctx context.Context, node store.Node) ([]a
 	return procs, nil
 }
 
+// callWorkerStop asks a worker to stop one process. A stop is cleanup, so it
+// runs detached from ctx's cancellation (bounded by its own minute): the
+// create that was cancelled — its caller gave up, or a part's worker went away
+// (partlost.go) — is the one whose started parts must still be stopped.
 func (o *Orchestrator) callWorkerStop(ctx context.Context, node store.Node, processID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
 	body, _ := json.Marshal(map[string]string{"id": processID})
 	url := workerURL(node.Address) + "/v1/process/stop"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
