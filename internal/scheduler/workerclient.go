@@ -31,7 +31,7 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 	auth.SignRequest(req, node.ID, node.WorkerToken)
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, startEnded(ctx, node, spec, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -40,7 +40,7 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 	}
 	var info agent.ProcessInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, fmt.Errorf("decode info: %w", err)
+		return nil, startEnded(ctx, node, spec, fmt.Errorf("decode info: %w", err))
 	}
 	// The worker spawns and answers 202 immediately; readiness happens on ITS
 	// clock, not this HTTP call's. Poll until the process leaves "starting".
@@ -48,6 +48,19 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 		return o.awaitWorkerReady(ctx, node, spec)
 	}
 	return &info, nil
+}
+
+// startEnded is the error of a start call that did not get its answer. When
+// the create's context was cancelled because a part's worker went away, the
+// call failed only because of that, and the reason names the process being
+// started — as awaitWorkerReady's does for one being waited on. Without this a
+// part lost while its start was in flight (the worker answered, the leader had
+// not yet read it) ended the create with the bare reason and no process.
+func startEnded(ctx context.Context, node store.Node, spec agent.ProcessSpec, err error) error {
+	if pl := partLostCause(ctx); pl != nil {
+		return pl.waitingOn(spec.ID, node.ID, nil, time.Time{})
+	}
+	return err
 }
 
 // awaitWorkerReady polls a worker process until it is running, failed, or the

@@ -39,7 +39,10 @@ type formingWorker struct {
 	started chan string // the process id of each start, as it lands
 	gone    bool        // the process died with the worker's previous incarnation
 	crashed string      // non-empty: the process reports "crashloop" with these last lines
-	srv     *httptest.Server
+	// holdStart, when set, keeps the start call unanswered after the start
+	// lands, until the caller gives up: the part is lost mid-start.
+	holdStart bool
+	srv       *httptest.Server
 }
 
 func newFormingWorker(t *testing.T) *formingWorker {
@@ -55,6 +58,14 @@ func newFormingWorker(t *testing.T) *formingWorker {
 				ID string `json:"id"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			w.mu.Lock()
+			hold := w.holdStart
+			w.mu.Unlock()
+			if hold {
+				w.started <- body.ID
+				<-r.Context().Done()
+				return
+			}
 			_ = json.NewEncoder(rw).Encode(map[string]any{"id": body.ID, "status": "starting"})
 			w.started <- body.ID
 		case strings.HasSuffix(r.URL.Path, "/v1/process/get"):
@@ -186,6 +197,38 @@ func TestACreateEndsWhenItsPartsWorkerIsReplaced(t *testing.T) {
 	}
 	cancel()
 	<-again
+}
+
+// A part lost while its start call is still unanswered names the process it
+// was starting, as one lost while the create polls it does. This was the
+// flaky failure of the test above under load: the start answer had not been
+// read when the replacement landed, and the error lost its process clause.
+func TestAPartLostMidStartNamesTheProcess(t *testing.T) {
+	srv, _, w, entry := formationFixture(t)
+	w.holdStart = true
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() {
+		done <- srv.CreateShards(ctx, CreateShardsRequest{ModelID: entry.ID, Gang: "g1", Shards: 1, Nodes: []string{"n1"}})
+	}()
+	var process string
+	select {
+	case process = <-w.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the coordinator was never started")
+	}
+	if err := srv.HeartbeatNode(ctx, HeartbeatRequest{ID: "n1", BootID: "boot-b"}, Caller{Admin: true}); err != nil {
+		t.Fatal(err)
+	}
+	err := awaitCreate(t, done, 10*time.Second)
+	if !errors.Is(err, scheduler.ErrPartLost) {
+		t.Fatalf("the error must say a part's worker went away: %v", err)
+	}
+	for _, want := range []string{"gang g1", "replaced", "process " + process + " on n1", "no status had been polled yet"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error must name %q: %q", want, err.Error())
+		}
+	}
 }
 
 // A removed node ends the create the same way: the operator said it is gone.

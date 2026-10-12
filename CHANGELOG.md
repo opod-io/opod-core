@@ -5,6 +5,13 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
+
+- **A part lost while its start call is in flight names the process.** A gang create whose part's worker was
+  replaced while the leader was still reading the start answer ended with the bare reason ("the worker behind node
+  … was replaced") and no process; one lost while the create polled the process named it. Both now read the same:
+  the process being started, on which node, and that no status had been polled yet.
+
 ## 2026-10-12 — gang creates and teardowns touch only their own incarnation
 
 - **A failed gang create no longer cleans up after its guard is released.** `CreateShards` used to tear down the
