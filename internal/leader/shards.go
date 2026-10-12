@@ -60,6 +60,26 @@ const (
 	ShardCreateInFlight = "gang_create_in_flight"
 )
 
+// shardCreateFailure names a failed create's cause the way the frozen contract
+// does: the error.code (empty when the cause has none) and the reason a person
+// reads. For gang_part_lost the reason is the PartLostError itself — the gang,
+// the node and the last output polled — without the "upstream" prefix. The
+// HTTP answer and the heal loop's shard.heal_failed event both read it here,
+// so the two can never name one failure differently.
+func shardCreateFailure(err error) (code, reason string) {
+	switch {
+	case errors.Is(err, scheduler.ErrPartLost):
+		var pl *scheduler.PartLostError
+		if errors.As(err, &pl) {
+			return ShardCreatePartLost, pl.Error()
+		}
+		return ShardCreatePartLost, err.Error()
+	case errors.Is(err, scheduler.ErrCreateInFlight):
+		return ShardCreateInFlight, err.Error()
+	}
+	return "", err.Error()
+}
+
 func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req CreateShardsRequest
@@ -76,22 +96,15 @@ func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, scheduler.ErrUnplaceable):
 		// Not an upstream fault: the fleet cannot hold the shape asked for.
 		writeJSONError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, scheduler.ErrPartLost):
-		// A definite answer: this gang did not form, its parts were stopped,
-		// and asking again is a new create. The code lets a manager stop
-		// waiting on it without parsing the message (feature
-		// shard_create_error_codes); the message is the PartLostError itself,
-		// which names the gang, the node and the last output polled.
-		msg := err.Error()
-		var pl *scheduler.PartLostError
-		if errors.As(err, &pl) {
-			msg = pl.Error()
-		}
-		writeJSONErrorCode(w, http.StatusBadGateway, ShardCreatePartLost, msg)
-	case errors.Is(err, scheduler.ErrCreateInFlight):
-		// NOT an answer about the gang: another create of it is running and
-		// decides. Same status as before; the code says it was a collision.
-		writeJSONErrorCode(w, http.StatusBadGateway, ShardCreateInFlight, err.Error())
+	case errors.Is(err, scheduler.ErrPartLost), errors.Is(err, scheduler.ErrCreateInFlight):
+		// gang_part_lost is a definite answer: this gang did not form, its
+		// parts were stopped, and asking again is a new create.
+		// gang_create_in_flight is NOT an answer about the gang: another create
+		// of it is running and decides. Same status as before; the code lets a
+		// manager tell them apart without parsing the message (feature
+		// shard_create_error_codes).
+		code, msg := shardCreateFailure(err)
+		writeJSONErrorCode(w, http.StatusBadGateway, code, msg)
 	case err != nil:
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 	default:

@@ -249,6 +249,15 @@ func contractFeatures() map[string]bool {
 		// running create is what decides. A manager keys on the code, never on
 		// the English, to tell a definite answer from a collision to retry.
 		"shard_create_error_codes": true,
+		// A heal-within-plan create that fails records shard.heal_failed on
+		// /admin/v1/events/stream (subject: the model) with data {gang, parts,
+		// by: "plan", revision: the plan revision the heal read, code: the
+		// create's error.code ("" when its cause has none), reason, retry_in_s},
+		// and the leader backs that gang's heal off (15 s → 30 s → 60 s) so a
+		// manager's own create gets the guard in between. A manager reads
+		// code "gang_part_lost" for its gang and revision as the leader's
+		// definite "this gang did not form".
+		"shard_heal_failed_event": true,
 		// A worker says GOODBYE on its way out — a final heartbeat declaring its
 		// engine `stopped` — and the leader takes it out of rotation at once
 		// (T11.2, ADR-065). Without it a pod being terminated keeps heartbeating

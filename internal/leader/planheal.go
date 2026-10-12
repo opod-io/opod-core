@@ -31,7 +31,21 @@ package leader
 //   - it acts only when enough free workers have registered, which is exactly
 //     the state an autoscaler leaves behind when it wakes a parked gang;
 //   - it waits out healAfter first, so a manager that is present and
-//     doing its job always wins the race and this never fights it;
+//     doing its job wins the first race and this never fights it;
+//   - after a heal that FAILED it backs off that gang — 15 s, then 30 s, then
+//     60 s at most — so the manager wins every race after the first too. A
+//     create holds the gang's guard for as long as it runs (16–50 s for a
+//     coordinator that dies at start), the ticker had the next pass queued by
+//     the time it returned, and without the back-off the next heal began a
+//     millisecond after the last failed: on the design-partner cell
+//     (2026-10-11) every one of a manager's 21 creates after a rollout was
+//     refused gang_create_in_flight. The back-off resets when a heal
+//     succeeds, when the gang is present again, and when the plan changes
+//     that gang's shape (a rollout or a rollback is a new question);
+//   - a heal that fails says so on the event stream (shard.heal_failed, with
+//     the create's error.code and its reason), not only in the log — a
+//     manager that cannot form the gang itself, because this loop holds the
+//     guard, reads the leader's own verdict there;
 //   - it does not choose WHERE parts run. Placement stayed with whoever renders
 //     the pods; by the time this loop runs, the parts are already on the nodes
 //     that were approved for them.
@@ -39,6 +53,7 @@ package leader
 import (
 	"context"
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/opod-io/opod/internal/models"
@@ -53,6 +68,94 @@ const healAfter = 45 * time.Second
 
 // healInterval is how often the loop looks.
 const healInterval = 15 * time.Second
+
+// After a heal fails, the same gang is not tried again for healBackoffBase,
+// doubling on each further failure up to healBackoffMax. The base is one
+// healInterval: the pass the ticker queued while the failed create ran is
+// skipped, and a manager retrying every few seconds gets the guard in between.
+const (
+	healBackoffBase = 15 * time.Second
+	healBackoffMax  = 60 * time.Second
+)
+
+// healBackoffAfter is the wait after the n-th consecutive failed heal of a
+// gang (n ≥ 1): 15 s, 30 s, 60 s, 60 s, …
+func healBackoffAfter(n int) time.Duration {
+	d := healBackoffBase
+	for i := 1; i < n && d < healBackoffMax; i++ {
+		d *= 2
+	}
+	return min(d, healBackoffMax)
+}
+
+// healState is what the loop carries between passes: each gang's absence
+// clock and, for a gang whose heal failed, its back-off.
+type healState struct {
+	absent map[string]time.Time     // gang id → first pass it was seen with no parts
+	failed map[string]healBackoffAt // gang id → back-off after a failed heal
+	now    func() time.Time
+}
+
+// healBackoffAt is one gang's back-off: the shape that failed, how many times
+// in a row, and the earliest time it may be tried again.
+type healBackoffAt struct {
+	spec      planGang
+	failures  int
+	notBefore time.Time
+}
+
+func newHealState() *healState {
+	return &healState{absent: map[string]time.Time{}, failed: map[string]healBackoffAt{}, now: time.Now}
+}
+
+// admit drops the gangs still backing off after a failed heal. A gang that is
+// present again, or whose shape in the plan is no longer the one that failed,
+// loses its back-off here.
+func (h *healState) admit(specs []planGang, held map[string]int, now time.Time) []planGang {
+	out := make([]planGang, 0, len(specs))
+	for _, g := range specs {
+		id := gangID(g)
+		if b, ok := h.failed[id]; ok {
+			switch {
+			case held[id] > 0 || !reflect.DeepEqual(b.spec, g):
+				delete(h.failed, id)
+			case now.Before(b.notBefore):
+				continue
+			}
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// failedHeal records one more failed heal of the gang and returns how long it
+// now waits.
+func (h *healState) failedHeal(g planGang, now time.Time) time.Duration {
+	id := gangID(g)
+	b := h.failed[id]
+	if !reflect.DeepEqual(b.spec, g) {
+		b = healBackoffAt{spec: g}
+	}
+	b.failures++
+	wait := healBackoffAfter(b.failures)
+	b.notBefore = now.Add(wait)
+	h.failed[id] = b
+	return wait
+}
+
+// healed forgets the gang: it formed.
+func (h *healState) healed(id string) {
+	delete(h.absent, id)
+	delete(h.failed, id)
+}
+
+// gangID is the gang's id as the store records it.
+func gangID(g planGang) string {
+	if g.ID == "" {
+		return store.DefaultGangID
+	}
+	return g.ID
+}
 
 // planGang is a gang the plan declares, in the terms a create needs.
 type planGang struct {
@@ -75,7 +178,7 @@ func (p *planFileState) gangSpecs() []planGang {
 // StartGangHealer runs the heal-within-plan loop for gangs. No plan file means
 // no plan to heal within, and the loop never starts.
 func (s *Server) StartGangHealer(ctx context.Context) {
-	absent := map[string]time.Time{}
+	st := newHealState()
 	go func() {
 		t := time.NewTicker(healInterval)
 		defer t.Stop()
@@ -84,21 +187,21 @@ func (s *Server) StartGangHealer(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				s.healGangs(ctx, absent)
+				s.healGangs(ctx, st)
 			}
 		}
 	}()
 }
 
 // healGangs forms any plan-declared gang that has been entirely absent for
-// healAfter and has the workers to run on. absent carries each gang's clock
-// between ticks.
-func (s *Server) healGangs(ctx context.Context, absent map[string]time.Time) {
+// healAfter, has the workers to run on and is not backing off after a failed
+// heal. st carries each gang's clocks between ticks.
+func (s *Server) healGangs(ctx context.Context, st *healState) {
 	specs := s.plan.gangSpecs()
 	if len(specs) == 0 || s.orch == nil {
 		return
 	}
-	_, model := s.plan.get()
+	revision, model := s.plan.get()
 	if model == "" || models.FindByID(s.cat, model) == nil {
 		return
 	}
@@ -111,7 +214,7 @@ func (s *Server) healGangs(ctx context.Context, absent map[string]time.Time) {
 		held[sh.Gang()]++
 	}
 	free := len(s.freeWorkers(ctx, shards))
-	g, id, ok := pickGangToHeal(specs, held, free, absent, time.Now())
+	g, id, ok := pickGangToHeal(st.admit(specs, held, st.now()), held, free, st.absent, st.now())
 	if !ok {
 		return
 	}
@@ -125,10 +228,20 @@ func (s *Server) healGangs(ctx context.Context, absent map[string]time.Time) {
 			s.log.Info("a create is already forming this gang — leaving it to finish", "model", model, "gang", id)
 			return
 		}
-		s.log.Warn("heal within the plan failed — will try again", "model", model, "gang", id, "err", err)
+		if ctx.Err() != nil {
+			return // the leader is shutting down; that is not the gang's failure
+		}
+		wait := st.failedHeal(g, st.now())
+		code, reason := shardCreateFailure(err)
+		s.log.Warn("heal within the plan failed — backing off before trying again",
+			"model", model, "gang", id, "code", code, "retry_in", wait, "err", err)
+		s.record("shard.heal_failed", model, map[string]any{
+			"gang": id, "parts": g.Parts, "by": "plan", "revision": revision,
+			"code": code, "reason": reason, "retry_in_s": int(wait / time.Second),
+		})
 		return
 	}
-	delete(absent, id)
+	st.healed(id)
 	s.record("shard.healed", model, map[string]any{"gang": id, "parts": g.Parts, "by": "plan"})
 }
 
@@ -140,10 +253,7 @@ func (s *Server) healGangs(ctx context.Context, absent map[string]time.Time) {
 // At most one gang per pass, because forming one changes who is free.
 func pickGangToHeal(specs []planGang, held map[string]int, free int, absent map[string]time.Time, now time.Time) (planGang, string, bool) {
 	for _, g := range specs {
-		id := g.ID
-		if id == "" {
-			id = store.DefaultGangID
-		}
+		id := gangID(g)
 		if held[id] > 0 {
 			// Present, in whole or in PART. A gang missing one part is not
 			// this loop's business: re-creating it would take down the parts

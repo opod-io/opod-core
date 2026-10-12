@@ -127,6 +127,8 @@ var contractFeatureFloor = []string{
 	"worker_devices",
 	// a failed shard create names its cause in error.code (gang_part_lost, gang_create_in_flight)
 	"shard_create_error_codes",
+	// a failed heal records shard.heal_failed {gang, revision, code, reason} and backs off
+	"shard_heal_failed_event",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

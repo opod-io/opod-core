@@ -9,7 +9,7 @@ package leader
 //
 // Types today: node.registered · node.drained · node.undrained · node.removed ·
 // model.loaded · model.unloaded · shard.created · shard.removed ·
-// plan.updated. Additive — consumers must ignore unknown types.
+// shard.healed · shard.heal_failed · plan.updated. Additive — consumers must ignore unknown types.
 
 import (
 	"net/http"

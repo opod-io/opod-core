@@ -5,6 +5,18 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-12 — a failing heal backs off and says why on the event stream
+
+- **The heal-within-plan loop backs a gang off after a heal that failed** — 15 s, then 30 s, then 60 s at most;
+  reset when a heal succeeds, the gang is present again, or the plan changes that gang's shape. The loop's create
+  runs inside its ticker, so the next tick was already queued when a create failed and the next heal began a
+  millisecond later: the gang's create guard was held almost without a gap, and a manager's own creates were all
+  refused `gang_create_in_flight`. A manager's create now gets the guard between attempts.
+- **A failed heal records `shard.heal_failed`** on `/admin/v1/events/stream` (feature `shard_heal_failed_event`,
+  additive): subject the model, data `gang`, `parts`, `by: "plan"`, `revision` (the plan revision the heal read),
+  `code` (the create's `error.code`, empty when its cause has none), `reason` and `retry_in_s`. Before, only a
+  success (`shard.healed`) reached the stream and a failure was only in the leader's log.
+
 ## 2026-10-11 — a slow gang teardown no longer deletes the gang formed after it
 
 - **A gang teardown removes the gang it read, never one formed again under the same id while it ran.** A teardown

@@ -204,10 +204,10 @@ func TestPlanWatcherReadsAnExpertGang(t *testing.T) {
 func TestHealGangsIsANoOpWithoutAPlan(t *testing.T) {
 	dir := t.TempDir()
 	srv := planWatcherServer(t, filepath.Join(dir, "absent.json"))
-	absent := map[string]time.Time{}
-	srv.healGangs(t.Context(), absent) // no plan: nothing declared
-	if len(absent) != 0 {
-		t.Errorf("a leader with no plan tracked a gang: %v", absent)
+	st := newHealState()
+	srv.healGangs(t.Context(), st) // no plan: nothing declared
+	if len(st.absent) != 0 {
+		t.Errorf("a leader with no plan tracked a gang: %v", st.absent)
 	}
 
 	// A plan with gangs but no orchestrator to build them: still no panic,
@@ -218,8 +218,8 @@ func TestHealGangsIsANoOpWithoutAPlan(t *testing.T) {
 	srv.plan.present = true
 	srv.plan.mu.Unlock()
 	srv.orch = nil
-	srv.healGangs(t.Context(), absent)
-	if len(absent) != 0 {
-		t.Errorf("no orchestrator means nothing to heal with: %v", absent)
+	srv.healGangs(t.Context(), st)
+	if len(st.absent) != 0 {
+		t.Errorf("no orchestrator means nothing to heal with: %v", st.absent)
 	}
 }
