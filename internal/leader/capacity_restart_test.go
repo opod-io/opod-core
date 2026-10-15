@@ -72,3 +72,17 @@ func TestAnUnloadWithTheEngineServingIsNotARestart(t *testing.T) {
 		t.Fatalf("an unload is not an engine restart, got %q", why)
 	}
 }
+
+// The API asks the leader's own gate again when a request it let through found
+// no worker left by the pick (PLAN T8.21): the hook has to be wired, or the
+// answer falls back to the leader's absent engine and its start hint.
+func TestTheAPIAsksTheGateAgainWhenNoWorkerIsLeft(t *testing.T) {
+	srv := slottedLeader(t, 4, PolicyAdmission{})
+	if srv.openaiH.Unavailable == nil {
+		t.Fatal("api.Handler.Unavailable is not wired to the leader's gate")
+	}
+	engineBeat(t, srv, "w1", "restarting")
+	if why := srv.openaiH.Unavailable(context.Background(), "m"); !strings.Contains(why, "whose engine is restarting") {
+		t.Fatalf("the hook is the gate: got %q", why)
+	}
+}

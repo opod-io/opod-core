@@ -21,6 +21,12 @@ the last section.
   back-off or entering crashloop. A back-off or crashloop is sent at once; a process that is up again is not yet
   loaded (engines start with no readiness probe), so the agent asks the engine twice a second until it lists a model
   (for at most ten minutes) and sends its heartbeat then.
+- **A request that finds no worker left by the time it is routed answers 503 with the leader's reason, not 502 "Start
+  llama.cpp".** The gate checks capacity before routing; when the heartbeat dropped the last worker's placement in
+  between, the router fell back to the leader's own engine — absent on a leader that serves through workers — and the
+  caller got `engine_unreachable` naming `127.0.0.1:8089` with a hint to start llama-server (measured on the
+  design-partner cell with both engines killed). The leader now asks its gate again and answers `503 unavailable` +
+  `Retry-After` with that reason (chat, embeddings, rerank); a standalone engine's own fault keeps its hint.
 
 - **`opod join` reads `OPOD_JOIN_TOKEN` when the URL carries no `?token=`, and the worker image no longer puts the
   token on the command line.** The image's entrypoint ran `opod join "<leader>?token=<token>"`, so anyone who could

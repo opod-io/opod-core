@@ -50,6 +50,12 @@ type Handler struct {
 	// finished well, with the request's context. The leader keeps a rolling
 	// window of them for /loadz (T16.3); nil = nobody is counting.
 	OnTTFT func(ctx context.Context, ttft time.Duration)
+	// Unavailable says why nothing can take a new request for model right
+	// now, or "" when something can — the leader's own gate (capacity.go),
+	// asked again when a request it let through found no worker left
+	// (capacityGone). nil = no such answer: a standalone engine's error
+	// stands as it is.
+	Unavailable func(ctx context.Context, model string) string
 
 	policy atomic.Pointer[Policy] // request-path policy, swapped by the owner (see policy.go)
 }
@@ -376,6 +382,11 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if msg, gone := gangGone(failedNode(ctx, err), err); gone {
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "gang_unreachable", msg)
+			return
+		}
+		if why, gone := h.capacityGone(ctx, requested, failedNode(ctx, err), err); gone {
+			w.Header().Set("Retry-After", "10")
+			writeJSONError(w, http.StatusServiceUnavailable, "unavailable", why)
 			return
 		}
 		code, msg := classifyEngineError(h.Engine, err)
@@ -857,6 +868,25 @@ func workerGone(node string, err error) (string, bool) {
 		return fmt.Sprintf("the engine on worker %s is not answering (it may be restarting) and no other worker can take this request right now; retry shortly (%v)", node, err), true
 	}
 	return fmt.Sprintf("worker %s could not be reached and no other worker can take this request right now; retry shortly (%v)", node, err), true
+}
+
+// capacityGone says whether a request the gate let through failed only because
+// no worker was left to take it by the time the router picked: the router
+// then falls back to the leader's own engine, and on a leader that serves
+// through workers that engine is not there, so its "connection refused" came
+// back as 502 with a hint to start llama-server — two wrong things (measured
+// on the design-partner cell, PLAN T8.21: both engines killed, the heartbeat
+// dropped the placements between the gate and the pick). The leader's own
+// answer for the model, asked again now, is the honest one: 503 + Retry-After
+// naming the engines restarting, the workers lost or the wake. When it says
+// something can serve, the leader's own engine really failed and
+// classifyEngineError describes it, as before.
+func (h *Handler) capacityGone(ctx context.Context, model, node string, err error) (string, bool) {
+	if h.Unavailable == nil || (node != "" && node != "local") || !nothingAnswered(err) {
+		return "", false
+	}
+	why := h.Unavailable(ctx, model)
+	return why, why != ""
 }
 
 // nothingAnswered is the router's own test for "the worker or gang gave the

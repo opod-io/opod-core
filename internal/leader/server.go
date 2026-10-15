@@ -230,6 +230,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		}
 		return nil
 	}
+	// A request the gate let through that found no worker left by the time
+	// the router picked asks the gate again, rather than reporting the
+	// leader's own absent engine (PLAN T8.21).
+	openaiH.Unavailable = s.unavailable
 	return s
 }
 

@@ -116,6 +116,11 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 	res, err := re.Rerank(ctx, engines.RerankRequest{Model: requested, Query: req.Query, Documents: req.Documents})
 	if err != nil {
 		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
+		if why, gone := h.capacityGone(ctx, requested, failedNode(ctx, err), err); gone { // no worker left by the pick (openai.go)
+			w.Header().Set("Retry-After", "10")
+			writeJSONError(w, http.StatusServiceUnavailable, "unavailable", why)
+			return
+		}
 		writeRerankError(w, h.Engine, failedNode(ctx, err), err)
 		return
 	}

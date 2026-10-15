@@ -151,6 +151,9 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		} else if msg, gone := gangGone(failedNode(ctx, err), err); gone { // a gang still forming or loading (openai.go)
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "gang_unreachable", msg)
+		} else if why, gone := h.capacityGone(ctx, requested, failedNode(ctx, err), err); gone { // no worker left by the pick (openai.go)
+			w.Header().Set("Retry-After", "10")
+			writeJSONError(w, http.StatusServiceUnavailable, "unavailable", why)
 		} else {
 			writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
 		}
