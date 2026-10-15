@@ -96,29 +96,34 @@ func (r *Router) recordOutcome(nodeID string, ok bool) {
 		return
 	}
 	if ok {
+		// Every successful request lands here, so the common case — nothing
+		// to clear — is read under the read lock and never contends with the
+		// picker for the write lock.
+		r.mu.RLock()
+		_, boxed := r.cooldowns[nodeID]
+		strikes := r.failures[nodeID] > 0
+		r.mu.RUnlock()
+		if !boxed && !strikes {
+			return
+		}
+		r.mu.Lock()
 		// A worker in the box served a request — it was the only one left to
 		// ask (takingRequests): it answers again, so it is back in rotation.
-		r.mu.Lock()
 		if _, boxed := r.cooldowns[nodeID]; boxed {
 			delete(r.cooldowns, nodeID)
 			metrics.SetRouterCooldownsActive(len(r.cooldowns))
 		}
+		// Its pending strikes (the configured breaker's) are reset too. Don't
+		// churn the metric — the gauge moves only on entering/exiting cooldown.
+		delete(r.failures, nodeID)
 		r.mu.Unlock()
+		return
 	}
 	if r.placementCooldownDur <= 0 || r.placementAllowedFails <= 0 {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if ok {
-		// Success: reset failure count if the node had any pending
-		// strikes. Don't churn the metric — we only update the gauge
-		// when entering/exiting cooldown.
-		if r.failures[nodeID] > 0 {
-			delete(r.failures, nodeID)
-		}
-		return
-	}
 	r.failures[nodeID]++
 	if r.failures[nodeID] < r.placementAllowedFails {
 		return

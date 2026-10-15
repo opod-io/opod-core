@@ -30,6 +30,9 @@ the last section.
   cancelled — now records the content chunks the caller received as `completion_tokens`: one token per chunk on
   llama.cpp and vLLM's default stream, an estimate where an engine batches tokens. `prompt_tokens` stays 0 there;
   only the engine counts it.
+- **A successful request no longer takes the router's write lock.** Since the 5 s set-aside, every success cleared
+  the worker's penalty-box entry under the write lock; it now checks under the read lock and writes only when there
+  is an entry or a pending strike to clear.
 
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 
@@ -47,8 +50,9 @@ the last section.
   was told to start the LEADER's llama-server. The worker now answers that case `502`
   `{"error":{"type":"engine_unreachable_on_worker",…}}` (chat and embeddings); the leader's client reads it back as
   `engines.ErrUnreachable`, so the router asks a sibling under the existing budget and, when none can take it, the
-  caller gets `503` + `Retry-After` naming the worker's engine. Any typed engine error from a worker is now
-  `upstream_error` without the leader-engine start hint. Wire: additive both ways — an older leader still reads a
+  caller gets `503` + `Retry-After` naming the worker's engine. Any non-2xx answer from a server that was reached
+  (`engines.ErrUpstream` — a worker's, or the leader's own engine's) is now `upstream_error` without the
+  leader-engine start hint, whatever its text says about a refused connection. Wire: additive both ways — an older leader still reads a
   `502`; an older worker's plain-text `502` is read as before (shown, not replayed).
 - **A part lost while its start call is in flight names the process.** A gang create whose part's worker was
   replaced while the leader was still reading the start answer ended with the bare reason ("the worker behind node
