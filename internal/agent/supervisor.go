@@ -100,6 +100,11 @@ type ProcessInfo struct {
 	ExitErr  string `json:"exit_err,omitempty"`
 	Address  string `json:"address,omitempty"`
 	Restarts int    `json:"restarts,omitempty"` // count of automatic restarts so far
+	// RestartPending: the process exited and the supervisor will relaunch it
+	// once its back-off ends. Status keeps saying how it exited ("failed" or
+	// "stopped") — callers that judge a launch read that — while a reader that
+	// wants to know whether it is coming back reads this.
+	RestartPending bool `json:"restart_pending,omitempty"`
 }
 
 type Process struct {
@@ -336,6 +341,7 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	p.Info.StartedAt = time.Now()
 	p.Info.ExitErr = ""
 	p.Info.Status = "starting"
+	p.Info.RestartPending = false
 	p.mu.Unlock()
 
 	// Reaper: starts immediately and unconditionally, and is the ONLY
@@ -434,6 +440,7 @@ func (s *Supervisor) Stop(id string) error {
 
 	p.mu.Lock()
 	p.Info.Status = "stopped"
+	p.Info.RestartPending = false
 	p.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -610,6 +617,11 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 		}
 	}
 	s.log.Warn("process exited abnormally — restarting", "id", p.spec.ID, "wait", wait, "attempt", restarts+1)
+	p.mu.Lock()
+	if !p.stopping {
+		p.Info.RestartPending = true
+	}
+	p.mu.Unlock()
 	time.Sleep(wait)
 
 	// Was the process Stopped during the backoff sleep? The child is
@@ -618,6 +630,7 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 	// possibly-reused PID.
 	p.mu.Lock()
 	if p.stopping {
+		p.Info.RestartPending = false
 		p.mu.Unlock()
 		return
 	}
@@ -648,6 +661,7 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 		p.mu.Lock()
 		p.Info.Status = "failed"
 		p.Info.ExitErr = "restart failed: " + err.Error()
+		p.Info.RestartPending = false
 		p.mu.Unlock()
 	}
 }

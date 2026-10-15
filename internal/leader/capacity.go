@@ -35,15 +35,16 @@ type modelHolders struct {
 	asleep   int // resident, engine asleep: wakes on demand
 	other    int // loading, failed, a state this version does not serve from
 	// restarting: a live worker that served the model, whose engine process
-	// is down and being started again (EngineStarting, EngineCrashLooping).
+	// is down and being started again (EngineStarting, EngineRestarting,
+	// EngineCrashLooping).
 	// Its engine answers nothing, so it reports nothing loaded and holds no
 	// placement; without this count the 503 read "no workers are awake …
 	// waking (scale-up in progress or floor is 0)" while nothing scaled.
 	restarting int
-	// stopped: the same, with an engine the worker reports stopped. That is
-	// also what a worker says while its supervisor waits out the back-off
-	// before a restart (the process sits at "failed"), so the text never
-	// claims the engine will not come back.
+	// stopped: the same, with an engine the worker reports stopped. A worker
+	// older than EngineRestarting also says stopped while its supervisor waits
+	// out the back-off before a restart, so the text never claims the engine
+	// will not come back.
 	stopped int
 }
 
@@ -126,7 +127,7 @@ func (s *Server) countEngineDown(h *modelHolders, n store.Node, model string, ma
 		return
 	}
 	switch e.State {
-	case nodeapi.EngineStarting, nodeapi.EngineCrashLooping:
+	case nodeapi.EngineStarting, nodeapi.EngineRestarting, nodeapi.EngineCrashLooping:
 		h.restarting++
 	case nodeapi.EngineStopped:
 		h.stopped++

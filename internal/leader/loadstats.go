@@ -128,7 +128,7 @@ type nodeEngineSample struct {
 }
 
 // EnginesUnhealthy counts the workers whose engine is NOT serving — crash
-// looping or stopped. Those workers hold their cards and heartbeat like any
+// looping, waiting out a restart back-off, or stopped. Those workers hold their cards and heartbeat like any
 // other, so anything counting workers counts them as capacity; they are not.
 //
 // Since T11.2 a worker that reported `stopped` is already out of the `workers`
@@ -144,7 +144,7 @@ func (s *Server) EnginesUnhealthy() (unhealthy int, worst string) {
 			return true // stale: the worker stopped saying, which liveness handles
 		}
 		switch e.State {
-		case nodeapi.EngineCrashLooping, nodeapi.EngineStopped:
+		case nodeapi.EngineCrashLooping, nodeapi.EngineRestarting, nodeapi.EngineStopped:
 			unhealthy++
 			if worst == "" || e.State == nodeapi.EngineCrashLooping {
 				worst = e.State

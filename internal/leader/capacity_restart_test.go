@@ -44,8 +44,19 @@ func TestBothEnginesRestartingSayRestartingNotWaking(t *testing.T) {
 	if strings.Contains(why, "awake") || strings.Contains(why, "scale-up") || !strings.Contains(why, "2 worker(s) whose engine is restarting") {
 		t.Fatalf("want the engines restarting, got %q", why)
 	}
-	// One engine reported stopped (also what a worker says during its
-	// restart back-off) reads so, without claiming it will not come back.
+	// A worker waiting out its restart back-off says so, and reads as
+	// restarting.
+	engineBeat(t, srv, "w2", "restarting")
+	if why := srv.unavailable(ctx, "m"); !strings.Contains(why, "2 worker(s) whose engine is restarting") {
+		t.Fatalf("a back-off is a restart, got %q", why)
+	}
+	// w1 is starting, which is not counted unhealthy; w2's back-off is.
+	if n, worst := srv.EnginesUnhealthy(); n != 1 || worst != "restarting" {
+		t.Fatalf("a back-off holds a card and serves nothing: unhealthy %d (%q), want 1 restarting", n, worst)
+	}
+	// One engine reported stopped (also what a worker older than
+	// "restarting" says during its back-off) reads so, without claiming it
+	// will not come back.
 	engineBeat(t, srv, "w2", "stopped")
 	if why := srv.unavailable(ctx, "m"); !strings.Contains(why, "1 worker(s) whose engine is restarting") || !strings.Contains(why, "1 worker(s) whose engine has stopped") {
 		t.Fatalf("want one restarting and one stopped, got %q", why)

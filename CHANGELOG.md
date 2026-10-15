@@ -5,7 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## 2026-10-14 — a worker's join token stays off its command line
+## 2026-10-14 — a worker's join token stays off its command line; an engine between restarts says `restarting`
+
+- **A worker whose engine exited and is about to be relaunched reports `restarting`, not `stopped`.** The supervisor
+  marks the process `restart_pending` while it waits out the back-off (1 s, doubling on each consecutive exit), and
+  the heartbeat sends the SDK's new `nodeapi.EngineRestarting` (`v0.4.2`). `stopped` means "will not come back
+  without a change", so a leader told callers an engine had stopped while it was seconds from serving; the 503 now
+  reads "whose engine is restarting", and `/loadz`'s `engines_unhealthy` counts the back-off (a card held, nothing
+  served). The process record's `status` still says how it exited (`failed` / `stopped`), because a gang's start reads
+  a part's `failed` as its definite answer. A leader older than this reads the new value as no statement.
 
 - **`opod join` reads `OPOD_JOIN_TOKEN` when the URL carries no `?token=`, and the worker image no longer puts the
   token on the command line.** The image's entrypoint ran `opod join "<leader>?token=<token>"`, so anyone who could

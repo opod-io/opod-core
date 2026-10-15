@@ -22,23 +22,28 @@ func TestEngineStateSaysWhatTheProcessIsDoing(t *testing.T) {
 	cases := []struct {
 		status   string
 		restarts int
+		pending  bool
 		want     string
 	}{
-		{"running", 0, nodeapi.EngineServing},
-		{"starting", 0, nodeapi.EngineStarting},
-		{"crashloop", 7, nodeapi.EngineCrashLooping},
-		{"failed", 1, nodeapi.EngineStopped},
-		{"stopped", 0, nodeapi.EngineStopped},
+		{"running", 0, false, nodeapi.EngineServing},
+		{"starting", 0, false, nodeapi.EngineStarting},
+		{"crashloop", 7, false, nodeapi.EngineCrashLooping},
+		{"failed", 1, false, nodeapi.EngineStopped},
+		{"stopped", 0, false, nodeapi.EngineStopped},
+		// Exited and waiting out the back-off before a relaunch: it is coming
+		// back, which "stopped" says it is not.
+		{"failed", 0, true, nodeapi.EngineRestarting},
+		{"stopped", 2, true, nodeapi.EngineRestarting},
 		// Up right now, but it has been relaunched repeatedly: capacity that
 		// keeps disappearing is not capacity.
-		{"running", 3, nodeapi.EngineCrashLooping},
+		{"running", 3, false, nodeapi.EngineCrashLooping},
 	}
 	for _, c := range cases {
 		sup := NewSupervisor(nil)
-		sup.procs["engine"] = &Process{Info: ProcessInfo{ID: "engine", Status: c.status, Restarts: c.restarts, StartedAt: time.Now()}}
+		sup.procs["engine"] = &Process{Info: ProcessInfo{ID: "engine", Status: c.status, Restarts: c.restarts, RestartPending: c.pending, StartedAt: time.Now()}}
 		got := engineState(sup)
 		if got == nil || got.State != c.want {
-			t.Errorf("%s (restarts %d) → %v, want %s", c.status, c.restarts, got, c.want)
+			t.Errorf("%s (restarts %d, pending %v) → %v, want %s", c.status, c.restarts, c.pending, got, c.want)
 		}
 	}
 }

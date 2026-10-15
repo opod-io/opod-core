@@ -390,6 +390,11 @@ func engineState(procs *Supervisor) *nodeapi.EngineState {
 		st.State = nodeapi.EngineCrashLooping
 	case "failed", "stopped":
 		st.State = nodeapi.EngineStopped
+		if worst.RestartPending {
+			// Exited, and the supervisor relaunches it when the back-off ends:
+			// stopped means it will not come back, which this one will.
+			st.State = nodeapi.EngineRestarting
+		}
 	default:
 		return nil // a status this build does not know is no statement, not a verdict
 	}

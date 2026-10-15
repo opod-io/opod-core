@@ -137,3 +137,43 @@ func trimSpace(s string) string {
 	}
 	return s
 }
+
+// While a crashed process waits out its back-off the record says it is coming
+// back (RestartPending), and its Status still says how it exited — the gang
+// code reads "failed" as a part's definite answer. The flag clears when the
+// relaunch starts, and a Stop during the back-off clears it for good.
+func TestSupervisor_RestartPendingDuringBackoff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("script-based test relies on POSIX shell")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "dies.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 0.05\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer sup.StopAll()
+	if _, err := sup.Start(context.Background(), ProcessSpec{
+		ID: "dies", Command: script, Restart: true, MaxRestarts: 5, RestartBackoff: 2 * time.Second,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var info *ProcessInfo
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if info, _ = sup.Get("dies"); info.RestartPending {
+			break
+		}
+	}
+	if !info.RestartPending || info.Status != "failed" {
+		t.Fatalf("in the back-off: status %q pending %v, want failed + pending", info.Status, info.RestartPending)
+	}
+	if st := engineState(sup); st == nil || st.State != "restarting" {
+		t.Fatalf("heartbeat in the back-off: %+v, want restarting", st)
+	}
+	if err := sup.Stop("dies"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if _, ok := sup.Get("dies"); ok {
+		t.Fatal("a stopped process stays registered")
+	}
+}
