@@ -18,6 +18,12 @@ the last section.
   router returns the first worker's error while the request's trace names the last worker tried, so the headline
   named one worker and the bracketed error was another's. The router now tags the error with the worker (or gang)
   that gave it, and the message names that one (chat, embeddings, rerank); usage attribution is unchanged.
+- **A model whose engines are only restarting no longer answers "no workers are awake … waking".** A worker whose
+  engine process is down reports nothing loaded, which drops its placements, so the 503 fell through to the
+  scale-from-zero text — "scale-up in progress or floor is 0" — while the floor was 2 and nothing scaled. The leader
+  keeps the models each worker last reported, and a live worker that served the model and says its engine is
+  `starting` or `crash-looping` is counted as "whose engine is restarting" (`stopped` — which a worker also reports
+  while it waits out the back-off before a restart — as "whose engine has stopped").
 
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 

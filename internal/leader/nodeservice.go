@@ -326,6 +326,9 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 			s.record("model.loaded", p.ModelID, map[string]any{"node": req.ID})
 		}
 	}
+	if len(cur) > 0 {
+		s.servedBefore.Store(req.ID, cur) // kept through the empty reports of an engine restart
+	}
 	for m := range prev {
 		if !cur[m] {
 			s.record("model.unloaded", m, map[string]any{"node": req.ID})
@@ -403,6 +406,7 @@ func (s *Server) forgetNode(ctx context.Context, id string) {
 	s.nodeEngine.Delete(id)
 	s.reconcileNodes.Delete(id)
 	s.engineSilentTold.Delete(id)
+	s.servedBefore.Delete(id)
 	if shards, err := s.store.Shards().List(ctx); err == nil {
 		for _, sh := range shards {
 			if sh.NodeID == id {
@@ -434,7 +438,7 @@ func releaseEngine(e engines.Engine) {
 // HoldsNode reports whether any per-node map on the leader still names the
 // node — what forgetNode is expected to leave empty. For tests.
 func (s *Server) HoldsNode(id string) bool {
-	for _, m := range []*sync.Map{&s.nodeLoad, &s.slots, &s.nodeEngine, &s.reconcileNodes, &s.engineSilentTold} {
+	for _, m := range []*sync.Map{&s.nodeLoad, &s.slots, &s.nodeEngine, &s.reconcileNodes, &s.engineSilentTold, &s.servedBefore} {
 		if _, ok := m.Load(id); ok {
 			return true
 		}

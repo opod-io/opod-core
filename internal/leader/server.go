@@ -97,6 +97,11 @@ type Server struct {
 	// engineSilentTold: nodes whose engine silence has been journalled
 	// (node.engine_silent), so it is said once (nodeservice.go).
 	engineSilentTold sync.Map
+	// servedBefore: node id → map[model]bool, the models a worker last
+	// reported loaded. A worker whose engine is down reports nothing loaded,
+	// which drops its placements; this is how the 503 still says "its engine
+	// is restarting" rather than "no workers are awake" (capacity.go).
+	servedBefore sync.Map
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)

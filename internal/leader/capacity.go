@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opod-io/opod-sdk/nodeapi"
+
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -32,10 +34,21 @@ type modelHolders struct {
 	silent   int // heartbeating, but its engine stopped answering it (store.Node.EngineSilent)
 	asleep   int // resident, engine asleep: wakes on demand
 	other    int // loading, failed, a state this version does not serve from
+	// restarting: a live worker that served the model, whose engine process
+	// is down and being started again (EngineStarting, EngineCrashLooping).
+	// Its engine answers nothing, so it reports nothing loaded and holds no
+	// placement; without this count the 503 read "no workers are awake …
+	// waking (scale-up in progress or floor is 0)" while nothing scaled.
+	restarting int
+	// stopped: the same, with an engine the worker reports stopped. That is
+	// also what a worker says while its supervisor waits out the back-off
+	// before a restart (the process sits at "failed"), so the text never
+	// claims the engine will not come back.
+	stopped int
 }
 
 func (h modelHolders) total() int {
-	return h.serving + h.draining + h.lost + h.silent + h.asleep + h.other
+	return h.serving + h.draining + h.lost + h.silent + h.asleep + h.other + h.restarting + h.stopped
 }
 
 // holdersOf counts the workers holding model. The leader's own "local" row is
@@ -53,6 +66,16 @@ func (s *Server) holdersOf(ctx context.Context, model string) modelHolders {
 		}
 		ps, err := s.store.Placements().GetByNode(ctx, n.ID)
 		if err != nil {
+			continue
+		}
+		holds := false
+		for _, p := range ps {
+			if p.ModelID == model && p.Status != store.PlacementReleased {
+				holds = true
+			}
+		}
+		if !holds {
+			s.countEngineDown(&h, n, model, maxAge, now)
 			continue
 		}
 		for _, p := range ps {
@@ -80,6 +103,34 @@ func (s *Server) holdersOf(ctx context.Context, model string) modelHolders {
 		}
 	}
 	return h
+}
+
+// countEngineDown counts a live worker that holds no placement of model only
+// because its engine is down: it served model before (servedBefore) and its
+// own latest word on the engine process is that it is starting again, crash
+// looping or stopped. A worker that unloaded the model with its engine serving
+// is not counted: it no longer holds it.
+func (s *Server) countEngineDown(h *modelHolders, n store.Node, model string, maxAge time.Duration, now time.Time) {
+	if n.Draining() || !n.Alive(maxAge, now) {
+		return
+	}
+	if v, ok := s.servedBefore.Load(n.ID); !ok || !v.(map[string]bool)[model] {
+		return
+	}
+	v, ok := s.nodeEngine.Load(n.ID)
+	if !ok {
+		return
+	}
+	e := v.(nodeEngineSample)
+	if time.Since(e.at) > loadSampleMaxAge {
+		return
+	}
+	switch e.State {
+	case nodeapi.EngineStarting, nodeapi.EngineCrashLooping:
+		h.restarting++
+	case nodeapi.EngineStopped:
+		h.stopped++
+	}
 }
 
 // unavailable says why nothing can take a new request for model right now,
@@ -212,7 +263,7 @@ func (s *Server) gangReason(ctx context.Context, model string) string {
 
 // reason is the 503 text for a model that workers hold and none can serve.
 func (h modelHolders) reason(model string) string {
-	if h.asleep > 0 && h.draining+h.lost+h.silent+h.other == 0 {
+	if h.asleep > 0 && h.draining+h.lost+h.silent+h.other+h.restarting+h.stopped == 0 {
 		return wakingMessage
 	}
 	return fmt.Sprintf("no worker can take a new request for %s right now: %s; retry shortly",
@@ -236,6 +287,12 @@ func (h modelHolders) causes(unit string) []string {
 	}
 	if h.other > 0 {
 		out = append(out, fmt.Sprintf("%d %s(s) not ready (loading or failed)", h.other, unit))
+	}
+	if h.restarting > 0 {
+		out = append(out, fmt.Sprintf("%d %s(s) whose engine is restarting — new requests resume when it serves again", h.restarting, unit))
+	}
+	if h.stopped > 0 {
+		out = append(out, fmt.Sprintf("%d %s(s) whose engine has stopped — new requests resume if it restarts or when the worker is replaced", h.stopped, unit))
 	}
 	return out
 }
