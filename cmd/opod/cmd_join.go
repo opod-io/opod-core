@@ -30,6 +30,7 @@ import (
 // Usage:
 //
 //	opod join "http://leader:8080?token=sk-orc-..."
+//	OPOD_JOIN_TOKEN=sk-orc-... opod join http://leader:8080
 //
 // workerBaseEnv is what every engine process this worker launches sees in
 // addition to its own environment: the device it may use and the VRAM budget
@@ -62,14 +63,17 @@ func cmdJoin(args []string) {
 		showHelp(helpSpec{
 			name:    "join",
 			summary: "join this machine to an existing opod cluster as a worker",
-			usage:   "opod join \"<leader-url>?token=<token>\" [--gpu <index>] [--vram-budget <GB>]",
+			usage:   "opod join \"<leader-url>[?token=<token>]\" [--gpu <index>] [--vram-budget <GB>]",
 			examples: []string{
 				"opod join \"http://leader.local:8080?token=sk-orc-...\"",
 				"opod join \"https://opod.example.com?token=sk-orc-...\"",
 				"opod join \"http://leader:8080?token=sk-orc-...\" --gpu 1 --vram-budget 20",
+				"OPOD_JOIN_TOKEN=sk-orc-... opod join https://opod.example.com",
 			},
 			notes: []string{
 				"Generate the token on the leader: `opod token create --node`",
+				"The token in the URL is visible to anyone who can list processes; a URL without one joins with",
+				"  OPOD_JOIN_TOKEN (or auth.join_token) from the environment instead, which is how an image should pass it.",
 				"--gpu <i> pins this worker's engine to one device (CUDA_VISIBLE_DEVICES / HIP_VISIBLE_DEVICES).",
 				"--vram-budget <GB> caps the engine's VRAM (vLLM --gpu-memory-utilization = budget / device) so",
 				"  several workers can share a device under a capacity ledger. Env: OPOD_VRAM_BUDGET_GB.",
@@ -84,7 +88,6 @@ func cmdJoin(args []string) {
 	if err != nil {
 		die("%v", err)
 	}
-	certJoin := token == "" // decided below, once the environment is read
 	// Placement hints for the engines this worker will supervise. They reach
 	// every engine launcher (vLLM, llama.cpp, …) through the supervisor's base
 	// environment — one contract; a manager sets the same variables on the
@@ -115,8 +118,10 @@ func cmdJoin(args []string) {
 	cfg := loadConfigOrExit()
 	log := newLogger(cfg)
 	env := cfg.Env // the environment contract, parsed once (config.Env)
-	if certJoin {
-		// No `?token=`: the worker's certificate (OPOD_NODE_CERT/KEY) is the
+	token = joinCredential(token, cfg.Auth.JoinToken)
+	warnCleartextJoin(leader, token)
+	if token == "" {
+		// No token in the URL or the environment: the worker's certificate (OPOD_NODE_CERT/KEY) is the
 		// credential the leader sees, and its mTLS gate needs no shared secret
 		// (nodeMtls=require is exactly a leader that refuses one). The token
 		// has a second job, though: it is the secret the LEADER signs its calls
@@ -126,7 +131,7 @@ func cmdJoin(args []string) {
 		// mTLS-protected register — a pod under `require` then carries no
 		// join token at all (PLAN T7.3).
 		if env.NodeCert == "" || env.NodeKey == "" {
-			die("join URL has no ?token= and no worker certificate is set (OPOD_NODE_CERT/OPOD_NODE_KEY): one or the other identifies this worker")
+			die("no join token (?token= in the URL, or OPOD_JOIN_TOKEN) and no worker certificate (OPOD_NODE_CERT/OPOD_NODE_KEY): one or the other identifies this worker")
 		}
 		token = generateCallbackSecret()
 	}
@@ -368,20 +373,39 @@ func parseJoinTarget(raw string) (leader, token string, err error) {
 		return "", "", fmt.Errorf("invalid URL: %w", err)
 	}
 	q := u.Query()
-	// The token is optional here and required by the caller unless the worker
-	// has a certificate (R9.6): under node mTLS the certificate is the
-	// credential and there is no shared secret to put in the URL.
+	// The token is optional here: the caller falls back to the environment
+	// (joinCredential), and a worker with a certificate (R9.6) needs none.
 	token = q.Get("token")
-	// A bare host was upgraded to http:// above. Warn when the join token
-	// would travel in cleartext to a non-local leader — it should go over
-	// https (or a private tailnet) for anything but localhost.
-	if host := u.Hostname(); token != "" && u.Scheme == "http" &&
-		host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		warn(os.Stderr, "joining %s over cleartext http — the join token will be sent unencrypted; prefer https for non-local leaders", host)
-	}
 	u.RawQuery = ""
 	leader = strings.TrimRight(u.String(), "/")
 	return leader, token, nil
+}
+
+// joinCredential is the join token a worker presents: the URL's ?token= when
+// the operator typed one, else the configured token (OPOD_JOIN_TOKEN or
+// auth.join_token). A URL token is visible to anyone who can list processes,
+// so an image passes the token through the environment and leaves the URL
+// bare; the URL form stays for a person at a shell. "" = no token, which only
+// a worker with a certificate may join with (see cmdJoin).
+func joinCredential(urlToken, configured string) string {
+	if urlToken != "" {
+		return urlToken
+	}
+	return configured
+}
+
+// warnCleartextJoin warns when the join token would travel in cleartext to a
+// non-local leader — it should go over https (or a private tailnet) for
+// anything but localhost. A bare host was upgraded to http:// by
+// parseJoinTarget, so it is warned about too.
+func warnCleartextJoin(leader, token string) {
+	u, err := url.Parse(leader)
+	if err != nil || token == "" || u.Scheme != "http" {
+		return
+	}
+	if host := u.Hostname(); host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		warn(os.Stderr, "joining %s over cleartext http — the join token will be sent unencrypted; prefer https for non-local leaders", host)
+	}
 }
 
 // generateCallbackSecret is the per-process secret a certificate join gives the

@@ -5,6 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-14 — a worker's join token stays off its command line
+
+- **`opod join` reads `OPOD_JOIN_TOKEN` when the URL carries no `?token=`, and the worker image no longer puts the
+  token on the command line.** The image's entrypoint ran `opod join "<leader>?token=<token>"`, so anyone who could
+  list the pod's processes — or the host's, with host process access — read the join token. It now runs `opod join
+  "<leader>"` and the token stays in the environment, where the manager already put it. The URL form still works and
+  wins when both are given; `opod join --help` says it is visible in a process list. A URL with no token and no
+  `OPOD_JOIN_TOKEN` still joins on the worker's certificate (R9.6), as before.
+
 ## 2026-10-12 — what a dying engine left: stranded slots, wrong names, zero-token rows
 
 - **A request in flight on a worker that left the pool no longer holds a slot of the workers that remain.** The

@@ -810,7 +810,7 @@ when library code reads a variable that is not on it, so the list is the whole s
 | `OPOD_VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent). The old unprefixed `VLLM_API_KEY` still works as a deprecated fallback; the prefixed form wins when both are set |
 | `OPOD_REQUIRE_KEYS` | `auth.require_keys` (`1/true` or `0/false`) |
 | `OPOD_ADMIN_TOKEN` | `auth.admin_token` — seeded as an admin-scope key at every `opod up` |
-| `OPOD_JOIN_TOKEN` | `auth.join_token` — seeded as a node-scope key, so joins survive a wiped leader DB |
+| `OPOD_JOIN_TOKEN` | `auth.join_token` — on a leader, seeded as a node-scope key, so joins survive a wiped leader DB; on a worker, the token `opod join` presents when its URL has no `?token=` (which keeps it out of the process list) |
 | `OPOD_DEFAULT_MODEL` | `router.default_model` |
 | `OPOD_PULL_DEFAULT_MODEL` | `router.pull_default_model` — `1` lets the leader pull that model into its own engine |
 | `OPOD_HEARTBEAT_MAX_AGE_SECONDS` | `router.heartbeat_max_age_seconds` (default 30; `0` falls back to a 60 s bound) |

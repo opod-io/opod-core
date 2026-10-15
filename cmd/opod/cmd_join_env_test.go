@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 // `opod join --gpu / --vram-budget` reach the engines through the
 // supervisor's base environment, never through os.Setenv on the worker
@@ -39,5 +43,40 @@ func TestParseJoinTargetTokenOptional(t *testing.T) {
 	// The minted callback secret is per process and never the same twice.
 	if a, b := generateCallbackSecret(), generateCallbackSecret(); a == b || len(a) < 40 {
 		t.Fatalf("callback secret: %q %q", a, b)
+	}
+}
+
+// A worker image passes its join token through the environment and a bare URL,
+// because a token on the command line is readable by anyone who can list
+// processes (PLAN T8.20). The URL's token still wins when a person typed one;
+// neither = "", which only a certificate join accepts.
+func TestJoinCredential(t *testing.T) {
+	for _, c := range []struct{ url, configured, want string }{
+		{"sk-orc-url", "sk-orc-env", "sk-orc-url"},
+		{"", "sk-orc-env", "sk-orc-env"},
+		{"sk-orc-url", "", "sk-orc-url"},
+		{"", "", ""},
+	} {
+		if got := joinCredential(c.url, c.configured); got != c.want {
+			t.Errorf("joinCredential(%q, %q) = %q, want %q", c.url, c.configured, got, c.want)
+		}
+	}
+}
+
+// The image's own command line carries no token: the entrypoint must hand
+// `opod join` the bare leader URL and leave OPOD_JOIN_TOKEN in the environment.
+func TestEntrypointKeepsTheJoinTokenOffTheCommandLine(t *testing.T) {
+	b, err := os.ReadFile("../../images/entrypoint.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "#") || !strings.Contains(l, "opod join") {
+			continue
+		}
+		if strings.Contains(l, "token=") || strings.Contains(l, "OPOD_JOIN_TOKEN") {
+			t.Errorf("entrypoint puts the join token on the command line: %s", l)
+		}
 	}
 }

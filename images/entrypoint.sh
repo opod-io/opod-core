@@ -151,7 +151,10 @@ for i in $(seq 1 120); do
   sleep 5
 done
 log "worker: joining $OPOD_LEADER_URL engine=$ENGINE advertise=${OPOD_ADVERTISE_ADDR:-auto}"
-opod join "$OPOD_LEADER_URL${OPOD_JOIN_TOKEN:+?token=$OPOD_JOIN_TOKEN}" &
+# The token stays in the environment: `opod join` reads OPOD_JOIN_TOKEN when the
+# URL carries none, and a token on the command line would be readable by anyone
+# who can list the pod's (or the host's) processes (PLAN T8.20).
+opod join "$OPOD_LEADER_URL" &
 JOIN_PID=$!
 
 # The model this worker exists to serve (OPOD_LOAD_MODEL, with
