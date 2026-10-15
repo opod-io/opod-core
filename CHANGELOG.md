@@ -24,6 +24,12 @@ the last section.
   keeps the models each worker last reported, and a live worker that served the model and says its engine is
   `starting` or `crash-looping` is counted as "whose engine is restarting" (`stopped` — which a worker also reports
   while it waits out the back-off before a restart — as "whose engine has stopped").
+- **A stream that breaks after tokens reached the caller is metered at what was delivered.** Its usage row wrote
+  `completion_tokens 0` (measured on the design-partner cell: ~100 tokens delivered), so usage export and anything
+  rating it downstream saw nothing. A streamed answer that ends without the engine's own usage — broken, errored or
+  cancelled — now records the content chunks the caller received as `completion_tokens`: one token per chunk on
+  llama.cpp and vLLM's default stream, an estimate where an engine batches tokens. `prompt_tokens` stays 0 there;
+  only the engine counts it.
 
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 

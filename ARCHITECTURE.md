@@ -655,6 +655,10 @@ cache               (key, namespace, value, expires_at)
 audit_log           (id, ts, actor, action, target, metadata_json)
 ```
 
+A streamed answer that ends without the engine's own usage — broken, errored or cancelled after tokens reached the
+caller — records `completion_tokens` as the content chunks delivered (one token each on llama.cpp and vLLM's default
+stream; an estimate where an engine batches tokens) and `prompt_tokens` 0, which only the engine can count.
+
 `usage.cost_usd` is a column that is always 0 — rating and showback are out of the product (ADR-003); it is kept
 so a reader of the SDK's `UsageData` does not break, and goes in the next breaking release. The columns added
 after the first schema (`bound_key_id`, `boot_id`, `engine_silent_since`, `cold`, `gang_id`, `ttft_ms`,

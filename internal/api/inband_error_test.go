@@ -111,3 +111,24 @@ func TestAWorkerWithoutAnInBandErrorAnswersAsBefore(t *testing.T) {
 		}
 	}
 }
+
+// A stream that breaks after tokens reached the caller is metered at what was
+// delivered. It wrote completion_tokens 0 (design-partner cell, PLAN T8.19:
+// ~100 tokens delivered, a row of 0), so usage export and billing downstream
+// saw nothing of an answer the caller had half received.
+func TestABrokenStreamIsMeteredAtWhatWasDelivered(t *testing.T) {
+	url := workerAnswer(t,
+		`data: {"choices":[{"delta":{"content":"one"}}]}`+"\n\n",
+		`data: {"choices":[{"delta":{"content":" two"}}]}`+"\n\n",
+		`data: {"choices":[{"delta":{"content":" three"}}]}`+"\n\n",
+		engineBroke)
+	st := usageTestStore(t)
+	h := &Handler{Engine: engines.MustNew("llamacpp", url, ""), Store: st, Default: "m"}
+	rec := httptest.NewRecorder()
+	h.ChatCompletions(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`)))
+	row := waitForUsage(t, st)
+	if row.Outcome != "error" || row.CompletionTokens != 3 {
+		t.Fatalf("want outcome error with the 3 delivered tokens, got outcome %q completion_tokens %d", row.Outcome, row.CompletionTokens)
+	}
+}

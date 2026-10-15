@@ -413,6 +413,10 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	// protocol, not content, so the clock stops at the first delta. A stream
 	// that never produces one leaves it zero rather than claiming a number.
 	var ttft time.Duration
+	// The content chunks that reached the caller: what a stream that ends
+	// without the engine's own usage (broken, errored, cancelled) is metered
+	// at, so the usage row counts what was delivered instead of 0.
+	var delivered int
 
 	// first chunk announces the assistant role
 	sendChunk(w, flusher, chatChunk{
@@ -426,11 +430,11 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	for ev := range stream {
 		// Bail before writing if the client is gone — avoids broken-pipe noise.
 		if r.Context().Err() != nil {
-			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "cancelled")
+			h.recordUsage(r.Context(), "openai", modelOut, deliveredUsage(delivered), time.Since(start), "cancelled")
 			return
 		}
 		if ev.Err != nil {
-			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
+			h.recordUsage(r.Context(), "openai", modelOut, deliveredUsage(delivered), time.Since(start), "error")
 			writeSSEError(w, flusher, h.Engine, servedBy(r.Context(), ev.Err))
 			return
 		}
@@ -476,6 +480,12 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			if ttft == 0 {
 				ttft = time.Since(start) // a tool call IS the answer: the clock stops here too
 			}
+			if ev.Delta == "" {
+				delivered++ // a chunk with content too is counted once, below
+			}
+		}
+		if ev.Delta != "" {
+			delivered++
 		}
 		if ev.Delta != "" && ttft == 0 {
 			ttft = time.Since(start)
@@ -509,7 +519,20 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	// The producer closed the stream without a final event. That is what a
 	// client disconnect looks like from here (every producer stops sending once
 	// the request context is done), and it still owes a usage row.
-	h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), unfinishedOutcome(r.Context()))
+	h.recordUsage(r.Context(), "openai", modelOut, deliveredUsage(delivered), time.Since(start), unfinishedOutcome(r.Context()))
+}
+
+// deliveredUsage is the usage of a stream that ended without the engine's own
+// count: the completion tokens are the content chunks the caller received —
+// one token each on llama.cpp and on vLLM's default stream, so an estimate
+// where an engine batches several tokens into one chunk. The prompt tokens
+// are unknown (0): only the engine counts them. nil when nothing reached the
+// caller, as before.
+func deliveredUsage(chunks int) *engines.Usage {
+	if chunks == 0 {
+		return nil
+	}
+	return &engines.Usage{CompletionTokens: chunks, TotalTokens: chunks}
 }
 
 // unfinishedOutcome names a stream that ended without its final event: the
