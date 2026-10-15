@@ -145,6 +145,11 @@ type Supervisor struct {
 	mu    sync.RWMutex
 	procs map[string]*Process
 	log   *slog.Logger
+	// changed is signalled (coalesced, never blocking) when a process reaches
+	// running, starts waiting out a restart back-off, or gives up in
+	// crashloop: the moments the worker's heartbeat would otherwise report up
+	// to one interval late (Changes).
+	changed chan struct{}
 }
 
 func NewSupervisor(log *slog.Logger) *Supervisor {
@@ -152,8 +157,39 @@ func NewSupervisor(log *slog.Logger) *Supervisor {
 		log = slog.Default()
 	}
 	return &Supervisor{
-		procs: make(map[string]*Process),
-		log:   log,
+		procs:   make(map[string]*Process),
+		log:     log,
+		changed: make(chan struct{}, 1),
+	}
+}
+
+// Changes is signalled when a managed process changes what the worker's
+// heartbeat says about it: it reached running (its model is servable again),
+// it started a restart back-off, or it entered crashloop. One pending signal
+// stands for any number of changes. The agent's loop reads it to send its
+// heartbeat at once: the leader learns a worker serves again only from a
+// heartbeat, and the timed one is up to an interval away — every request
+// meanwhile was refused (PLAN T8.22).
+func (s *Supervisor) Changes() <-chan struct{} { return s.changed }
+
+// anyRunning: some managed process is up (status running) — launched, which
+// for an engine started with no readiness probe is not yet "loaded".
+func (s *Supervisor) anyRunning() bool {
+	if s == nil {
+		return false
+	}
+	for _, p := range s.List() {
+		if p.Status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Supervisor) notifyChanged() {
+	select {
+	case s.changed <- struct{}{}:
+	default: // one is already pending; it covers this change too
 	}
 }
 
@@ -377,6 +413,7 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	p.Info.Status = "running"
 	p.readyAt = time.Now()
 	p.mu.Unlock()
+	s.notifyChanged()
 
 	go s.superviseExit(p, gen, exited)
 
@@ -598,6 +635,7 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 		p.mu.Lock()
 		p.Info.Status = "crashloop"
 		p.mu.Unlock()
+		s.notifyChanged()
 		// Log the engine's output here too: a crashloop is the one state an
 		// operator MUST be able to act on, and "exceeded MaxRestarts" alone says
 		// nothing about why.
@@ -622,6 +660,7 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 		p.Info.RestartPending = true
 	}
 	p.mu.Unlock()
+	s.notifyChanged()
 	time.Sleep(wait)
 
 	// Was the process Stopped during the backoff sleep? The child is

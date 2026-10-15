@@ -61,6 +61,27 @@ type Agent struct {
 	Log               *slog.Logger
 }
 
+// engineWatchPoll and engineWatchMax bound how the loop waits for a
+// relaunched engine to list a model before its early heartbeat (Loop): asked
+// locally twice a second, for at most ten minutes (a large vLLM load); past
+// that the timed heartbeat reports it as before.
+const (
+	engineWatchPoll = 500 * time.Millisecond
+	engineWatchMax  = 10 * time.Minute
+)
+
+// engineListsAModel: the engine answers its model list with at least one
+// model — the moment a heartbeat makes the worker servable again.
+func (a *Agent) engineListsAModel(ctx context.Context) bool {
+	if a.Engine == nil {
+		return false
+	}
+	lctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	m, err := a.Engine.List(lctx)
+	return err == nil && len(m) > 0
+}
+
 // MaxRefusedRegisters is how many consecutive re-registers the leader may
 // refuse (401/403) before the worker exits (R10.2). A heartbeat 401 is
 // answered by a re-register with the token this process started with — the
@@ -266,10 +287,52 @@ func (a *Agent) Loop(ctx context.Context) error {
 	backoff := a.HeartbeatInterval
 	t := time.NewTimer(backoff)
 	defer t.Stop()
+	// The engine process changed what a heartbeat says (Supervisor.Changes).
+	// The leader refuses the model until a heartbeat says it is loaded again,
+	// and the timed one is up to an interval away (PLAN T8.22), so:
+	//   - a restart back-off or a crashloop: beat now — "restarting" is news;
+	//   - a process that is up again: an engine is started with no readiness
+	//     probe (vLLM binds only after its load), so "running" is not
+	//     "loaded". Ask the engine itself until it lists a model, then beat —
+	//     a beat sent before would tell the leader the engine serves nothing.
+	// Firing the timer early keeps one path for the beat and its error
+	// handling. nil channels (no supervisor, no watch) never fire.
+	var changes <-chan struct{}
+	if a.Procs != nil {
+		changes = a.Procs.Changes()
+	}
+	beatNow := func() {
+		if !t.Stop() {
+			select {
+			case <-t.C:
+			default:
+			}
+		}
+		t.Reset(0)
+	}
+	var watch <-chan time.Time
+	var watchUntil time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-changes:
+			if a.Procs.anyRunning() {
+				watchUntil = time.Now().Add(engineWatchMax)
+				watch = time.After(engineWatchPoll)
+				continue
+			}
+			beatNow()
+			continue
+		case <-watch:
+			watch = nil
+			switch {
+			case a.engineListsAModel(ctx):
+				beatNow()
+			case time.Now().Before(watchUntil) && a.Procs.anyRunning():
+				watch = time.After(engineWatchPoll)
+			}
+			continue
 		case <-t.C:
 			code, err := a.Heartbeat(ctx)
 			if err == nil {

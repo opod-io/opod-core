@@ -177,3 +177,39 @@ func TestSupervisor_RestartPendingDuringBackoff(t *testing.T) {
 		t.Fatal("a stopped process stays registered")
 	}
 }
+
+// The supervisor signals the moments a heartbeat must not wait for: a process
+// reaching running, and one starting its restart back-off (PLAN T8.22).
+func TestSupervisor_SignalsRunningAndBackoff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("script-based test relies on POSIX shell")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "dies.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 0.2\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer sup.StopAll()
+	if _, err := sup.Start(context.Background(), ProcessSpec{
+		ID: "dies", Command: script, Restart: true, MaxRestarts: 5, RestartBackoff: 2 * time.Second,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	wait := func(what string) {
+		t.Helper()
+		select {
+		case <-sup.Changes():
+		case <-time.After(3 * time.Second):
+			t.Fatalf("no change signalled for %s", what)
+		}
+	}
+	wait("running")
+	if info, _ := sup.Get("dies"); info.Status != "running" {
+		t.Fatalf("first signal: status %q, want running", info.Status)
+	}
+	wait("the restart back-off")
+	if info, _ := sup.Get("dies"); !info.RestartPending {
+		t.Fatalf("second signal: %+v, want a pending restart", info)
+	}
+}

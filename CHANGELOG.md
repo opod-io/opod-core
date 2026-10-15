@@ -14,6 +14,13 @@ the last section.
   reads "whose engine is restarting", and `/loadz`'s `engines_unhealthy` counts the back-off (a card held, nothing
   served). The process record's `status` still says how it exited (`failed` / `stopped`), because a gang's start reads
   a part's `failed` as its definite answer. A leader older than this reads the new value as no statement.
+- **A worker heartbeats the moment its engine serves again, not up to an interval later.** The leader learns a model is
+  loaded only from a heartbeat, so after every engine relaunch the model was refused for up to `HeartbeatInterval`
+  (5 s) after it could serve — on the design-partner cell, no request between two kills succeeded although each
+  relaunch served within about a second. The supervisor now signals a process reaching `running`, starting a restart
+  back-off or entering crashloop. A back-off or crashloop is sent at once; a process that is up again is not yet
+  loaded (engines start with no readiness probe), so the agent asks the engine twice a second until it lists a model
+  (for at most ten minutes) and sends its heartbeat then.
 
 - **`opod join` reads `OPOD_JOIN_TOKEN` when the URL carries no `?token=`, and the worker image no longer puts the
   token on the command line.** The image's entrypoint ran `opod join "<leader>?token=<token>"`, so anyone who could
