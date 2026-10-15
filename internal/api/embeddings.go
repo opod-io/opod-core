@@ -145,10 +145,10 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		Inputs: inputs,
 	})
 	if err != nil {
-		if msg, gone := workerGone(router.NodeFrom(ctx), err); gone { // no capacity right now, not a fault of ours (openai.go)
+		if msg, gone := workerGone(failedNode(ctx, err), err); gone { // no capacity right now, not a fault of ours (openai.go)
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "worker_unreachable", msg)
-		} else if msg, gone := gangGone(router.NodeFrom(ctx), err); gone { // a gang still forming or loading (openai.go)
+		} else if msg, gone := gangGone(failedNode(ctx, err), err); gone { // a gang still forming or loading (openai.go)
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "gang_unreachable", msg)
 		} else {

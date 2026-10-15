@@ -116,7 +116,7 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 	res, err := re.Rerank(ctx, engines.RerankRequest{Model: requested, Query: req.Query, Documents: req.Documents})
 	if err != nil {
 		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
-		writeRerankError(w, h.Engine, router.NodeFrom(ctx), err)
+		writeRerankError(w, h.Engine, failedNode(ctx, err), err)
 		return
 	}
 

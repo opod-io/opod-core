@@ -14,6 +14,10 @@ the last section.
   request went to (the router's trace, installed before the gate) and does not count one whose worker is outside
   the pool; a worker that comes back with its requests still running counts them again. `/gatewayz` reports the
   number per model as `admission.models.<m>.stranded`.
+- **A `worker_unreachable` answer names the worker whose error it quotes.** With every worker of a model down, the
+  router returns the first worker's error while the request's trace names the last worker tried, so the headline
+  named one worker and the bracketed error was another's. The router now tags the error with the worker (or gang)
+  that gave it, and the message names that one (chat, embeddings, rerank); usage attribution is unchanged.
 
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 

@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -37,6 +38,38 @@ func NoteNode(ctx context.Context, nodeID string) {
 		t.node = nodeID
 		t.mu.Unlock()
 	}
+}
+
+// attemptError is the error of one dispatch attempt with the worker or gang
+// (router key) that gave it. The router returns the FIRST worker's error when
+// every attempt fails, while the trace names the LAST worker tried; a message
+// built from both named one worker and quoted another's error. FailedNode
+// reads the name back. The error's text and type are the wrapped error's.
+type attemptError struct {
+	node string
+	err  error
+}
+
+func (e *attemptError) Error() string { return e.err.Error() }
+func (e *attemptError) Unwrap() error { return e.err }
+
+// failedOn tags err with the node of the attempt that produced it.
+func failedOn(node string, err error) error {
+	if err == nil || node == "" {
+		return err
+	}
+	return &attemptError{node: node, err: err}
+}
+
+// FailedNode is the worker or gang whose error err is, when the router tagged
+// it, else fallback (typically NodeFrom: the last worker tried). A message
+// that quotes err names this node, so the name and the error agree.
+func FailedNode(err error, fallback string) string {
+	var ae *attemptError
+	if errors.As(err, &ae) {
+		return ae.node
+	}
+	return fallback
 }
 
 // NodeFrom is the node id the router last dispatched this request to

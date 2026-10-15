@@ -186,7 +186,7 @@ func (r *Router) unary(ctx context.Context, op unaryOp, model string, call unary
 		attemptSpan.RecordError(lastErr)
 		attemptSpan.End()
 		if i == 0 && primaryErr == nil {
-			primaryErr = lastErr
+			primaryErr = failedOn(nodeID, lastErr) // the caller's message names the worker this error came from
 		}
 		// The worker was unreachable and got nothing: the same model, another worker.
 		if next, again := r.tryNextWorker(ctx, nodeID, lastErr); again {

@@ -368,12 +368,12 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, status, code, msg)
 			return
 		}
-		if msg, gone := workerGone(router.NodeFrom(ctx), err); gone {
+		if msg, gone := workerGone(failedNode(ctx, err), err); gone {
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "worker_unreachable", msg)
 			return
 		}
-		if msg, gone := gangGone(router.NodeFrom(ctx), err); gone {
+		if msg, gone := gangGone(failedNode(ctx, err), err); gone {
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "gang_unreachable", msg)
 			return
@@ -810,9 +810,18 @@ func gangGone(node string, err error) (string, bool) {
 	return fmt.Sprintf("the gang serving this model is not answering yet: its coordinator has been formed but may still be loading the model, or a part went away. Nothing else can take this request right now; retry shortly (%v)", err), true
 }
 
+// failedNode is the worker or gang whose error err is (router.FailedNode),
+// else the last one the request was dispatched to (router.NodeFrom). When
+// every worker failed the router returns the first one's error, so naming the
+// last one tried put one worker in the headline and another's error in the
+// brackets.
+func failedNode(ctx context.Context, err error) string {
+	return router.FailedNode(err, router.NodeFrom(ctx))
+}
+
 // workerGone says whether a failed dispatch is "the worker the router picked
-// could not be reached, and it had no other to ask" — node is the last worker
-// the request was dispatched to (router.NodeFrom). That is not a fault of the
+// could not be reached, and it had no other to ask" — node is the worker whose
+// error err is (failedNode). That is not a fault of the
 // leader's own engine, which is what classifyEngineError describes (with a hint
 // to start it): it is no capacity right now — a worker that was parked, moved
 // or died and still looks alive for a heartbeat or two. The caller answers 503

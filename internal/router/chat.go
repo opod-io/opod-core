@@ -179,7 +179,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attemptSpan.RecordError(lastErr)
 			attemptSpan.End()
 			if i == 0 && primaryErr == nil {
-				primaryErr = lastErr
+				primaryErr = failedOn(nodeID, lastErr) // the caller's message names the worker this error came from
 			}
 			// The worker gave the caller nothing — it was unreachable, or its
 			// stream broke before the first event: the same model, another worker.

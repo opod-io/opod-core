@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -108,5 +109,38 @@ func TestAnOlderWorkersEngineDownIsReadAsBefore(t *testing.T) {
 	}
 	if healthy.calls.Load() != 0 {
 		t.Fatalf("an untyped 502 was replayed on w1 (%d calls)", healthy.calls.Load())
+	}
+}
+
+// Every worker down, each with its own error: the router returns the FIRST
+// worker's error while the trace names the LAST worker tried. The caller's
+// message is built from both, so it named one worker and quoted another's
+// error (design-partner cell, PLAN T8.19). FailedNode names the worker the
+// error came from.
+func TestTheFailedWorkerIsTheOneWhoseErrorIsReturned(t *testing.T) {
+	a := newPlainWorker(t, http.StatusBadGateway, "application/json",
+		`{"error":{"type":"engine_unreachable_on_worker","message":"engine on w0: connection refused"}}`)
+	b := newPlainWorker(t, http.StatusBadGateway, "application/json",
+		`{"error":{"type":"engine_unreachable_on_worker","message":"engine on w1: connection refused"}}`)
+	r, _ := drainRouter(t,
+		store.Node{ID: "w0", State: store.NodeStateReady},
+		store.Node{ID: "w1", State: store.NodeStateReady})
+	r.remotes["w0"] = engines.MustNew("vllm", a.srv.URL, "")
+	r.remotes["w1"] = engines.MustNew("vllm", b.srv.URL, "")
+	r.inflight["w1"] = 50 // w0 first
+	ctx := WithTrace(context.Background())
+	_, err := r.Chat(ctx, engines.ChatRequest{Model: "m"})
+	if err == nil || a.calls.Load() != 1 || b.calls.Load() != 1 {
+		t.Fatalf("want both workers asked once and an error, got w0=%d w1=%d err=%v", a.calls.Load(), b.calls.Load(), err)
+	}
+	if !errors.Is(err, engines.ErrWorkerEngineUnreachable) {
+		t.Fatalf("the tag must keep the error's type: %v", err)
+	}
+	quoted := "w0"
+	if strings.Contains(err.Error(), "engine on w1") {
+		quoted = "w1"
+	}
+	if got := FailedNode(err, NodeFrom(ctx)); got != quoted {
+		t.Fatalf("the error quotes %s's engine (%v) but the failed worker reads %q (last tried %q)", quoted, err, got, NodeFrom(ctx))
 	}
 }
