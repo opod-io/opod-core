@@ -1586,6 +1586,9 @@ Mechanisms a manager drives through this surface:
   256). A gang's slots are its head's: the coordinator is asked once, the head worker's heartbeat stands in. Per
   model the leader keeps a pool — the slots of the workers and gangs that take its requests now (cached, recomputed
   on every capacity change and at least each second) and the requests it has dispatched and not seen complete. A
+  request still in flight on a worker that has left the pool (its engine stopped, it drains, its placement went) is
+  *stranded*: it took that worker's slots with it and holds none of the workers that remain, until its worker is
+  back or it ends (the gate reads the worker from the router's trace; `/gatewayz` `admission.models.<m>.stranded`). A
   request takes a slot when one is free for its class and nobody waits ahead of it; otherwise it waits in its class
   queue. A completion (the answer's last byte) frees one slot and grants exactly one waiter: the highest class below
   its share first, deficit round robin by flow inside it. Each class may hold at most `maxShare` of the slots at once

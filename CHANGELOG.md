@@ -5,6 +5,16 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-12 — what a dying engine left: stranded slots, wrong names, zero-token rows
+
+- **A request in flight on a worker that left the pool no longer holds a slot of the workers that remain.** The
+  admission gate counted in-flight requests per model, so when a worker's engine was sent SIGTERM its slots left
+  the pool at once while its hung streams (30 s) stayed counted: on the design-partner cell 4 such streams kept every
+  slot of an idle sibling and 6 queued requests waited 30–33 s. The gate now reads which worker or gang each granted
+  request went to (the router's trace, installed before the gate) and does not count one whose worker is outside
+  the pool; a worker that comes back with its requests still running counts them again. `/gatewayz` reports the
+  number per model as `admission.models.<m>.stranded`.
+
 ## 2026-10-12 — a worker whose engine breaks mid-stream answers with an error, not an empty 200
 
 - **A worker that gave a request nothing is set aside for new requests too.** After a worker's engine died, the

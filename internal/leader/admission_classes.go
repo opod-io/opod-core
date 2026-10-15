@@ -201,6 +201,8 @@ func (s *Server) requestIdent(r *http.Request) admissionIdent {
 type heldReq struct {
 	class int
 	flow  string
+	node  func() string // where the router sent it, once granted (pool.take)
+	grant *grant        // its slot, once granted. Written under slotGate.mu.
 	// done is closed when the request leaves the queue by the gate's hand:
 	// granted a slot, or shed (shedWhy says why). Written under slotGate.mu.
 	done    chan struct{}

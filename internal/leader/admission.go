@@ -33,7 +33,16 @@ package leader
 //     bounded by maxHeld and the client's own timeout;
 //   - a worker that reports no slot count is UNGOVERNED: it makes its pool
 //     unbounded, which is the pre-ADR-091 rule (hold only while nothing can
-//     serve). /gatewayz lists such workers and a gauge counts them.
+//     serve). /gatewayz lists such workers and a gauge counts them;
+//   - a request in flight on a worker that has LEFT the pool (its engine
+//     stopped, it drains, its placement went) is STRANDED: it took its slots
+//     with it, so it holds none of the workers that remain. The gate learns
+//     the worker each request went to from the router's trace
+//     (router.NoteNode) and counts a stranded request against nothing until
+//     its worker is back in the pool or the request ends. Measured on the
+//     design-partner cell (2026-10-12): an engine sent SIGTERM held 4
+//     streams for 30 s; counted model-wide they kept every slot of the
+//     idle sibling, and 6 queued requests waited 30-33 s for it.
 //
 // One path, always: with no classes in the policy the same gate runs with one
 // class, standard, share 1 (ADR-086 §4).
@@ -58,6 +67,7 @@ import (
 	"github.com/opod-io/opod-sdk/adminapi"
 
 	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod/internal/router"
 )
 
 // PolicyAdmission and PolicyAdmissionClass are the shared wire types
@@ -111,6 +121,10 @@ type capView struct {
 	reason     string // non-empty = no worker can serve (the 503 text)
 	gen        uint64 // the capacityChanged generation it was computed at
 	at         time.Time
+	// holders are the router keys (a worker's node id, a gang's
+	// router.GangKey) whose slots this view counts, governed or not. A request
+	// in flight on a key outside it is stranded (pool.stranded).
+	holders map[string]bool
 }
 
 func (c capView) servable() bool { return c.reason == "" }
@@ -122,6 +136,7 @@ type pool struct {
 	cap     capView
 	inUse   int
 	byClass [numClasses]int
+	grants  map[*grant]struct{} // the requests counted in inUse
 	q       classQueues
 	held    [numClasses]int64 // waiting, by class (the caps)
 	all     int64
@@ -159,6 +174,35 @@ func (g *slotGate) pool(model string) *pool {
 	return p
 }
 
+// grant is one request that holds a slot of its pool. node reads the router
+// key its request was dispatched to ("" until the router picks one).
+type grant struct {
+	class int
+	node  func() string
+}
+
+// stranded counts the granted requests in flight on a worker or gang that is
+// no longer in the pool, in all and by class: they hold none of the slots of
+// the workers that remain. Read at every check rather than written when the
+// pool changes, so a worker that comes back with its requests still running
+// counts them again, and a stranded request's completion needs no special
+// case. A request the router has not placed yet ("") and one on the leader's
+// own engine count as in the pool. Called with the gate's lock held.
+func (p *pool) stranded() (all int, byClass [numClasses]int) {
+	if p.cap.holders == nil {
+		return 0, byClass
+	}
+	for g := range p.grants {
+		n := g.node()
+		if n == "" || n == "local" || p.cap.holders[n] {
+			continue
+		}
+		all++
+		byClass[g.class]++
+	}
+	return all, byClass
+}
+
 // canGrant says whether a request of class may take a slot now. Called with
 // the gate's lock held.
 func (p *pool) canGrant(cfg *classConfig, class int) bool {
@@ -168,23 +212,38 @@ func (p *pool) canGrant(cfg *classConfig, class int) bool {
 	if !p.cap.bounded() {
 		return true // an ungoverned worker serves: no bound to keep (the pre-ADR-091 rule)
 	}
-	return p.inUse < p.cap.slots && p.byClass[class] < cfg.shareCap(class, p.cap.slots)
+	share := cfg.shareCap(class, p.cap.slots)
+	if p.inUse < p.cap.slots && p.byClass[class] < share {
+		return true // the common case, without walking the grants
+	}
+	// Stranded requests only ever free slots, so they are counted only when
+	// the plain count says no.
+	gone, goneBy := p.stranded()
+	return p.inUse-gone < p.cap.slots && p.byClass[class]-goneBy[class] < share
 }
 
-// take counts one granted request. Called with the gate's lock held.
-func (p *pool) take(class int) {
+// take counts one granted request; node reads where the router sent it.
+// Called with the gate's lock held.
+func (p *pool) take(class int, node func() string) *grant {
+	g := &grant{class: class, node: node}
+	if p.grants == nil {
+		p.grants = map[*grant]struct{}{}
+	}
+	p.grants[g] = struct{}{}
 	p.inUse++
 	p.byClass[class]++
 	metrics.SetAdmissionInUse(p.model, classNames[class], p.byClass[class])
+	return g
 }
 
 // give returns one granted request's slot. Called with the gate's lock held.
-func (p *pool) give(class int) {
-	if p.byClass[class] > 0 {
-		p.byClass[class]--
+func (p *pool) give(g *grant) {
+	if _, ok := p.grants[g]; ok {
+		delete(p.grants, g)
+		p.byClass[g.class]--
 		p.inUse--
 	}
-	metrics.SetAdmissionInUse(p.model, classNames[class], p.byClass[class])
+	metrics.SetAdmissionInUse(p.model, classNames[g.class], p.byClass[g.class])
 }
 
 // dispatch grants waiters while slots are free: the highest eligible class
@@ -198,7 +257,7 @@ func (p *pool) dispatch(cfg *classConfig, a *admissionState) {
 		}
 		h.queued, h.granted = false, true
 		p.uncount(h, a)
-		p.take(h.class)
+		h.grant = p.take(h.class, h.node)
 		close(h.done)
 	}
 }
@@ -278,13 +337,13 @@ func (s *Server) computeCapacity(ctx context.Context, model string) capView {
 	if why := s.unavailable(ctx, model); why != "" {
 		return capView{reason: why}
 	}
-	slots, ungoverned := s.slotsOf(ctx, model)
+	slots, ungoverned, holders := s.slotsOf(ctx, model)
 	if slots == 0 && ungoverned == 0 {
 		// Servable, yet no worker or gang counted: the leader's own engine
 		// (or one only the router can judge). Not governed.
 		ungoverned = 1
 	}
-	return capView{slots: slots, ungoverned: ungoverned}
+	return capView{slots: slots, ungoverned: ungoverned, holders: holders}
 }
 
 // admit is the request path's gate. It returns a release to call when the
@@ -294,6 +353,10 @@ func (s *Server) computeCapacity(ctx context.Context, model string) capView {
 func (s *Server) admit(ctx context.Context, model string, started time.Time) (release func(), reason string) {
 	cfg := s.admission.config()
 	class := cfg.classOf(admissionIdentFrom(ctx))
+	// Where the router sends this request, read from its trace (installed by
+	// the caller, filled by router.NoteNode): what lets the gate see a request
+	// stranded on a worker that left the pool.
+	node := func() string { return router.NodeFrom(ctx) }
 	cv := s.capacityFor(ctx, model)
 	g := &s.admission.gate
 	a := &s.admission
@@ -302,10 +365,10 @@ func (s *Server) admit(ctx context.Context, model string, started time.Time) (re
 	p := g.pool(model)
 	// The fast path: nobody waits ahead and a slot of this class is free.
 	if p.all == 0 && p.canGrant(cfg, class) {
-		p.take(class)
+		gr := p.take(class, node)
 		g.mu.Unlock()
 		metrics.ObserveAdmissionWait(classNames[class], time.Since(started))
-		return s.releaser(model, class), ""
+		return s.releaser(model, gr), ""
 	}
 	budget := time.Duration(cfg.holdMs[class]) * time.Millisecond
 	if !cv.servable() && budget <= 0 {
@@ -317,7 +380,7 @@ func (s *Server) admit(ctx context.Context, model string, started time.Time) (re
 		g.mu.Unlock()
 		return nil, s.shedOut(class, "deadline", s.busyReason(cv, model))
 	}
-	h := &heldReq{class: class, flow: admissionIdentFrom(ctx).flow, done: make(chan struct{})}
+	h := &heldReq{class: class, flow: admissionIdentFrom(ctx).flow, node: node, done: make(chan struct{})}
 	if !p.enqueue(h, cfg, a) {
 		g.mu.Unlock()
 		return nil, s.shedOut(class, "cap", s.busyReason(cv, model))
@@ -326,7 +389,7 @@ func (s *Server) admit(ctx context.Context, model string, started time.Time) (re
 	if h.granted {
 		g.mu.Unlock()
 		metrics.ObserveAdmissionWait(classNames[class], time.Since(started))
-		return s.releaser(model, class), "" // it never waited
+		return s.releaser(model, h.grant), "" // it never waited
 	}
 	g.mu.Unlock()
 
@@ -348,7 +411,7 @@ func (s *Server) admit(ctx context.Context, model string, started time.Time) (re
 			return nil, s.busyReason(cv, model)
 		}
 		if h.granted { // granted at the same moment: give it straight back
-			s.releaser(model, class)()
+			s.releaser(model, h.grant)()
 		}
 		metrics.ObserveAdmissionHold("cancelled")
 		return nil, s.busyReason(cv, model)
@@ -359,7 +422,7 @@ func (s *Server) admit(ctx context.Context, model string, started time.Time) (re
 		metrics.ObserveAdmissionHold("served")
 		metrics.ObserveAdmissionSlotWait(classNames[class])
 		metrics.ObserveAdmissionWait(classNames[class], time.Since(started))
-		return s.releaser(model, class), ""
+		return s.releaser(model, h.grant), ""
 	case h.shedWhy == "unavailable":
 		metrics.ObserveAdmissionHold("shed_deadline")
 		metrics.ObserveAdmissionShed(classNames[class], "unavailable")
@@ -408,14 +471,14 @@ func (g *slotGate) withdraw(model string, h *heldReq, a *admissionState) bool {
 // releaser is the completion of one granted request: its slot goes back and,
 // when someone waits, exactly one waiter per freed slot is granted. Safe to
 // call once; later calls do nothing.
-func (s *Server) releaser(model string, class int) func() {
+func (s *Server) releaser(model string, gr *grant) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			g := &s.admission.gate
 			g.mu.Lock()
 			p := g.pool(model)
-			p.give(class)
+			p.give(gr)
 			p.dispatch(s.admission.config(), &s.admission)
 			g.mu.Unlock()
 		})
@@ -471,9 +534,11 @@ func (s *Server) admissionGovernance() map[string]any {
 	g.mu.Lock()
 	models := map[string]any{}
 	for m, p := range g.pools {
+		stranded, _ := p.stranded()
 		models[m] = map[string]any{
 			"slots":              p.cap.slots,
 			"in_flight":          p.inUse,
+			"stranded":           stranded, // in flight on a worker that left the pool: holds none of its slots
 			"held":               p.all,
 			"ungoverned_workers": p.cap.ungoverned,
 			"servable":           p.cap.servable(),

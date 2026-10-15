@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/api"
+	"github.com/opod-io/opod/internal/router"
 )
 
 func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +51,11 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	// the autoscaler's wake signal (/loadz unavailable_1m). The request's
 	// class and flow are read on the way in, from memory.
 	started := time.Now()
+	// The route trace goes in before the gate, so the gate reads the worker
+	// the router sends this request to (the handler reuses the same trace):
+	// a request stranded on a worker that left the pool holds none of the
+	// slots that remain (admission.go).
+	r = r.WithContext(router.WithTrace(r.Context()))
 	ctx := withAdmissionIdent(r.Context(), s.requestIdent(r))
 	if !s.capacityFor(ctx, model).servable() {
 		// A sleeping engine is resumed for this request (wakeonrequest.go);

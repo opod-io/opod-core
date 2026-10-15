@@ -53,8 +53,11 @@ func (s *Server) slotsOfKey(key string) (int, bool) {
 
 // slotsOf counts model's governed slots and its ungoverned servers among the
 // workers and gangs that take its requests now — the same holders
-// modelServable accepts.
-func (s *Server) slotsOf(ctx context.Context, model string) (slots, ungoverned int) {
+// modelServable accepts — and names them by router key (a worker's node id, a
+// gang's router.GangKey): the keys a request in flight may be on and still
+// hold one of these slots.
+func (s *Server) slotsOf(ctx context.Context, model string) (slots, ungoverned int, holders map[string]bool) {
+	holders = map[string]bool{}
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
 	if ready, err := s.store.Placements().GetByModel(ctx, model); err == nil {
 		for _, p := range ready {
@@ -65,6 +68,7 @@ func (s *Server) slotsOf(ctx context.Context, model string) (slots, ungoverned i
 			if err != nil || n == nil || !n.TakesNewWork(maxAge, now) || s.engineGoneWhy(p.NodeID) != "" {
 				continue
 			}
+			holders[p.NodeID] = true
 			if k, ok := s.slotsOfKey(p.NodeID); ok {
 				slots += k
 			} else {
@@ -74,7 +78,7 @@ func (s *Server) slotsOf(ctx context.Context, model string) (slots, ungoverned i
 	}
 	shards, err := s.store.Shards().GetByModel(ctx, model)
 	if err != nil || len(shards) == 0 {
-		return slots, ungoverned
+		return slots, ungoverned, holders
 	}
 	alive := s.routableNodes(ctx)
 	for key, parts := range store.GroupGangs(shards) {
@@ -82,13 +86,14 @@ func (s *Server) slotsOf(ctx context.Context, model string) (slots, ungoverned i
 		if !ok {
 			continue
 		}
+		holders[router.GangKey(key.Model, key.Gang)] = true
 		if k := s.gangSlots(key, coord); k > 0 {
 			slots += k
 		} else {
 			ungoverned++
 		}
 	}
-	return slots, ungoverned
+	return slots, ungoverned, holders
 }
 
 // gangSlots is a gang's slot count: the coordinator's own word, else its head
