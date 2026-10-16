@@ -5,6 +5,16 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-15 — an engine that dies at startup keeps its last words
+
+- **The exit a worker records always carries the engine's own last output.** The supervisor read an engine's stdout
+  and stderr through pipes beside `exec.Cmd.Wait`, and `Wait` closes those pipes the moment the process exits — so
+  an engine that printed its error and died at once (llama.cpp's `GGML_ASSERT`, a missing binary) could be recorded
+  as having "produced no output", which is the unactionable failure the tail exists to prevent. Seen once in CI and
+  reproduced at about 1 in 300 runs. The engine's output is now the command's own `Stdout`/`Stderr`, so `Wait`
+  returns only after every byte is in the log buffer; a last line with no newline is kept, and a process the engine
+  left behind holding its output open delays the exit by at most 2 s (`WaitDelay`).
+
 ## 2026-10-14 — a worker's join token stays off its command line; an engine between restarts says `restarting`
 
 - **A worker whose engine exited and is about to be relaunched reports `restarting`, not `stopped`.** The supervisor

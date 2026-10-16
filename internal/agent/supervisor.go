@@ -11,10 +11,10 @@
 package agent
 
 import (
-	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -332,19 +332,13 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	}
 	cmd.Env = env
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("stderr pipe: %w", err)
-	}
-
-	go readLines(stdout, p.logBuf, spec.ID)
-	go readLines(stderr, p.logBuf, spec.ID)
+	stdout := &lineWriter{dst: p.logBuf, id: spec.ID}
+	stderr := &lineWriter{dst: p.logBuf, id: spec.ID}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	// A grandchild that inherited the output (an engine's own worker
+	// processes) can hold it open after the child exits, and Wait waits for
+	// the copy; this bounds that wait and then closes the pipes.
+	cmd.WaitDelay = outputDrainDelay
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -386,6 +380,12 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	// collected here, so no zombies pile up on failed launches.
 	go func() {
 		waitErr := cmd.Wait()
+		if errors.Is(waitErr, exec.ErrWaitDelay) {
+			// The child itself exited 0; only a grandchild held its output open.
+			waitErr = nil
+		}
+		stdout.flush()
+		stderr.flush()
 		p.mu.Lock()
 		if p.generation == gen {
 			p.exitErr = waitErr
@@ -809,7 +809,14 @@ func (r *ringBuffer) tail(n int) []string {
 	return out
 }
 
-// readLines captures a child's output into its ring buffer AND echoes it to the
+// outputDrainDelay bounds how long the reaper waits, after the child exits, for
+// output still held open by a process the child left behind.
+const outputDrainDelay = 2 * time.Second
+
+// maxLogLine is where an unterminated line is cut and recorded anyway.
+const maxLogLine = 1 << 20
+
+// lineWriter captures a child's output into its ring buffer AND echoes it to the
 // supervisor's own stdout, tagged with the process id.
 //
 // The echo matters more than it looks. Without it the engine's output existed only
@@ -817,13 +824,52 @@ func (r *ringBuffer) tail(n int) []string {
 // the cluster — so a worker spending twenty minutes compiling GPU kernels was
 // indistinguishable from one that had hung. The operator could see THAT we were
 // waiting, never WHAT for. An engine that talks to nobody may as well be silent.
-func readLines(rc io.ReadCloser, dst *ringBuffer, id string) {
-	defer rc.Close()
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		dst.append(line)
-		fmt.Printf("[%s] %s\n", id, line)
+//
+// It is the command's Stdout/Stderr, not a pipe a goroutine of ours reads,
+// because exec.Cmd.Wait then returns only once everything the child wrote has
+// been written here: the exit the reaper records always has the engine's last
+// words in the buffer. A StdoutPipe read beside Wait raced it — Wait closes the
+// pipe on exit, so an engine that printed its error and died at once could be
+// recorded as having produced no output.
+type lineWriter struct {
+	mu      sync.Mutex
+	dst     *ringBuffer
+	id      string
+	pending []byte
+}
+
+func (w *lineWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := len(b)
+	for len(b) > 0 {
+		i := bytes.IndexByte(b, '\n')
+		if i < 0 {
+			w.pending = append(w.pending, b...)
+			if len(w.pending) >= maxLogLine {
+				w.emit()
+			}
+			break
+		}
+		w.pending = append(w.pending, b[:i]...)
+		w.emit()
+		b = b[i+1:]
 	}
+	return n, nil
+}
+
+// flush records a last line the child did not end with a newline.
+func (w *lineWriter) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) > 0 {
+		w.emit()
+	}
+}
+
+func (w *lineWriter) emit() {
+	line := string(bytes.TrimSuffix(w.pending, []byte{'\r'}))
+	w.pending = w.pending[:0]
+	w.dst.append(line)
+	fmt.Printf("[%s] %s\n", w.id, line)
 }
