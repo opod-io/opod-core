@@ -5,6 +5,16 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-15 — a pull request that slows the leader fails
+
+- **CI measures what the leader costs on every pull request** (`leader-cost` workflow, `make perfgate`,
+  `internal/perfgate`). One runner starts a real `opod up` and `opod join` in front of a stub engine with a fixed
+  token cadence and measures the stub two ways, interleaved: called directly and through the leader and the worker.
+  Only the difference is judged, so the runner's own speed cancels out. The gate fails when the leader adds more than
+  10 ms to time-to-first-token p95, at one stream or at four. A third arm puts a leader that is 20 ms slower in front,
+  and the run fails unless the gate fails that arm too — the gate proves on every run that it can see a regression.
+  Throughput loss is reported beside it and not yet gated. On a laptop the leader adds 3–4 ms at p95.
+
 ## 2026-10-15 — an engine that dies at startup keeps its last words
 
 - **The exit a worker records always carries the engine's own last output.** The supervisor read an engine's stdout

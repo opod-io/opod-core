@@ -1,0 +1,49 @@
+name: leader-cost
+
+# Fails a pull request when the leader adds more time to first token than its
+# margin. One runner measures a stub engine directly and through a real
+# `opod up` + `opod join`, interleaved, and judges only the difference; a
+# deliberately slowed leader must fail on every run. See internal/perfgate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leader-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: leader cost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build opod
+        run: go build -trimpath -o opod ./cmd/opod
+
+      - name: measure and judge
+        env:
+          OPOD_BIN: ${{ github.workspace }}/opod
+          OPOD_PERFGATE_OUT: ${{ github.workspace }}/leader-cost.json
+        run: go test -tags perfgate -count=1 -v ./internal/perfgate/
+
+      - name: keep the numbers
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: leader-cost
+          path: leader-cost.json
+          if-no-files-found: ignore

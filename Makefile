@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt-check check integration run clean tidy
+.PHONY: build test lint fmt-check check integration perfgate run clean tidy
 
 BIN := opod
 PKG := ./cmd/opod
@@ -9,6 +9,11 @@ build:
 
 test:
 	go test ./...
+
+# perfgate: the leader-cost gate CI runs on every PR (internal/perfgate) — a
+# real leader and worker in front of a stub engine, ~2 min.
+perfgate:
+	go test -tags perfgate -count=1 -v ./internal/perfgate/
 
 # lint: go vet, then golangci-lint (the same .golangci.yml CI gates on — size
 # ratchets included) when the binary is on PATH or in GOPATH/bin.

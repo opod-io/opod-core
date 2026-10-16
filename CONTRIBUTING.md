@@ -42,6 +42,7 @@ The Makefile is intentionally tiny. Every target maps to a single `go` invocatio
 | `make test` | `go test ./...` |
 | `make lint` | `go vet ./...`, then `golangci-lint run ./...` with this repo's `.golangci.yml` when that binary is on PATH or in `GOPATH/bin` (CI always runs it) |
 | `make check` | lint + test + build, in order. **This is what every PR must pass.** |
+| `make perfgate` | the leader-cost gate, ~2 min: a real `opod up` + `opod join` in front of a stub engine, measured against the stub called directly. A PR fails when the leader adds more than its margin to time-to-first-token p95. CI runs it on every PR (`leader-cost` workflow) |
 | `make run` | `make build && ./opod up` |
 | `make tidy` | `go mod tidy` |
 | `make clean` | remove the binary and `data/`, `.opod/` working dirs |
