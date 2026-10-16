@@ -5,6 +5,16 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-16 — an SGLang part with a whole card sizes its own memory
+
+- **A whole-card SGLang part is no longer told to take 85 % of the card.** With no VRAM budget the worker and the
+  gang backend now leave `--mem-fraction-static` out, and SGLang reserves room for its activations and CUDA graph
+  buffers by card size, as it does when run alone. The fixed 0.85 left an 8 GB card 0.6 GB for that room, and both
+  ranks of a two-machine gang died on their first workspace allocation; SGLang's own choice there is about 0.62. On a
+  large card the pool is now slightly smaller than before (SGLang's figure, about 0.8 on 48 GB). A part with a
+  budget is unchanged: its fraction still comes from the budget. vLLM keeps its fixed default, because it has no
+  card-sized rule of its own.
+
 ## 2026-10-15 — a pull request that slows the leader fails
 
 - **CI measures what the leader costs on every pull request** (`leader-cost` workflow, `make perfgate`,
