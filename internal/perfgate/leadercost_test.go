@@ -21,9 +21,9 @@ import (
 const (
 	// ttftP95Margin is what the leader and worker together may add to the
 	// time to first token at p95, over the engine called directly on the same
-	// runner. Measured on a laptop the leader adds 3–4 ms here and the slowed
-	// arm 25–27 ms; the margin sits between them, and moves only with runner
-	// numbers that justify it.
+	// runner. Five runs on ubuntu-24.04 (2026-10-15): the leader adds 1.3–2.9 ms
+	// at p95 and the slowed arm 21.8–23.3 ms; a laptop reads 3–4 and 25–27. The
+	// margin sits between them, and moves only with runner numbers that justify it.
 	ttftP95Margin = 10 * time.Millisecond
 
 	// slowedBy is the regression the gate must catch on every run.

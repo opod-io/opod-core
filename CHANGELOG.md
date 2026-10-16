@@ -13,7 +13,8 @@ the last section.
   Only the difference is judged, so the runner's own speed cancels out. The gate fails when the leader adds more than
   10 ms to time-to-first-token p95, at one stream or at four. A third arm puts a leader that is 20 ms slower in front,
   and the run fails unless the gate fails that arm too — the gate proves on every run that it can see a regression.
-  Throughput loss is reported beside it and not yet gated. On a laptop the leader adds 3–4 ms at p95.
+  Throughput loss is reported beside it and not yet gated. In five runs on a GitHub `ubuntu-24.04` runner the leader
+  added 1.3–2.9 ms at p95 and the slowed arm 21.8–23.3 ms, so the margin has room on both sides.
 
 ## 2026-10-15 — an engine that dies at startup keeps its last words
 
