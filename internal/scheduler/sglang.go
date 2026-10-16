@@ -194,8 +194,9 @@ func sglangGangCommand(g sglangGang) string {
 		// hard-coded 0.85 here put a part on an 8 GB card at 85% of the CARD
 		// rather than the 6 GB its plan gave it, and the engine died allocating
 		// its attention workspace with 512 KiB free — a per-worker VRAM budget
-		// that one start path ignores is not a budget.
-		"--mem-fraction-static " + agent.MemFractionVar,
+		// that one start path ignores is not a budget. A whole-card part has no
+		// budget, and then SGLang sizes its own pool (agent.SGLangMemFractionFlag).
+		agent.SGLangMemFractionFlag,
 		"--tp-size " + strconv.Itoa(g.TP),
 	}
 	if g.PP > 1 {
@@ -207,8 +208,8 @@ func sglangGangCommand(g sglangGang) string {
 		"--node-rank "+strconv.Itoa(g.NodeRank),
 	)
 	// The budget line runs BEFORE the exec: it writes $U, which the fraction
-	// flag above reads.
-	return agent.MemFractionShell("0.85") + strings.Join(args, " ")
+	// flag above reads — empty when the part has no budget.
+	return agent.MemFractionShell("") + strings.Join(args, " ")
 }
 
 // shellQuote escapes a value for the single quotes it is placed inside.

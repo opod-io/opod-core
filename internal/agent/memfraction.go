@@ -47,6 +47,20 @@ const processOverheadMiB = "768"
 // MemFractionVar is what a command line writes where the fraction goes.
 const MemFractionVar = `"$U"`
 
+// SGLangMemFractionFlag is where an SGLang command line puts its fraction, and
+// it is written only when a budget set one: the caller passes "" as the default
+// to MemFractionShell, so with no budget $U is empty and the flag disappears.
+//
+// SGLang sizes its own pool when it is not told: it reserves room for its
+// activations and CUDA graph buffers by card size and parallel width (about
+// 3 GB on a card under 20 GB, v0.5.2 `server_args.py`). vLLM has no such rule
+// — its default is a constant — so it keeps one. A fixed 0.85 on a WHOLE-CARD
+// part replaced SGLang's arithmetic with ours: on an 8 GB card the pool took
+// all but 0.6 GB and both ranks of a two-machine gang died allocating the
+// attention workspace with 448 KiB free (design-partner cell, 2026-10-16),
+// where SGLang alone would have chosen about 0.61.
+const SGLangMemFractionFlag = `${U:+--mem-fraction-static "$U"}`
+
 // gpuCountShell counts the devices this worker can see and derives the largest
 // power of two at or below that count as $TP — an engine's tensor degree must
 // divide the attention head count, which is almost always a power of two, so 5

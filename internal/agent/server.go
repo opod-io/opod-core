@@ -921,7 +921,8 @@ func (s *Server) pinnedSource(model string) (source, revArgs string, err error) 
 // and differ only in flag names:
 //
 //	--tp-size              how many cards (auto-detected, same power-of-two rule)
-//	--mem-fraction-static  how much of each (from the worker's VRAM budget)
+//	--mem-fraction-static  how much of each (from the worker's VRAM budget;
+//	                       absent without one, and SGLang sizes itself)
 //	--served-model-name    serve under the catalog id, so routing needs no
 //	                       name translation anywhere in the fleet
 //
@@ -967,10 +968,12 @@ func (s *Server) sglangCmdline(model, servedName, host string, port int) (string
 		servedName = model
 	}
 	flagOverrides, flagArgs := s.EngineFlags.sglangShellOverrides()
-	cmdline := gpuCountShell + MemFractionShell("0.85") + fmt.Sprintf(
+	// No budget, no fraction: SGLang then sizes its pool from the card itself
+	// (SGLangMemFractionFlag).
+	cmdline := gpuCountShell + MemFractionShell("") + fmt.Sprintf(
 		"%s "+
 			"exec python3 -m sglang.launch_server --model-path '%s' %s --served-model-name '%s' --host %s --port %d "+
-			"--trust-remote-code --mem-fraction-static \"$U\" --tp-size \"$TP\" %s",
+			"--trust-remote-code "+SGLangMemFractionFlag+" --tp-size \"$TP\" %s",
 		flagOverrides, source, revArgs, servedName, host, port, flagArgs)
 	return cmdline, nil
 }

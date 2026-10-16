@@ -48,3 +48,34 @@ func TestTheFractionKeepsTheProcessInsideItsBudget(t *testing.T) {
 		t.Errorf("with no reading of the card the default stands: %s", got)
 	}
 }
+
+// An SGLang command line carries the fraction only when a budget produced one.
+// With no budget SGLang sizes its own pool from the card; the fixed 0.85 that
+// stood in its place left an 8 GB card 0.6 GB for SGLang's workspace and a
+// two-machine gang died on its first allocation (design-partner cell,
+// 2026-10-16). Run as a shell line, because the flag is a shell expansion.
+func TestSGLangGetsAFractionOnlyFromABudget(t *testing.T) {
+	if _, err := exec.LookPath("awk"); err != nil {
+		t.Skip("no awk on this machine")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "nvidia-smi"), []byte("#!/bin/sh\necho 8192\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(budget string) string {
+		// printf '[%s]' shows each word the flag expands to, and nothing when it is empty.
+		cmd := exec.Command("sh", "-c", MemFractionShell("")+`printf '[%s]' x `+SGLangMemFractionFlag)
+		cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "OPOD_VRAM_BUDGET_GB=" + budget}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	if got := run("0"); got != "[x]" {
+		t.Errorf("no budget: SGLang must size itself, got the words %s", got)
+	}
+	if got := run("6"); got != "[x][--mem-fraction-static][0.65]" {
+		t.Errorf("a 6 GB budget on an 8 GB card: got the words %s", got)
+	}
+}

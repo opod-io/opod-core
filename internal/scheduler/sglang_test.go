@@ -275,12 +275,13 @@ func TestSGLangGangHonoursThePartsVRAMBudget(t *testing.T) {
 	if !strings.Contains(got, "OPOD_VRAM_BUDGET_GB") {
 		t.Errorf("the budget line must run before the exec:\n%s", got)
 	}
-	if !strings.Contains(got, `--mem-fraction-static "$U"`) {
+	if !strings.Contains(got, agent.SGLangMemFractionFlag) {
 		t.Errorf("the flag must read the variable that line writes:\n%s", got)
 	}
 	// And it is the SAME rule the worker's own launches use — one rule, three
 	// readers; a second copy is how the constant got here in the first place.
-	if !strings.Contains(got, agent.MemFractionShell("0.85")) {
+	// The default is empty: a whole-card part leaves the sizing to SGLang.
+	if !strings.Contains(got, agent.MemFractionShell("")) {
 		t.Errorf("the gang must use agent.MemFractionShell, not its own arithmetic:\n%s", got)
 	}
 }
