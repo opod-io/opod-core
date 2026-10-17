@@ -16,13 +16,36 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
+// callWorkerStart starts one process on a worker and waits until it is ready.
+// A start that does not end ready gives back what it took: once the request
+// may have reached the worker, any failure — the process failed, never became
+// ready, the wait was cancelled, the answer was lost — stops the process, so
+// a failed create, heal or move never leaves the part it was starting running
+// on the card (every gang backend relied on its caller's rollback, which only
+// covers the parts that had finished). A worker that refused the start (an
+// error status) started nothing; a spec that cannot be encoded was never sent.
 func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spec agent.ProcessSpec) (*agent.ProcessInfo, error) {
+	info, sent, err := o.startOnWorker(ctx, node, spec)
+	if err != nil && sent {
+		if serr := o.callWorkerStop(ctx, node, spec.ID); serr != nil {
+			o.Log.Warn("a part that failed to start could not be stopped — it may still hold its card",
+				"node", node.ID, "process", spec.ID, "start_err", err, "stop_err", serr)
+		} else {
+			o.Log.Info("stopped a part that failed to start", "node", node.ID, "process", spec.ID, "err", err)
+		}
+	}
+	return info, err
+}
+
+// startOnWorker is the start itself; sent says the request may have reached
+// the worker with nothing refused.
+func (o *Orchestrator) startOnWorker(ctx context.Context, node store.Node, spec agent.ProcessSpec) (*agent.ProcessInfo, bool, error) {
 	body, err := json.Marshal(spec)
 	if err != nil {
 		// A spec that cannot be encoded must fail here, named — not reach the
 		// worker as an empty body (2026-09-14: a func-typed hook on ProcessSpec
 		// did exactly that, and every gang part failed with "invalid body: EOF").
-		return nil, fmt.Errorf("encode process spec %s: %w", spec.ID, err)
+		return nil, false, fmt.Errorf("encode process spec %s: %w", spec.ID, err)
 	}
 	url := workerURL(node.Address) + "/v1/process/start"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -31,23 +54,27 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 	auth.SignRequest(req, node.ID, node.WorkerToken)
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
-		return nil, startEnded(ctx, node, spec, err)
+		return nil, true, startEnded(ctx, node, spec, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s: %s", resp.Status, string(b))
+		return nil, false, fmt.Errorf("%s: %s", resp.Status, string(b))
 	}
 	var info agent.ProcessInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, startEnded(ctx, node, spec, fmt.Errorf("decode info: %w", err))
+		return nil, true, startEnded(ctx, node, spec, fmt.Errorf("decode info: %w", err))
 	}
 	// The worker spawns and answers 202 immediately; readiness happens on ITS
 	// clock, not this HTTP call's. Poll until the process leaves "starting".
 	if info.Status == "starting" {
-		return o.awaitWorkerReady(ctx, node, spec)
+		ready, err := o.awaitWorkerReady(ctx, node, spec)
+		return ready, true, err
 	}
-	return &info, nil
+	if info.Status == "failed" || info.Status == "crashloop" {
+		return nil, true, &PartFailedError{Process: spec.ID, Node: node.ID, Status: info.Status, Restarts: info.Restarts, ExitErr: info.ExitErr}
+	}
+	return &info, true, nil
 }
 
 // startEnded is the error of a start call that did not get its answer. When
@@ -263,10 +290,20 @@ func (o *Orchestrator) PlaceOnNodes(ctx context.Context, entry models.Entry, nod
 			o.Log.Warn("forced placement replaces what the worker serves", "model", entry.ID, "node", nd.ID, "refusal", lost.Error())
 		}
 	}
+	// One placement is one acquisition: a load that fails on node k gives back
+	// the loads it made on the nodes before it, so a partly placed model is
+	// never left holding cards nobody asked for in that shape.
+	var loaded []store.Node
 	for _, nd := range workers {
 		if err := o.callWorkerLoad(ctx, nd, entry, pin); err != nil {
-			return fmt.Errorf("node %s: %w", nd.ID, err)
+			for i := len(loaded) - 1; i >= 0; i-- {
+				if _, uerr := o.UnloadFromNode(context.WithoutCancel(ctx), entry, loaded[i].ID); uerr != nil {
+					o.Log.Warn("a partial placement could not be given back", "model", entry.ID, "node", loaded[i].ID, "err", uerr)
+				}
+			}
+			return fmt.Errorf("node %s: %w (the %d node(s) loaded before it were unloaded)", nd.ID, err, len(loaded))
 		}
+		loaded = append(loaded, nd)
 		o.Log.Info("model placed on worker", "model", entry.ID, "node", nd.ID)
 	}
 	return nil

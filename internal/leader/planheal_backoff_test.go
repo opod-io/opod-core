@@ -41,7 +41,7 @@ func TestHealBackoffHoldsAndResets(t *testing.T) {
 	if got := h.admit(specs, none, now); len(got) != 1 {
 		t.Fatalf("a gang that never failed is admitted: %v", got)
 	}
-	if wait := h.failedHeal(g, now); wait != 15*time.Second {
+	if _, _, wait := h.failedHeal(g, now); wait != 15*time.Second {
 		t.Fatalf("first failure waits 15 s, got %s", wait)
 	}
 	if got := h.admit(specs, none, now.Add(14*time.Second)); len(got) != 0 {
@@ -50,7 +50,7 @@ func TestHealBackoffHoldsAndResets(t *testing.T) {
 	if got := h.admit(specs, none, now.Add(15*time.Second)); len(got) != 1 {
 		t.Fatalf("a gang whose back-off ended is admitted again: %v", got)
 	}
-	if wait := h.failedHeal(g, now.Add(15*time.Second)); wait != 30*time.Second {
+	if _, _, wait := h.failedHeal(g, now.Add(15*time.Second)); wait != 30*time.Second {
 		t.Fatalf("second failure in a row waits 30 s, got %s", wait)
 	}
 
@@ -59,7 +59,7 @@ func TestHealBackoffHoldsAndResets(t *testing.T) {
 	if got := h.admit(specs, none, now.Add(16*time.Second)); len(got) != 1 {
 		t.Fatalf("a healed gang has no back-off: %v", got)
 	}
-	if wait := h.failedHeal(g, now.Add(20*time.Second)); wait != 15*time.Second {
+	if _, _, wait := h.failedHeal(g, now.Add(20*time.Second)); wait != 15*time.Second {
 		t.Fatalf("after a success the first failure waits 15 s again, got %s", wait)
 	}
 
@@ -78,6 +78,35 @@ func TestHealBackoffHoldsAndResets(t *testing.T) {
 	h.admit(specs, map[string]int{"g1": 2}, now.Add(31*time.Second))
 	if _, ok := h.failed["g1"]; ok {
 		t.Fatal("a gang that is present again must drop its back-off")
+	}
+}
+
+// The loop gives up after healMaxAttempts failed heals of one
+// shape — the last one says final — and tries again only when the gang
+// appears, its shape changes, or the manager parks and un-parks it.
+func TestHealGivesUpAfterThreeAndAPlanChangeAsksAgain(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	g := planGang{ID: "g1", Parts: 2, PP: 2}
+	specs, none := []planGang{g}, map[string]int{}
+	h := newHealState()
+	for want := 1; want <= healMaxAttempts; want++ {
+		at := now.Add(time.Duration(want) * 5 * time.Minute)
+		if got := h.admit(specs, none, at); len(got) != 1 {
+			t.Fatalf("attempt %d is admitted: %v", want, got)
+		}
+		attempt, final, _ := h.failedHeal(g, at)
+		if attempt != want || final != (want == healMaxAttempts) {
+			t.Fatalf("attempt %d: got attempt %d final %v", want, attempt, final)
+		}
+	}
+	if got := h.admit(specs, none, now.Add(24*time.Hour)); len(got) != 0 {
+		t.Fatalf("a gang given up on is never tried again by itself: %v", got)
+	}
+	// The manager parks it (it leaves the active set) and later un-parks it:
+	// a new question.
+	h.admit(nil, none, now.Add(25*time.Hour))
+	if got := h.admit(specs, none, now.Add(26*time.Hour)); len(got) != 1 {
+		t.Fatalf("a gang parked and un-parked is asked about afresh: %v", got)
 	}
 }
 

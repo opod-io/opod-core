@@ -110,6 +110,10 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 				// Without this a leader restart formed the gang bare — no -c,
 				// no tensor split — whatever the plan said.
 				Flags map[string]string `json:"flags"`
+				// Parked: the manager scaled the gang to zero on purpose — an
+				// autoscaler at rest, or a gang the heal gave up on (T22.4).
+				// It is not a gang to form.
+				Parked bool `json:"parked"`
 			} `json:"shardGroups"`
 		}
 		if err := json.Unmarshal(raw, &doc); err != nil {
@@ -127,8 +131,8 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 		}
 		gangs := make([]planGang, 0, len(doc.ShardGroups))
 		for _, g := range doc.ShardGroups {
-			if len(g.Parts) == 0 {
-				continue // a gang with no parts is not a gang to form
+			if len(g.Parts) == 0 || g.Parked {
+				continue // a gang with no parts, or parked, is not a gang to form
 			}
 			gangs = append(gangs, planGang{ID: g.ID, Parts: len(g.Parts),
 				TP: g.Parallelism.Tensor, PP: g.Parallelism.Pipeline, Devices: g.DevicesPerPart, Flags: g.Flags, Expert: g.Parallelism.Expert})

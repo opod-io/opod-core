@@ -339,6 +339,17 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	// processes) can hold it open after the child exits, and Wait waits for
 	// the copy; this bounds that wait and then closes the pipes.
 	cmd.WaitDelay = outputDrainDelay
+	// When the process context ends (a failed health probe, a stop) the kill
+	// goes to the whole group, as Stop's SIGTERM does: the default kills only
+	// the direct child, and an engine's own workers (vLLM's Ray actors, a
+	// download helper) lived on holding the card's memory with nothing left
+	// to supervise them.
+	cmd.Cancel = func() error {
+		if err := signalGroup(cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
 
 	if err := cmd.Start(); err != nil {
 		cancel()

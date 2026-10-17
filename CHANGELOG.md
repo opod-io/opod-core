@@ -5,6 +5,23 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-17 — what an operation started, it stops when it fails
+
+- **A part that fails to start is stopped by the start itself.** Every gang backend (llama.cpp RPC, vLLM over Ray,
+  SGLang, expert parallel) rolled back the parts that had finished when a create failed, but not the one it was
+  starting — a part that failed, never became ready, or whose wait was cancelled kept running and held its card until
+  the next create swept it. The shared start call now stops the process whenever a start that may have reached the
+  worker does not end ready; a start the worker refused started nothing and is left alone.
+- **A stop kills the engine's whole process group.** When a process's context ends (a failed health probe, a stop),
+  the kill now goes to its group, as the graceful stop's SIGTERM already did; the default reached only the direct
+  child, and an engine's own workers (vLLM's Ray actors) could outlive it on the card.
+- **A placement on several nodes that fails part-way unloads what it loaded** (`opod model add <id> --node a,b,c`):
+  the nodes before the failing one no longer keep the model.
+- **The gang heal gives up after three failed tries of one shape.** The last `shard.heal_failed` carries
+  `final: true` (every one now carries `attempt`), and the leader stops trying that gang until it appears, the plan
+  changes its shape, or the manager parks it and later un-parks it. A gang the plan marks `parked` is not one the
+  leader forms. Before, the heal retried every minute for ever, starting processes on the cards each time.
+
 ## 2026-10-16 — an SGLang part with a whole card sizes its own memory
 
 - **A whole-card SGLang part is no longer told to take 85 % of the card.** With no VRAM budget the worker and the

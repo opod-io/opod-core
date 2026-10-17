@@ -46,6 +46,16 @@ package leader
 //     the create's error.code and its reason), not only in the log — a
 //     manager that cannot form the gang itself, because this loop holds the
 //     guard, reads the leader's own verdict there;
+//   - it GIVES UP after healMaxAttempts failed heals of the same gang shape:
+//     the last shard.heal_failed carries final:true and the loop stops trying
+//     that gang until it appears, the plan changes its shape, or the manager
+//     parks it and later un-parks it (a gang that leaves the plan's active set
+//     is asked about afresh when it comes back; a parked gang is not formed).
+//     A plan revision alone does not reset it — the autoscaler writes one for
+//     every scale. A heal that failed three times on the same parts would fail
+//     a fourth, and each attempt starts processes on the cards; retrying for
+//     ever only kept a card busy (design-partner cell, a two-vendor gang logged
+//     "Gang heal failed" seven times). What gave up is the manager's to park;
 //   - it does not choose WHERE parts run. Placement stayed with whoever renders
 //     the pods; by the time this loop runs, the parts are already on the nodes
 //     that were approved for them.
@@ -76,6 +86,9 @@ const healInterval = 15 * time.Second
 const (
 	healBackoffBase = 15 * time.Second
 	healBackoffMax  = 60 * time.Second
+	// healMaxAttempts is how many failed heals of one gang shape the loop
+	// makes before it gives up on it (final:true).
+	healMaxAttempts = 3
 )
 
 // healBackoffAfter is the wait after the n-th consecutive failed heal of a
@@ -108,10 +121,21 @@ func newHealState() *healState {
 	return &healState{absent: map[string]time.Time{}, failed: map[string]healBackoffAt{}, now: time.Now}
 }
 
-// admit drops the gangs still backing off after a failed heal. A gang that is
-// present again, or whose shape in the plan is no longer the one that failed,
-// loses its back-off here.
+// admit drops the gangs still backing off after a failed heal, and the gangs
+// the loop has given up on. A gang that is present again, whose shape in the
+// plan is no longer the one that failed, or that left the plan's active set
+// (the manager parked it, or removed it) loses its back-off — and a given-up
+// gang is asked about afresh — here.
 func (h *healState) admit(specs []planGang, held map[string]int, now time.Time) []planGang {
+	active := map[string]bool{}
+	for _, g := range specs {
+		active[gangID(g)] = true
+	}
+	for id := range h.failed {
+		if !active[id] {
+			delete(h.failed, id)
+		}
+	}
 	out := make([]planGang, 0, len(specs))
 	for _, g := range specs {
 		id := gangID(g)
@@ -119,6 +143,8 @@ func (h *healState) admit(specs []planGang, held map[string]int, now time.Time) 
 			switch {
 			case held[id] > 0 || !reflect.DeepEqual(b.spec, g):
 				delete(h.failed, id)
+			case b.failures >= healMaxAttempts:
+				continue // given up: the plan has to change, or the gang to appear
 			case now.Before(b.notBefore):
 				continue
 			}
@@ -128,19 +154,19 @@ func (h *healState) admit(specs []planGang, held map[string]int, now time.Time) 
 	return out
 }
 
-// failedHeal records one more failed heal of the gang and returns how long it
-// now waits.
-func (h *healState) failedHeal(g planGang, now time.Time) time.Duration {
+// failedHeal records one more failed heal of the gang: which attempt it was,
+// whether it was the last (final), and how long the gang waits if not.
+func (h *healState) failedHeal(g planGang, now time.Time) (attempt int, final bool, wait time.Duration) {
 	id := gangID(g)
 	b := h.failed[id]
 	if !reflect.DeepEqual(b.spec, g) {
 		b = healBackoffAt{spec: g}
 	}
 	b.failures++
-	wait := healBackoffAfter(b.failures)
+	wait = healBackoffAfter(b.failures)
 	b.notBefore = now.Add(wait)
 	h.failed[id] = b
-	return wait
+	return b.failures, b.failures >= healMaxAttempts, wait
 }
 
 // healed forgets the gang: it formed.
@@ -231,14 +257,21 @@ func (s *Server) healGangs(ctx context.Context, st *healState) {
 		if ctx.Err() != nil {
 			return // the leader is shutting down; that is not the gang's failure
 		}
-		wait := st.failedHeal(g, st.now())
+		attempt, final, wait := st.failedHeal(g, st.now())
 		code, reason := shardCreateFailure(err)
-		s.log.Warn("heal within the plan failed — backing off before trying again",
-			"model", model, "gang", id, "code", code, "retry_in", wait, "err", err)
-		s.record("shard.heal_failed", model, map[string]any{
+		data := map[string]any{
 			"gang": id, "parts": g.Parts, "by": "plan", "revision": revision,
-			"code": code, "reason": reason, "retry_in_s": int(wait / time.Second),
-		})
+			"code": code, "reason": reason, "attempt": attempt, "final": final,
+		}
+		if final {
+			s.log.Warn("heal within the plan failed for the last time — giving up on this gang until the plan changes",
+				"model", model, "gang", id, "code", code, "attempts", attempt, "err", err)
+		} else {
+			data["retry_in_s"] = int(wait / time.Second)
+			s.log.Warn("heal within the plan failed — backing off before trying again",
+				"model", model, "gang", id, "code", code, "attempt", attempt, "retry_in", wait, "err", err)
+		}
+		s.record("shard.heal_failed", model, data)
 		return
 	}
 	st.healed(id)

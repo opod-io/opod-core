@@ -199,6 +199,25 @@ func TestPlanWatcherReadsAnExpertGang(t *testing.T) {
 	}
 }
 
+// A parked gang — the manager scaled it to zero on purpose, or parked one the
+// heal gave up on (T22.4) — is not a gang the leader forms.
+func TestPlanWatcherSkipsAParkedGang(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plan.json")
+	plan := `{"revision": 3, "model": {"id": "m", "engine": "llamacpp"},
+	  "shardGroups": [
+	    {"id": "g0", "parts": [{"node": "node-b"}, {"node": "node-c"}], "parallelism": {"pipeline": 2}},
+	    {"id": "g1", "parked": true, "parts": [{"node": "node-d"}, {"node": "node-e"}], "parallelism": {"pipeline": 2}}]}`
+	if err := os.WriteFile(path, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := planWatcherServer(t, path)
+	srv.StartPlanWatcher(t.Context())
+	specs := srv.plan.gangSpecs()
+	if len(specs) != 1 || specs[0].ID != "g0" {
+		t.Fatalf("only the active gang is one to form: %+v", specs)
+	}
+}
+
 // The loop runs on every leader, including a standalone `opod up` with no plan
 // and no orchestrator. It must be a no-op there rather than a panic.
 func TestHealGangsIsANoOpWithoutAPlan(t *testing.T) {
