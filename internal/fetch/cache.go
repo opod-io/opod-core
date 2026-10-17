@@ -274,6 +274,11 @@ type PruneResult struct {
 	TotalBytes int64  `json:"totalBytes,omitempty"`
 	FreeBytes  int64  `json:"freeBytes,omitempty"`
 	VolumeErr  string `json:"volumeErr,omitempty"`
+	// Swept is how many leftovers of crashed pulls (temp files and locks
+	// nothing writes any more) the run cleared beside the prune — `--sweep`,
+	// only with --apply. A manager records it: it is the one cleanup nobody
+	// asked for by name.
+	Swept int `json:"swept,omitempty"`
 }
 
 // keepSet answers "does the keep list name this entry?" (PruneRequest.Keep).

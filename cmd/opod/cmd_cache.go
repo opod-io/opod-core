@@ -106,6 +106,7 @@ func cachePrune(args []string) {
 	}
 	if *sweep > 0 && *apply {
 		if n, err := fetch.SweepPartials(d, *sweep); err == nil && n > 0 {
+			res.Swept = n
 			fmt.Fprintf(os.Stderr, "swept %d leftover(s) of crashed pulls\n", n)
 		}
 	}

@@ -17,6 +17,8 @@ the last section.
   child, and an engine's own workers (vLLM's Ray actors) could outlive it on the card.
 - **A placement on several nodes that fails part-way unloads what it loaded** (`opod model add <id> --node a,b,c`):
   the nodes before the failing one no longer keep the model.
+- **`opod cache prune --json` says how many crashed pulls it swept** (`swept`, only with `--apply`), so a manager can
+  record the one cleanup nobody asked for by name.
 - **The gang heal gives up after three failed tries of one shape.** The last `shard.heal_failed` carries
   `final: true` (every one now carries `attempt`), and the leader stops trying that gang until it appears, the plan
   changes its shape, or the manager parks it and later un-parks it. A gang the plan marks `parked` is not one the
