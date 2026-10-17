@@ -247,7 +247,13 @@ func (s *Server) pushUsage(w http.ResponseWriter, r *http.Request) {
 			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
 			LatencyMS: row.LatencyMS, TTFTMS: row.TTFTMS, Outcome: row.Outcome, NodeID: row.NodeID,
 		}
-		if err := s.store.Usage().Record(r.Context(), u); err != nil {
+		err := s.store.Usage().Record(r.Context(), u)
+		if err == nil && s.keyLimits != nil {
+			// A door's tokens count toward the key's day here, the one place
+			// that sees every replica's answers (T19.17).
+			s.keyLimits.record(u.APIKeyID, int64(u.PromptTokens+u.CompletionTokens), u.TS)
+		}
+		if err != nil {
 			// Partial success is reported, not hidden: the gateway retries the
 			// rest, and the rows already written are deduplicated on the retry.
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -270,6 +276,10 @@ type spendSnapshot struct {
 	Gateways []string `json:"gateways,omitempty"`
 	// LagBoundMS is published, not implied (ADR-063).
 	LagBoundMS int `json:"lag_bound_ms"`
+	// Day and Keys are each quota'd key's tokens on that UTC day as the leader
+	// counts them (T19.17): a door adds its own tokens since this poll.
+	Day  string           `json:"day,omitempty"`
+	Keys map[string]int64 `json:"key_tokens_today,omitempty"`
 }
 
 // spend serves the snapshot every gateway polls: what has been spent per key,
@@ -281,5 +291,9 @@ func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
 	// are, and the lag bound the poll publishes.
 	now := time.Now()
 	doors, names := s.gateways.doors(now)
-	writeJSON(w, http.StatusOK, spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS})
+	snap := spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS}
+	if s.keyLimits != nil {
+		snap.Day, snap.Keys = s.keyLimits.todayByKey()
+	}
+	writeJSON(w, http.StatusOK, snap)
 }

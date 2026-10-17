@@ -110,7 +110,7 @@ One binary, seven modes determined by subcommand (and by `--role` on `opod up`):
 | Mode | What runs in-process |
 |---|---|
 | `opod up` | **Leader**: HTTP gateway · Router · Control plane (`/admin/v1`) · embedded SQLite · local engine adapter. No UI: `/` answers 404 (ADR-022) |
-| `opod up --role gateway --leader <url>` | **Gateway (front door)**: the same HTTP gateway and Router, and nothing else. No `/admin/v1`, no join surface, no engine of its own: the worker registry, the join tokens, the gang calls and the plan revision belong to exactly ONE process. Its worker list (nodes, placements, gang parts) is mirrored from the leader every 10 s and a stale list keeps workers but adopts none; its usage rows are pushed to the leader — the single writer — and deduplicated there by a row id the door mints; every 10 s it polls a spend snapshot back (`GET /admin/v1/spend`: the doors the leader has heard from and the published lag bound, 10 s, also on `/gatewayz`) — the per-key quota and rate-limit shares that snapshot once carried left core with the per-key policy on 2026-09-28. Serves the probes (`/healthz`, `/readyz`, `/loadz`, `/metrics`) plus `/gatewayz`, which is its staleness and backlog. Every push doubles as a heartbeat carrying the door's own load, so an idle door still counts as a door and the LEADER's `/gatewayz` can publish the endpoint's total across doors — the only aggregate a scaler for the doors can honestly read, since keep-alive pins a client to one door |
+| `opod up --role gateway --leader <url>` | **Gateway (front door)**: the same HTTP gateway and Router, and nothing else. No `/admin/v1`, no join surface, no engine of its own: the worker registry, the join tokens, the gang calls and the plan revision belong to exactly ONE process. Its worker list (nodes, placements, gang parts) is mirrored from the leader every 10 s and a stale list keeps workers but adopts none; its usage rows are pushed to the leader — the single writer — and deduplicated there by a row id the door mints; every 10 s it polls a spend snapshot back (`GET /admin/v1/spend`: the doors the leader has heard from and the published lag bound, 10 s, also on `/gatewayz`) — and, for each key with a daily quota, the leader's count of its tokens that UTC day (`day`, `key_tokens_today`), which the door adds its own tokens to between polls (per-key limits, below). Serves the probes (`/healthz`, `/readyz`, `/loadz`, `/metrics`) plus `/gatewayz`, which is its staleness and backlog. Every push doubles as a heartbeat carrying the door's own load, so an idle door still counts as a door and the LEADER's `/gatewayz` can publish the endpoint's total across doors — the only aggregate a scaler for the doors can honestly read, since keep-alive pins a client to one door |
 | `opod up --role door --routes <file>` | **Door (one URL for many endpoints, ADR-087)**: an HTTP surface and a watched routes file (`adminapi.DoorRoutes`), nothing else — no store, no engine, no catalog, no key, no Router. Reads each request's `model`, looks the alias up and forwards the request to that endpoint through the stdlib reverse proxy, headers and body as sent (`Authorization` included; the one change is `model`, rewritten to the route's `model` when it differs from the alias, because a leader routes by its own model id) and every stream chunk flushed as it arrives. Chooses no worker, judges no load, retries nothing, falls back to nothing: there is still one router per endpoint, its leader. The endpoint's leader verifies the caller's key, so a key for A sent with B's model is refused by B. `GET /v1/models` asks every endpoint with the caller's key and lists the aliases answered 200, cached 10 s per SHA-256 of the key. Unknown / empty / `auto` model → `404 model_not_found`; an unreachable endpoint → `502 upstream_unavailable` for that model only. Body caps are the leader's per route. An https upstream is trusted through the route's `ca` PEM only. Serves `/healthz`, `/readyz` (ready once a routes file has been read) and `/gatewayz` (`role: door`, routes revision and age) |
 | `opod join "<url>?token=…"` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `opod <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
@@ -1047,7 +1047,16 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
 - Format: `sk-orc-` + 24 random bytes, base64url-encoded (`internal/auth/keys.go`)
 - Stored as sha256 hashes — only the hex digest is persisted, never the plaintext
 - Scopes: `user`, `admin`, `node` — exactly one scope per key
-- Per-key controls: optional expiry (`--ttl` / `--expires-at`). The daily token quota, RPM/TPM limits and model allowlist left core on 2026-09-28 — a key is an identity; per-caller limits belong to the layer in front of the endpoint
+- Per-key controls: optional expiry (`--ttl` / `--expires-at`). A key minted with `opod token create` carries no limits.
+- **Per-key limits from a manager** (contract feature `key_limits`): a key delivered in the auth snapshot may carry
+  `rpmLimit`, `tpmLimit`, `quotaDailyTokens` and `allowedModels`. They are enforced from memory and nothing else
+  (`internal/leader/keylimits.go`) — the first version, removed on 2026-09-28, ran a SUM over the usage table before
+  every request. Requests and tokens per minute are token buckets per key; each replica that serves keyed traffic
+  (the leader and every gateway) takes `limit ÷ doors`. The daily quota is a counter per key and UTC day: the leader
+  counts its own answers and its doors' pushed rows, starts from the larger of one store read at snapshot load and the
+  manager's `spentToday`, and publishes the count in the spend snapshot; a door adds its own tokens to the count it
+  last polled. Over a limit the answer is 429 with Retry-After (`rate_limit_rpm` | `rate_limit_tpm` | `quota_daily`);
+  a model off the allowlist is 403 `model_not_allowed` and is left out of `GET /v1/models`. Each refusal is a usage row
 - Revocable at any time
 
 ### Key scopes
@@ -1067,7 +1076,7 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
 ### Authorization model
 
 - Scope checks via middleware (`auth.RequireScope` / `RequireScopeAny` in `internal/auth/keys.go`) — no role system
-- No per-key model allowlist since 2026-09-28; a mounted plan limits the gateway to the endpoint's one model instead
+- A key's model allowlist comes only from a manager's auth snapshot (above); a mounted plan limits the gateway to the endpoint's one model either way
 
 ---
 
@@ -1547,8 +1556,9 @@ Mechanisms a manager drives through this surface:
   never saw must not bill twice. `GET /admin/v1/spend` serves `{ts, doors, gateways, lag_bound_ms}`: the doors the
   leader has actually heard from (45 s of silence and a door stops counting, deliberately longer than the 10 s poll;
   with no gateway at all there is one door — the leader's own) and the 10 s lag bound, published in the snapshot
-  itself rather than left in our documentation. The per-key ceilings and per-door rate shares it used to carry left
-  core with the per-key policy on 2026-09-28. The dedup window is in memory on purpose: it guards a gateway's
+  itself rather than left in our documentation. For each key with a daily quota it also carries the leader's count of
+  that key's tokens today (`day`, `key_tokens_today`); a door's per-minute share of a key's limit is `limit ÷ doors`.
+  The dedup window is in memory on purpose: it guards a gateway's
   retry, which happens in seconds, and a leader restart that re-accepted a row shows as a duplicate in the usage
   export rather than as a silent double charge.
 - **Worker unload** (`worker_unload`): `POST /v1/model/unload` on the worker — the driver's `Unload`, or a

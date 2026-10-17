@@ -174,6 +174,12 @@ func contractFeatures() map[string]bool {
 		// once carried left with ADR-077). Without it a manager must keep every
 		// request on one front door.
 		"gateway_spend": true,
+		// Per-key limits (ADR-092 §8, T19.17): the snapshot key's rpmLimit,
+		// tpmLimit, quotaDailyTokens and allowedModels are enforced from memory
+		// — 429 with Retry-After naming the limit, 403 model_not_allowed, and
+		// /v1/models filtered. A manager must not set a limit on an endpoint
+		// whose leader lacks this: an older leader ignores the fields.
+		"key_limits": true,
 		// A revocation is a TOMBSTONE (ADR-085): the auth snapshot's
 		// revokedKeys refuses a key id even while its row is still in keys,
 		// and a tombstone seen once is never undone by a later snapshot.

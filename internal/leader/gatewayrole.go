@@ -94,6 +94,13 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 	}
 	s.front.push.Trust(trust)
 	s.front.spend.Trust(trust)
+	// The leader's per-key counts for the day, every door's rows included:
+	// this door's own count restarts from them (T19.17).
+	s.front.spend.OnSnapshot = func(snap gateway.Snapshot) {
+		if s.keyLimits != nil && len(snap.Keys) > 0 {
+			s.keyLimits.setRemote(snap.Day, snap.Keys)
+		}
+	}
 	// A door never receives a heartbeat, so the heartbeat-AGE rule is not a
 	// liveness rule for it — it is a clock on how long ago the LEADER last saw
 	// the worker, copied with the row. While the leader restarts (every rollout,

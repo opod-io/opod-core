@@ -54,3 +54,8 @@ func requestBody(r *http.Request) ([]byte, *http.Request, error) {
 	r.Body = io.NopCloser(bytes.NewReader(data))
 	return data, r, nil
 }
+
+// RequestBody is requestBody for a middleware outside this package (T19.17's
+// limits read the model before the handler): the body is read once, and the
+// returned request carries it to the handler.
+func RequestBody(r *http.Request) ([]byte, *http.Request, error) { return requestBody(r) }

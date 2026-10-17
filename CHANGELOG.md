@@ -5,6 +5,17 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-17 — per-key limits, from memory
+
+- **A key from the auth snapshot may carry limits again** (feature `key_limits`). `rpmLimit` and `tpmLimit` are token
+  buckets per key; each replica serving keyed traffic — the leader and every gateway — takes `limit ÷ doors`.
+  `quotaDailyTokens` is a counter per key and UTC day: the leader counts its own answers and its doors' rows, and
+  starts a replaced pod from the larger of its store and the manager's `spentToday`; the spend snapshot carries the
+  count (`day`, `key_tokens_today`) to the doors. `allowedModels` refuses any other model with 403 and filters
+  `GET /v1/models`. Over a limit: 429 with Retry-After and `rate_limit_rpm`, `rate_limit_tpm` or `quota_daily`. Each
+  refusal is a usage row. Nothing on the request path but memory — the version removed on 2026-09-28 ran a SUM per
+  request. Keys made with `opod token create` carry no limits.
+
 ## 2026-10-17 — what an operation started, it stops when it fails
 
 - **A part that fails to start is stopped by the start itself.** Every gang backend (llama.cpp RPC, vLLM over Ray,

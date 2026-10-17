@@ -78,9 +78,8 @@ func TestAuthSnapshotSync(t *testing.T) {
 	}
 
 	// second snapshot: limits change, key b leaves, requireKeys off
-	// An older manager's snapshot may still carry per-key limits; they are not
-	// fields any more (ADR-077 §5), so they are decoded as JSON decodes any
-	// unknown key — ignored — and the key is what it always was.
+	// Per-key limits (T19.17) are held in the leader's memory, not in its key
+	// store: a snapshot that changes only them leaves the key record as it was.
 	snap2 := &AuthSnapshot{}
 	if err := json.Unmarshal([]byte(`{"revision":"r2","requireKeys":false,"keys":[{"id":"a","name":"team-a","hash":"`+auth.Hash(plainA)+`","rpmLimit":20,"tpmLimit":5,"quotaDailyTokens":1000,"allowedModels":["x"]}]}`), snap2); err != nil {
 		t.Fatal(err)
@@ -89,7 +88,10 @@ func TestAuthSnapshotSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ka, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainA)); ka == nil || ka.Revoked {
-		t.Fatalf("key a stays live across a snapshot that only changed fields core no longer holds: %+v", ka)
+		t.Fatalf("key a stays live across a snapshot that only changed its limits: %+v", ka)
+	}
+	if kl, ok := srv.keyLimits.limitOf(SnapshotKeyPrefix + "a"); !ok || kl.rpm != 20 || kl.tpm != 5 || kl.quota != 1000 || !kl.allowed["x"] {
+		t.Fatalf("the limits are the limiter's: %+v", kl)
 	}
 	kb, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainB))
 	if kb == nil || !kb.Revoked {

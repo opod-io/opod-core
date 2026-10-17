@@ -31,6 +31,10 @@ type Snapshot struct {
 	TS         int64 `json:"ts"`
 	Doors      int   `json:"doors"`
 	LagBoundMS int   `json:"lag_bound_ms"`
+	// Day and Keys are each quota'd key's tokens that UTC day as the leader
+	// counts them (T19.17), every door's pushed rows included.
+	Day  string           `json:"day,omitempty"`
+	Keys map[string]int64 `json:"key_tokens_today,omitempty"`
 }
 
 // Spend polls the snapshot and keeps the last good one.
@@ -45,6 +49,9 @@ type Spend struct {
 	at       time.Time
 	lastErr  string
 	localUse map[string]int64 // key → tokens this door has spent since the last snapshot
+	// OnSnapshot is called with each snapshot taken (T19.17: the door's
+	// per-key counts restart from the leader's).
+	OnSnapshot func(Snapshot)
 }
 
 func NewSpend(leaderURL, token string) *Spend {
@@ -83,7 +90,11 @@ func (s *Spend) Poll(ctx context.Context) error {
 	s.mu.Lock()
 	s.snap, s.at, s.lastErr = snap, s.now(), ""
 	s.localUse = map[string]int64{}
+	on := s.OnSnapshot
 	s.mu.Unlock()
+	if on != nil {
+		on(snap)
+	}
 	return nil
 }
 

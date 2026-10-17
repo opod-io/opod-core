@@ -43,8 +43,9 @@ import (
 const defaultAuthPath = "/etc/opod-auth/auth.json"
 
 // SnapshotKeyPrefix marks api_keys rows owned by the auth snapshot; only
-// those are revoked when they leave the file.
-const SnapshotKeyPrefix = "k_cp_"
+// those are revoked when they leave the file. It is the SDK's, because a
+// manager strips it from every record that names the key.
+const SnapshotKeyPrefix = adminapi.SnapshotKeyPrefix
 
 type authFileState struct {
 	mu          sync.Mutex
@@ -171,6 +172,7 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	}
 	want := map[string]bool{}
 	ranks := map[string]keyRank{}
+	limits := map[string]keyLimit{}
 	created, updated, revoked := 0, 0, 0
 	for _, sk := range doc.Keys {
 		if sk.ID == "" || sk.Hash == "" {
@@ -184,6 +186,9 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		if sk.Class != "" || sk.Team != "" {
 			ranks[id] = keyRank{class: sk.Class, team: strings.TrimSpace(sk.Team)}
 		}
+		if kl := keyLimitOf(sk); kl.limited() {
+			limits[id] = kl
+		}
 		scope := sk.Scope
 		if scope == "" {
 			scope = "user"
@@ -194,9 +199,6 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		}
 		cur, ok := byID[id]
 		if !ok {
-			// A managed key's rpmLimit, tpmLimit, quotaDailyTokens and
-			// allowedModels in the snapshot are read by nothing since the per-key
-			// policy left core (ADR-077 §5, 2026-09-28); a key is an identity.
 			rec := store.APIKey{ID: id, Hash: sk.Hash, Name: sk.Name, Scope: scope, CreatedAt: time.Now(), ExpiresAt: exp}
 			if err := keys.Create(ctx, rec); err != nil {
 				s.log.Warn("auth snapshot: create key", "id", id, "err", err)
@@ -220,6 +222,10 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	}
 	revoked += s.applyKeyTombstones(ctx, keys, tomb, byID)
 	s.authf.ranks.Store(&ranks)
+	if s.keyLimits != nil {
+		s.keyLimits.set(limits)
+		s.seedKeyQuotas(ctx, limits)
+	}
 	mtlsChanged := s.applyNodeMTLS(doc)
 	// IssuedAt is deliberately NOT part of "changed": a manager that sets a
 	// staleness bound re-issues the snapshot on a period, and each re-issue

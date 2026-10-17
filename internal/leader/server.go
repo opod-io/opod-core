@@ -51,6 +51,9 @@ type Server struct {
 	listener  net.Listener
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
+	// keyLimits enforces each key's limits from the auth snapshot, in memory
+	// (T19.17, keylimits.go).
+	keyLimits *keyLimiter
 	load      loadStats
 	ttft      ttftWindow // streamed answers' time to first token, for /loadz (ttftwindow.go)
 	// metricsH serves /metrics on both listeners: the opod_* names and this
@@ -203,6 +206,14 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	}
 	// Every streamed answer's time to first token feeds /loadz (T16.3).
 	openaiH.OnTTFT = s.observeTTFT
+	// Per-key limits (T19.17): each replica takes limit ÷ (doors + 1) of a
+	// per-minute limit; every keyed answer's tokens feed the key's meters.
+	s.keyLimits = newKeyLimiter(s.doorCount)
+	openaiH.OnKeyTokens = s.keyLimits.record
+	openaiH.ModelAllowed = func(ctx context.Context, model string) bool {
+		k := auth.KeyFrom(ctx)
+		return k == nil || s.keyLimits.allowedModel(k.ID, model)
+	}
 	// A door's usage rows belong to the leader's store, not its own (ADR-063).
 	if s.isGateway() {
 		openaiH.OnUsage = s.recordUsageForGateway
@@ -444,11 +455,10 @@ func (s *Server) routes() http.Handler {
 		// estimation, the dispatch handlers) buffers an unbounded body.
 		r.Use(s.limitRequestBody)
 		r.Use(auth.MiddlewareFn(s.store.APIKeys(), s.requireKeys))
-		// The per-key policy — model allowlist, RPM/TPM ceilings, the daily
-		// token quota — left core on 2026-09-28 (ADR-077 §5): per-caller
-		// limits belong to the application layer in front of an endpoint,
-		// not to the runtime that turns GPUs into tokens. A key is an
-		// identity here and nothing more.
+		// The per-key limits — a model allowlist, RPM/TPM ceilings, a daily
+		// token quota — enforced from memory (ADR-092 §8, keylimits.go): the
+		// first version ran a SUM per request and ADR-077 removed it.
+		r.Use(s.keyLimitsMiddleware)
 		//
 		// Stamp a request id on every response so client SDKs and the usage
 		// row share one correlation token.
