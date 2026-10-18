@@ -1053,8 +1053,8 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
   (`internal/leader/keylimits.go`) — the first version, removed on 2026-09-28, ran a SUM over the usage table before
   every request. Requests and tokens per minute are token buckets per key; each replica that serves keyed traffic
   (the leader and every gateway) takes `limit ÷ fronts`, the doors heard from plus the leader. The daily quota is a counter per key and UTC day: the leader
-  counts its own answers and its doors' pushed rows, starts from the larger of one store read at snapshot load and the
-  manager's `spentToday`, and publishes the count in the spend snapshot; a door adds its own tokens to the count it
+  counts its own answers and its doors' pushed rows on top of a base taken once when the quota reaches the pod — the
+  larger of one store read and the manager's `spentToday` — and publishes the count in the spend snapshot; a door adds its own tokens to the count it
   last polled. Over a limit the answer is 429 with Retry-After (`rate_limit_rpm` | `rate_limit_tpm` | `quota_daily`);
   a model off the allowlist is 403 `model_not_allowed` and is left out of `GET /v1/models`. Each refusal is a usage row
 - Revocable at any time

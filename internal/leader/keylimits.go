@@ -10,11 +10,13 @@ package leader
 //     traffic — this leader and each gateway replica — enforces its share of
 //     the limit, limit ÷ fronts: every door heard from plus the leader, the
 //     count the spend snapshot carries to the doors.
-//   - The daily quota is a counter per key and UTC day. The leader counts every
-//     token — its own responses and the rows its doors push — and starts from
-//     the larger of one store sum at snapshot load and the manager's
-//     `spentToday`, which survives a replaced pod. A door adds its own tokens to
-//     the leader's count it last polled.
+//   - The daily quota is a counter per key and UTC day: a BASE — the day before
+//     this meter began, the larger of one store sum and the manager's
+//     `spentToday`, taken once — plus every token since: the leader's own
+//     responses and the rows its doors push. The manager's later `spentToday`
+//     is a floor, never added again (it already holds this pod's tokens). A
+//     door counts from the leader's figure it last polled plus its own tokens
+//     since.
 //   - The allowlist is a set on the key.
 //
 // A refusal is 429 with Retry-After naming the limit, or 403 for a model the key
@@ -49,13 +51,18 @@ func (k keyLimit) limited() bool {
 	return k.rpm > 0 || k.tpm > 0 || k.quota > 0 || k.allowed != nil
 }
 
-// keyMeter is one key's running state on this replica.
+// keyMeter is one key's running state on this replica. Its day count is
+// base + used + remote.
 type keyMeter struct {
 	reqLevel, tokLevel float64 // bucket levels, refilled per second
 	at                 time.Time
 	day                string
-	used               int64 // tokens on day counted here
-	remote             int64 // the leader's count on day, as a door last polled it
+	// base is the day before this meter began: the manager's spentToday when
+	// the meter was made, raised once by the store read (seeded).
+	base   int64
+	seeded bool
+	used   int64 // tokens on day counted here since the meter began (a door: since its last poll)
+	remote int64 // the leader's count on day, as a door last polled it (replaces base)
 }
 
 // keyLimiter holds every key's limits and meters.
@@ -107,6 +114,9 @@ func (l *keyLimiter) meter(keyID string, k keyLimit, now time.Time) *keyMeter {
 	rpmCap, tpmCap := float64(k.rpm)*share, float64(k.tpm)*share
 	if m == nil {
 		m = &keyMeter{reqLevel: rpmCap, tokLevel: tpmCap, at: now, day: utcDay(now)}
+		if k.day == m.day {
+			m.base = k.spent
+		}
 		l.meters[keyID] = m
 	}
 	if dt := now.Sub(m.at).Seconds(); dt > 0 {
@@ -115,14 +125,17 @@ func (l *keyLimiter) meter(keyID string, k keyLimit, now time.Time) *keyMeter {
 		m.at = now
 	}
 	if d := utcDay(now); d != m.day {
-		m.day, m.used, m.remote = d, 0, 0
+		// A new day begins at nothing: everything counted was yesterday's.
+		m.day, m.base, m.used, m.remote, m.seeded = d, 0, 0, 0, true
 	}
 	return m
 }
 
-// spentToday is the key's tokens today as this replica best knows them.
+// spentToday is the key's tokens today as this replica best knows them: what
+// it counted, or the manager's newer count when that is higher (it may include
+// tokens served before this meter began that the base missed).
 func (m *keyMeter) spentToday(k keyLimit) int64 {
-	spent := m.used + m.remote
+	spent := m.base + m.used + m.remote
 	if k.day == m.day && k.spent > spent {
 		spent = k.spent
 	}
@@ -193,8 +206,12 @@ func (l *keyLimiter) record(keyID string, tokens int64, at time.Time) {
 	m.tokLevel -= float64(tokens)
 }
 
-// seed starts a key's day from a count read once (the store, at snapshot load),
-// never lowering what is already counted.
+// seed starts a key's quota count, ONCE per meter and day, from a store read
+// taken now: the base becomes the larger of it and the manager's spentToday —
+// they count the same tokens, so never their sum — and the count of this pod
+// restarts at zero, because the store read already holds every token it
+// counted (a key whose meter began with a rate limit, before it had a quota).
+// A later read would hold this pod's tokens twice, so it is ignored.
 func (l *keyLimiter) seed(keyID string, tokens int64) {
 	k, ok := l.limitOf(keyID)
 	if !ok {
@@ -202,9 +219,15 @@ func (l *keyLimiter) seed(keyID string, tokens int64) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if m := l.meter(keyID, k, l.now()); tokens > m.used {
-		m.used = tokens
+	m := l.meter(keyID, k, l.now())
+	if m.seeded {
+		return
 	}
+	base := tokens
+	if k.day == m.day && k.spent > base {
+		base = k.spent
+	}
+	m.seeded, m.base, m.used = true, base, 0
 }
 
 // todayByKey is every limited key's tokens today, for the spend snapshot.
@@ -236,7 +259,7 @@ func (l *keyLimiter) setRemote(day string, counts map[string]int64) {
 		}
 		m := l.meter(id, k, now)
 		if m.day == day {
-			m.remote, m.used = n, 0
+			m.remote, m.base, m.used = n, 0, 0
 		}
 	}
 }

@@ -10,8 +10,8 @@ the last section.
 - **A key from the auth snapshot may carry limits again** (feature `key_limits`). `rpmLimit` and `tpmLimit` are token
   buckets per key; each replica serving keyed traffic — the leader and every gateway — takes `limit ÷ fronts`; the spend snapshot
   carries `fronts` (the doors plus the leader) to the doors.
-  `quotaDailyTokens` is a counter per key and UTC day: the leader counts its own answers and its doors' rows, and
-  starts a replaced pod from the larger of its store and the manager's `spentToday`; the spend snapshot carries the
+  `quotaDailyTokens` is a counter per key and UTC day: the leader counts its own answers and its doors' rows on
+  top of a base taken once — the larger of its store and the manager's `spentToday` — so a replaced pod keeps the day; the spend snapshot carries the
   count (`day`, `key_tokens_today`) to the doors. `allowedModels` refuses any other model with 403 and filters
   `GET /v1/models`. Over a limit: 429 with Retry-After and `rate_limit_rpm`, `rate_limit_tpm` or `quota_daily`. Each
   refusal is a usage row. Nothing on the request path but memory — the version removed on 2026-09-28 ran a SUM per

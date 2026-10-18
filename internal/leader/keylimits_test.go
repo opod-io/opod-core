@@ -80,21 +80,21 @@ func TestTPMIsChargedByTheResponse(t *testing.T) {
 	}
 }
 
-// The daily quota counts every token of the UTC day — a store seed, the
-// manager's count and the responses — and waits until midnight; the next day
-// starts at zero, and the manager's count for another day is ignored.
+// The daily quota counts every token of the UTC day — a base from the store
+// and the manager's count, then the responses — and waits until midnight; the
+// next day starts at zero, and the manager's count for another day is ignored.
 func TestTheDailyQuotaCountsTheDayAndWaitsForMidnight(t *testing.T) {
 	at := time.Date(2026, 10, 17, 22, 0, 0, 0, time.UTC)
 	l, now := limiterAt(at, 0, map[string]keyLimit{"k": {quota: 1000, spent: 300, day: "2026-10-17"}})
-	// The manager's 300 and this leader's count are the same tokens seen twice,
-	// so the larger counts, never the sum (a replaced pod may under-count).
+	// The store's 200 and the manager's 300 are the same tokens seen twice,
+	// so the base is the larger, never the sum.
 	l.seed("k", 200)
 	if ref := l.admit("k", "m"); ref != nil {
-		t.Fatalf("max(200, 300) = 300 of 1000: %+v", ref)
+		t.Fatalf("base max(200, 300) = 300 of 1000: %+v", ref)
 	}
-	l.record("k", 600, at) // 800 counted here
+	l.record("k", 600, at) // 300 + 600
 	if ref := l.admit("k", "m"); ref != nil {
-		t.Fatalf("800 of 1000: %+v", ref)
+		t.Fatalf("900 of 1000: %+v", ref)
 	}
 	l.record("k", 200, at)
 	ref := l.admit("k", "m")
@@ -104,6 +104,52 @@ func TestTheDailyQuotaCountsTheDayAndWaitsForMidnight(t *testing.T) {
 	*now = time.Date(2026, 10, 18, 0, 0, 1, 0, time.UTC)
 	if ref := l.admit("k", "m"); ref != nil {
 		t.Fatalf("a new UTC day; the manager's count was for yesterday: %+v", ref)
+	}
+}
+
+// A replaced leader starts with an empty memory: the manager's spentToday is
+// the day BEFORE this pod, and every token the pod serves adds to it. Taking
+// the larger of the two instead let a pod with 300 tokens left serve 1155 on
+// the design-partner cell, because its own count started at zero.
+func TestARestartedLeaderAddsToTheManagersCount(t *testing.T) {
+	at := time.Date(2026, 10, 18, 0, 30, 0, 0, time.UTC)
+	l, _ := limiterAt(at, 1, map[string]keyLimit{"k": {quota: 1190, spent: 890, day: "2026-10-18"}})
+	l.seed("k", 0) // the new pod's store is empty
+	l.record("k", 97, at)
+	l.record("k", 97, at)
+	l.record("k", 97, at) // 890 + 291 = 1181
+	if ref := l.admit("k", "m"); ref != nil {
+		t.Fatalf("1181 of 1190: %+v", ref)
+	}
+	l.record("k", 97, at)
+	if ref := l.admit("k", "m"); ref == nil || ref.code != "quota_daily" {
+		t.Fatalf("890 before this pod + 388 since is over 1190: %+v", ref)
+	}
+	// A later snapshot carries the manager's newer count, which includes this
+	// pod's tokens: it is a floor, never added again.
+	l.set(map[string]keyLimit{"k": {quota: 2000, spent: 1278, day: "2026-10-18"}})
+	if _, keys := l.todayByKey(); keys["k"] != 890+388 {
+		t.Fatalf("the base is taken once: %d", keys["k"])
+	}
+	// A second snapshot load must not seed again: the store now holds this
+	// pod's own tokens too.
+	l.seed("k", 388)
+	if _, keys := l.todayByKey(); keys["k"] != 890+388 {
+		t.Fatalf("a later seed must not count this pod's tokens twice: %d", keys["k"])
+	}
+}
+
+// A key whose meter began with a rate limit gets a quota later: the store read
+// already holds the tokens the meter counted, so the count restarts from it.
+func TestAQuotaAddedLaterStartsFromTheStoreOnce(t *testing.T) {
+	at := time.Date(2026, 10, 18, 0, 30, 0, 0, time.UTC)
+	l, _ := limiterAt(at, 1, map[string]keyLimit{"k": {rpm: 100}})
+	l.admit("k", "m")
+	l.record("k", 400, at) // counted while the key had no quota
+	l.set(map[string]keyLimit{"k": {quota: 1000, spent: 300, day: "2026-10-18"}})
+	l.seed("k", 400) // the store holds the same 400
+	if _, keys := l.todayByKey(); keys["k"] != 400 {
+		t.Fatalf("max(store 400, manager 300), the meter's 400 not added again: %d", keys["k"])
 	}
 }
 
