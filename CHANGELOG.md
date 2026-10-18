@@ -8,7 +8,8 @@ the last section.
 ## 2026-10-17 — per-key limits, from memory
 
 - **A key from the auth snapshot may carry limits again** (feature `key_limits`). `rpmLimit` and `tpmLimit` are token
-  buckets per key; each replica serving keyed traffic — the leader and every gateway — takes `limit ÷ doors`.
+  buckets per key; each replica serving keyed traffic — the leader and every gateway — takes `limit ÷ fronts`; the spend snapshot
+  carries `fronts` (the doors plus the leader) to the doors.
   `quotaDailyTokens` is a counter per key and UTC day: the leader counts its own answers and its doors' rows, and
   starts a replaced pod from the larger of its store and the manager's `spentToday`; the spend snapshot carries the
   count (`day`, `key_tokens_today`) to the doors. `allowedModels` refuses any other model with 403 and filters

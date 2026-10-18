@@ -375,7 +375,15 @@ func TestTheLeaderPublishesWhatEveryDoorIsCarrying(t *testing.T) {
 	// The idle door is in the spend snapshot's divisor too — that is the whole
 	// reason the heartbeat exists.
 	if n, names := leader.gateways.doors(time.Now()); n != 2 || len(names) != 2 {
-		t.Errorf("both doors divide a key's rate: %d %v", n, names)
+		t.Errorf("both doors count as doors: %d %v", n, names)
+	}
+	// A key's per-minute limit is shared by everything that admits it: the
+	// two doors and the leader's own front (T19.17).
+	if f := leader.gateways.fronts(time.Now()); f != 3 {
+		t.Errorf("two doors and the leader are three fronts: %d", f)
+	}
+	if f := leader.frontCount(); f != 3 {
+		t.Errorf("the key limiter divides by the fronts: %d", f)
 	}
 }
 

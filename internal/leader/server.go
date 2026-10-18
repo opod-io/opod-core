@@ -208,7 +208,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	openaiH.OnTTFT = s.observeTTFT
 	// Per-key limits (T19.17): each replica takes limit ÷ (doors + 1) of a
 	// per-minute limit; every keyed answer's tokens feed the key's meters.
-	s.keyLimits = newKeyLimiter(s.doorCount)
+	s.keyLimits = newKeyLimiter(s.frontCount)
 	openaiH.OnKeyTokens = s.keyLimits.record
 	openaiH.ModelAllowed = func(ctx context.Context, model string) bool {
 		k := auth.KeyFrom(ctx)

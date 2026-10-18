@@ -151,6 +151,14 @@ func (g *gatewayFront) doors(now time.Time) (n int, names []string) {
 	return len(names), names
 }
 
+// fronts is every replica serving keyed traffic: the live doors plus the
+// leader's own front. Unlike doors() it counts the leader whether or not a
+// door exists, because a key's limit is shared by everything that admits it.
+func (g *gatewayFront) fronts(now time.Time) int {
+	_, names := g.doors(now)
+	return len(names) + 1
+}
+
 // seenDoors is every door the leader has EVER heard from with the age of its
 // last push, live or not. doors() deliberately hides a door that went quiet
 // (a share of 1/N must not count a dead door); this is where it is still
@@ -276,6 +284,11 @@ type spendSnapshot struct {
 	Gateways []string `json:"gateways,omitempty"`
 	// LagBoundMS is published, not implied (ADR-063).
 	LagBoundMS int `json:"lag_bound_ms"`
+	// Fronts is every replica that serves keyed traffic: the doors heard from
+	// plus the leader, which serves /v1 itself and sits behind the endpoint's
+	// front Service with them. It divides a key's per-minute limit (T19.17);
+	// Doors stays the gateways alone, the unit their scaler counts.
+	Fronts int `json:"fronts"`
 	// Day and Keys are each quota'd key's tokens on that UTC day as the leader
 	// counts them (T19.17): a door adds its own tokens since this poll.
 	Day  string           `json:"day,omitempty"`
@@ -291,7 +304,7 @@ func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
 	// are, and the lag bound the poll publishes.
 	now := time.Now()
 	doors, names := s.gateways.doors(now)
-	snap := spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS}
+	snap := spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS, Fronts: len(names) + 1}
 	if s.keyLimits != nil {
 		snap.Day, snap.Keys = s.keyLimits.todayByKey()
 	}

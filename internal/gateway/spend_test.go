@@ -42,3 +42,26 @@ func TestAnUnreachableLeaderLeavesTheLastSnapshotEnforced(t *testing.T) {
 		t.Errorf("a door must be able to say how stale it is and why: age=%v bound=%v doors=%d err=%q", age, bound, doors, lastErr)
 	}
 }
+
+// A door divides a key's per-minute limit by the fronts the leader counts —
+// the doors and the leader itself (T19.17) — and holds the count through an
+// unreachable leader like the rest of the snapshot.
+func TestADoorReadsTheFrontsFromTheSnapshot(t *testing.T) {
+	ctx := context.Background()
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"ts":1,"doors":2,"fronts":3,"lag_bound_ms":10000,"day":"2026-10-17","key_tokens_today":{"k_cp_a":120}}`)
+	}))
+	defer leader.Close()
+	s := NewSpend(leader.URL, "tok")
+	if s.Fronts() != 0 {
+		t.Fatal("no snapshot yet: no count")
+	}
+	var got Snapshot
+	s.OnSnapshot = func(snap Snapshot) { got = snap }
+	if err := s.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s.Fronts() != 3 || got.Day != "2026-10-17" || got.Keys["k_cp_a"] != 120 {
+		t.Fatalf("fronts %d, day %q, keys %v", s.Fronts(), got.Day, got.Keys)
+	}
+}

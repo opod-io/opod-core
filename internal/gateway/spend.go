@@ -31,6 +31,9 @@ type Snapshot struct {
 	TS         int64 `json:"ts"`
 	Doors      int   `json:"doors"`
 	LagBoundMS int   `json:"lag_bound_ms"`
+	// Fronts is every replica serving keyed traffic — the doors and the
+	// leader — the divisor of a key's per-minute limit (T19.17).
+	Fronts int `json:"fronts"`
 	// Day and Keys are each quota'd key's tokens that UTC day as the leader
 	// counts them (T19.17), every door's pushed rows included.
 	Day  string           `json:"day,omitempty"`
@@ -108,6 +111,14 @@ func (s *Spend) Age() (age time.Duration, bound time.Duration, doors int, lastEr
 		return 0, time.Duration(s.snap.LagBoundMS) * time.Millisecond, s.snap.Doors, s.lastErr
 	}
 	return s.now().Sub(s.at), time.Duration(s.snap.LagBoundMS) * time.Millisecond, s.snap.Doors, s.lastErr
+}
+
+// Fronts is the held snapshot's count of replicas serving keyed traffic; 0
+// before the first successful poll.
+func (s *Spend) Fronts() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snap.Fronts
 }
 
 // Run polls every SpendPollEvery until ctx is done.

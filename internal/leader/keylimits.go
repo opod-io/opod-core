@@ -8,8 +8,8 @@ package leader
 //
 //   - RPM and TPM are token buckets per key. Every replica that serves keyed
 //     traffic — this leader and each gateway replica — enforces its share of
-//     the limit, limit ÷ doors, the divisor the spend snapshot already carries
-//     and /gatewayz states (never below 1).
+//     the limit, limit ÷ fronts: every door heard from plus the leader, the
+//     count the spend snapshot carries to the doors.
 //   - The daily quota is a counter per key and UTC day. The leader counts every
 //     token — its own responses and the rows its doors push — and starts from
 //     the larger of one store sum at snapshot load and the manager's
@@ -61,17 +61,17 @@ type keyMeter struct {
 // keyLimiter holds every key's limits and meters.
 type keyLimiter struct {
 	limits atomic.Pointer[map[string]keyLimit]
-	// doors is the divisor of a per-minute limit: each replica takes
-	// limit ÷ doors. A value below 1 counts as 1.
-	doors func() int
-	now   func() time.Time
+	// fronts is the divisor of a per-minute limit: each replica takes
+	// limit ÷ fronts. A value below 1 counts as 1.
+	fronts func() int
+	now    func() time.Time
 
 	mu     sync.Mutex
 	meters map[string]*keyMeter
 }
 
-func newKeyLimiter(doors func() int) *keyLimiter {
-	return &keyLimiter{doors: doors, now: time.Now, meters: map[string]*keyMeter{}}
+func newKeyLimiter(fronts func() int) *keyLimiter {
+	return &keyLimiter{fronts: fronts, now: time.Now, meters: map[string]*keyMeter{}}
 }
 
 func utcDay(t time.Time) string { return t.UTC().Format("2006-01-02") }
@@ -94,8 +94,8 @@ func (l *keyLimiter) limitOf(keyID string) (keyLimit, bool) {
 // share is this replica's fraction of a per-minute limit.
 func (l *keyLimiter) share() float64 {
 	d := 1
-	if l.doors != nil {
-		d = max(l.doors(), 1)
+	if l.fronts != nil {
+		d = max(l.fronts(), 1)
 	}
 	return 1 / float64(d)
 }
@@ -289,23 +289,22 @@ func protocolOf(path string) string {
 	return "openai"
 }
 
-// doorCount is the divisor of this endpoint's per-minute limits — the same
-// number the spend snapshot divides a key's rate by: the leader counts the
-// doors that push to it (never below 1), a door reads it from the snapshot it
-// polls.
-func (s *Server) doorCount() int {
+// frontCount is the divisor of this endpoint's per-minute limits: every
+// replica that admits keyed traffic. The leader counts the doors that push to
+// it plus itself; a door reads the same number from the snapshot it polls, and
+// before its first poll counts itself and the leader — the fewest there can be
+// while a door is serving.
+func (s *Server) frontCount() int {
 	if s.isGateway() {
 		if s.front == nil || s.front.spend == nil {
-			return 1
+			return 2
 		}
-		_, _, doors, _ := s.front.spend.Age()
-		return doors
+		return max(s.front.spend.Fronts(), 2)
 	}
 	if s.gateways == nil {
 		return 1
 	}
-	d, _ := s.gateways.doors(time.Now())
-	return d
+	return s.gateways.fronts(time.Now())
 }
 
 // keyLimitOf reads one snapshot key's limits.

@@ -1052,7 +1052,7 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
   `rpmLimit`, `tpmLimit`, `quotaDailyTokens` and `allowedModels`. They are enforced from memory and nothing else
   (`internal/leader/keylimits.go`) — the first version, removed on 2026-09-28, ran a SUM over the usage table before
   every request. Requests and tokens per minute are token buckets per key; each replica that serves keyed traffic
-  (the leader and every gateway) takes `limit ÷ doors`. The daily quota is a counter per key and UTC day: the leader
+  (the leader and every gateway) takes `limit ÷ fronts`, the doors heard from plus the leader. The daily quota is a counter per key and UTC day: the leader
   counts its own answers and its doors' pushed rows, starts from the larger of one store read at snapshot load and the
   manager's `spentToday`, and publishes the count in the spend snapshot; a door adds its own tokens to the count it
   last polled. Over a limit the answer is 429 with Retry-After (`rate_limit_rpm` | `rate_limit_tpm` | `quota_daily`);
@@ -1557,7 +1557,8 @@ Mechanisms a manager drives through this surface:
   leader has actually heard from (45 s of silence and a door stops counting, deliberately longer than the 10 s poll;
   with no gateway at all there is one door — the leader's own) and the 10 s lag bound, published in the snapshot
   itself rather than left in our documentation. For each key with a daily quota it also carries the leader's count of
-  that key's tokens today (`day`, `key_tokens_today`); a door's per-minute share of a key's limit is `limit ÷ doors`.
+  that key's tokens today (`day`, `key_tokens_today`); `fronts` (the doors plus the leader) divides a key's per-minute limit, while `doors` stays the gateways alone,
+  the unit their scaler counts.
   The dedup window is in memory on purpose: it guards a gateway's
   retry, which happens in seconds, and a leader restart that re-accepted a row shows as a duplicate in the usage
   export rather than as a silent double charge.

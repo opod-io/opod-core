@@ -19,9 +19,9 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-func limiterAt(t time.Time, doors int, limits map[string]keyLimit) (*keyLimiter, *time.Time) {
+func limiterAt(t time.Time, fronts int, limits map[string]keyLimit) (*keyLimiter, *time.Time) {
 	now := t
-	l := newKeyLimiter(func() int { return doors })
+	l := newKeyLimiter(func() int { return fronts })
 	l.now = func() time.Time { return now }
 	l.set(limits)
 	return l, &now
@@ -49,7 +49,7 @@ func TestRPMIsABucketThatRefills(t *testing.T) {
 	}
 }
 
-// Each replica takes limit ÷ doors of a per-minute limit.
+// Each replica takes limit ÷ fronts of a per-minute limit.
 func TestAPerMinuteLimitIsSharedWithTheDoors(t *testing.T) {
 	l, _ := limiterAt(time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC), 2, map[string]keyLimit{"k": {rpm: 4}})
 	for i := range 2 {
