@@ -75,6 +75,14 @@ func TestManifestMatchesBuildScript(t *testing.T) {
 	}
 	listed := map[string]bool{}
 	for _, img := range manifest.Images {
+		if img.Upstream {
+			// Run as its vendor publishes it (T19.15): a build.sh row would be
+			// a derived copy its licence forbids.
+			if _, built := specs[img.Name]; built {
+				t.Errorf("%s is marked upstream but images/build.sh builds it", img.Name)
+			}
+			continue
+		}
 		listed[img.Name] = true
 		spec, ok := specs[img.Name]
 		if !ok {
@@ -140,6 +148,15 @@ func TestEveryImageIsDocumented(t *testing.T) {
 	for name := range buildSpecs(t) {
 		if !strings.Contains(readme, "`"+name+"`") {
 			t.Errorf("%s is built but not in the images/README.md table", name)
+		}
+	}
+	manifest, err := images.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, img := range manifest.Images {
+		if img.Upstream && !strings.Contains(readme, "`"+img.Name+"`") {
+			t.Errorf("%s is run upstream but not in the images/README.md table: nobody would know where it comes from", img.Name)
 		}
 	}
 }

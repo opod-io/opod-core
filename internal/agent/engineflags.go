@@ -14,6 +14,8 @@ package agent
 //	           tensor_split (--tensor-split: uneven shares per device), extra (raw args)
 //	SGLang:    tp, mem_fraction_static, max_model_len (--context-length), max_running_requests,
 //	           kv_cache_dtype (--kv-cache-dtype), extra (raw args)
+//	TensorRT-LLM: tp (--tp_size), max_num_seqs (--max_batch_size, always set), max_model_len
+//	           (--max_seq_len), kv_cache_free_gpu_memory_fraction, extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
 
@@ -293,6 +295,46 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 	return strings.Join(sh, " "), shellQuoteAll(args)
 }
 
+// trtllmShellOverrides is sglangShellOverrides for trtllm-serve (T19.15): tp
+// into $TP, and the rest as trtllm-serve's own flag names. --max_batch_size is
+// ALWAYS on the line, as --max-num-seqs is for vLLM (ADR-091): it is the slot
+// count the worker reports, and TensorRT-LLM's own default is far above what
+// the leader should dispatch to one card.
+func (f EngineFlags) trtllmShellOverrides() (overrides string, extraArgs string) {
+	var sh []string
+	if tp, ok := f.posInt("tp", 1, 64); ok {
+		sh = append(sh, fmt.Sprintf("TP=%d;", tp))
+	}
+	var args []string
+	if _, inExtra := f.extraInt("--max_batch_size"); !inExtra {
+		args = append(args, "--max_batch_size", strconv.Itoa(f.trtllmMaxBatch()))
+	}
+	if n, ok := f.posInt("max_model_len", 512, 1<<22); ok {
+		args = append(args, "--max_seq_len", strconv.Itoa(n))
+	}
+	if v, ok := f.get("kv_cache_free_gpu_memory_fraction"); ok {
+		if u, err := strconv.ParseFloat(v, 64); err == nil && u >= 0.05 && u <= 0.95 {
+			args = append(args, "--kv_cache_free_gpu_memory_fraction", strconv.FormatFloat(u, 'f', 2, 64))
+		}
+	}
+	if v, ok := f.get("extra"); ok {
+		args = append(args, splitExtra(v)...)
+	}
+	return strings.Join(sh, " "), shellQuoteAll(args)
+}
+
+// DefaultTRTLLMMaxBatch is the --max_batch_size a TensorRT-LLM worker starts
+// with when the plan pins none: the same slot count a small card's vLLM worker
+// is usually run at, stated rather than left to the engine's 2048.
+const DefaultTRTLLMMaxBatch = 64
+
+func (f EngineFlags) trtllmMaxBatch() int {
+	if n, ok := f.posInt("max_num_seqs", 1, 4096); ok {
+		return n
+	}
+	return DefaultTRTLLMMaxBatch
+}
+
 // DefaultVLLMMaxNumSeqs is the --max-num-seqs a vLLM worker starts with when
 // the plan pins none (ADR-091): vLLM's own default on cards below 70 GiB, the
 // cards most fleets run. vLLM picks 1024 by itself on larger cards; a plan that
@@ -358,6 +400,11 @@ func (f EngineFlags) LaunchSlots(engine string) int {
 		}
 		n, _ := f.posInt("max_running_requests", 1, 4096)
 		return n
+	case "trtllm":
+		if n, ok := f.extraInt("--max_batch_size"); ok {
+			return n
+		}
+		return f.trtllmMaxBatch()
 	case "llamacpp":
 		if n, ok := f.extraInt("-np", "--parallel"); ok {
 			return n

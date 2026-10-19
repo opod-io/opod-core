@@ -100,6 +100,8 @@ func engineEndpoint(cfg *config.Config, name string) (canonical, endpoint, apiKe
 		return canonical, cfg.Engine.LlamaCppEndpoint, "", true
 	case "sglang":
 		return canonical, cfg.Engine.SGLangEndpoint, "", true
+	case "trtllm":
+		return canonical, cfg.Engine.TRTLLMEndpoint, "", true
 	}
 	return canonical, "", "", false
 }

@@ -15,6 +15,8 @@
 #               rpc (llama.cpp RPC parts) | ray (vLLM multi-node) | omitted = one node only
 #   proven      true once this image has served requests on the hardware it names
 #   requires    what the node must provide before the container can see the device
+#   upstream    true = run as the vendor publishes base (no dockerfile, never built or pushed here,
+#               because its licence forbids a derived copy); opod is copied in at start
 #   notes       limits a reader must know before choosing it
 schema: 1
 registry: ghcr.io/opod-io
@@ -206,3 +208,22 @@ images:
       - Instinct only - upstream has no RDNA build, so a Radeon card serves through llama.cpp or vLLM instead. MI350 needs the -mi35x base (rebuild with SGLANG_AMD_BASE=).
       - 'Confirmed on a Radeon RX 7900 XTX 2026-09-19: the worker joins, SGLang starts and its scheduler dies with "HIP error: invalid device function" - no kernel in the image is compiled for RDNA.'
       - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
+
+  - name: nvcr-trtllm-nvidia
+    role: worker
+    engine: trtllm
+    vendor: nvidia
+    arch: [amd64, arm64]
+    upstream: true
+    base: nvcr.io/nvidia/tensorrt-llm/release:1.2.1
+    weights: [safetensors]
+    proven: false
+    hardware: NVIDIA GPUs (CUDA; Ampere and newer)
+    requires:
+      - NVIDIA driver and the NVIDIA container runtime on the node
+      - the owner's acceptance of NVIDIA's container licence (the image is pulled from nvcr.io as NVIDIA publishes it)
+    summary: TensorRT-LLM's trtllm-serve on the PyTorch backend. Safetensors from the Hub, no engine build. Run as NVIDIA publishes it; opod is copied in at start.
+    notes:
+      - Not rebuilt or pushed by opod - NVIDIA's container licence forbids a derived copy, so the chart names nvcr.io directly.
+      - One node only - its multi-node mode needs MPI, which core does not carry.
+      - No runtime LoRA, no sleep mode; images are refused until a vision model is proven on it.

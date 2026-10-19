@@ -170,6 +170,7 @@ type EngineConfig struct {
 	MLXEndpoint      string `yaml:"mlx_endpoint"`
 	LlamaCppEndpoint string `yaml:"llamacpp_endpoint"`
 	SGLangEndpoint   string `yaml:"sglang_endpoint"`
+	TRTLLMEndpoint   string `yaml:"trtllm_endpoint"`
 }
 
 type RouterConfig struct {
@@ -280,6 +281,7 @@ func Default() *Config {
 			MLXEndpoint:      "http://127.0.0.1:8080",
 			LlamaCppEndpoint: "http://127.0.0.1:8089",
 			SGLangEndpoint:   "http://127.0.0.1:30000", // the port a worker launches sglang.launch_server on
+			TRTLLMEndpoint:   "http://127.0.0.1:8000",  // the port a worker launches trtllm-serve on (T19.15)
 		},
 		Router: RouterConfig{
 			DefaultModel:           "",
@@ -412,6 +414,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPOD_SGLANG_ENDPOINT"); v != "" {
 		c.Engine.SGLangEndpoint = v
+	}
+	if v := os.Getenv("OPOD_TRTLLM_ENDPOINT"); v != "" {
+		c.Engine.TRTLLMEndpoint = v
 	}
 	if v := os.Getenv("OPOD_ENGINE"); v != "" {
 		c.Engine.Preferred = v

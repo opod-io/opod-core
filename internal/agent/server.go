@@ -699,23 +699,16 @@ func (s *Server) LoadModel(ctx context.Context, req LoadRequest) (string, error)
 	// forget (no readiness gate): vLLM binds its port only after a multi-minute
 	// model load, so we let it warm up in the background — requests 503 until
 	// ready, then the heartbeat reports the model and the leader reconciles.
-	if strings.HasPrefix(s.Engine.Name(), "vllm") {
-		if err := s.launchVLLM(name, req.ID); err != nil {
-			return "", fmt.Errorf("vllm serve: %w", err)
+	// SGLang and TensorRT-LLM pose the same problem: one model per process, a
+	// port that binds only after the weights load (launchers.go).
+	if l, ok := launcherFor(s.Engine.Name()); ok {
+		if err := l.launch(s, name, req.ID); err != nil {
+			return "", fmt.Errorf("%s: %w", l.process, err)
 		}
-		s.noteLaunch("vllm-serve", req.ID, name)
-		if s.AdaptersErr == nil && len(s.Adapters) > 0 {
+		s.noteLaunch(l.process, req.ID, name)
+		if l.adapters && s.AdaptersErr == nil && len(s.Adapters) > 0 {
 			go s.loadAdaptersWhenReady(req.ID, s.Adapters, s.launchGen.Add(1))
 		}
-	}
-	// SGLang, like vLLM, has no persistent server and its driver never starts
-	// one: the model is chosen at launch. Same fire-and-forget shape, same
-	// reason — the port binds only after the weights are loaded.
-	if strings.HasPrefix(s.Engine.Name(), "sglang") {
-		if err := s.launchSGLang(name, req.ID); err != nil {
-			return "", fmt.Errorf("sglang launch_server: %w", err)
-		}
-		s.noteLaunch("sglang-serve", req.ID, name)
 	}
 	// llama.cpp whole-model placement (for load-balancing replicas): launch a
 	// whole llama-server for this model. Like vLLM, the driver never starts one
@@ -745,19 +738,7 @@ func (s *Server) LoadModel(ctx context.Context, req LoadRequest) (string, error)
 // background (restarting on crash) and the model becomes servable when vLLM
 // finishes warming up, observed via the engine's /v1/models on the next heartbeat.
 func (s *Server) launchVLLM(model, servedName string) error {
-	host, port := "127.0.0.1", 8000
-	if ep, ok := s.Engine.(interface{ Endpoint() string }); ok {
-		if u, err := url.Parse(ep.Endpoint()); err == nil {
-			if h := u.Hostname(); h != "" {
-				host = h
-			}
-			if p := u.Port(); p != "" {
-				if n, err := strconv.Atoi(p); err == nil {
-					port = n
-				}
-			}
-		}
-	}
+	host, port := s.engineAddr(8000)
 	cmdline, err := s.vllmCmdline(model, servedName, host, port)
 	if err != nil {
 		return err
@@ -948,19 +929,7 @@ func (s *Server) pinnedSource(model string) (source, revArgs string, err error) 
 //
 // SGLang has no sleep mode, so there is no equivalent of vLLM's dev-mode flags.
 func (s *Server) launchSGLang(model, servedName string) error {
-	host, port := "127.0.0.1", 30000
-	if ep, ok := s.Engine.(interface{ Endpoint() string }); ok {
-		if u, err := url.Parse(ep.Endpoint()); err == nil {
-			if h := u.Hostname(); h != "" {
-				host = h
-			}
-			if p := u.Port(); p != "" {
-				if n, err := strconv.Atoi(p); err == nil {
-					port = n
-				}
-			}
-		}
-	}
+	host, port := s.engineAddr(30000)
 	cmdline, err := s.sglangCmdline(model, servedName, host, port)
 	if err != nil {
 		return err

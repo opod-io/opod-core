@@ -69,6 +69,12 @@ type Image struct {
 	// to one image at a time.
 	Families []string `yaml:"families,omitempty" json:"families,omitempty"`
 	Requires []string `yaml:"requires,omitempty" json:"requires,omitempty"`
+	// Upstream marks an image run exactly as its vendor publishes it, from
+	// Base, and never rebuilt or pushed here — because its licence forbids a
+	// derived copy (NVIDIA's container licence, T19.15). It has no Dockerfile;
+	// the manager copies the opod binary and entrypoint into it at start from
+	// the leader image, and the owner accepts the vendor's terms by pulling it.
+	Upstream bool     `yaml:"upstream,omitempty" json:"upstream,omitempty"`
 	Summary  string   `yaml:"summary"            json:"summary"`
 	Notes    []string `yaml:"notes,omitempty"    json:"notes,omitempty"`
 }
@@ -109,14 +115,19 @@ func parse(data []byte) (Manifest, error) {
 		}
 		seen[img.Name] = true
 		img.Repository = m.Registry + "/" + img.Name
+		if img.Upstream {
+			img.Repository, _, _ = strings.Cut(img.Base, ":")
+		}
 	}
 	return m, nil
 }
 
 func (i Image) validate() error {
 	switch {
-	case i.Name == "" || i.Dockerfile == "" || i.Base == "" || i.Summary == "" || len(i.Arch) == 0:
-		return fmt.Errorf("%q: name, dockerfile, base, arch and summary are required", i.Name)
+	case i.Name == "" || i.Base == "" || i.Summary == "" || len(i.Arch) == 0:
+		return fmt.Errorf("%q: name, base, arch and summary are required", i.Name)
+	case i.Upstream != (i.Dockerfile == ""):
+		return fmt.Errorf("%s: an image is built from a dockerfile or run upstream as published, exactly one", i.Name)
 	case i.Role == RoleLeader:
 		if i.Engine != "" || i.Vendor != "" || len(i.Weights) != 0 || i.Gang != "" {
 			return fmt.Errorf("%s: a leader runs no engine", i.Name)

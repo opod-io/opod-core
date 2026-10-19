@@ -12,5 +12,6 @@ import (
 	_ "github.com/opod-io/opod/internal/engines/mlx"
 	_ "github.com/opod-io/opod/internal/engines/ollama"
 	_ "github.com/opod-io/opod/internal/engines/sglang"
+	_ "github.com/opod-io/opod/internal/engines/trtllm"
 	_ "github.com/opod-io/opod/internal/engines/vllm"
 )

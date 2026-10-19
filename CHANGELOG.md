@@ -18,6 +18,14 @@ the last section.
   and the answer was about the text alone. Content parts now survive every hop, a data URL whole. An image for a
   catalog model without `vision` is refused 400 `unsupported_request` naming `image_url`, and so is an image sent to
   SGLang, llama.cpp (no `--mmproj` yet) or MLX until each is proven; vLLM and Ollama take them. Feature key `vision`.
+- **A TensorRT-LLM driver** (`trtllm`, T19.15, ADR-092 §7). A worker launches `trtllm-serve <model>` on the PyTorch
+  backend — safetensors from the Hub, no engine build — with `tp`, `max_num_seqs` (`--max_batch_size`, always set),
+  `max_model_len` (`--max_seq_len`), `kv_cache_free_gpu_memory_fraction` and `extra`; the driver reads KV
+  utilisation and the queue from `/prometheus/metrics`. One node only. A pinned revision is served from its prefetched
+  snapshot and refused without one, because `trtllm-serve` takes no `--revision`. The worker's engine launches are one
+  table now (vLLM, SGLang, TensorRT-LLM). NVIDIA's container licence forbids a derived copy, so there is no
+  `opod-worker-trtllm-*` image: `images.yaml` lists `nvcr-trtllm-nvidia` as an **upstream** row — NVIDIA's own image,
+  with opod copied in at start by the manager.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
