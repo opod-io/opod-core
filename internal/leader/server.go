@@ -477,6 +477,20 @@ func (s *Server) routes() http.Handler {
 		// never by a quiet re-add.
 	})
 
+	// A Vertex AI custom container (T19.4): its predict and health routes, keyless
+	// because Vertex's IAM has already authenticated the caller. Still counted for
+	// /loadz and body-capped like /v1.
+	if s.cfg.Env.Vertex && !s.isGateway() {
+		predict, health := s.vertexRoutes()
+		r.Group(func(r chi.Router) {
+			r.Use(s.trackLoad)
+			r.Use(s.limitRequestBody)
+			r.Use(api.ResponseHeadersMiddleware())
+			r.Post(predict, s.vertexPredict)
+			r.Get(health, s.readyz)
+		})
+	}
+
 	// A GATEWAY serves /v1 and nothing else (T11.1, ADR-063). The admin surface
 	// is the BRAIN's: the worker registry, the join tokens, the shard calls and
 	// the plan revision belong to exactly one process, and a door that exposed

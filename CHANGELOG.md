@@ -18,6 +18,10 @@ the last section.
   and the answer was about the text alone. Content parts now survive every hop, a data URL whole. An image for a
   catalog model without `vision` is refused 400 `unsupported_request` naming `image_url`, and so is an image sent to
   SGLang, llama.cpp (no `--mmproj` yet) or MLX until each is proven; vLLM and Ollama take them. Feature key `vision`.
+- **A Vertex AI custom container** (T19.4, ADR-092 §1). `OPOD_VERTEX=1` adds `POST $AIP_PREDICT_ROUTE` (default
+  `/v1/vertex:predict`: `{instances, parameters}` → `{predictions}`, each instance a chat request; a body without
+  `instances` is rawPredict, a chat body passed through) and `GET $AIP_HEALTH_ROUTE` (default `/v1/vertex/health`).
+  Keyless — Vertex's IAM authenticates the caller — and recorded as protocol `vertex`.
 - **A TensorRT-LLM driver** (`trtllm`, T19.15, ADR-092 §7). A worker launches `trtllm-serve <model>` on the PyTorch
   backend — safetensors from the Hub, no engine build — with `tp`, `max_num_seqs` (`--max_batch_size`, always set),
   `max_model_len` (`--max_seq_len`), `kv_cache_free_gpu_memory_fraction` and `extra`; the driver reads KV

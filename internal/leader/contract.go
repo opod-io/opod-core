@@ -146,6 +146,11 @@ func contractFeatures() map[string]bool {
 		// engine not proven to take images — SGLang, llama.cpp, MLX — rather
 		// than answering about the text alone (T16.2).
 		"vision": true,
+		// OPOD_VERTEX=1 serves a Vertex AI custom container: POST
+		// AIP_PREDICT_ROUTE ({instances, parameters} → {predictions}, or a chat
+		// body passed through) and GET AIP_HEALTH_ROUTE, keyless, recorded as
+		// protocol vertex (ADR-092 §1, T19.4).
+		"vertex": true,
 		// /metrics (both listeners) carries vllm:num_requests_waiting,
 		// vllm:num_requests_running and vllm:kv_cache_usage_perc beside the
 		// opod_* names, so an inference pool whose picker reads vLLM's names

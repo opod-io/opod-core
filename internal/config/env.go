@@ -35,6 +35,13 @@ type Env struct {
 	// reads a request's model, finds the endpoint in the routes file and
 	// forwards the request there. No store, no engine, no credential.
 	DoorRoutes string `env:"OPOD_DOOR_ROUTES" side:"leader" doc:"the routes file a DOOR watches: {revision, routes[{alias, upstream, model, ca}]}; required when OPOD_ROLE=door"`
+	// Vertex AI custom container (ADR-092 §1, T19.4): the leader also answers
+	// Vertex's predict and health routes. Vertex sets the AIP_* variables on a
+	// container it runs; elsewhere the defaults are under /v1, so a door can
+	// front them.
+	Vertex             bool   `env:"OPOD_VERTEX" side:"leader" doc:"1 = also serve a Vertex AI custom container: POST AIP_PREDICT_ROUTE ({instances, parameters} → {predictions}, or a chat body passed through) and GET AIP_HEALTH_ROUTE. Vertex's IAM authenticates the caller, so these routes take no key; usage rows say protocol vertex"`
+	VertexPredictRoute string `env:"AIP_PREDICT_ROUTE" side:"leader" doc:"the predict route Vertex sets on its container; default /v1/vertex:predict"`
+	VertexHealthRoute  string `env:"AIP_HEALTH_ROUTE" side:"leader" doc:"the health route Vertex sets on its container; default /v1/vertex/health"`
 	// worker
 	Accelerator   string `env:"OPOD_ACCELERATOR" side:"worker" doc:"the vendor the manager placed the worker on (nvidia | amd | intel | tt | none); unset = what the worker detects"`
 	EngineFlags   string `env:"OPOD_ENGINE_FLAGS" side:"worker" doc:"JSON map of engine flags from the plan (tp, max_model_len, ctx, ngl, …)"`
