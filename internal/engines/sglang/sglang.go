@@ -59,7 +59,9 @@ func New(endpoint, apiKey string) *Driver {
 	if apiKey != "" {
 		auth = func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+apiKey) }
 	}
-	return &Driver{Client: openaicompat.NewClient(name, endpoint, auth)}
+	c := openaicompat.NewClient(name, endpoint, auth)
+	c.NoImages = "images are not proven on this engine yet (PLAN T16.2): serve vision models on vLLM, or send text only"
+	return &Driver{Client: c}
 }
 
 func (s *Driver) Name() string { return name }

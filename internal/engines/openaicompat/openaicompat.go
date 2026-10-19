@@ -31,6 +31,12 @@ type Client struct {
 	HTTP *http.Client
 	// Auth, when non-nil, decorates every request (Bearer token etc.).
 	Auth func(*http.Request)
+	// NoImages, when set, is why this server cannot take an image: a request
+	// carrying one is refused 400 naming `image_url` instead of being answered
+	// about nothing (T16.2). Empty forwards images as content parts — the
+	// default, because the leader reaches its workers through this client and
+	// the worker's own driver is the one that knows.
+	NoImages string
 }
 
 // ConnectTimeout bounds how long a connection to the engine (or to a worker: a
@@ -189,6 +195,10 @@ func (c Client) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engin
 	// span.End() runs in ConsumeStreamWithSpan so the duration covers the
 	// full streamed response, not just stream-start.
 
+	if c.NoImages != "" && engines.HasImages(req.Messages) {
+		span.End()
+		return nil, engines.Unsupported(c.Driver, "image_url", c.NoImages)
+	}
 	out := make(chan engines.StreamEvent, 16)
 	raw, _ := json.Marshal(BuildChatBody(req))
 
@@ -242,7 +252,9 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
 	}
 	for _, m := range req.Messages {
-		msg := map[string]any{"role": m.Role, "content": m.Content}
+		// Content parts when the message carries images, the text alone
+		// otherwise — a text-only body is byte-identical to before (T16.2).
+		msg := map[string]any{"role": m.Role, "content": engines.ContentValue(m.Content, m.Images)}
 		// The two fields that make tool calling a loop: the assistant turn's
 		// own calls, and the id a tool result answers. An engine rejects a
 		// tool-role message without the id, so dropping it turns the caller's

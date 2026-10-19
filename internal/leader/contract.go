@@ -139,6 +139,13 @@ func contractFeatures() map[string]bool {
 		// documents and image URLs are refused 400 in Anthropic's envelope
 		// (ADR-092 §1, T19.3). The usage row's protocol is "anthropic".
 		"anthropic_messages": true,
+		// An image (`image_url` content parts, or an Anthropic base64 image
+		// block) reaches the engine: the leader re-sends content parts to its
+		// worker and the shared serialiser sends them on. A catalog model
+		// without `vision` is refused 400 naming `image_url`, and so is an
+		// engine not proven to take images — SGLang, llama.cpp, MLX — rather
+		// than answering about the text alone (T16.2).
+		"vision": true,
 		// /metrics (both listeners) carries vllm:num_requests_waiting,
 		// vllm:num_requests_running and vllm:kv_cache_usage_perc beside the
 		// opod_* names, so an inference pool whose picker reads vLLM's names

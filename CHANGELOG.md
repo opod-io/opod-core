@@ -5,7 +5,7 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## 2026-10-19 — Anthropic Messages on every chat model
+## 2026-10-19 — Anthropic Messages on every chat model, and images reach the engine
 
 - **`POST /v1/messages` and `/v1/messages/count_tokens` are served again** (ADR-092 §1), translated to the chat path so
   every engine serves them: `system`, text and base64 images, `tool_use` / `tool_result`, `tools`, `tool_choice`,
@@ -13,6 +13,11 @@ the last section.
   Anthropic's envelope, and the usage row's protocol is `anthropic`. `count_tokens` is the engine's own prompt count,
   taken from a one-token generation. Extended thinking, server tools, documents, image URLs and unknown fields are
   refused 400 naming the field. Feature key `anthropic_messages`; both routes join the leader contract.
+- **An image reaches the engine** (T16.2, ADR-092 §3). The gateway parsed `image_url` parts, but the shared OpenAI
+  serialiser sent text only and the worker decoded content as a string, so under a worker no engine ever saw an image
+  and the answer was about the text alone. Content parts now survive every hop, a data URL whole. An image for a
+  catalog model without `vision` is refused 400 `unsupported_request` naming `image_url`, and so is an image sent to
+  SGLang, llama.cpp (no `--mmproj` yet) or MLX until each is proven; vLLM and Ollama take them. Feature key `vision`.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 

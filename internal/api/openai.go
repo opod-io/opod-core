@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -225,7 +226,7 @@ type chatMessage struct {
 	// parts per the OpenAI multimodal spec, e.g.
 	//   [{"type":"text","text":"…"},
 	//    {"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}]
-	// Parsed by toEngineMessages.
+	// Parsed by toEngineMessages (engines.ParseContent).
 	Content json.RawMessage `json:"content"`
 	// ToolCalls carries the model's calls on an ANSWER, and is read back on
 	// the NEXT request: the standard client appends the assistant message it
@@ -235,18 +236,6 @@ type chatMessage struct {
 	// the API means (T10.8).
 	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
-}
-
-// chatContentPart is one element of the OpenAI multimodal content array.
-type chatContentPart struct {
-	Type     string               `json:"type"`
-	Text     string               `json:"text,omitempty"`
-	ImageURL *chatContentImageURL `json:"image_url,omitempty"`
-}
-
-type chatContentImageURL struct {
-	URL    string `json:"url"`
-	Detail string `json:"detail,omitempty"` // low | high | auto — ignored for now
 }
 
 type chatResponse struct {
@@ -357,6 +346,19 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Tools:          req.Tools,
 		ToolChoice:     req.ToolChoice,
 		Extra:          extra,
+	}
+
+	// An image for a model the catalog does not call a vision model is refused
+	// by name: the engine would answer about the text alone (T16.2). A model
+	// the catalog does not know is passed on, and its engine answers — and so
+	// is an entry tagged `user`, which a manager wrote for a model of its
+	// owner's (a sharded one), not a catalog claim about it.
+	if engines.HasImages(engineReq.Messages) {
+		if e, ok := h.catalogEntry(requested); ok && !slices.Contains(e.Tags, "user") && !slices.Contains(e.Capabilities, "vision") {
+			writeJSONError(w, http.StatusBadRequest, "unsupported_request",
+				fmt.Sprintf("%s is not a vision model (its catalog entry does not list `vision`), so `image_url` cannot be served: send text only, or use a vision model", requested))
+			return
+		}
 	}
 
 	// Per-request routing overrides (opod.fallbacks / opod.num_retries /
@@ -666,6 +668,16 @@ func (h *Handler) ResolveModel(catalogID string) (string, error) {
 // engine. Catalog entries can carry both an Ollama tag (source.ollama_name) and
 // an HF repo (source.repo); we pick the right one based on which engine the
 // gateway is talking to.
+// catalogEntry is the catalog's entry for a model id.
+func (h *Handler) catalogEntry(id string) (models.Entry, bool) {
+	for _, e := range h.Catalog {
+		if e.ID == id {
+			return e, true
+		}
+	}
+	return models.Entry{}, false
+}
+
 func (h *Handler) lookupModelByCatalogID(catalogID string) (engineModel string, ok bool) {
 	for _, e := range h.Catalog {
 		if e.ID != catalogID {
@@ -694,7 +706,7 @@ func (h *Handler) lookupModelByCatalogID(catalogID string) (engineModel string, 
 func toEngineMessages(in []chatMessage) []engines.Message {
 	out := make([]engines.Message, 0, len(in))
 	for _, m := range in {
-		text, images := parseChatContent(m.Content)
+		text, images := engines.ParseContent(m.Content)
 		out = append(out, engines.Message{
 			Role: m.Role, Content: text, Images: images,
 			ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
@@ -703,64 +715,12 @@ func toEngineMessages(in []chatMessage) []engines.Message {
 	return out
 }
 
-// parseChatContent accepts OpenAI's `content` field in either form:
-//
-//   - a plain JSON string                        → text, no images
-//   - a JSON array of {type, text|image_url} parts → text parts concatenated
-//     with a single space, image_url URLs collected into images
-//
-// Anything that fails to parse is treated as empty text — the engine layer
-// will produce a clear error if the resulting prompt is empty.
-func parseChatContent(raw json.RawMessage) (text string, images []string) {
-	if len(raw) == 0 {
-		return "", nil
-	}
-	// Try string first.
-	var asStr string
-	if err := json.Unmarshal(raw, &asStr); err == nil {
-		return asStr, nil
-	}
-	// Try array of content parts.
-	var parts []chatContentPart
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return "", nil
-	}
-	var b strings.Builder
-	for _, p := range parts {
-		switch p.Type {
-		case "text":
-			if b.Len() > 0 {
-				b.WriteByte(' ')
-			}
-			b.WriteString(p.Text)
-		case "image_url":
-			if p.ImageURL != nil && p.ImageURL.URL != "" {
-				images = append(images, stripDataURLPrefix(p.ImageURL.URL))
-			}
-		}
-	}
-	return b.String(), images
-}
-
 // jsonString returns a json.RawMessage holding the JSON encoding of s — so
 // a chatMessage built for a response renders `"content": "…"` instead of the
 // raw byte slice. Errors here are unreachable (string marshal always works).
 func jsonString(s string) json.RawMessage {
 	b, _ := json.Marshal(s)
 	return b
-}
-
-// stripDataURLPrefix turns "data:image/png;base64,iVBORw0…" into the raw base64
-// payload. Engines like Ollama want just the base64 bytes; vLLM accepts either.
-// Non-data URLs (https://…) are returned unchanged.
-func stripDataURLPrefix(s string) string {
-	if !strings.HasPrefix(s, "data:") {
-		return s
-	}
-	if i := strings.Index(s, ","); i >= 0 {
-		return s[i+1:]
-	}
-	return s
 }
 
 func sendChunk(w http.ResponseWriter, flusher http.Flusher, c chatChunk) {

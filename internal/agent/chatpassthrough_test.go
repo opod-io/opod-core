@@ -220,3 +220,21 @@ func TestWorkerCarriesTheCallersExtraFieldsToTheEngine(t *testing.T) {
 		}
 	}
 }
+
+// An image survives the worker's hop (T16.2): the leader re-sends content
+// parts, and the worker decoded content as a string, which failed the whole
+// request.
+func TestWorkerCarriesImagesToTheEngine(t *testing.T) {
+	eng := &chatRecorder{}
+	s := &Server{Engine: eng}
+	w := httptest.NewRecorder()
+	s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"what is this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAA"}}]}]}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	m := eng.got.Messages[0]
+	if m.Content != "what is this" || len(m.Images) != 1 || m.Images[0] != "data:image/png;base64,AAA" {
+		t.Fatalf("the engine got %+v", m)
+	}
+}

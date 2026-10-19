@@ -441,7 +441,11 @@ func buildChatBody(req engines.ChatRequest) map[string]any {
 	for _, m := range req.Messages {
 		entry := map[string]any{"role": m.Role, "content": m.Content}
 		if len(m.Images) > 0 {
-			entry["images"] = m.Images
+			images := make([]string, len(m.Images))
+			for i, img := range m.Images {
+				images[i] = engines.StripDataURL(img) // Ollama takes the bare base64
+			}
+			entry["images"] = images
 		}
 		msgs = append(msgs, entry)
 	}

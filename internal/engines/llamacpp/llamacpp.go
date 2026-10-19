@@ -74,7 +74,9 @@ type Driver struct {
 
 // New returns a driver for a llama-server at endpoint.
 func New(endpoint string) *Driver {
-	return &Driver{Client: openaicompat.NewClient(name, endpoint, nil)}
+	c := openaicompat.NewClient(name, endpoint, nil)
+	c.NoImages = "llama-server takes images only with a multimodal projector (--mmproj), which a worker does not start yet: serve vision models on vLLM, or send text only"
+	return &Driver{Client: c}
 }
 
 func (l *Driver) Name() string { return name }

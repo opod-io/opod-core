@@ -36,7 +36,9 @@ type Driver struct {
 
 // New returns a driver for an MLX-LM server at endpoint (e.g. http://localhost:8080).
 func New(endpoint string) *Driver {
-	return &Driver{Client: openaicompat.NewClient(name, endpoint, nil)}
+	c := openaicompat.NewClient(name, endpoint, nil)
+	c.NoImages = "images are not proven on this engine yet (PLAN T16.2): serve vision models on vLLM, or send text only"
+	return &Driver{Client: c}
 }
 
 func (m *Driver) Name() string { return name }

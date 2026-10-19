@@ -367,8 +367,10 @@ type workerChatRequest struct {
 	// 2026-10-05). The worker is the normal path, so that would have been
 	// every tool loop under the control plane.
 	Messages []struct {
-		Role       string          `json:"role"`
-		Content    string          `json:"content"`
+		Role string `json:"role"`
+		// A string, or content parts when the turn carries images (T16.2):
+		// decoded as a string, an image turn failed the whole request.
+		Content    json.RawMessage `json:"content"`
 		ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
 		ToolCallID string          `json:"tool_call_id,omitempty"`
 	} `json:"messages"`
@@ -417,8 +419,9 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs := make([]engines.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
+		text, images := engines.ParseContent(m.Content)
 		msgs = append(msgs, engines.Message{
-			Role: m.Role, Content: m.Content,
+			Role: m.Role, Content: text, Images: images,
 			ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
 		})
 	}
