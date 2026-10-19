@@ -42,6 +42,9 @@ func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 	u *engines.Usage, latency, ttft time.Duration, outcome string) {
 	st, pol := h.Store, h.Policy()
+	// A Messages request is served by the chat handler; the row says what the
+	// caller spoke (anthropic.go).
+	protocol = protocolOf(ctx, protocol)
 
 	var keyID, userID string
 	if k := auth.KeyFrom(ctx); k != nil {

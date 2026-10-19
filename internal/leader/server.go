@@ -467,10 +467,14 @@ func (s *Server) routes() http.Handler {
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)
 		r.Post("/rerank", s.openaiH.Rerank)
-		// OpenAI chat + embeddings, and rerank, are the whole protocol surface.
-		// ADR-022 step 4 (2026-09-07) removed Anthropic Messages, audio and
-		// rerank; ADR-084 (2026-10-06) brought rerank back. A new surface
-		// arrives by an amendment like that one, never by a quiet re-add.
+		r.Post("/messages", s.dispatchAnthropicMessages)
+		r.Post("/messages/count_tokens", s.dispatchAnthropicCount)
+		// OpenAI chat + embeddings, rerank and Anthropic Messages are the whole
+		// protocol surface. ADR-022 step 4 (2026-09-07) removed Anthropic
+		// Messages, audio and rerank; ADR-084 (2026-10-06) brought rerank back
+		// and ADR-092 §1 (2026-10-16) Messages, translated to the chat path
+		// (anthropic.go). A new surface arrives by an amendment like those,
+		// never by a quiet re-add.
 	})
 
 	// A GATEWAY serves /v1 and nothing else (T11.1, ADR-063). The admin surface

@@ -694,7 +694,9 @@ A GGUF is one file (`opod fetch <repo> <file>`). A safetensors model is a direct
 
 ### Other protocol shapes
 
-Rerank only. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); `/v1/rerank` came back on 2026-10-06 (ADR-084, amending ADR-022) — one non-streaming POST the engines already serve, where the engine is a scorer and the gateway orders, truncates to `top_n` and attaches the text. The other shapes stay out; a shim in front of the gateway is the place for them.
+Rerank and Anthropic Messages. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); `/v1/rerank` came back on 2026-10-06 (ADR-084, amending ADR-022) — one non-streaming POST the engines already serve, where the engine is a scorer and the gateway orders, truncates to `top_n` and attaches the text.
+
+Anthropic Messages came back on 2026-10-19 (ADR-092 §1, `internal/api/anthropic.go`, `internal/leader/anthropic.go`) as a translator, not an engine path: `POST /v1/messages` becomes a chat request — `system`, text and base64 image blocks, `tool_use` / `tool_result`, `tools`, `tool_choice`, `stop_sequences`, `max_tokens`, `temperature`, `top_p`, `top_k` — and rides the chat route's admission, router, guardrails and usage row (protocol `anthropic`). The answer is rewritten on the way out: an aggregated answer into a Message, a stream into Anthropic's events as each chunk arrives, an error into Anthropic's envelope. `/v1/messages/count_tokens` serves the prompt as a one-token generation and answers the engine's own `prompt_tokens`, so it is exact on every engine and counts as a request. Extended thinking, server tools, documents, image URLs, `mcp_servers`, `container` and unknown fields are refused 400 before admission. Audio stays out.
 
 ### Internal request shape
 

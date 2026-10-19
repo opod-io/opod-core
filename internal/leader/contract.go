@@ -65,6 +65,9 @@ var LeaderContract = []ContractRoute{
 	{Method: http.MethodPost, Path: "/admin/v1/models/{id}/move"},
 	// gateway — API key (ADR-084, 2026-10-06: rerank returned to core)
 	{Method: http.MethodPost, Path: "/v1/rerank"},
+	// gateway — API key (ADR-092 §1, 2026-10-19: Anthropic Messages, translated to the chat path)
+	{Method: http.MethodPost, Path: "/v1/messages"},
+	{Method: http.MethodPost, Path: "/v1/messages/count_tokens"},
 }
 
 // EnvContract is the process-environment half of the contract: every
@@ -129,6 +132,13 @@ func contractFeatures() map[string]bool {
 		// vLLM, SGLang and llama.cpp (--reranking) engines; an engine without a
 		// rerank route is refused 501 `rerank_not_supported`, never a 404.
 		"rerank": true,
+		// POST /v1/messages (streamed or not) and /v1/messages/count_tokens
+		// answer Anthropic's Messages shapes on every chat endpoint, translated
+		// to the chat path: system, text and base64 images, tool_use and
+		// tool_result, tools and tool_choice. Extended thinking, server tools,
+		// documents and image URLs are refused 400 in Anthropic's envelope
+		// (ADR-092 §1, T19.3). The usage row's protocol is "anthropic".
+		"anthropic_messages": true,
 		// /metrics (both listeners) carries vllm:num_requests_waiting,
 		// vllm:num_requests_running and vllm:kv_cache_usage_perc beside the
 		// opod_* names, so an inference pool whose picker reads vLLM's names

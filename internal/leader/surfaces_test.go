@@ -81,9 +81,16 @@ func TestSurfacesOff(t *testing.T) {
 	if c, _ := get("/admin/v1/callbacks", true); c != http.StatusNotFound {
 		t.Errorf("GET /admin/v1/callbacks = %d, want 404 (callbacks left core, ADR-022)", c)
 	}
-	for _, p := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1/audio/speech", "/v1/audio/transcriptions"} {
+	for _, p := range []string{"/v1/audio/speech", "/v1/audio/transcriptions"} {
 		if c := post(p); c != http.StatusNotFound {
-			t.Errorf("POST %s with protocols=openai = %d, want 404", p, c)
+			t.Errorf("POST %s = %d, want 404 (audio left core, ADR-022)", p, c)
+		}
+	}
+	// Anthropic Messages came back with ADR-092 §1, translated to the chat
+	// path: the routes exist, so an empty body is the caller's mistake.
+	for _, p := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
+		if c := post(p); c != http.StatusBadRequest {
+			t.Errorf("POST %s with an empty body = %d, want 400 (served since ADR-092 §1)", p, c)
 		}
 	}
 	// Rerank came back with ADR-084 (amending ADR-022): the route exists, so an

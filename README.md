@@ -431,7 +431,7 @@ of these will be declined for the same reason, so the table is here to save you 
 | **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes and expiry, the usage stream and the audit log are the accountability story on a trusted network. |
 | **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
 | **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
-| **Non-chat protocol surfaces** (Anthropic Messages, audio transcription and speech) | one protocol, done properly. These were removed in the 2026-09 contraction (ADR-022); `/v1/rerank` came back on 2026-10-06 (ADR-084) because a retrieval stack asks for it. |
+| **Audio surfaces** (transcription and speech) | removed in the 2026-09 contraction (ADR-022). `/v1/rerank` came back on 2026-10-06 (ADR-084) because a retrieval stack asks for it, and Anthropic Messages on 2026-10-19 (ADR-092 §1), translated to the chat path so every engine serves it. |
 | **Content policies, output filtering, guardrail implementations** | the interface and the event stream stay; the policies belong where the request originates. |
 | **Kubernetes, Helm, operators, CRDs** | `opod` runs as a process. Anything that schedules processes across a fleet is an orchestrator's job, not the runtime's. |
 | **Training and fine-tuning** | use `axolotl`, `unsloth`, or `torchtune`. |
@@ -509,9 +509,11 @@ plus one `snippets/*.tmpl` per client:
 | **curl** (`curl`) | direct HTTP |
 
 Anything else that speaks the OpenAI shape works without a snippet — point it at the base URL and the key
-(LangChain and LlamaIndex, for example, take `openai_api_base`). A tool that only speaks the **Anthropic
-Messages** shape (Claude Code among them) needs a protocol shim in front of the gateway; core does not ship
-one (ADR-022).
+(LangChain and LlamaIndex, for example, take `openai_api_base`). A tool that speaks the **Anthropic
+Messages** shape (Claude Code among them) points at the same base URL: `POST /v1/messages` and
+`/v1/messages/count_tokens` are served on every chat model, translated to the chat path (ADR-092 §1). Text,
+base64 images, tools and streaming work; extended thinking, server tools, documents and image URLs are refused
+400 with the field named.
 
 ---
 
@@ -1203,7 +1205,7 @@ OPOD_TOKEN=sk-orc-<your-key> opod connect aider           # use a non-default to
 opod connect aider --token sk-orc-<your-key>               # same, via flag
 ```
 
-Anything that speaks the OpenAI API shape connects with one line. The full roster today: **cursor**, **aider**, **continue**, **zed**, **cline**, **openclaw**, **opencode**, **open-webui**, **open-notebook**, **goose**, **plandex**, **openhands**, **codex-cli**, **openai-sdk**, **curl**. Tools that only speak the Anthropic Messages shape (Claude Code, qwen-code, hermes) need a protocol shim in front of the gateway; core does not ship one (ADR-022).
+Anything that speaks the OpenAI API shape connects with one line. The full roster today: **cursor**, **aider**, **continue**, **zed**, **cline**, **openclaw**, **opencode**, **open-webui**, **open-notebook**, **goose**, **plandex**, **openhands**, **codex-cli**, **openai-sdk**, **curl**. Tools that speak the Anthropic Messages shape (Claude Code, qwen-code, hermes) use the same base URL: `/v1/messages` is served on every chat model (ADR-092 §1).
 
 Token comes from `--token`, then `$OPOD_TOKEN`, then `~/.opod/admin.key` (written when you ran `opod up`). Base URL comes from `--base-url`, then `external_url` in `~/.opod/config.yaml`, then `http://localhost:<listen>`.
 

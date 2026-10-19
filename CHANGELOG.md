@@ -5,6 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-19 — Anthropic Messages on every chat model
+
+- **`POST /v1/messages` and `/v1/messages/count_tokens` are served again** (ADR-092 §1), translated to the chat path so
+  every engine serves them: `system`, text and base64 images, `tool_use` / `tool_result`, `tools`, `tool_choice`,
+  `stop_sequences`, `max_tokens`, `temperature`, `top_p` and `top_k`. A stream is Anthropic's events, an error is
+  Anthropic's envelope, and the usage row's protocol is `anthropic`. `count_tokens` is the engine's own prompt count,
+  taken from a one-token generation. Extended thinking, server tools, documents, image URLs and unknown fields are
+  refused 400 naming the field. Feature key `anthropic_messages`; both routes join the leader contract.
+
 ## 2026-10-18 — a gang whose part is down is formed again
 
 - **The door takes `model: "auto"` — an owner's ordered list of endpoints, with fallback down it** (ADR-092 §8). A
