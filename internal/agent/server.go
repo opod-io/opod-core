@@ -474,6 +474,23 @@ func writeEngineFailure(w http.ResponseWriter, err error) {
 		writeOpenAIError(w, http.StatusBadGateway, engines.EngineUnreachableType, "engine: "+err.Error())
 		return
 	}
+	// The engine refused the request itself (engines.ClientStatus): its own
+	// status and answer go back as they are, so the leader relays the caller's
+	// error as the caller's (its upstreamPassthrough) instead of a 502 —
+	// a 7,739-token prompt against a 2,048-token slot reached the caller as
+	// `502 upstream_error` (design-partner cell, 2026-10-18).
+	if status, ok := engines.ClientStatus(err); ok {
+		var up *engines.UpstreamError
+		errors.As(err, &up)
+		if json.Valid([]byte(up.Body)) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, up.Body)
+			return
+		}
+		writeOpenAIError(w, status, "invalid_request_error", up.Body)
+		return
+	}
 	http.Error(w, "engine: "+err.Error(), http.StatusBadGateway)
 }
 

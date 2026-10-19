@@ -7,6 +7,10 @@ the last section.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
+- **A worker relays its engine's refusal of the request as the caller's error.** An engine answer that says the request
+  itself is wrong — 400, 413, 422 — went back from the worker as 502, so the leader answered `502 upstream_error` to a
+  prompt longer than the context. The worker now relays the engine's status and words (`engines.ClientStatus`), and the
+  leader's existing passthrough answers 400 with the engine's own error type.
 - **llama.cpp's KV layout is the manager's to say** (`flags.kv_unified`: `true` → `--kv-unified`, one pool every slot
   shares; `false` → `--no-kv-unified`, a partition per slot). A build picks one when not told, and the default changed
   between builds. The KV-pressure number stays slot occupancy, which is KV use only with a partition per slot.

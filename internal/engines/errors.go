@@ -72,6 +72,26 @@ func (e *UpstreamError) Error() string {
 // Is makes errors.Is(err, ErrUpstream) true for every UpstreamError.
 func (e *UpstreamError) Is(target error) bool { return target == ErrUpstream }
 
+// ClientStatus reports an engine's answer that refused the REQUEST — 400, 413,
+// 422 and the like: a prompt longer than the context, a parameter out of range
+// — and its status, so the caller hears what it can fix with the code that
+// says so. Answered 502, the request read as our failure: a client cannot act
+// on that, and a retry sends the same request again (design-partner cell,
+// 2026-10-18: a 7,739-token prompt against a 2,048-token slot came back
+// `502 upstream_error`). Statuses about the engine's own setup or capacity —
+// 401, 403, 404 (no such model on it), 408 and 429 — stay ours to answer.
+func ClientStatus(err error) (int, bool) {
+	var up *UpstreamError
+	if !errors.As(err, &up) || up.Status < 400 || up.Status >= 500 {
+		return 0, false
+	}
+	switch up.Status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return 0, false
+	}
+	return up.Status, true
+}
+
 // Upstream wraps a non-2xx response to op (e.g. "chat", "list models").
 func Upstream(engine, op string, status int, body []byte) error {
 	return &UpstreamError{Engine: engine, Op: op, Status: status, Body: strings.TrimSpace(string(body))}
