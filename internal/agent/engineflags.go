@@ -12,6 +12,8 @@ package agent
 //	llama.cpp: ctx (-c), ngl (--n-gpu-layers), parallel (-np), kv_cache_type (-ctk/-ctv),
 //	           kv_unified (true → --kv-unified, false → --no-kv-unified),
 //	           tensor_split (--tensor-split: uneven shares per device), extra (raw args)
+//	SGLang:    tp, mem_fraction_static, max_model_len (--context-length), max_running_requests,
+//	           kv_cache_dtype (--kv-cache-dtype), extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
 
@@ -278,6 +280,12 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 	}
 	if n, ok := f.posInt("max_running_requests", 1, 4096); ok {
 		args = append(args, "--max-running-requests", strconv.Itoa(n))
+	}
+	// kv_cache_dtype: the KV cache's element type (fp8_e5m2, fp8_e4m3 …), the
+	// same key vLLM takes — an 8-bit cache holds twice the tokens. SGLang had
+	// no way to take it from a plan (PLAN T23.10).
+	if v, ok := f.get("kv_cache_dtype"); ok && isToken(v) {
+		args = append(args, "--kv-cache-dtype", v)
 	}
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)

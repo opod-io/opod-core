@@ -59,6 +59,17 @@ func TestLlamaKVLayoutIsSaidEitherWay(t *testing.T) {
 	}
 }
 
+// SGLang takes the KV cache's element type from a plan, as vLLM does (T23.10).
+func TestSGLangTakesTheKVElementType(t *testing.T) {
+	_, args := ParseEngineFlags(`{"kv_cache_dtype":"fp8_e5m2"}`).sglangShellOverrides()
+	if args != "'--kv-cache-dtype' 'fp8_e5m2'" {
+		t.Fatalf("sglang args: %q", args)
+	}
+	if _, args := ParseEngineFlags(`{"kv_cache_dtype":"fp8; rm -rf /"}`).sglangShellOverrides(); args != "" {
+		t.Fatalf("a value that is not a plain token is dropped: %q", args)
+	}
+}
+
 func TestLlamaModelSource(t *testing.T) {
 	if got := strings.Join(llamaModelSource("id", "org/repo-GGUF", "q4.gguf", ""), " "); got != "-hf org/repo-GGUF --hf-file q4.gguf" {
 		t.Fatalf("repo+file: %q", got)

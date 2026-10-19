@@ -7,6 +7,7 @@ the last section.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
+- **SGLang takes the KV cache's element type from a plan** (`flags.kv_cache_dtype` → `--kv-cache-dtype`), as vLLM does.
 - **A worker relays its engine's refusal of the request as the caller's error.** An engine answer that says the request
   itself is wrong — 400, 413, 422 — went back from the worker as 502, so the leader answered `502 upstream_error` to a
   prompt longer than the context. The worker now relays the engine's status and words (`engines.ClientStatus`), and the
