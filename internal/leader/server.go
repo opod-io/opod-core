@@ -318,6 +318,12 @@ func (s *Server) Start(ctx context.Context) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
+	// HTTP/2 beside HTTP/1.1 on the one listener — h2 by ALPN under TLS, h2c in
+	// the clear — because gRPC (T19.5) needs it and every other client is unchanged.
+	s.http.Protocols = new(http.Protocols)
+	s.http.Protocols.SetHTTP1(true)
+	s.http.Protocols.SetHTTP2(true)
+	s.http.Protocols.SetUnencryptedHTTP2(true)
 	// Bind first so a test (or an operator on :0) can read the address, then
 	// serve plain or TLS on the one listener: with OPOD_TLS_CERT/KEY the
 	// gateway, /admin/v1, /readyz and the join path are all https.
@@ -350,7 +356,10 @@ func (s *Server) Start(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("tls certificate: %w", err)
 		}
-		base := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{crt}}
+		// h2 is offered explicitly: a handshake served by GetConfigForClient
+		// returns a clone of this config, and a clone without it would answer
+		// every gRPC client (T19.5) with HTTP/1.1.
+		base := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{crt}, NextProtos: []string{"h2", "http/1.1"}}
 		base.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
 			pol := s.nodeMTLS()
 			if pol.ClientCAs() == nil {
@@ -476,6 +485,14 @@ func (s *Server) routes() http.Handler {
 		// (anthropic.go). A new surface arrives by an amendment like those,
 		// never by a quiet re-add.
 	})
+
+	// Vertex AI's gRPC PredictionService (T19.5) on this same port: each call is
+	// re-framed into a POST /v1/chat/completions served by THIS router, so the
+	// /v1 chain — keys, limits, the stale-auth gate, /loadz, usage — applies.
+	// Leader only: a gateway's /v1 is a copy, and the service is the leader's.
+	if !s.isGateway() {
+		r.Handle("/"+vertexGRPCService+"/*", newVertexGRPC(r))
+	}
 
 	// A Vertex AI custom container (T19.4): its predict and health routes, keyless
 	// because Vertex's IAM has already authenticated the caller. Still counted for

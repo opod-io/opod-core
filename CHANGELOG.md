@@ -22,6 +22,10 @@ the last section.
   `/v1/vertex:predict`: `{instances, parameters}` → `{predictions}`, each instance a chat request; a body without
   `instances` is rawPredict, a chat body passed through) and `GET $AIP_HEALTH_ROUTE` (default `/v1/vertex/health`).
   Keyless — Vertex's IAM authenticates the caller — and recorded as protocol `vertex`.
+- **Vertex AI's gRPC `PredictionService` on the leader's port** (T19.5, ADR-092 §1). The listener now speaks HTTP/2
+  beside HTTP/1.1 (h2 under TLS, h2c in the clear). `ChatCompletions` and `StreamRawPredict` (streams) and `RawPredict`
+  carry OpenAI JSON in an `HttpBody` and run through the `/v1` chain — the call's `authorization` metadata is the key,
+  usage protocol `grpc-vertex`. Other methods are `Unimplemented`. Feature key `grpc_vertex`.
 - **A TensorRT-LLM driver** (`trtllm`, T19.15, ADR-092 §7). A worker launches `trtllm-serve <model>` on the PyTorch
   backend — safetensors from the Hub, no engine build — with `tp`, `max_num_seqs` (`--max_batch_size`, always set),
   `max_model_len` (`--max_seq_len`), `kv_cache_free_gpu_memory_fraction` and `extra`; the driver reads KV

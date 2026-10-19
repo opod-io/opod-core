@@ -151,6 +151,12 @@ func contractFeatures() map[string]bool {
 		// body passed through) and GET AIP_HEALTH_ROUTE, keyless, recorded as
 		// protocol vertex (ADR-092 §1, T19.4).
 		"vertex": true,
+		// Vertex AI's gRPC PredictionService on the leader's own port, over
+		// HTTP/2 (h2 / h2c): ChatCompletions and StreamRawPredict stream,
+		// RawPredict answers once, each carrying OpenAI JSON in an HttpBody and
+		// served through the /v1 chain — keys from the call's metadata, usage
+		// protocol grpc-vertex. Other methods are Unimplemented (T19.5).
+		"grpc_vertex": true,
 		// /metrics (both listeners) carries vllm:num_requests_waiting,
 		// vllm:num_requests_running and vllm:kv_cache_usage_perc beside the
 		// opod_* names, so an inference pool whose picker reads vLLM's names
