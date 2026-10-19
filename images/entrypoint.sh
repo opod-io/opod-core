@@ -70,6 +70,28 @@ done
 
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
 
+# Kubernetes stops a pod with SIGTERM to PID 1 — this shell — and a shell does
+# not pass a signal on to the processes it started. `opod join` then died with
+# the SIGKILL at the end of the grace period and never said goodbye
+# (agent.Goodbye, T11.2): the leader kept routing to the stopped worker until
+# its heartbeat bound, 60 s, and every request in that minute was answered 503
+# after a dial timeout — after every park and every rolling update
+# (design-partner cell, 2026-10-18). So a worker's stop is forwarded to the
+# processes it ran, and the shell waits for them to finish.
+STOPPING=0
+forward_stop() {
+  STOPPING=1
+  # shellcheck disable=SC2086 # the pids are numbers, one or two of them
+  kill -TERM ${WORKER_PIDS:-} 2>/dev/null || true
+}
+# reap PID: wait for PID to exit — a trapped signal interrupts `wait`, so it
+# waits again while the process lives — and leave its exit status in REAPED
+# (bash keeps a finished job's status, so the last `wait` returns it).
+reap() {
+  while kill -0 "$1" 2>/dev/null; do wait "$1" || true; done
+  wait "$1" && REAPED=0 || REAPED=$?
+}
+
 # A DOOR is `opod up` with the role set: it serves /v1, mirrors the leader's
 # registry, pushes its usage there and enforces from the spend snapshot
 # (T11.1, ADR-063). Same command as a leader — core reads OPOD_ROLE and
@@ -156,6 +178,8 @@ log "worker: joining $OPOD_LEADER_URL engine=$ENGINE advertise=${OPOD_ADVERTISE_
 # who can list the pod's (or the host's) processes (PLAN T8.20).
 opod join "$OPOD_LEADER_URL" &
 JOIN_PID=$!
+WORKER_PIDS="$JOIN_PID ${ENGINE_PID:-}"
+trap forward_stop TERM INT
 
 # The model this worker exists to serve (OPOD_LOAD_MODEL, with
 # OPOD_LOAD_REPO / OPOD_LOAD_FILE overriding the catalog) is loaded by `opod
@@ -171,8 +195,15 @@ JOIN_PID=$!
 # container. Reporting the engine's exit is what turns "pod running, nothing
 # served" into a restart the supervisor can act on.
 if [ -n "${ENGINE_PID:-}" ]; then
-  wait -n "$JOIN_PID" "$ENGINE_PID"
-  log "worker: join or engine exited — container will restart"
+  wait -n "$JOIN_PID" "$ENGINE_PID" || true
+  if [ "$STOPPING" = 0 ]; then
+    log "worker: join or engine exited — container will restart"
+    forward_stop # the one still running says goodbye too
+    STOPPING=0
+  fi
+  reap "$JOIN_PID"; reap "$ENGINE_PID"
+  [ "$STOPPING" = 1 ] && exit 0
   exit 1
 fi
-wait $JOIN_PID
+reap "$JOIN_PID"
+exit "$REAPED"

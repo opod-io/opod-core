@@ -7,6 +7,11 @@ the last section.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
+- **A worker's stop reaches `opod join`, so it says goodbye.** The image's entrypoint ran `opod join` in the
+  background and Kubernetes' SIGTERM went to the shell alone; the join process died with the SIGKILL and never sent
+  its goodbye, so after every park and rolling update the leader kept routing to the stopped worker until the
+  heartbeat bound (60 s) — each request a 503 after a dial timeout, and a floor-0 endpoint's wake hold never applied.
+  The entrypoint now forwards TERM/INT to the worker's processes and waits for them.
 - **A gang part whose process is down takes its gang with it.** When a worker's heartbeat newly reports its engine
   `stopped` or `crash-looping`, the leader checks that worker's process list; a gang whose recorded part is not running
   is removed (`shard.stale`, reason "the worker reports its part's process down"), so the heal forms it again and

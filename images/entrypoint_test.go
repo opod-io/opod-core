@@ -1,11 +1,14 @@
 package images
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The load this script used to perform — `curl -X POST .../v1/model/load` with
@@ -122,5 +125,68 @@ func TestAGatewaysModelsDirectoryIsOneItCanMake(t *testing.T) {
 	// And a leader's default is unchanged — the shared /data volume it is given.
 	if out, err := runRole("leader", filepath.Join(ro, "models")); err == nil && strings.Contains(out, "PREPARED") {
 		t.Errorf("a leader with an unwritable models dir must fail, not pass: %s", out)
+	}
+}
+
+// Kubernetes stops a pod with SIGTERM to PID 1, the entrypoint's shell, and a
+// shell does not pass it on: `opod join` never said goodbye, and the leader
+// routed requests into the stopped worker for its whole heartbeat bound (60 s,
+// every one a 503 after a dial timeout; design-partner cell, 2026-10-18). The
+// signal goes to the shell ONLY here, as the kubelet sends it; the worker must
+// get it, finish, and the shell must exit with its status.
+func TestAWorkersStopReachesTheJoinProcess(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	dir := t.TempDir()
+	said := filepath.Join(dir, "goodbye")
+	join := filepath.Join(dir, "join.sh")
+	// It says when its own trap is set: a stop that lands before that kills it
+	// outright, which is the test racing itself, not the entrypoint failing.
+	up := filepath.Join(dir, "up")
+	if err := os.WriteFile(join, []byte("trap 'echo goodbye > \"$SAID\"; exit 0' TERM\n: > \"$UP\"\nwhile :; do sleep 0.05; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := `set -euo pipefail
+eval "$(sed -n '/^STOPPING=0$/,/^# A DOOR is/p' entrypoint.sh)"
+bash "$JOIN" &
+JOIN_PID=$!
+WORKER_PIDS="$JOIN_PID"
+trap forward_stop TERM INT
+while [ ! -f "$UP" ]; do sleep 0.02; done
+echo READY
+reap "$JOIN_PID"
+exit "$REAPED"`
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Dir = "."
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "JOIN=" + join, "SAID=" + said, "UP=" + up}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready := make([]byte, 6)
+	if _, err := io.ReadFull(out, ready); err != nil || string(ready) != "READY\n" {
+		t.Fatalf("the script did not start: %q %v", ready, err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the shell must exit with the worker's own status (0 after its goodbye): %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("the shell did not exit after SIGTERM")
+	}
+	if b, err := os.ReadFile(said); err != nil || strings.TrimSpace(string(b)) != "goodbye" {
+		t.Fatalf("the join process never got the stop, so it could not say goodbye: %q %v", b, err)
 	}
 }
