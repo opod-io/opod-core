@@ -79,6 +79,8 @@ func ClassifyError(err error) ErrorClass {
 		strings.Contains(msg, "context_length_exceeded"),
 		strings.Contains(msg, "maximum context length"),
 		strings.Contains(msg, "n_ctx"),
+		strings.Contains(msg, "exceed_context_size"), // llama.cpp server's error type
+		strings.Contains(msg, "available context size"),
 		strings.Contains(msg, "too many tokens"),
 		strings.Contains(msg, "max input length"):
 		return ClassContextLength

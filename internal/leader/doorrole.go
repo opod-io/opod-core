@@ -1,6 +1,6 @@
 package leader
 
-// The cell door (ADR-087, feature `door`): ONE URL for many endpoints.
+// The cell door (ADR-087, feature `door`; auto routes ADR-092 §8): ONE URL for many endpoints.
 //
 // An endpoint is one leader serving one model identity (D1/D5), so a cell of
 // five models is five base URLs — and every OpenAI-compatible service a client
@@ -10,9 +10,13 @@ package leader
 //   - it reads the request's `model`, finds the endpoint that answers it in a
 //     watched routes file (adminapi.DoorRoutes), and forwards the request
 //     there unchanged — streaming included, flushed per chunk;
-//   - it chooses no worker, judges no load, retries nothing and falls back to
-//     nothing. Choosing a worker stays the endpoint leader's job, so there is
-//     still exactly one router per endpoint;
+//   - it chooses no worker. Choosing a worker stays the endpoint leader's
+//     job, so there is still exactly one router per endpoint;
+//   - a name route retries nothing and falls back to nothing. An AUTO route
+//     (ADR-092 §8, doorauto.go) is the one exception: a name the owner maps
+//     to an ordered list of endpoints, tried down the list when one answers
+//     that it cannot take the request. The order is the owner's; nothing in
+//     it is a price (ADR-003);
 //   - it holds no credential. `Authorization` is forwarded as received and the
 //     endpoint's leader verifies it, so a key for endpoint A sent with B's
 //     model is refused by B's leader, exactly as if it had been sent to B;
@@ -41,6 +45,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,8 +59,9 @@ import (
 
 // DoorRoutes is the routes file's wire type (opod-sdk/adminapi).
 type (
-	DoorRoutes = adminapi.DoorRoutes
-	DoorRoute  = adminapi.DoorRoute
+	DoorRoutes    = adminapi.DoorRoutes
+	DoorRoute     = adminapi.DoorRoute
+	DoorCandidate = adminapi.DoorCandidate
 )
 
 const (
@@ -83,6 +89,7 @@ type CellDoor struct {
 
 	mu       sync.RWMutex
 	routes   map[string]*doorUpstream // alias → upstream
+	autos    map[string]*doorAuto     // auto alias → its candidates
 	revision string
 	loadedAt time.Time
 	loaded   bool
@@ -95,14 +102,20 @@ type CellDoor struct {
 
 	cmu    sync.Mutex
 	models map[string]doorModelsEntry // sha256(Authorization) → answer
+
+	lmu   sync.Mutex
+	loads map[string]candidateLoad // upstream URL → its last /loadz, for least-loaded
 }
 
-// doorUpstream is one route made usable: the parsed URL and its transport.
+// doorUpstream is one endpoint made usable: the parsed URL and its transport.
+// For a candidate of an auto route, alias is the endpoint's own alias and
+// tools says its model can call tools.
 type doorUpstream struct {
 	alias string
 	model string
 	url   *url.URL
 	rt    http.RoundTripper
+	tools bool
 }
 
 type doorModelsEntry struct {
@@ -121,8 +134,8 @@ func NewCellDoor(cfg *config.Config, log *slog.Logger, path string) (*CellDoor, 
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &CellDoor{cfg: cfg, log: log, path: path, routes: map[string]*doorUpstream{},
-		transports: map[string]http.RoundTripper{}, models: map[string]doorModelsEntry{}}, nil
+	return &CellDoor{cfg: cfg, log: log, path: path, routes: map[string]*doorUpstream{}, autos: map[string]*doorAuto{},
+		transports: map[string]http.RoundTripper{}, models: map[string]doorModelsEntry{}, loads: map[string]candidateLoad{}}, nil
 }
 
 // Run watches the routes file and serves until ctx ends.
@@ -200,36 +213,55 @@ func (d *CellDoor) apply(raw []byte) error {
 		return err
 	}
 	next := make(map[string]*doorUpstream, len(doc.Routes))
+	autos := map[string]*doorAuto{}
 	for i, r := range doc.Routes {
 		alias := strings.TrimSpace(r.Alias)
 		if alias == "" {
 			return fmt.Errorf("route %d has no alias", i)
 		}
-		if _, dup := next[alias]; dup {
+		_, dup := next[alias]
+		if _, dupAuto := autos[alias]; dup || dupAuto {
 			return fmt.Errorf("alias %q is listed twice", alias)
 		}
-		u, err := url.Parse(strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(r.Upstream), "/"), "/v1"))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("route %q: upstream %q is not an http(s) base URL", alias, r.Upstream)
+		if len(r.Candidates) > 0 {
+			a, err := d.autoRoute(alias, r)
+			if err != nil {
+				return fmt.Errorf("route %q: %w", alias, err)
+			}
+			autos[alias] = a
+			continue
 		}
-		rt, err := d.transport(r.CA)
+		up, err := d.upstream(alias, r.Upstream, r.Model, r.CA)
 		if err != nil {
 			return fmt.Errorf("route %q: %w", alias, err)
 		}
-		next[alias] = &doorUpstream{alias: alias, model: strings.TrimSpace(r.Model), url: u, rt: rt}
+		next[alias] = up
 	}
 	d.mu.Lock()
 	changed := !d.loaded || d.revision != doc.Revision
-	d.routes, d.revision, d.loadedAt, d.loaded, d.lastErr = next, doc.Revision, time.Now(), true, ""
+	d.routes, d.autos, d.revision, d.loadedAt, d.loaded, d.lastErr = next, autos, doc.Revision, time.Now(), true, ""
 	d.mu.Unlock()
 	// A list answered under the old routes may name an alias that is gone.
 	d.cmu.Lock()
 	d.models = map[string]doorModelsEntry{}
 	d.cmu.Unlock()
 	if changed {
-		d.log.Info("door routes applied", "revision", doc.Revision, "routes", len(next))
+		d.log.Info("door routes applied", "revision", doc.Revision, "routes", len(next), "auto_routes", len(autos))
 	}
 	return nil
+}
+
+// upstream parses one endpoint's base URL and trust.
+func (d *CellDoor) upstream(alias, base, model, ca string) (*doorUpstream, error) {
+	u, err := url.Parse(strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(base), "/"), "/v1"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("upstream %q is not an http(s) base URL", base)
+	}
+	rt, err := d.transport(ca)
+	if err != nil {
+		return nil, err
+	}
+	return &doorUpstream{alias: alias, model: strings.TrimSpace(model), url: u, rt: rt}, nil
 }
 
 // transport is the round tripper for one trust: the system roots when ca is
@@ -259,6 +291,13 @@ func (d *CellDoor) route(alias string) *doorUpstream {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.routes[alias]
+}
+
+// auto is the auto route one alias names, or nil.
+func (d *CellDoor) auto(alias string) *doorAuto {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.autos[alias]
 }
 
 // Handler is the door's whole HTTP surface.
@@ -291,7 +330,7 @@ func (d *CellDoor) Handler() http.Handler {
 // request would be a 404 that reads as a missing model.
 func (d *CellDoor) readyz(w http.ResponseWriter, _ *http.Request) {
 	d.mu.RLock()
-	loaded, n := d.loaded, len(d.routes)
+	loaded, n := d.loaded, len(d.routes)+len(d.autos)
 	d.mu.RUnlock()
 	if !loaded {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false, "role": "door",
@@ -310,12 +349,17 @@ func (d *CellDoor) gatewayz(w http.ResponseWriter, _ *http.Request) {
 	for a := range d.routes {
 		aliases = append(aliases, a)
 	}
+	autos := make([]string, 0, len(d.autos))
+	for a := range d.autos {
+		autos = append(autos, a)
+	}
 	out := map[string]any{
 		"role":            "door",
 		"routes_file":     d.path,
 		"routes_loaded":   d.loaded,
 		"routes_revision": d.revision,
 		"routes":          len(d.routes),
+		"auto_routes":     len(d.autos),
 	}
 	if d.loaded {
 		out["routes_age_s"] = int(time.Since(d.loadedAt).Seconds())
@@ -325,7 +369,9 @@ func (d *CellDoor) gatewayz(w http.ResponseWriter, _ *http.Request) {
 	}
 	d.mu.RUnlock()
 	sort.Strings(aliases)
+	sort.Strings(autos)
 	out["aliases"] = aliases
+	out["auto_aliases"] = autos
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -338,7 +384,8 @@ func (d *CellDoor) forward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var probe struct {
-		Model *string `json:"model"`
+		Model *string         `json:"model"`
+		Tools json.RawMessage `json:"tools"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
 		doorError(w, http.StatusBadRequest, "invalid_request_error", "", "the request body is not JSON: "+err.Error())
@@ -347,6 +394,10 @@ func (d *CellDoor) forward(w http.ResponseWriter, r *http.Request) {
 	alias := ""
 	if probe.Model != nil {
 		alias = strings.TrimSpace(*probe.Model)
+	}
+	if auto := d.auto(alias); auto != nil {
+		d.forwardAuto(w, r, auto, body, carriesTools(probe.Tools))
+		return
 	}
 	up := d.route(alias)
 	if up == nil {
@@ -368,7 +419,8 @@ func (d *CellDoor) forward(w http.ResponseWriter, r *http.Request) {
 // proxy is the stdlib reverse proxy aimed at one upstream. FlushInterval -1
 // writes every chunk as it arrives, so a stream reaches the client token by
 // token whatever its content type. Headers pass as received —
-// Authorization included — minus the hop-by-hop ones.
+// Authorization included — minus the hop-by-hop ones. The answer carries
+// X-Opod-Endpoint: the alias of the endpoint that served it.
 func (d *CellDoor) proxy(up *doorUpstream) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -377,13 +429,18 @@ func (d *CellDoor) proxy(up *doorUpstream) *httputil.ReverseProxy {
 		},
 		Transport:     up.rt,
 		FlushInterval: -1,
+		ModifyResponse: func(resp *http.Response) error {
+			resp.Header.Set(doorEndpointHeader, up.alias)
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if r.Context().Err() != nil {
 				return // the client left; nobody is reading an answer
 			}
 			d.log.Warn("door upstream unreachable", "alias", up.alias, "upstream", up.url.String(), "err", err)
-			// No retry and no fallback (ADR-087): the endpoint is unreachable,
-			// and saying so is the answer.
+			// A name route has no retry and no fallback (ADR-087): the endpoint
+			// is unreachable, and saying so is the answer. An auto route that
+			// has a next candidate never reaches here (doorauto.go).
 			doorError(w, http.StatusBadGateway, "upstream_unavailable", "",
 				fmt.Sprintf("the endpoint for model %q did not answer the door", up.alias))
 		},
@@ -430,7 +487,8 @@ func (d *CellDoor) getModel(w http.ResponseWriter, r *http.Request) {
 }
 
 // acceptedAliases is the sorted aliases whose endpoint answers 200 to
-// /v1/models with the caller's Authorization. Cached per key for
+// /v1/models with the caller's Authorization — for an auto route, any of its
+// candidates. Each distinct endpoint is asked once. Cached per key for
 // doorModelsTTL under the key's SHA-256 — the raw key is never held.
 func (d *CellDoor) acceptedAliases(r *http.Request) []string {
 	auth := r.Header.Get("Authorization")
@@ -444,28 +502,47 @@ func (d *CellDoor) acceptedAliases(r *http.Request) []string {
 	d.cmu.Unlock()
 
 	d.mu.RLock()
-	ups := make([]*doorUpstream, 0, len(d.routes))
-	for _, u := range d.routes {
-		ups = append(ups, u)
+	ups := map[string]*doorUpstream{} // base URL → one endpoint to ask
+	named := make(map[string]string, len(d.routes))
+	for a, u := range d.routes {
+		ups[u.url.String()], named[a] = u, u.url.String()
+	}
+	autos := make(map[string][]string, len(d.autos))
+	for a, ar := range d.autos {
+		for _, c := range ar.cands {
+			ups[c.url.String()] = c
+			autos[a] = append(autos[a], c.url.String())
+		}
 	}
 	d.mu.RUnlock()
 	var (
-		wg  sync.WaitGroup
-		mu  sync.Mutex
-		ids = make([]string, 0, len(ups))
+		wg sync.WaitGroup
+		mu sync.Mutex
+		ok = make(map[string]bool, len(ups))
 	)
-	for _, up := range ups {
+	for base, up := range ups {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if d.accepts(r.Context(), up, auth) {
 				mu.Lock()
-				ids = append(ids, up.alias)
+				ok[base] = true
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
+	ids := make([]string, 0, len(named)+len(autos))
+	for a, base := range named {
+		if ok[base] {
+			ids = append(ids, a)
+		}
+	}
+	for a, bases := range autos {
+		if slices.ContainsFunc(bases, func(b string) bool { return ok[b] }) {
+			ids = append(ids, a)
+		}
+	}
 	sort.Strings(ids)
 	if r.Context().Err() == nil {
 		d.cmu.Lock()
@@ -499,8 +576,8 @@ func (d *CellDoor) accepts(ctx context.Context, up *doorUpstream, auth string) b
 }
 
 // doorModelNotFound is OpenAI's own answer for a model nobody serves here.
-// An empty model and "auto" land here too: a door looks names up and chooses
-// nothing (ADR-087 §5).
+// An empty model lands here too, and so does "auto" unless the owner defined
+// an auto route by that name.
 func doorModelNotFound(w http.ResponseWriter, model string) {
 	msg := fmt.Sprintf("The model `%s` does not exist or you do not have access to it.", model)
 	if model == "" {

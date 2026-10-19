@@ -20,6 +20,7 @@ func TestClassifyError(t *testing.T) {
 
 		// Substring heuristics — patterns each upstream tends to emit.
 		{"llama.cpp n_ctx", errors.New("n_ctx exceeded by 200 tokens"), ClassContextLength},
+		{"llama.cpp server", errors.New(`{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`), ClassContextLength},
 		{"OpenAI maximum context length", errors.New("This model's maximum context length is 8192 tokens"), ClassContextLength},
 		{"vLLM too many tokens", errors.New("decode: too many tokens in prompt"), ClassContextLength},
 		{"Anthropic context_length_exceeded", errors.New("context_length_exceeded: prompt is 33001 tokens"), ClassContextLength},

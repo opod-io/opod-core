@@ -7,6 +7,15 @@ the last section.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
+- **The door takes `model: "auto"` — an owner's ordered list of endpoints, with fallback down it** (ADR-092 §8). A
+  route that names `candidates` resolves to them by `pick` (`first`, the owner's order; or `least-loaded`, each
+  candidate's `/loadz` in-flight plus queued requests per serving worker, read at most every 2 s). The door tries the
+  next candidate, `maxHops` times (default 1), on a 429, any 5xx, a context-length refusal or no answer; any other
+  answer is the client's. A request that carries `tools` skips a candidate whose model cannot call them. Every answer
+  through the door names the endpoint that served in `X-Opod-Endpoint`, and that endpoint's leader records the usage.
+  A name route behaves as before: no retry, no fallback.
+- **llama.cpp's own context-size refusal (`exceed_context_size_error`) is a context-length error** to the router's
+  typed fallback chains, as vLLM's and SGLang's already were.
 - **SGLang takes the KV cache's element type from a plan** (`flags.kv_cache_dtype` → `--kv-cache-dtype`), as vLLM does.
 - **A worker relays its engine's refusal of the request as the caller's error.** An engine answer that says the request
   itself is wrong — 400, 413, 422 — went back from the worker as 502, so the leader answered `502 upstream_error` to a
