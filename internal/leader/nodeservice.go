@@ -122,7 +122,7 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 			// A worker that predates boot ids: what was recorded as running
 			// on it is checked against its own process list on the next
 			// heartbeat (its agent is listening by then).
-			s.reconcileNodes.Store(n.ID, struct{}{})
+			s.reconcileNodes.Store(n.ID, whyRegisteredAgain)
 		}
 	}
 	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address, "again": existing != nil, "boot_id": n.BootID})
@@ -170,7 +170,7 @@ func (s *Server) reincarnated(ctx context.Context, n store.Node, previous string
 		removed, err := s.orch.RemoveShardsOn(ctx, n.ID)
 		if err != nil {
 			s.log.Warn("shard rows of the previous incarnation not removed — the process-list check retries on the next heartbeat", "node", n.ID, "err", err)
-			s.reconcileNodes.Store(n.ID, struct{}{})
+			s.reconcileNodes.Store(n.ID, whyRegisteredAgain)
 			return
 		}
 		for _, g := range removed {
@@ -180,9 +180,17 @@ func (s *Server) reincarnated(ctx context.Context, n store.Node, previous string
 	}()
 }
 
-// reconcileShardsOn runs the orchestrator's stale-part check for a node
-// that registered again (see RegisterNode), off the heartbeat's path.
-func (s *Server) reconcileShardsOn(n store.Node) {
+// Why a node's shard rows are checked against its process list.
+const (
+	whyRegisteredAgain = "worker registered again; the recorded process is not running"
+	whyPartProcessDown = "the worker reports its part's process down; the recorded process is not running"
+)
+
+// reconcileShardsOn runs the orchestrator's stale-part check for a node, off
+// the heartbeat's path: one that registered again (see RegisterNode), or one
+// whose heartbeat says a process of its stopped or is crash-looping
+// (partProcessDown). why is what the journal says when a gang goes.
+func (s *Server) reconcileShardsOn(n store.Node, why string) {
 	if s.orch == nil {
 		return
 	}
@@ -190,14 +198,24 @@ func (s *Server) reconcileShardsOn(n store.Node) {
 	defer cancel()
 	removed, err := s.orch.ReconcileNode(ctx, n)
 	if err != nil {
-		s.log.Warn("stale shard check failed — will retry on the next register", "node", n.ID, "err", err)
-		s.reconcileNodes.Store(n.ID, struct{}{})
+		s.log.Warn("stale shard check failed — will retry on the next heartbeat", "node", n.ID, "err", err)
+		s.reconcileNodes.Store(n.ID, why)
 		return
 	}
 	for _, g := range removed {
-		s.log.Warn("gang removed: its part died with the worker's previous incarnation", "model", g.Model, "gang", g.Gang, "node", n.ID)
-		s.record("shard.stale", g.Model, map[string]any{"node": n.ID, "gang": g.Gang, "reason": "worker registered again; the recorded process is not running"})
+		s.log.Warn("gang removed: a part's recorded process is not running", "model", g.Model, "gang", g.Gang, "node", n.ID, "why", why)
+		s.record("shard.stale", g.Model, map[string]any{"node": n.ID, "gang": g.Gang, "reason": why})
 	}
+}
+
+// partProcessDown: a worker's engine report that may mean a gang part's process
+// will not come back — stopped for good, or crash-looping (which is also how a
+// process whose supervisor ran out of restarts reads). The report does not
+// decide anything: it only asks the stale-part check, which reads the worker's
+// own process list and removes a gang only when its recorded part is not
+// running. A part that restarted and is up again is running, and stays.
+func partProcessDown(state string) bool {
+	return state == nodeapi.EngineStopped || state == nodeapi.EngineCrashLooping
 }
 
 // HeartbeatNode refreshes liveness, keeps the engine's load sample, and
@@ -222,8 +240,18 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	if n.BoundKeyID != "" && !caller.Admin && caller.KeyID != n.BoundKeyID {
 		return ErrNodeBoundToOtherKey
 	}
+	// A gang part whose process is down leaves its gang's rows "ready" until
+	// something checks — the router stops sending to it (engineGoneWhy), but the
+	// heal sees a gang that is present and never forms it again, and a manager
+	// reading the rows sees a serving gang (T22.4, design-partner cell
+	// 2026-10-18: a part that could not start again left its gang refusing
+	// every request for good). So the report's arrival asks the stale-part
+	// check, once per change of state rather than on every heartbeat.
+	partDown := false
 	if req.Engine != nil {
-		s.nodeEngine.Store(req.ID, nodeEngineSample{EngineState: *req.Engine, at: time.Now()})
+		prev, had := s.nodeEngine.Swap(req.ID, nodeEngineSample{EngineState: *req.Engine, at: time.Now()})
+		changed := !had || prev.(nodeEngineSample).State != req.Engine.State
+		partDown = changed && partProcessDown(req.Engine.State)
 	}
 	if req.Load != nil {
 		s.nodeLoad.Store(req.ID, nodeLoadSample{EngineLoad: *req.Load, at: time.Now()})
@@ -243,8 +271,14 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	} else if n.BootID == "" && req.BootID != "" {
 		n.BootID = req.BootID // a row from before the field: adopt the process it now names
 	}
-	if _, again := s.reconcileNodes.LoadAndDelete(req.ID); again {
-		go s.reconcileShardsOn(*n)
+	if v, again := s.reconcileNodes.LoadAndDelete(req.ID); again {
+		why, _ := v.(string)
+		if why == "" {
+			why = whyRegisteredAgain
+		}
+		go s.reconcileShardsOn(*n, why)
+	} else if partDown {
+		go s.reconcileShardsOn(*n, whyPartProcessDown)
 	}
 	// A targeted write, never the row read above: a drain (or undrain) that
 	// lands between that read and this write must not be undone by it.

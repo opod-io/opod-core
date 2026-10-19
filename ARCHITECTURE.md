@@ -197,7 +197,11 @@ state (`Server.engineGoneWhy`): a fresh `stopped` takes the worker out of the ro
 count, while `engines_unhealthy` still counts it, because the card it holds is still held. `crash-looping`
 does **not** take a worker out: the process may be up again by the time the next request lands, and flapping
 an endpoint between serving and 503 on a report is worse than routing one request at a worker that then
-errors. Silence remains the heartbeat rule's alone. The goodbye is best-effort and bounded at 3 s — a shutdown
+errors. Silence remains the heartbeat rule's alone. **A gang part is checked, not just routed around:** a report that
+newly reads `stopped` or `crash-looping` asks the stale-part check (`Orchestrator.ReconcileNode`) for that node, which
+reads the worker's own process list and removes a gang whose recorded part is not running (its siblings stopped,
+`shard.stale`) — so the heal forms it again, and gives up after three. A part that restarted and runs keeps its gang.
+Without it a part that could not start again left its gang's rows `ready` and the heal idle, for good. The goodbye is best-effort and bounded at 3 s — a shutdown
 must never wait on a leader that is itself restarting, and a lost goodbye costs exactly what we had before,
 the heartbeat bound (ADR-065).
 

@@ -5,6 +5,14 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## 2026-10-18 — a gang whose part is down is formed again
+
+- **A gang part whose process is down takes its gang with it.** When a worker's heartbeat newly reports its engine
+  `stopped` or `crash-looping`, the leader checks that worker's process list; a gang whose recorded part is not running
+  is removed (`shard.stale`, reason "the worker reports its part's process down"), so the heal forms it again and
+  gives up after three. Before, a part that could not start again left the gang's rows `ready`: the router refused
+  every request for the model and the heal, seeing a gang present, never tried.
+
 ## 2026-10-17 — per-key limits, from memory
 
 - **A key from the auth snapshot may carry limits again** (feature `key_limits`). `rpmLimit` and `tpmLimit` are token
