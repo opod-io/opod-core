@@ -76,12 +76,19 @@ func (d *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 		return engines.EngineLoad{}, engines.Unreachable(name, d.BaseURL, err)
 	}
 	defer resp.Body.Close()
+	now := time.Now()
+	ld := engines.EngineLoad{SampledAt: now.Unix()}
+	if resp.StatusCode == http.StatusNotFound {
+		// Release 1.2.1 has no Prometheus route, and its /metrics JSON stays
+		// empty unless iteration stats are switched on through a config file
+		// (read on the cell, 2026-10-19): no load signal, which is not an
+		// error. The control plane declares no KV pressure for it.
+		return ld, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		return engines.EngineLoad{}, engines.Upstream(name, "GET /prometheus/metrics", resp.StatusCode, nil)
 	}
 	m := engines.ParsePromText(resp.Body)
-	now := time.Now()
-	ld := engines.EngineLoad{SampledAt: now.Unix()}
 	if kv, ok := engines.First(m, "trtllm_kv_cache_utilization", "trtllm:kv_cache_utilization"); ok {
 		ld.KVUsedPct = kv * 100
 	}

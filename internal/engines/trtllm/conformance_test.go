@@ -54,3 +54,13 @@ func TestLoadReadsPrometheusMetrics(t *testing.T) {
 		t.Fatalf("load %+v err %v", ld, err)
 	}
 }
+
+// Release 1.2.1 has no Prometheus route: no load signal, and no error either.
+func TestLoadWithoutPrometheusRoute(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	ld, err := trtllm.New(srv.URL, "").Load(context.Background())
+	if err != nil || ld.KVUsedPct != 0 || ld.SampledAt == 0 {
+		t.Fatalf("load %+v err %v", ld, err)
+	}
+}

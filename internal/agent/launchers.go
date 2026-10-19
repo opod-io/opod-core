@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -65,15 +66,22 @@ func (s *Server) engineAddr(defPort int) (string, int) {
 //	--kv_cache_free_gpu_memory_fraction    a share of the memory LEFT AFTER the weights
 //	                                       (T23.3 owns the translation from a budget)
 //
-// trtllm-serve takes no --revision, so a pinned revision is served only from
-// its prefetched snapshot; without one the launch is refused rather than
-// serving whatever the repo holds today. No sleep mode, no runtime LoRA.
+// trtllm-serve has no served-model-name: it lists the model under the base
+// name of the directory it was given, or the repo id, and answers whatever
+// `model` a request names. So the worker records THAT name as this model's
+// native one, or its heartbeat would report a name the leader cannot place
+// (read on the cell, 2026-10-19). No sleep mode, no runtime LoRA.
 func (s *Server) launchTRTLLM(model, servedName string) error {
 	host, port := s.engineAddr(8000)
-	cmdline, err := s.trtllmCmdline(model, host, port)
+	cmdline, servedAs, err := s.trtllmCmdline(model, host, port)
 	if err != nil {
 		return err
 	}
+	if servedName == "" {
+		servedName = model
+	}
+	s.Aliases.Forget(model)
+	s.Aliases.Note(servedAs, servedName)
 	s.launchedSlots.Store(int64(s.EngineFlags.LaunchSlots("trtllm")))
 	_ = s.Supervisor.Stop("trtllm-serve") // exclusive: one model per worker
 	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{
@@ -86,19 +94,23 @@ func (s *Server) launchTRTLLM(model, servedName string) error {
 	return err
 }
 
-// trtllmCmdline is the shell line launchTRTLLM runs. trtllm-serve has no
-// --served-model-name: it serves under the path or repo it was given, which is
-// why the driver resolves the catalog id to that native name (openaicompat).
-func (s *Server) trtllmCmdline(model, host string, port int) (string, error) {
+// trtllmCmdline is the shell line launchTRTLLM runs, and the name the engine
+// will list the model under: a directory's base name, else the repo id.
+// --revision is spelled as vLLM's and SGLang's (pinnedSource).
+func (s *Server) trtllmCmdline(model, host string, port int) (cmdline, servedAs string, err error) {
 	source, revArgs, err := s.pinnedSource(model)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	servedAs = source
+	if filepath.IsAbs(source) {
+		servedAs = filepath.Base(source)
 	}
 	if revArgs != "" {
-		return "", fmt.Errorf("model %s: TensorRT-LLM cannot pin revision %s by flag — prefetch the snapshot so the worker serves it from %s", model, s.ModelRevision, s.ModelsDir)
+		revArgs += " "
 	}
 	flagOverrides, flagArgs := s.EngineFlags.trtllmShellOverrides()
 	return gpuCountShell + fmt.Sprintf(
-		"%s exec trtllm-serve '%s' --host %s --port %d --backend pytorch --tp_size \"$TP\" --trust_remote_code %s",
-		flagOverrides, source, host, port, flagArgs), nil
+		"%s exec trtllm-serve '%s' %s--host %s --port %d --backend pytorch --tp_size \"$TP\" --trust_remote_code %s",
+		flagOverrides, source, revArgs, host, port, flagArgs), servedAs, nil
 }

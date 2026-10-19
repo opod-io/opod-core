@@ -26,9 +26,9 @@ func TestLauncherFor(t *testing.T) {
 // own names, and always states its slot count (ADR-091).
 func TestTRTLLMCmdline(t *testing.T) {
 	s := &Server{ModelsDir: t.TempDir(), EngineFlags: EngineFlags{"tp": "2", "max_model_len": "4096", "kv_cache_free_gpu_memory_fraction": "0.6", "extra": "--max_num_tokens 2048"}}
-	got, err := s.trtllmCmdline("Qwen/Qwen2.5-0.5B-Instruct", "127.0.0.1", 8000)
-	if err != nil {
-		t.Fatal(err)
+	got, served, err := s.trtllmCmdline("Qwen/Qwen2.5-0.5B-Instruct", "127.0.0.1", 8000)
+	if err != nil || served != "Qwen/Qwen2.5-0.5B-Instruct" {
+		t.Fatal(err, served)
 	}
 	for _, want := range []string{"TP=2;", "exec trtllm-serve 'Qwen/Qwen2.5-0.5B-Instruct' --host 127.0.0.1 --port 8000 --backend pytorch --tp_size \"$TP\"",
 		"'--max_batch_size' '64'", "'--max_seq_len' '4096'", "'--kv_cache_free_gpu_memory_fraction' '0.60'", "'--max_num_tokens' '2048'"} {
@@ -41,13 +41,15 @@ func TestTRTLLMCmdline(t *testing.T) {
 	}
 }
 
-// trtllm-serve has no --revision: a pinned revision is served from its
-// snapshot, and refused without one rather than serving the branch head.
+// A pinned revision reaches trtllm-serve as --revision when it pulls the repo
+// itself, and a snapshot directory is the revision — listed under the
+// directory's base name, which the worker must record (read on the cell).
 func TestTRTLLMPinnedRevision(t *testing.T) {
 	dir := t.TempDir()
 	pinned := &Server{ModelsDir: dir, ModelRevision: "0123abc"}
-	if _, err := pinned.trtllmCmdline("org/llama", "127.0.0.1", 8000); err == nil || !strings.Contains(err.Error(), "prefetch") {
-		t.Fatalf("pinned, no snapshot: %v", err)
+	got, served, err := pinned.trtllmCmdline("org/llama", "127.0.0.1", 8000)
+	if err != nil || !strings.Contains(got, "'org/llama' --revision '0123abc' ") || served != "org/llama" {
+		t.Fatalf("pinned, no snapshot: %v %q\n%s", err, served, got)
 	}
 	sdir := fetch.SnapshotDir(dir, "org/llama", "0123abc")
 	if err := os.MkdirAll(sdir, 0o755); err != nil {
@@ -61,8 +63,8 @@ func TestTRTLLMPinnedRevision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sdir, fetch.SnapshotManifestName), man, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := pinned.trtllmCmdline("org/llama", "127.0.0.1", 8000)
-	if err != nil || !strings.Contains(got, "'"+sdir+"'") {
-		t.Fatalf("snapshot: %v\n%s", err, got)
+	got, served, err = pinned.trtllmCmdline("org/llama", "127.0.0.1", 8000)
+	if err != nil || !strings.Contains(got, "'"+sdir+"'") || strings.Contains(got, "--revision") || served != filepath.Base(sdir) {
+		t.Fatalf("snapshot: %v %q\n%s", err, served, got)
 	}
 }
