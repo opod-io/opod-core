@@ -7,6 +7,9 @@ the last section.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
+- **llama.cpp's KV layout is the manager's to say** (`flags.kv_unified`: `true` → `--kv-unified`, one pool every slot
+  shares; `false` → `--no-kv-unified`, a partition per slot). A build picks one when not told, and the default changed
+  between builds. The KV-pressure number stays slot occupancy, which is KV use only with a partition per slot.
 - **A worker's stop reaches `opod join`, so it says goodbye.** The image's entrypoint ran `opod join` in the
   background and Kubernetes' SIGTERM went to the shell alone; the join process died with the SIGKILL and never sent
   its goodbye, so after every park and rolling update the leader kept routing to the stopped worker until the

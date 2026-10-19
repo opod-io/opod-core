@@ -37,6 +37,28 @@ func TestEngineFlags(t *testing.T) {
 	}
 }
 
+// The KV layout is the manager's to say (G39 O-05): a shared worker runs one
+// pool its slots share, a dedicated one a partition per slot. A build picks one
+// when not told, and the default changed between builds, so the flag is
+// rendered either way and anything else renders nothing.
+func TestLlamaKVLayoutIsSaidEitherWay(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"kv_unified":"true"}`:  "--kv-unified",
+		`{"kv_unified":true}`:    "--kv-unified",
+		`{"kv_unified":"false"}`: "--no-kv-unified",
+		`{"kv_unified":"maybe"}`: "",
+		`{}`:                     "",
+	} {
+		if got := strings.Join(ParseEngineFlags(raw).llamaArgs(), " "); got != want {
+			t.Errorf("%s: llama args %q, want %q", raw, got, want)
+		}
+	}
+	// The gang coordinator is a llama-server too, and takes the same flags.
+	if got := strings.Join(ParseEngineFlags(`{"kv_unified":"true"}`).LlamaServerArgs(), " "); got != "--kv-unified" {
+		t.Errorf("a gang head takes the layout too: %q", got)
+	}
+}
+
 func TestLlamaModelSource(t *testing.T) {
 	if got := strings.Join(llamaModelSource("id", "org/repo-GGUF", "q4.gguf", ""), " "); got != "-hf org/repo-GGUF --hf-file q4.gguf" {
 		t.Fatalf("repo+file: %q", got)

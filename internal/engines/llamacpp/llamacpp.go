@@ -130,11 +130,13 @@ var _ engines.Engine = (*Driver)(nil)
 // no `kv_cache_usage_ratio` — read from inside a serving worker, its /metrics
 // carries fifteen series and that is not one of them, so the field was 0 for
 // every llama.cpp worker for ever and the autoscaler's KV trigger could not
-// fire. Each slot owns a fixed partition of the context the server was
-// started with (`-c` is the total, `-np` divides it), so a busy slot IS a full
-// partition: with the context pinned, occupancy is KV occupancy exactly. The
-// ratio is still read first when a build emits it. The slot count comes from
-// /props (`total_slots`), read once and kept.
+// fire. With a partition per slot (`--no-kv-unified`: `-c` is the total, `-np`
+// divides it) a busy slot IS a full partition, so occupancy is KV occupancy
+// exactly. With one unified pool (`--kv-unified`, which a manager asks for on a
+// worker that shares its card) it is NOT: a busy slot holds what its request
+// holds, so this number is slot occupancy and the manager does not read it as
+// KV use (G39 O-05). The ratio is still read first when a build emits it. The
+// slot count comes from /props (`total_slots`), read once and kept.
 func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.BaseURL+"/metrics", nil)
 	if err != nil {

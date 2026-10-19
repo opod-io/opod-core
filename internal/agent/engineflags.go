@@ -10,6 +10,7 @@ package agent
 //	           gpu_memory_utilization (0.05–0.95; overrides the budget-derived value),
 //	           max_model_len, max_num_seqs, kv_cache_dtype, extra (raw args)
 //	llama.cpp: ctx (-c), ngl (--n-gpu-layers), parallel (-np), kv_cache_type (-ctk/-ctv),
+//	           kv_unified (true → --kv-unified, false → --no-kv-unified),
 //	           tensor_split (--tensor-split: uneven shares per device), extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
@@ -157,6 +158,16 @@ func (f EngineFlags) llamaArgs() []string {
 	}
 	if v, ok := f.get("kv_cache_type"); ok && isToken(v) {
 		args = append(args, "-ctk", v, "-ctv", v)
+	}
+	// kv_unified: one KV pool every slot shares, or a fixed partition per slot
+	// (-c ÷ -np each). A build picks one when it is not told — unified only
+	// when the slot count is automatic, as of the build we ship — so the
+	// manager says which, and the layout no longer changes with the build.
+	switch v, _ := f.get("kv_unified"); strings.ToLower(v) {
+	case "true":
+		args = append(args, "--kv-unified")
+	case "false":
+		args = append(args, "--no-kv-unified")
 	}
 	// tensor_split: how much of the model each device holds, as llama.cpp's own
 	// proportions ("12,8" = three fifths on the first card, two on the second).
