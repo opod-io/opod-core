@@ -23,7 +23,11 @@ package leader
 //   - admission.classes: one queue per request class, dispatched strictly in
 //     class order and fairly per flow inside a class, each class capped at
 //     its maxShare of the slots (ADR-086, ADR-091; admission_classes.go).
-//     None = one class, standard, on the same gate.
+//     None = one class, standard, on the same gate;
+//   - wake.noResumeInPlace: sleeping workers the leader's request wake must
+//     not resume, because a manager gave their card away while they slept;
+//     a request that finds only those is held by the admission hold instead
+//     (PLAN T11.31; wakeonrequest.go).
 //
 // No file → no-op: standalone `opod up` keeps its config behaviour. A bad
 // file keeps the last good policy (never a half-applied one).
@@ -31,7 +35,9 @@ package leader
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +71,15 @@ type policyFileState struct {
 	// maxAuthAgeSec is auth.maxSnapshotAgeSec; 0 = no bound. Read lock-free
 	// by the gateway on every keyed request.
 	maxAuthAgeSec atomic.Int64
+	// noResume is wake.noResumeInPlace as a set: sleeping workers the
+	// request wake must not resume (wakeonrequest.go). nil = none.
+	noResume atomic.Pointer[map[string]bool]
+}
+
+// resumeWithheld reports whether the policy forbids resuming node in place.
+func (p *policyFileState) resumeWithheld(node string) bool {
+	m := p.noResume.Load()
+	return m != nil && (*m)[node]
 }
 
 // fallbackRouting returns the active fallback target, or nil.
@@ -144,13 +159,14 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
 	}
 	s.policy.maxAuthAgeSec.Store(int64(max(doc.Auth.MaxSnapshotAgeSec, 0)))
+	marksChanged := s.applyWakeMarks(doc.Wake.NoResumeInPlace)
 	s.admission.set(doc.Admission)
 	if doc.Logging.AccessLog != nil {
 		s.policy.accessLog.Store(*doc.Logging.AccessLog)
 	} else {
 		s.policy.accessLog.Store(true)
 	}
-	changed := !s.policy.present || s.policy.revision != doc.Revision
+	changed := !s.policy.present || s.policy.revision != doc.Revision || marksChanged
 	s.policy.present = true
 	s.policy.revision = doc.Revision
 	s.policy.rules = len(doc.Guardrails) - skipped
@@ -160,6 +176,31 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.logEvent("policy.updated", doc.Revision, map[string]any{"guardrails": s.policy.rules, "skipped": skipped,
 			"fallback": r.FallbackURL != "", "accessLog": s.policy.accessLogEnabled()})
 	}
+}
+
+// applyWakeMarks swaps in the sleeping workers the request wake must leave
+// asleep (wake.noResumeInPlace) and reports whether the set changed — then it
+// is recorded, so an operator reading the event stream sees why a request was
+// held rather than served by an instant resume.
+func (s *Server) applyWakeMarks(ids []string) bool {
+	next := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			next[id] = true
+		}
+	}
+	prev := s.policy.noResume.Load()
+	if prev == nil && len(next) == 0 {
+		return false
+	}
+	if prev != nil && maps.Equal(*prev, next) {
+		return false
+	}
+	s.policy.noResume.Store(&next)
+	marked := slices.Sorted(maps.Keys(next))
+	s.log.Info("request wake: sleeping workers not to resume in place", "nodes", marked)
+	s.logEvent("policy.wake_marks", strings.Join(marked, ","), map[string]any{"noResumeInPlace": marked})
+	return true
 }
 
 // buildGuardrailRegistry turns the rules into the three mode chains. Rules

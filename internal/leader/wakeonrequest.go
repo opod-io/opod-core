@@ -20,6 +20,16 @@ package leader
 // One resume per worker at a time — a burst against a sleeping endpoint waits
 // on the same call rather than sending one each. A worker whose engine has no
 // sleep mode answers 501 and is left alone.
+//
+// What a manager may forbid (PLAN T11.31). A sleeper whose card the manager
+// gave to another workload while it slept must not wake into that memory: a
+// resume in place put two claims on one card until the manager's next look.
+// The policy snapshot names such workers (wake.noResumeInPlace) and the wake
+// passes them over. A request that finds only those is not resumed and not
+// refused here: it goes on to the admission gate, which holds it for the
+// policy's holdMs (the wake hold a manager sets on an endpoint that sleeps)
+// while the manager moves or re-places the worker, and serves it when one can
+// take it.
 
 import (
 	"context"
@@ -71,7 +81,8 @@ func (s *Server) wakeForRequest(ctx context.Context, model string) bool {
 	}
 }
 
-// sleepingHolder is a live worker that holds model asleep, or nil.
+// sleepingHolder is a live worker that holds model asleep and that the policy
+// lets the leader resume in place, or nil.
 func (s *Server) sleepingHolder(ctx context.Context, model string) *store.Node {
 	nodes, err := s.store.Nodes().List(ctx)
 	if err != nil {
@@ -89,6 +100,9 @@ func (s *Server) sleepingHolder(ctx context.Context, model string) *store.Node {
 		}
 		for _, p := range ps {
 			if p.ModelID == model && p.Status == PlacementSleeping {
+				if s.policy.resumeWithheld(n.ID) {
+					break // its card is no longer its own: the admission hold waits for the manager
+				}
 				return &n
 			}
 		}
