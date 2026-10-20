@@ -4,6 +4,8 @@ package router
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,54 +103,100 @@ func TestLoadRank_SaturatedGoesLast(t *testing.T) {
 	}
 }
 
-// The prefix key is a hash of the system prompt and the opening user turn,
-// never the prompt; a different opening turn is a different key; a long
-// document does not decide the key.
-func TestPrefixKey(t *testing.T) {
-	a := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: "You are terse."}, {Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "more"}}}
-	b := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: "You are terse."}, {Role: "user", Content: "hello"}}}
-	c := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: "You are terse."}, {Role: "user", Content: "goodbye"}}}
-	if prefixKeyOf(a) == "" || prefixKeyOf(a) != prefixKeyOf(b) {
-		t.Fatalf("same opening → same key: %q %q", prefixKeyOf(a), prefixKeyOf(b))
+// The prefix chain hashes the leading text in chunks, each link covering
+// everything before it: prompts share links for exactly as long as their
+// text does, never the prompt itself, and a long document does not decide it.
+func TestPrefixKeys(t *testing.T) {
+	sys := strings.Repeat("You are a careful assistant. ", 40) // > 1 KiB: several links
+	a := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: sys}, {Role: "user", Content: "hello"}}}
+	b := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: sys}, {Role: "user", Content: "goodbye"}}}
+	ka, kb := prefixKeysOf(a), prefixKeysOf(b)
+	if len(ka) < 4 || len(ka) != len(kb) {
+		t.Fatalf("a > 1 KiB lead is several links: %d %d", len(ka), len(kb))
 	}
-	if prefixKeyOf(a) == prefixKeyOf(c) {
-		t.Fatal("different opening turn → different key")
+	shared := 0
+	for shared < len(ka) && ka[shared] == kb[shared] {
+		shared++
 	}
-	if prefixKeyOf(engines.ChatRequest{}) != "" {
-		t.Fatal("nothing to key on → empty")
+	if shared != len(ka)-1 {
+		t.Fatalf("the same system prompt shares every link but the last: %d of %d", shared, len(ka))
 	}
-	long := engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: string(make([]byte, 5000))}}}
-	long2 := engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: string(make([]byte, 6000))}}}
-	if prefixKeyOf(long) != prefixKeyOf(long2) {
-		t.Fatal("the key is the capped head, not the whole document")
+	if strings.Contains(strings.Join(ka, ""), "assistant") {
+		t.Fatal("a key is a hash, never the text")
+	}
+	if prefixKeysOf(engines.ChatRequest{}) != nil {
+		t.Fatal("nothing to key on → no chain")
+	}
+	if len(prefixKeysOf(engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: "hi"}}})) != 1 {
+		t.Fatal("a short prompt is one partial link")
+	}
+	long := engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: strings.Repeat("y", 5000)}}}
+	long2 := engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: strings.Repeat("y", 6000)}}}
+	if k := prefixKeysOf(long); len(k) != prefixMaxChunks || strings.Join(k, "") != strings.Join(prefixKeysOf(long2), "") {
+		t.Fatal("the chain is the capped head, not the whole document")
 	}
 }
 
-// Affinity: off by default; on, a served prefix pins to its worker for the
-// TTL and the pin is consulted for the same model only.
+// Affinity: off by default; on, a served prefix pins every link to its worker
+// for the TTL, per model; a request that shares only the lead matches on it.
 func TestPrefixAffinity(t *testing.T) {
 	r := newLoadRouter(nil)
-	ctx := withPrefixKey(context.Background(), "abc")
-	r.rememberPrefix(ctx, "m", "w1")
-	if got := r.prefixPick(ctx, "m"); got != "" {
+	sys := strings.Repeat("Shared system prompt. ", 30)
+	served := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "first question"}}}))
+	other := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "a different question"}}}))
+	r.rememberPrefix(served, "m", "w1")
+	if got := r.prefixPick(served, "m", nil); got != "" {
 		t.Fatalf("affinity off → no pin: %q", got)
 	}
 	r.SetLoadAware(0, 0, true)
-	r.rememberPrefix(ctx, "m", "w1")
-	if got := r.prefixPick(ctx, "m"); got != "w1" {
+	r.rememberPrefix(served, "m", "w1")
+	if got := r.prefixPick(served, "m", nil); got != "w1" {
 		t.Fatalf("pinned: %q", got)
 	}
-	if got := r.prefixPick(ctx, "other"); got != "" {
+	if got := r.prefixPick(other, "m", nil); got != "w1" {
+		t.Fatalf("the same system prompt with another question matches its lead: %q", got)
+	}
+	if got := r.prefixPick(served, "other", nil); got != "" {
 		t.Fatalf("per model: %q", got)
 	}
-	if got := r.prefixPick(context.Background(), "m"); got != "" {
+	if got := r.prefixPick(context.Background(), "m", nil); got != "" {
 		t.Fatalf("no key → no pin: %q", got)
 	}
+	// other's own last link → w2; the lead it shares with served → w1 again
+	// (each serve rewrites every link it covers).
+	r.rememberPrefix(other, "m", "w2")
+	r.rememberPrefix(served, "m", "w1")
+	if got := r.prefixPick(other, "m", nil); got != "w2" {
+		t.Fatalf("the longest link wins: %q", got)
+	}
+	if got := r.prefixPick(other, "m", func(id string) bool { return id != "w2" }); got != "w1" {
+		t.Fatalf("an unusable longest pin falls back to a shorter link's worker: %q", got)
+	}
 	r.SetStickyTTL(time.Millisecond)
-	r.rememberPrefix(ctx, "m", "w1")
+	r.rememberPrefix(served, "m", "w1")
+	r.rememberPrefix(other, "m", "w1")
 	time.Sleep(5 * time.Millisecond)
-	if got := r.prefixPick(ctx, "m"); got != "" {
+	if got := r.prefixPick(served, "m", nil); got != "" {
 		t.Fatalf("expired: %q", got)
+	}
+}
+
+// The pin table is bounded: an insert that takes it past prefixPinsMax cuts
+// it to three quarters (expired pins first, then arbitrary ones), so it is
+// never seen above the bound.
+func TestPrefixPinsBounded(t *testing.T) {
+	r := newLoadRouter(nil)
+	r.SetLoadAware(0, 0, true)
+	n := prefixPinsMax/prefixMaxChunks + 64 // more distinct leads than the table holds
+	for i := 0; i < n; i++ {
+		ctx := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: fmt.Sprint("prompt ", i, strings.Repeat(".", 4096))}))
+		r.rememberPrefix(ctx, "m", "w1")
+		if len(r.prefixPins) > prefixPinsMax {
+			t.Fatalf("insert %d left %d pins, over the bound %d", i, len(r.prefixPins), prefixPinsMax)
+		}
+	}
+	if got := len(r.prefixPins); got >= n*prefixMaxChunks || got < prefixPinsMax*3/4 {
+		t.Fatalf("pins after %d leads: %d — want evicted, and no lower than three quarters", n, got)
 	}
 }
 
@@ -157,7 +205,7 @@ func TestPrefixPinYieldsToSaturation(t *testing.T) {
 	table := map[string]LoadSignal{"w1": {KVUsedPct: 99}, "w2": {KVUsedPct: 10}}
 	r := newLoadRouter(table)
 	r.SetLoadAware(0, 95, true)
-	ctx := withPrefixKey(context.Background(), "k")
+	ctx := withPrefixKeys(context.Background(), []string{"k"})
 	r.rememberPrefix(ctx, "m", "w1")
 	r.mu.RLock()
 	sat, _ := r.loadRank("w1")
@@ -166,7 +214,7 @@ func TestPrefixPinYieldsToSaturation(t *testing.T) {
 		t.Fatal("w1 is saturated")
 	}
 	workers := []store.Placement{{NodeID: "w2"}, {NodeID: "w1"}}
-	if pin := r.prefixPick(ctx, "m"); pin != "" && !sat {
+	if pin := r.prefixPick(ctx, "m", nil); pin != "" && !sat {
 		workers = preferNode(workers, pin)
 	}
 	if workers[0].NodeID != "w2" {
@@ -176,7 +224,7 @@ func TestPrefixPinYieldsToSaturation(t *testing.T) {
 	r.mu.RLock()
 	sat, _ = r.loadRank("w1")
 	r.mu.RUnlock()
-	if pin := r.prefixPick(ctx, "m"); pin != "" && !sat {
+	if pin := r.prefixPick(ctx, "m", nil); pin != "" && !sat {
 		workers = preferNode(workers, pin)
 	}
 	if workers[0].NodeID != "w1" {

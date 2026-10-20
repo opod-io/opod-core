@@ -37,7 +37,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	ctx = withPickState(ctx) // what this request remembers between picks (nextworker.go)
 	ov := FromContext(ctx)
 	if r.prefixAffinity {
-		ctx = withPrefixKey(ctx, prefixKeyOf(req))
+		ctx = withPrefixKeys(ctx, prefixKeysOf(req))
 	}
 	ctx = r.withPrefixBlocks(ctx, req)
 	chain, source, chains := r.chainFor(req.Model, ov)

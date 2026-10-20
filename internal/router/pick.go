@@ -138,14 +138,20 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	})
 	r.mu.RUnlock()
 
-	// 3b. Prefix affinity: the worker that last served this prompt prefix
-	// still holds it in its prefix cache — prefer it unless it is saturated
-	// (a cache hit is not worth a queue).
+	// 3b. Prefix affinity: the worker that last served the longest part of
+	// this prompt's lead likely still holds it in its prefix cache — prefer
+	// it unless it is saturated or its slots are all in flight (a cache hit is
+	// not worth a queue; T10.15, the same guard as the sticky pin below).
 	// When the block index found the prefix warm somewhere, the score above
 	// already decided from what the engines hold; the pin is a guess and is
 	// consulted only when nobody reports holding anything.
-	if pin := r.prefixPick(ctx, model); pin != "" && !rank[pin].saturated && !warm {
-		workers = preferNode(workers, pin)
+	if !warm {
+		if pin := r.prefixPick(ctx, model, func(id string) bool {
+			rk, ok := rank[id]
+			return ok && !rk.saturated && !r.slotsFullLocked(id)
+		}); pin != "" {
+			workers = preferNode(workers, pin)
+		}
 	}
 
 	// 3a. Sticky pin: if there's a fresh (user_id, model) entry whose

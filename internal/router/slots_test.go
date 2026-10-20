@@ -64,3 +64,26 @@ func TestPickStickyYieldsToFullSlots(t *testing.T) {
 		t.Fatalf("with a free slot the pin decides: want a, got %q", node)
 	}
 }
+
+// T10.15: one shared prefix, two workers — the prefix pin yields to a free
+// slot exactly as the sticky pin does, so a long shared system prompt cannot
+// send every request to one worker; with a free slot again the pin decides.
+func TestPickPrefixPinYieldsToFullSlots(t *testing.T) {
+	r, _ := drainRouter(t, store.Node{ID: "a", State: store.NodeStateReady}, store.Node{ID: "b", State: store.NodeStateReady})
+	r.SetLoadAware(0, 0, true)
+	r.SetSlotSource(func(k string) (int, bool) { return 1, k == "a" || k == "b" })
+	ctx := withPrefixKeys(context.Background(), []string{"lead"})
+	r.rememberPrefix(ctx, "m", "a")
+	r.inflight["a"] = 1
+	if _, node, _ := r.pick(ctx, "m"); node != "b" {
+		t.Fatalf("the pinned worker is full: want b, got %q", node)
+	}
+	r.inflight["a"], r.inflight["b"] = 0, 1
+	if _, node, _ := r.pick(ctx, "m"); node != "a" {
+		t.Fatalf("with a free slot the pin decides: want a, got %q", node)
+	}
+	r.inflight["b"] = 0
+	if _, node, _ := r.pick(ctx, "m"); node != "a" {
+		t.Fatalf("both free: the pin decides over load order: want a, got %q", node)
+	}
+}

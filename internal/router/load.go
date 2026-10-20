@@ -17,10 +17,12 @@ package router
 // pushes policy, the leader decides per request); both default off, so a
 // leader with no policy orders exactly as before.
 //
-// Prefix affinity: requests that share a prompt prefix (the system prompt
-// and the opening user turn) land on the worker that last served that
-// prefix, whose prefix cache still holds it. A bounded table with the
-// sticky TTL, keyed by a hash of the prefix — never the prompt itself.
+// Prefix affinity: requests that share a prompt prefix land on the worker
+// that last served the longest part of it, whose prefix cache likely still
+// holds it — an approximate scorer, for engines that publish no KV events
+// (llama.cpp); a worker's reported blocks override it (pick.go 3b). A bounded
+// table with the sticky TTL, keyed by a chain of hashes over the prompt's
+// leading chunks — never the prompt itself.
 
 import (
 	"context"
@@ -133,55 +135,81 @@ func (r *Router) loadRank(nodeID string) (saturated bool, score float64) {
 
 type prefixKeyCtx struct{}
 
-// prefixKeyOf hashes the request's prompt prefix: the system prompt and the
-// first user turn, capped so a long document does not decide the key (the
-// engine's prefix cache is a block cache; the opening blocks are what
-// repeat). Empty when there is nothing to key on.
-func prefixKeyOf(req engines.ChatRequest) string {
-	const capChars = 1024
-	// Clip each part BEFORE joining: the key covers the first capChars bytes,
-	// so nothing past them is ever needed, and joining first copied a 1 MB
-	// prompt in full to hash 1 KiB of it.
-	clip := func(s string) string {
-		if len(s) > capChars {
-			return s[:capChars]
+const (
+	// prefixChunkChars is one link of the prefix chain: a request's leading
+	// text is hashed in chunks of this many bytes, each hash covering every
+	// chunk before it, so two prompts share keys for exactly as long as their
+	// text does — a shared system prompt matches with a different question
+	// after it. It stands in for an engine's KV block, which the router cannot
+	// see without the engine's events (prefixblocks.go).
+	prefixChunkChars = 256
+	// prefixMaxChunks bounds the chain: the leading 4 KiB decide a match, so
+	// a long document never costs more than its head.
+	prefixMaxChunks = 16
+	// prefixPinsMax bounds the pin table. Every served request remembers up
+	// to prefixMaxChunks keys; past the bound the expired go first, then
+	// arbitrary ones — a pin is a guess, and a lost guess routes by load.
+	prefixPinsMax = 1 << 17
+)
+
+// prefixKeysOf hashes the request's leading text — the system prompt, then
+// every turn in order — as a chain of prefixChunkChars chunks, shortest
+// prefix first (T19.23). A final partial chunk is a link too, so a short
+// prompt still has a key. Never the prompt itself: each key is 8 bytes of a
+// SHA-256. Nil when there is nothing to key on.
+func prefixKeysOf(req engines.ChatRequest) []string {
+	const capChars = prefixChunkChars * prefixMaxChunks
+	var head []byte
+	add := func(role, content string) {
+		if len(head) >= capChars {
+			return
 		}
-		return s
+		head = append(head, role...)
+		head = append(head, 0)
+		// Clip BEFORE appending: nothing past the cap is ever hashed, so a
+		// 1 MB prompt costs its head only.
+		if room := capChars - len(head); len(content) > room {
+			content = content[:max(room, 0)]
+		}
+		head = append(head, content...)
+		head = append(head, 0)
 	}
-	var head string
 	if req.System != "" {
-		head = clip(req.System)
+		add("system", req.System)
 	}
 	for _, m := range req.Messages {
-		if m.Role == "system" && head == "" {
-			head = clip(m.Content)
-			continue
+		if m.Content != "" {
+			add(m.Role, m.Content)
 		}
-		if m.Role == "user" {
-			head += "\n" + clip(m.Content)
-			break
-		}
-	}
-	if head == "" {
-		return ""
 	}
 	if len(head) > capChars {
 		head = head[:capChars]
 	}
-	sum := sha256.Sum256([]byte(head))
-	return hex.EncodeToString(sum[:8])
+	if len(head) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, (len(head)+prefixChunkChars-1)/prefixChunkChars)
+	var prev [sha256.Size]byte
+	for off := 0; off < len(head); off += prefixChunkChars {
+		h := sha256.New()
+		h.Write(prev[:])
+		h.Write(head[off:min(off+prefixChunkChars, len(head))])
+		copy(prev[:], h.Sum(nil))
+		keys = append(keys, hex.EncodeToString(prev[:8]))
+	}
+	return keys
 }
 
-// withPrefixKey attaches the request's prefix key for pick() to read.
-func withPrefixKey(ctx context.Context, key string) context.Context {
-	if key == "" {
+// withPrefixKeys attaches the request's prefix chain for pick() to read.
+func withPrefixKeys(ctx context.Context, keys []string) context.Context {
+	if len(keys) == 0 {
 		return ctx
 	}
-	return context.WithValue(ctx, prefixKeyCtx{}, key)
+	return context.WithValue(ctx, prefixKeyCtx{}, keys)
 }
 
-func prefixKeyFrom(ctx context.Context) string {
-	k, _ := ctx.Value(prefixKeyCtx{}).(string)
+func prefixKeysFrom(ctx context.Context) []string {
+	k, _ := ctx.Value(prefixKeyCtx{}).([]string)
 	return k
 }
 
@@ -194,38 +222,41 @@ func (r *Router) prefixTTL() time.Duration {
 	return defaultPrefixTTL
 }
 
-// prefixPick returns the worker pinned to the request's prefix for this
-// model, or "" (affinity off, no key, no pin, or an expired one).
-func (r *Router) prefixPick(ctx context.Context, model string) string {
-	key := prefixKeyFrom(ctx)
+// prefixPick returns the worker pinned to the longest link of the request's
+// prefix chain that usable accepts, or "" (affinity off, no key, no live pin).
+// usable is how pick() keeps a pin off a worker that would queue the request
+// (T10.15); a shorter link may then name another worker that served the same
+// lead. Expired pins are left to the sweep in rememberPrefix.
+func (r *Router) prefixPick(ctx context.Context, model string, usable func(nodeID string) bool) string {
+	keys := prefixKeysFrom(ctx)
+	if len(keys) == 0 || model == "" {
+		return ""
+	}
+	now := time.Now()
+	var pinned []string
 	r.mu.RLock()
-	on := r.prefixAffinity && r.prefixPins != nil
-	var e stickyEntry
-	var ok bool
-	if on && key != "" && model != "" {
-		e, ok = r.prefixPins[key+"|"+model]
+	if r.prefixAffinity && r.prefixPins != nil {
+		for i := len(keys) - 1; i >= 0; i-- {
+			if e, ok := r.prefixPins[keys[i]+"|"+model]; ok && now.Before(e.ExpiresAt) {
+				pinned = append(pinned, e.NodeID)
+			}
+		}
 	}
 	r.mu.RUnlock()
-	if !ok {
-		return ""
-	}
-	if time.Now().After(e.ExpiresAt) {
-		r.mu.Lock()
-		if e2, ok := r.prefixPins[key+"|"+model]; ok && time.Now().After(e2.ExpiresAt) {
-			delete(r.prefixPins, key+"|"+model)
+	for _, n := range pinned {
+		if usable == nil || usable(n) {
+			return n
 		}
-		r.mu.Unlock()
-		return ""
 	}
-	return e.NodeID
+	return ""
 }
 
-// rememberPrefix pins the prefix to the worker that just served it. Called
-// on the success path beside rememberSticky. The table is swept like the
-// sticky one so one-shot prefixes do not accumulate.
+// rememberPrefix pins every link of the prefix chain to the worker that just
+// served it. Called on the success path beside rememberSticky. The table is
+// swept like the sticky one, and bounded by prefixPinsMax.
 func (r *Router) rememberPrefix(ctx context.Context, model, nodeID string) {
-	key := prefixKeyFrom(ctx)
-	if key == "" || model == "" || nodeID == "" {
+	keys := prefixKeysFrom(ctx)
+	if len(keys) == 0 || model == "" || nodeID == "" {
 		return
 	}
 	r.mu.Lock()
@@ -233,12 +264,23 @@ func (r *Router) rememberPrefix(ctx context.Context, model, nodeID string) {
 	if !r.prefixAffinity || r.prefixPins == nil {
 		return
 	}
-	r.prefixPins[key+"|"+model] = stickyEntry{NodeID: nodeID, ExpiresAt: time.Now().Add(r.prefixTTL())}
+	exp := time.Now().Add(r.prefixTTL())
+	for _, k := range keys {
+		r.prefixPins[k+"|"+model] = stickyEntry{NodeID: nodeID, ExpiresAt: exp}
+	}
 	r.prefixInserts++
-	if r.prefixInserts%stickySweepEvery == 0 || len(r.prefixPins) > stickySweepThreshold {
+	if r.prefixInserts%stickySweepEvery == 0 || len(r.prefixPins) > prefixPinsMax {
 		now := time.Now()
 		for k, e := range r.prefixPins {
 			if now.After(e.ExpiresAt) {
+				delete(r.prefixPins, k)
+			}
+		}
+		if len(r.prefixPins) > prefixPinsMax {
+			for k := range r.prefixPins { // map order: arbitrary victims
+				if len(r.prefixPins) <= prefixPinsMax*3/4 {
+					break
+				}
 				delete(r.prefixPins, k)
 			}
 		}
