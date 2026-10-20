@@ -34,6 +34,21 @@ the last section.
   table now (vLLM, SGLang, TensorRT-LLM). NVIDIA's container licence forbids a derived copy, so there is no
   `opod-worker-trtllm-*` image: `images.yaml` lists `nvcr-trtllm-nvidia` as an **upstream** row — NVIDIA's own image,
   with opod copied in at start by the manager.
+- **Prefix affinity matches a shared lead, not only an identical opening.** With `routing.prefixAffinity` the router
+  keyed on one hash of the system prompt plus the first user turn, so the same system prompt with another question
+  missed. It now hashes the prompt's leading 4 KiB in 256-byte links, each covering all before it, and pins to the
+  worker that served the longest shared link — an approximate scorer for engines that publish no KV events. Reported
+  blocks still win, the switch is still off by default, and the pin table is bounded. The pin also yields, as the
+  sticky pin does, to a worker whose slots are all in flight, so one long shared system prompt no longer sends every
+  request to one worker.
+- **SGLang publishes its KV-cache events** (`kv_block_events`). With `OPOD_KV_EVENTS=1` an SGLang worker starts the
+  engine with the same publisher config as vLLM and 16-token pages (unless its flags set `--page-size`), and the
+  leader tokenizes for its block index through SGLang's `/tokenize`.
+- **SGLang on CUDA is `v0.5.21`** (`lmsysorg/sglang:v0.5.21-cu130`, from `v0.5.2-cu126`). The base is CUDA 13, so the
+  node needs NVIDIA driver 580 or newer. On `v0.5.2`, `tool_choice: required` killed the engine; on `v0.5.21` it answers
+  a tool call.
+- **An engine that dies during startup is reported as exited**, with its output, rather than as a port that did not
+  open, when the death lands near the readiness deadline.
 
 ## 2026-10-18 — a gang whose part is down is formed again
 
