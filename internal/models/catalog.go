@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -194,6 +195,18 @@ func FindByID(entries []Entry, id string) *Entry {
 		}
 	}
 	return nil
+}
+
+// ToolParser is the tool-call parser engine needs for e (the entry's
+// `tool_parser`, PLAN T19.25), or "" when e is nil, does not call tools, or
+// names no parser for that engine. A parser named on a model without the
+// `tools` capability is ignored: the flag would turn on a feature the catalog
+// says the model does not have.
+func ToolParser(e *Entry, engine string) string {
+	if e == nil || !slices.Contains(e.Capabilities, "tools") {
+		return ""
+	}
+	return e.ToolParser[engine]
 }
 
 // EngineNativeName maps a catalog Entry to the model name a given engine pulls
