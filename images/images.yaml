@@ -178,13 +178,13 @@ images:
     vendor: nvidia
     arch: [amd64]
     dockerfile: images/worker-sglang/Dockerfile
-    base: lmsysorg/sglang:v0.5.2-cu126
+    base: lmsysorg/sglang:v0.5.21-cu130
     weights: [safetensors]
     proven: true
     hardware: NVIDIA GPUs (CUDA)
     families: [nvidia:turing, nvidia:ampere, nvidia:ada, nvidia:hopper, nvidia:blackwell]
     requires:
-      - NVIDIA driver and the NVIDIA container runtime on the node
+      - NVIDIA driver 580 or newer (the base is CUDA 13) and the NVIDIA container runtime on the node
     summary: SGLang on CUDA. Safetensors models from a Hugging Face repo; multi-node gangs via SGLang's own launcher.
     notes:
       - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.

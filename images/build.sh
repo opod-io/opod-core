@@ -105,7 +105,7 @@ spec() {
     vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
-    sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.2-cu126@sha256:fce5585fa8da175224ead70727a4660f719e34adf0638aebf6dd27930f03e1b6 amd64" ;;
+    sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.21-cu130@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 amd64" ;;
     sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile $SGLANG_AMD_BASE amd64" ;;
     vllm-tt)         echo "opod-worker-vllm-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
     *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|vllm-tt)" ;;
