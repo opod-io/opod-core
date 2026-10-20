@@ -290,3 +290,13 @@ func TestSGLangGangHonoursThePartsVRAMBudget(t *testing.T) {
 		t.Errorf("the gang must use agent.MemFractionShell, not its own arithmetic:\n%s", got)
 	}
 }
+
+// The coordinator's driver reads /metrics for the gang's load sample, and
+// SGLang serves it only when asked.
+func TestSGLangGangServesItsMetrics(t *testing.T) {
+	got := sglangGangCommand(sglangGang{Model: "m", ServedAs: "m", ServePort: 30000,
+		DistAddr: "10.0.0.1:29500", NNodes: 2, NodeRank: 0, TP: 1, PP: 2})
+	if !strings.Contains(got, "--enable-metrics") {
+		t.Errorf("a gang part starts without --enable-metrics:\n%s", got)
+	}
+}

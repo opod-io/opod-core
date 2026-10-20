@@ -191,6 +191,9 @@ func sglangGangCommand(g sglangGang) string {
 		"--host 0.0.0.0",
 		"--port " + strconv.Itoa(g.ServePort),
 		"--trust-remote-code",
+		// /metrics is opt-in on SGLang; the coordinator's driver reads it for
+		// the gang's load sample (agent.sglangCmdline says the same).
+		"--enable-metrics",
 		// The fraction comes from the PART's VRAM budget, computed on the machine
 		// by the one rule every start path uses (agent.MemFractionShell). A
 		// hard-coded 0.85 here put a part on an 8 GB card at 85% of the CARD

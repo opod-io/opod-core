@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **An SGLang worker reports its load again.** SGLang serves `/metrics` only with `--enable-metrics`, and core never
+  passed it, so every load sample failed with a 404: an SGLang worker or gang reported no KV use, queue depth,
+  throughput or KV pool (T23.2) at all, and the router and autoscaler saw it as idle. Both the single-worker and the
+  gang launch lines now pass the flag.
 - **An SGLang pipeline that cannot serve is refused by name** (T8.23, `error.code` `sglang_pp_tied_llama`). On SGLang
   v0.5.21 a pipeline-parallel gang (`pp > 1`) of a Llama-family model with tied word embeddings (`LlamaForCausalLM` and
   the classes SGLang derives from it unchanged: Mistral, Phi3, InternLM3, IQuestCoder) crashes on its last stage —

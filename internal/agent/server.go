@@ -972,10 +972,13 @@ func (s *Server) sglangCmdline(model, servedName, host string, port int) (string
 	}
 	// No budget, no fraction: SGLang then sizes its pool from the card itself
 	// (SGLangMemFractionFlag).
+	// --enable-metrics: SGLang serves /metrics only when asked, and the driver's
+	// Load reads it — without it every load sample failed with a 404 and the
+	// worker reported no KV use, queue, throughput or KV pool at all.
 	cmdline := gpuCountShell + MemFractionShell("sglang") + fmt.Sprintf(
 		"%s "+
 			"exec python3 -m sglang.launch_server --model-path '%s' %s --served-model-name '%s' --host %s --port %d "+
-			"--trust-remote-code "+SGLangMemFractionFlag+" --tp-size \"$TP\" %s",
+			"--trust-remote-code --enable-metrics "+SGLangMemFractionFlag+" --tp-size \"$TP\" %s",
 		flagOverrides, source, revArgs, servedName, host, port, strings.TrimSpace(flagArgs+" "+s.sglangKVEventsArgs(flagArgs)))
 	return cmdline, nil
 }

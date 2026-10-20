@@ -83,3 +83,12 @@ func TestSGLangKVEventsFlags(t *testing.T) {
 		t.Fatalf("a plan's own page size wins: %q", got)
 	}
 }
+
+// SGLang serves /metrics only with --enable-metrics, and the driver's load
+// sample reads it: without the flag a worker reported no load at all.
+func TestSGLangServesItsMetrics(t *testing.T) {
+	line, err := (&Server{}).sglangCmdline("org/m", "m", "127.0.0.1", 30000)
+	if err != nil || !strings.Contains(line, " --enable-metrics ") {
+		t.Fatalf("sglang starts without --enable-metrics: %v %q", err, line)
+	}
+}
