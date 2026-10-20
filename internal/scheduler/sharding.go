@@ -299,6 +299,9 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, ga
 	if err := checkExpertCreate(entry, shardCount, par); err != nil { // before the teardown: refusing replaces nothing
 		return err
 	}
+	if err := o.checkSGLangPipeline(ctx, entry, shardCount, par); err != nil { // sglang_tied.go; also before the teardown
+		return err
+	}
 	// One create of this model's gangs at a time (createGuard): a second one
 	// would tear down this one's parts before they are on record.
 	release, err := o.forms.claim(entry.ID, gangID)

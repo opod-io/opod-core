@@ -285,8 +285,13 @@ func contractFeatures() map[string]bool {
 		// know a code keeps reading the failure as it did before) — and
 		// "gang_create_in_flight" — refused because another create of this
 		// gang (or of the whole model) is running; nothing was touched, and the
-		// running create is what decides. A manager keys on the code, never on
-		// the English, to tell a definite answer from a collision to retry.
+		// running create is what decides. A 409 refusal may carry a code too:
+		// "sglang_pp_tied_llama" — an SGLang pipeline (pp > 1) of a
+		// Llama-family model with tied word embeddings, refused before
+		// anything was touched because its last stage cannot load the output
+		// layer (added 2026-10-19; a definite answer, the message names the
+		// remedy). A manager keys on the code, never on the English, to tell a
+		// definite answer from a collision to retry.
 		"shard_create_error_codes": true,
 		// A heal-within-plan create that fails records shard.heal_failed on
 		// /admin/v1/events/stream (subject: the model) with data {gang, parts,

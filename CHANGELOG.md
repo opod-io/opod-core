@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **An SGLang pipeline that cannot serve is refused by name** (T8.23, `error.code` `sglang_pp_tied_llama`). On SGLang
+  v0.5.21 a pipeline-parallel gang (`pp > 1`) of a Llama-family model with tied word embeddings (`LlamaForCausalLM` and
+  the classes SGLang derives from it unchanged: Mistral, Phi3, InternLM3, IQuestCoder) crashes on its last stage —
+  `PPMissingLayer` in `_compute_lm_head` — on every re-form. Before such a create claims its guard or touches a part, the
+  leader reads the model's `config.json` (a local directory, a complete snapshot, else one bounded Hub GET with
+  `HF_TOKEN`) and answers `409` with the code and the remedy: tensor parallelism, one stage, or vLLM. The heal loop's
+  `shard.heal_failed` carries the same code. A tied Qwen2 pipeline still forms (it serves), and a config that cannot be
+  read never blocks a create.
 - **`OPOD_PLAIN_LISTEN`** (feature `plain_listen`, `plain_listen` in `config.yaml`): the whole API — the main
   listener's own handler, so `/v1`, `/admin/v1`, the join path and the probes with the same checks — on a second
   listener that is always plain HTTP, beside a main one that may speak TLS. For a gateway that load-balances several

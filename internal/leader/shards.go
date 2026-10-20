@@ -63,6 +63,10 @@ const (
 	// or crashloop once its restarts ran out, while it was forming. Definite;
 	// the message carries the engine's own last lines.
 	ShardCreatePartFailed = "gang_part_failed"
+	// scheduler.ReasonSGLangPPTiedLlama ("sglang_pp_tied_llama", a 409): refused
+	// before anything was touched — an SGLang pipeline (pp > 1) of a
+	// Llama-family model with tied embeddings, whose last stage cannot load its
+	// output layer. Definite; the message names the remedy.
 )
 
 // shardCreateFailure names a failed create's cause the way the frozen contract
@@ -90,6 +94,12 @@ func shardCreateFailure(err error) (code, reason string) {
 	case errors.Is(err, scheduler.ErrCreateInFlight):
 		return ShardCreateInFlight, err.Error()
 	}
+	var refused *scheduler.RefusedError
+	if errors.As(err, &refused) {
+		// A create refused by name before anything was touched (a 409): the
+		// scheduler's reason is the code — "sglang_pp_tied_llama" today.
+		return refused.Reason, err.Error()
+	}
 	return "", err.Error()
 }
 
@@ -107,7 +117,14 @@ func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNoOrchestrator):
 		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, scheduler.ErrUnplaceable):
-		// Not an upstream fault: the fleet cannot hold the shape asked for.
+		// Not an upstream fault: the fleet cannot hold the shape asked for, or
+		// the engine cannot run it. A refusal with a name
+		// (scheduler.RefusedError) carries it as error.code; the status and
+		// the message are what they always were.
+		if code, msg := shardCreateFailure(err); code != "" {
+			writeJSONErrorCode(w, http.StatusConflict, code, msg)
+			return
+		}
 		writeJSONError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, scheduler.ErrPartLost), errors.Is(err, scheduler.ErrPartFailed), errors.Is(err, scheduler.ErrCreateInFlight):
 		// gang_part_lost and gang_part_failed are definite answers: this gang

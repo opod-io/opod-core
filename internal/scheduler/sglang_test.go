@@ -94,6 +94,11 @@ func sglangFixture(t *testing.T, workers ...*startedProcs) (*Orchestrator, model
 		nodes = append(nodes, n)
 	}
 	o := New(st, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	// A pipeline create reads the model's config.json first (sglang_tied.go).
+	// These gangs are about the launch, not that check: a Hub that has no
+	// config keeps the test off the network, and a config that cannot be read
+	// never blocks a create.
+	o.HFEndpoint = fakeHub(t, nil).URL
 	entry := models.Entry{
 		ID:       "big-model",
 		Source:   models.SourceSpec{Type: "huggingface", Repo: "vendor/Big-Model"},

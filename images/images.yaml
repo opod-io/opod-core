@@ -189,6 +189,7 @@ images:
     notes:
       - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
       - Served on an NVIDIA card 2026-09-19; the row had said proven false until 2026-09-21.
+      - 'SGLang v0.5.21 cannot run a pipeline (pp > 1) of a Llama-family model with tied word embeddings (LlamaForCausalLM and the classes that reuse it - Mistral, Phi3, InternLM3, IQuestCoder): the last stage has no output layer and crashes in _compute_lm_head. Core reads the model config.json and refuses that gang by name (sglang_pp_tied_llama) before forming it; use tensor parallelism, one stage, or vLLM. Qwen2 with tied embeddings serves on pp=2.'
 
   - name: opod-worker-sglang-amd
     role: worker
