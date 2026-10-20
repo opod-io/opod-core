@@ -6,7 +6,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,24 @@ func (s *Server) kvEventsArgs() string {
 		return ""
 	}
 	return "--kv-events-config '" + kvevents.EngineConfig("") + "'"
+}
+
+// sglangKVPageSize is the page SGLang is started with when it publishes KV
+// events and the plan names none: SGLang's default page is one token, so each
+// event would name one block per token and the leader's per-worker index would
+// hold a few hundred prompts. 16 is vLLM's block, the size the index was
+// designed around (T19.21).
+const sglangKVPageSize = 16
+
+// sglangKVEventsArgs is kvEventsArgs for SGLang: the same publisher config
+// (SGLang reads it with pydantic, which ignores the vLLM-only key), plus a page
+// size unless the plan's own flags set one.
+func (s *Server) sglangKVEventsArgs(flagArgs string) string {
+	args := s.kvEventsArgs()
+	if args == "" || strings.Contains(flagArgs, "--page-size") {
+		return args
+	}
+	return args + fmt.Sprintf(" --page-size %d", sglangKVPageSize)
 }
 
 // startKVEvents starts the subscriber once per worker process. It outlives

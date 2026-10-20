@@ -66,3 +66,20 @@ func TestKVEventsFlagIsLocalAndGated(t *testing.T) {
 		t.Fatalf("the publisher must bind localhost: %q", got)
 	}
 }
+
+// T19.21: an SGLang worker publishes with the same config, on localhost, and
+// with 16-token pages unless the plan's flags name a page size; off, nothing.
+func TestSGLangKVEventsFlags(t *testing.T) {
+	off := &Server{}
+	if line, err := off.sglangCmdline("org/m", "m", "127.0.0.1", 30000); err != nil || strings.Contains(line, "--kv-events-config") || strings.Contains(line, "--page-size") {
+		t.Fatalf("off by default: %v %q", err, line)
+	}
+	on := &Server{KVEvents: true, Blocks: kvevents.NewTranslator()}
+	line, err := on.sglangCmdline("org/m", "m", "127.0.0.1", 30000)
+	if err != nil || !strings.Contains(line, "--kv-events-config '") || !strings.Contains(line, "tcp://127.0.0.1:") || !strings.Contains(line, "--page-size 16") {
+		t.Fatalf("on: %v %q", err, line)
+	}
+	if got := on.sglangKVEventsArgs("--page-size 32"); strings.Contains(got, "--page-size 16") || !strings.Contains(got, "--kv-events-config") {
+		t.Fatalf("a plan's own page size wins: %q", got)
+	}
+}

@@ -199,3 +199,12 @@ func (s *Driver) Rerank(ctx context.Context, req engines.RerankRequest) (engines
 }
 
 var _ engines.RerankEngine = (*Driver)(nil)
+
+// Tokenize asks SGLang for the prompt's token ids (openaicompat.Tokenize):
+// SGLang runs a /tokenize request with messages through its chat request's own
+// processing, so the ids are the ones its radix cache is keyed by (T19.21).
+func (s *Driver) Tokenize(ctx context.Context, model string, messages []engines.Message, prompt string, limit int) ([]int, error) {
+	return openaicompat.Tokenize(ctx, s.Client, model, messages, prompt, limit)
+}
+
+var _ engines.Tokenizer = (*Driver)(nil)

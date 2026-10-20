@@ -936,6 +936,7 @@ func (s *Server) launchSGLang(model, servedName string) error {
 	}
 	s.launchedSlots.Store(int64(s.EngineFlags.LaunchSlots("sglang")))
 	_ = s.Supervisor.Stop("sglang-serve") // exclusive: one model per worker
+	s.startKVEvents()
 	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{
 		ID:          "sglang-serve",
 		Command:     "/bin/sh",
@@ -963,7 +964,7 @@ func (s *Server) sglangCmdline(model, servedName, host string, port int) (string
 		"%s "+
 			"exec python3 -m sglang.launch_server --model-path '%s' %s --served-model-name '%s' --host %s --port %d "+
 			"--trust-remote-code "+SGLangMemFractionFlag+" --tp-size \"$TP\" %s",
-		flagOverrides, source, revArgs, servedName, host, port, flagArgs)
+		flagOverrides, source, revArgs, servedName, host, port, strings.TrimSpace(flagArgs+" "+s.sglangKVEventsArgs(flagArgs)))
 	return cmdline, nil
 }
 
