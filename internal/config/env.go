@@ -59,6 +59,7 @@ type Env struct {
 	NodeCert      string `env:"OPOD_NODE_CERT" side:"worker" doc:"PEM client certificate this worker presents to its leader; its SPIFFE SAN spiffe://<domain>/opod/node/<id> IS the worker's identity (R9.6). Needs OPOD_NODE_KEY"`
 	NodeKey       string `env:"OPOD_NODE_KEY" side:"worker" doc:"the private key for OPOD_NODE_CERT"`
 	VRAMBudgetGB  string `env:"OPOD_VRAM_BUDGET_GB" side:"worker" doc:"the slice of the card this worker may use (shared placement); read by the engine launch"`
+	CardMiB       string `env:"OPOD_CARD_MIB" side:"worker" doc:"the card's memory in MiB, as the manager measured it: the engine launch turns OPOD_VRAM_BUDGET_GB into the engine's own memory knob against it. Unset = nvidia-smi is asked, and with no answer the budget is not applied (hosts without nvidia-smi: AMD, Intel)"`
 	GPUIndex      string `env:"OPOD_GPU_INDEX" side:"worker" doc:"the device index the worker was pinned to (informational; the engine sees CUDA_VISIBLE_DEVICES & co)"`
 	// T10.7: the model a worker exists to serve. The worker loads it itself,
 	// once its engine answers (agent.SelfLoad) — it used to be the container

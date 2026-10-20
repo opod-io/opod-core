@@ -21,6 +21,7 @@ import (
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/mesh"
+	"github.com/opod-io/opod/internal/models"
 
 	"gopkg.in/yaml.v3"
 )
@@ -285,6 +286,14 @@ func cmdJoin(args []string) {
 		ModelRevision: env.ModelRevision,
 		ModelSHA256:   env.ModelSHA256,
 		Log:           log,
+	}
+	// The tool-call parser a vLLM or SGLang launch needs for its model is the
+	// catalog's word (T19.25). An unreadable catalog costs only the parser: the
+	// engine then starts with none, as it always did.
+	if entries, err := loadCatalog(cfg); err == nil {
+		srv.ToolParser = func(id, engine string) string { return models.ToolParser(models.FindByID(entries, id), engine) }
+	} else {
+		warn(os.Stdout, "catalog unreadable (%v) — vLLM and SGLang start with no tool-call parser", err)
 	}
 	// The heartbeat's slot count falls back to what this server put on the
 	// engine's launch line (ADR-091) when the engine cannot state its own.

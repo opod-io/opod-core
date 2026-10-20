@@ -281,7 +281,7 @@ func TestSGLangGangHonoursThePartsVRAMBudget(t *testing.T) {
 	// And it is the SAME rule the worker's own launches use — one rule, three
 	// readers; a second copy is how the constant got here in the first place.
 	// The default is empty: a whole-card part leaves the sizing to SGLang.
-	if !strings.Contains(got, agent.MemFractionShell("")) {
+	if !strings.Contains(got, agent.MemFractionShell("sglang")) {
 		t.Errorf("the gang must use agent.MemFractionShell, not its own arithmetic:\n%s", got)
 	}
 }

@@ -241,7 +241,8 @@ type loadResponse struct {
 
 // aggregateWorkerLoad folds the serving workers' engine samples into the
 // leader's /loadz (build item 14): max KV use (one full cache is pressure),
-// summed queue and tokens/s, mean prefix hits.
+// summed queue and tokens/s, mean prefix hits, and the KV pools and counters
+// the engines state (T23.2), summed.
 //
 // `workers` is capacity a reader can count on: workers that can take a NEW
 // request for the plan's model right now — the node takes new work
@@ -270,6 +271,24 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum, kvSum float64
 	var prefixSamples int
+	fold := func(ld engines.EngineLoad) {
+		out.Reporting++
+		prefixSamples++
+		if ld.KVUsedPct > out.KVUsedPct {
+			out.KVUsedPct = ld.KVUsedPct
+		}
+		kvSum += ld.KVUsedPct / 100
+		out.QueueDepth += ld.QueueDepth
+		out.TokensPerSec += ld.TokensPerSec
+		prefixSum += ld.PrefixHitPct
+		// What the engines say they built (PLAN T23.2), summed over the samples
+		// that say it. A gang's coordinator holds the whole gang's pool, so its
+		// one sample is the gang's figure.
+		addStated(&out.KVCapacityTokens, ld.KVCapacityTokens)
+		addStated(&out.KVUsedTokens, ld.KVUsedTokens)
+		addStated(&out.PreemptionsTotal, ld.PreemptionsTotal)
+		addStated(&out.EvictionsTotal, ld.EvictionsTotal)
+	}
 	for _, n := range nodes {
 		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {
 			continue
@@ -292,15 +311,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		if now.Sub(ld.at) > loadSampleMaxAge {
 			continue
 		}
-		out.Reporting++
-		prefixSamples++
-		if ld.KVUsedPct > out.KVUsedPct {
-			out.KVUsedPct = ld.KVUsedPct
-		}
-		kvSum += ld.KVUsedPct / 100
-		out.QueueDepth += ld.QueueDepth
-		out.TokensPerSec += ld.TokensPerSec
-		prefixSum += ld.PrefixHitPct
+		fold(ld.EngineLoad)
 	}
 	// A gang reports through its COORDINATOR, not its parts. The parts are
 	// rpc-servers: they hold weights and do matrix multiplication, they run no
@@ -321,15 +332,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		if !ok {
 			continue
 		}
-		out.Reporting++
-		prefixSamples++
-		if ld.KVUsedPct > out.KVUsedPct {
-			out.KVUsedPct = ld.KVUsedPct
-		}
-		kvSum += ld.KVUsedPct / 100
-		out.QueueDepth += ld.QueueDepth
-		out.TokensPerSec += ld.TokensPerSec
-		prefixSum += ld.PrefixHitPct
+		fold(ld)
 	}
 	// The leader's own queue IS the endpoint's queue since ADR-091: a request
 	// past the workers' slots waits in the admission gate, not in an engine,
@@ -352,6 +355,18 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		out.KVBusyWorkers = kvMeanFrac * float64(out.Workers)
 	}
 	return kvMeanFrac
+}
+
+// addStated adds a stated figure to a sum that stays absent until some sample
+// states one: an engine that does not say contributes nothing, never a zero.
+func addStated(sum **int64, v *int64) {
+	if v == nil {
+		return
+	}
+	if *sum == nil {
+		*sum = new(int64(0))
+	}
+	**sum += *v
 }
 
 // workerLoadView is the worker half of /loadz with the mean KV fraction beside

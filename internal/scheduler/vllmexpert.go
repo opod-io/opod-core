@@ -138,6 +138,9 @@ func (o *Orchestrator) createShardedVLLMExpert(ctx context.Context, entry models
 		model = entry.ID
 	}
 	overrides, extra := agent.EngineFlags(par.Flags).VLLMShellOverrides()
+	if ta := agent.ToolParserArgs("vllm", models.ToolParser(&entry, "vllm"), par.Flags["extra"]); len(ta) > 0 {
+		extra = strings.TrimSpace(extra + quoteArgs(ta)) // the model's tool-call parser (PLAN T19.25)
+	}
 
 	var created []store.Shard
 	for rank, w := range workers {
@@ -260,7 +263,7 @@ func vllmExpertCommand(r vllmExpertRank) string {
 	if r.Extra != "" {
 		args = append(args, r.Extra)
 	}
-	pre := gangIfnameShell + agent.MemFractionShell("0.85")
+	pre := gangIfnameShell + agent.MemFractionShell("vllm")
 	if r.Overrides != "" {
 		pre += r.Overrides + " "
 	}

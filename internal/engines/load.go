@@ -15,16 +15,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 )
 
-// EngineLoad is one sample of an engine's pressure.
-type EngineLoad struct {
-	KVUsedPct    float64 `json:"kv_used_pct"`    // KV cache in use, 0–100 (the pressure signal)
-	QueueDepth   int64   `json:"queue_depth"`    // requests waiting for a slot (every slot busy)
-	TokensPerSec float64 `json:"tokens_per_s"`   // generated tokens per second since the previous sample
-	PrefixHitPct float64 `json:"prefix_hit_pct"` // prefix-cache hit rate, 0–100 (0 when the engine does not report it)
-	SampledAt    int64   `json:"sampled_at"`     // unix seconds
-}
+// EngineLoad is one sample of an engine's pressure: the heartbeat's wire type
+// itself (opod-sdk nodeapi.EngineLoad), so a field a driver fills is a field
+// the leader reads, with no second copy to drift. KVUsedPct is the pressure
+// signal; the pointer fields are the engine's own report of the KV pool it
+// built and what it did with it (PLAN T23.2), nil when the engine does not say.
+type EngineLoad = nodeapi.EngineLoad
 
 // LoadReporter is implemented by engines that can report EngineLoad.
 type LoadReporter interface {
@@ -39,6 +41,16 @@ type LoadReporter interface {
 // number it launched the engine with, or reports none.
 type SlotReporter interface {
 	Slots(ctx context.Context) (n int, ok bool)
+}
+
+// KVLayoutSetter is implemented by a driver whose engine's report of its KV
+// pool depends on a launch choice the engine does not report back: llama.cpp's
+// /props gives one slot's context, which is the whole pool when the slots
+// share it (--kv-unified) and a slot's share of it when they do not. The worker
+// that launched the engine says which; until it does the driver states no
+// pool for a server with several slots.
+type KVLayoutSetter interface {
+	SetKVUnified(unified bool)
 }
 
 // ParsePromText reads Prometheus text exposition into name → value. Labels
@@ -74,6 +86,38 @@ func ParsePromText(r io.Reader) map[string]float64 {
 			continue
 		}
 		out[name] += v
+	}
+	return out
+}
+
+// PromLabels returns the labels of every series of one metric in Prometheus
+// text exposition, one map per series. It is how an INFO metric is read — a
+// gauge fixed at 1 whose facts are its labels, such as vLLM's
+// cache_config_info — which ParsePromText cannot, since it keeps only values.
+// Only that metric's lines go to the parser, so a malformed line elsewhere in
+// an engine's exposition (ParsePromText skips those) costs nothing here.
+func PromLabels(text, name string) []map[string]string {
+	var b strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, name+"{") || strings.HasPrefix(t, name+" ") {
+			b.WriteString(t + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	parser := expfmt.NewTextParser(model.LegacyValidation)
+	fams, err := parser.TextToMetricFamilies(strings.NewReader(b.String()))
+	if err != nil || fams[name] == nil {
+		return nil
+	}
+	var out []map[string]string
+	for _, m := range fams[name].GetMetric() {
+		labels := make(map[string]string, len(m.GetLabel()))
+		for _, l := range m.GetLabel() {
+			labels[l.GetName()] = l.GetValue()
+		}
+		out = append(out, labels)
 	}
 	return out
 }

@@ -67,9 +67,15 @@ func init() {
 type Driver struct {
 	openaicompat.Client
 	genRate engines.RateTracker // tokens_predicted_total → tokens/s between Load samples
-	// slots is /props total_slots, read once (totalSlots); slotsMu guards it.
+	// slots is /props total_slots and slotCtx each slot's context
+	// (default_generation_settings.n_ctx), read once (totalSlots); slotsMu
+	// guards both and the layout.
 	slotsMu sync.Mutex
 	slots   int
+	slotCtx int64
+	// unified is the KV layout the worker launched llama-server with, when it
+	// said (SetKVUnified): nil = not told.
+	unified *bool
 }
 
 // New returns a driver for a llama-server at endpoint.
@@ -162,6 +168,7 @@ func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 			ld.KVUsedPct = min(100, busy/float64(slots)*100)
 		}
 	}
+	ld.KVCapacityTokens = l.kvPool(ctx)
 	if q, ok := engines.First(m, "llamacpp:requests_deferred"); ok {
 		ld.QueueDepth = int64(q)
 	}
@@ -193,13 +200,52 @@ func (l *Driver) totalSlots(ctx context.Context) int {
 	}
 	var props struct {
 		TotalSlots int `json:"total_slots"`
+		Defaults   struct {
+			NCtx int64 `json:"n_ctx"`
+		} `json:"default_generation_settings"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&props) != nil {
 		return 0
 	}
-	l.slots = props.TotalSlots
+	l.slots, l.slotCtx = props.TotalSlots, props.Defaults.NCtx
 	return l.slots
 }
+
+// SetKVUnified tells the driver how the llama-server it reads was launched:
+// one KV pool every slot shares (--kv-unified), or a partition per slot. The
+// worker that launched it knows; /props does not say, and the pool cannot be
+// read without it (kvPool).
+func (l *Driver) SetKVUnified(unified bool) {
+	l.slotsMu.Lock()
+	defer l.slotsMu.Unlock()
+	l.unified = &unified
+}
+
+// kvPool is the KV pool llama-server built, in tokens (PLAN T23.2), from its
+// own /props: `default_generation_settings.n_ctx` is ONE slot's context, so
+// the pool is that times total_slots when each slot has its own partition, and
+// that alone when the slots share a unified pool (one sequence may take all
+// of it). With one slot the two are the same. nil when the server does not
+// say, or when it has several slots and nobody said which layout they have —
+// a pool off by the slot count is worse than none. (A slot capped by
+// --kv-unified-per-slot reports its cap; the worker then tells no layout.) llama.cpp has no
+// preemption, counts no tokens in use and no evictions, so those stay unsaid.
+func (l *Driver) kvPool(ctx context.Context) *int64 {
+	slots := l.totalSlots(ctx)
+	l.slotsMu.Lock()
+	defer l.slotsMu.Unlock()
+	switch {
+	case slots <= 0 || l.slotCtx <= 0:
+		return nil
+	case slots == 1 || (l.unified != nil && *l.unified):
+		return new(l.slotCtx)
+	case l.unified != nil:
+		return new(l.slotCtx * int64(slots))
+	}
+	return nil
+}
+
+var _ engines.KVLayoutSetter = (*Driver)(nil)
 
 // Slots is the server's slot count (`total_slots` in /props, set by `-np`):
 // how many requests llama-server decodes at once. Anything past it waits in

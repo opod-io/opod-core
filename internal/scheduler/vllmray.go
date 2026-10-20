@@ -169,6 +169,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	vllmCmd := vllmGangCommand(vllmGang{
 		Model: model, ServedAs: entry.ID, Host: headHost, Port: vllmPort,
 		TP: gpusPerNode, PP: pp, Eager: eager,
+		ToolArgs: agent.ToolParserArgs("vllm", models.ToolParser(&entry, "vllm"), par.Flags["extra"]),
 	})
 	vllmSpec := agent.ProcessSpec{
 		ID:      gangShardID(entry.ID, gangID, "vllm-ray"),
@@ -230,6 +231,16 @@ func rayCommand(args ...string) string {
 	return strings.Join(quoted, " ")
 }
 
+// quoteArgs is args as single-quoted shell words, each after a space: "" for
+// none, so a caller appends it to a command line unconditionally.
+func quoteArgs(args []string) string {
+	var b strings.Builder
+	for _, a := range args {
+		b.WriteString(" '" + strings.ReplaceAll(a, "'", `'\''`) + "'")
+	}
+	return b.String()
+}
+
 // vllmGang is what a Ray gang's COORDINATOR needs to build its serve command —
 // the head node's `vllm serve`, which drives every part through Ray. It is a
 // struct so the command is a pure function of it and can be tested without an
@@ -242,6 +253,9 @@ type vllmGang struct {
 	TP       int  // devices per node — vLLM's tensor group
 	PP       int  // pipeline stages, one per part
 	Eager    bool // skip CUDA-graph capture (cross-machine TP)
+	// ToolArgs turn on the model's tool-call parser (agent.ToolParserArgs,
+	// PLAN T19.25); none = the catalog names no parser for it.
+	ToolArgs []string
 }
 
 // vllmGangCommand is the `vllm serve` line the Ray head runs under a login
@@ -264,7 +278,7 @@ func vllmGangCommand(g vllmGang) string {
 	if g.Eager {
 		eager = " --enforce-eager"
 	}
-	return agent.MemFractionShell("0.85") + fmt.Sprintf(
+	return agent.MemFractionShell("vllm") + fmt.Sprintf(
 		// Served under the catalog id AND the repo name, like agent.launchVLLM:
 		// the leader resolves a catalog id to the engine's native name at
 		// dispatch, so a coordinator that served the id alone answered 404
@@ -273,5 +287,5 @@ func vllmGangCommand(g vllmGang) string {
 			"--tensor-parallel-size %d --pipeline-parallel-size %d --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization "+agent.MemFractionVar+eager,
 		shellQuote(g.Model), shellQuote(g.ServedAs), shellQuote(g.Model),
-		g.TP, g.PP, g.Host, g.Port)
+		g.TP, g.PP, g.Host, g.Port) + quoteArgs(g.ToolArgs)
 }

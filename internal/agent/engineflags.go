@@ -18,6 +18,9 @@ package agent
 //	           (--max_seq_len), kv_cache_free_gpu_memory_fraction, extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
+//	vLLM/SGLang: no flag for the tool-call parser — the model's catalog entry names it (tool_parser)
+//	           and the launch adds it; an `extra` that already carries --tool-call-parser wins
+//	           and the catalog's is not added (toolparser.go)
 
 import (
 	"encoding/json"
@@ -185,6 +188,41 @@ func (f EngineFlags) llamaArgs() []string {
 		args = append(args, splitExtra(v)...)
 	}
 	return args
+}
+
+// llamaKVUnified is the KV layout the launch line gives llama-server: true =
+// one pool every slot shares, false = a partition per slot. The engine does
+// not report it back, and its pool cannot be read without it (the llama.cpp
+// driver's SetKVUnified, PLAN T23.2). The last word wins, as on llama-server's
+// own command line: `extra` (written last), then the kv_unified flag, then the
+// build's own rule — unified only when the slot count is left automatic.
+// known = false when the line caps each slot with --kv-unified-per-slot: the
+// slot context /props reports is then that cap, not the pool, and neither
+// layout's arithmetic reads the pool from it.
+func (f EngineFlags) llamaKVUnified() (unified, known bool) {
+	if v, ok := f.get("extra"); ok {
+		toks := strings.Fields(v)
+		for _, t := range toks {
+			if t == "--kv-unified-per-slot" || strings.HasPrefix(t, "--kv-unified-per-slot=") {
+				return false, false
+			}
+		}
+		for i := len(toks) - 1; i >= 0; i-- {
+			switch toks[i] {
+			case "--kv-unified", "-kvu":
+				return true, true
+			case "--no-kv-unified", "-no-kvu":
+				return false, true
+			}
+		}
+	}
+	switch v, _ := f.get("kv_unified"); strings.ToLower(v) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return f.LaunchSlots("llamacpp") == 0, true
 }
 
 // isSplitList accepts a comma-separated list of non-negative numbers and

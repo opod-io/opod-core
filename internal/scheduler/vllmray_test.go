@@ -35,7 +35,7 @@ func TestVLLMRayGangHonoursThePartsVRAMBudget(t *testing.T) {
 	// And it is the SAME rule the worker's own launches and the SGLang gang use —
 	// one rule, three readers; a second copy is how the constant got here in the
 	// first place.
-	if !strings.Contains(got, agent.MemFractionShell("0.85")) {
+	if !strings.Contains(got, agent.MemFractionShell("vllm")) {
 		t.Errorf("the gang must use agent.MemFractionShell, not its own arithmetic:\n%s", got)
 	}
 	// The budget line writes $U, so it can only come BEFORE the exec that reads it.

@@ -34,3 +34,19 @@ bad line here
 		t.Fatalf("alias lookup %v %v", v, ok)
 	}
 }
+
+// An info metric's facts are its labels (vLLM's cache_config_info); a
+// malformed line elsewhere in the exposition does not stop them being read.
+func TestPromLabelsReadsAnInfoMetric(t *testing.T) {
+	text := "not a metric line {{{\n" +
+		`vllm:cache_config_info{block_size="16",engine="0",num_gpu_blocks="2048"} 1.0` + "\n" +
+		`vllm:cache_config_info{block_size="32",engine="1",num_gpu_blocks="None"} 1` + "\n" +
+		`vllm:cache_config_info_other{x="y"} 1` + "\n"
+	got := PromLabels(text, "vllm:cache_config_info")
+	if len(got) != 2 || got[0]["num_gpu_blocks"] != "2048" || got[1]["block_size"] != "32" || got[1]["num_gpu_blocks"] != "None" {
+		t.Fatalf("labels: %v", got)
+	}
+	if PromLabels(text, "vllm:absent") != nil {
+		t.Fatal("an absent metric has no series")
+	}
+}

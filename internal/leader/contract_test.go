@@ -129,6 +129,7 @@ var contractFeatureFloor = []string{
 	"shard_create_error_codes",
 	// a failed heal records shard.heal_failed {gang, revision, code, reason} and backs off
 	"shard_heal_failed_event",
+	"card_mib", "kv_readback", "wake_no_resume", "tool_parsers",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

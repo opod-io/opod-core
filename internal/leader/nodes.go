@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -45,6 +46,11 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		// InFlight is the requests THIS process's router has on the worker
 		// now — not the doors' (ADR-091: a door counts its own).
 		InFlight int `json:"in_flight,omitempty"`
+		// Load is the worker's last engine sample while it is fresh: its KV
+		// pressure and, from an engine that states them, the KV pool it built
+		// and its preemption and eviction counters (PLAN T23.2) — the per
+		// worker figures /loadz sums. Omitted when the worker sent none lately.
+		Load *engines.EngineLoad `json:"load,omitempty"`
 	}
 	inflight := s.router.Inflight()
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
@@ -66,6 +72,11 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		}
 		v.Slots, _ = s.slotsOfKey(n.ID)
 		v.InFlight = inflight[n.ID]
+		if ls, ok := s.nodeLoad.Load(n.ID); ok {
+			if ld := ls.(nodeLoadSample); now.Sub(ld.at) <= loadSampleMaxAge {
+				v.Load = &ld.EngineLoad
+			}
+		}
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)

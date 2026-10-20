@@ -50,6 +50,9 @@ type Driver struct {
 	// slots is the server's running-request limit, read once (Slots).
 	slotsMu sync.Mutex
 	slots   int
+	// poolTokens is /server_info's max_total_num_tokens, read with the slots:
+	// the KV pool when /metrics does not carry it.
+	poolTokens int64
 }
 
 // New returns a driver for an SGLang server at endpoint (e.g. http://gpu:30000).
@@ -120,6 +123,22 @@ func (s *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	} else if gen, ok := engines.First(m, "sglang:generation_tokens_total"); ok {
 		ld.TokensPerSec = s.genRate.Rate(gen, now)
 	}
+	// What the engine built and did (PLAN T23.2): the KV pool in tokens, the
+	// tokens running requests hold in it (radix-cached tokens that may be
+	// evicted are not counted), and its retractions — SGLang's preemption: a
+	// running request sent back to the queue to free KV. SGLang counts no
+	// evictions of its own (evictable tokens are a gauge), so those stay unsaid.
+	if n, ok := engines.First(m, "sglang:max_total_num_tokens"); ok && n > 0 {
+		ld.KVCapacityTokens = new(int64(n))
+	} else if n := s.serverInfoPool(); n > 0 {
+		ld.KVCapacityTokens = new(n)
+	}
+	if n, ok := engines.First(m, "sglang:kv_used_tokens", "sglang:num_used_tokens"); ok {
+		ld.KVUsedTokens = new(int64(n))
+	}
+	if n, ok := engines.First(m, "sglang:num_retracted_requests_total"); ok {
+		ld.PreemptionsTotal = new(int64(n))
+	}
 	if hit, ok := engines.First(m, "sglang:cache_hit_rate"); ok {
 		// Released as a fraction in some versions and a percentage in others;
 		// a rate above 1 can only be the latter.
@@ -167,13 +186,17 @@ func (s *Driver) readSlots(ctx context.Context, path string) int {
 		return 0
 	}
 	var info struct {
-		InternalStates []struct {
+		MaxTotalNumTokens int64 `json:"max_total_num_tokens"`
+		InternalStates    []struct {
 			Effective int `json:"effective_max_running_requests_per_dp"`
 			Max       int `json:"max_running_requests"`
 		} `json:"internal_states"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&info) != nil {
 		return 0
+	}
+	if info.MaxTotalNumTokens > 0 {
+		s.poolTokens = info.MaxTotalNumTokens
 	}
 	total := 0
 	for _, st := range info.InternalStates {
@@ -185,6 +208,14 @@ func (s *Driver) readSlots(ctx context.Context, path string) int {
 		}
 	}
 	return total
+}
+
+// serverInfoPool is the KV pool /server_info stated when the slots were read
+// (Slots asks it once and keeps both); 0 = not read, or not said.
+func (s *Driver) serverInfoPool() int64 {
+	s.slotsMu.Lock()
+	defer s.slotsMu.Unlock()
+	return s.poolTokens
 }
 
 var _ engines.SlotReporter = (*Driver)(nil)

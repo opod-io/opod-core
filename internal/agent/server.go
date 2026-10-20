@@ -82,6 +82,11 @@ type Server struct {
 	// which bytes are served sets both.
 	ModelRevision string
 	ModelSHA256   string
+	// ToolParser names the tool-call parser engine needs for the model with
+	// this catalog id, "" when none is known or the model calls no tools
+	// (toolparser.go, PLAN T19.25). The worker wires it from its catalog; nil
+	// = no catalog, and vLLM and SGLang start with no parser, as before.
+	ToolParser func(modelID, engine string) string
 
 	// adapterSet is what this worker holds as LoRA variants (adapters.go).
 	adaptersOnce sync.Once
@@ -800,8 +805,9 @@ func (s *Server) launchVLLM(model, servedName string) error {
 // per-worker VRAM budget (OPOD_VRAM_BUDGET_GB, set by a control plane or by
 // hand — `opod join --vram-budget`), the fraction is budget / device VRAM
 // (clamped 0.05–0.95) so several workers can share one device under a
-// ledger instead of each grabbing 85% of it. Budget is only honoured when
-// nvidia-smi can report the device size; otherwise the default stands.
+// ledger instead of each grabbing 85% of it. The device size is the
+// manager's OPOD_CARD_MIB, else nvidia-smi's; with neither the default stands
+// (MemFractionShell).
 // Plan flags (OPOD_ENGINE_FLAGS) may pin TP / utilisation and add the
 // capacity knobs the control plane exposes (max_model_len, kv dtype, …).
 //
@@ -826,10 +832,13 @@ func (s *Server) vllmCmdline(model, servedName, host string, port int) (string, 
 	if la := vllmLoRAArgs(len(adapters), MaxAdapterRank(adapters)); la != "" {
 		flagArgs = strings.TrimSpace(flagArgs + " " + la)
 	}
+	if ta := s.toolParserArgs("vllm", servedName); ta != "" {
+		flagArgs = strings.TrimSpace(flagArgs + " " + ta)
+	}
 	// MemFractionShell is CONCATENATED, never part of the format: it contains an
 	// awk `printf "%.2f"`, which Sprintf would read as a verb of its own and
 	// shift every argument after it.
-	cmdline := gpuCountShell + MemFractionShell("0.85") + fmt.Sprintf(
+	cmdline := gpuCountShell + MemFractionShell("vllm") + fmt.Sprintf(
 		"%s "+
 			"exec vllm serve '%s' %s --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
@@ -958,9 +967,12 @@ func (s *Server) sglangCmdline(model, servedName, host string, port int) (string
 		servedName = model
 	}
 	flagOverrides, flagArgs := s.EngineFlags.sglangShellOverrides()
+	if ta := s.toolParserArgs("sglang", servedName); ta != "" {
+		flagArgs = strings.TrimSpace(flagArgs + " " + ta)
+	}
 	// No budget, no fraction: SGLang then sizes its pool from the card itself
 	// (SGLangMemFractionFlag).
-	cmdline := gpuCountShell + MemFractionShell("") + fmt.Sprintf(
+	cmdline := gpuCountShell + MemFractionShell("sglang") + fmt.Sprintf(
 		"%s "+
 			"exec python3 -m sglang.launch_server --model-path '%s' %s --served-model-name '%s' --host %s --port %d "+
 			"--trust-remote-code "+SGLangMemFractionFlag+" --tp-size \"$TP\" %s",
@@ -1009,6 +1021,13 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 	args = append(args, flags.llamaArgs()...)                     // plan flags: ctx, ngl, parallel, kv cache type, extra
 	args = append(args, flags.llamaOffloadArgs(s.Accelerated)...) // offload to the card this worker reserved, unless the plan pinned ngl
 	s.launchedSlots.Store(int64(flags.LaunchSlots("llamacpp")))
+	// The engine's pool is unreadable without its layout (PLAN T23.2); a line
+	// whose layout cannot be read leaves the driver untold, and it states none.
+	if kl, ok := s.Engine.(engines.KVLayoutSetter); ok {
+		if unified, known := flags.llamaKVUnified(); known {
+			kl.SetKVUnified(unified)
+		}
+	}
 	_ = s.Supervisor.Stop("llama-server") // exclusive: one model per worker
 	// Launch via a login shell + exec, NOT a bare exec.Command: the direct
 	// supervisor launch (new process group, null stdin) makes the Intel CPU

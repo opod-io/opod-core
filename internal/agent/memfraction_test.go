@@ -22,7 +22,7 @@ func TestTheFractionKeepsTheProcessInsideItsBudget(t *testing.T) {
 		}
 	}
 	run := func(budget string) string {
-		cmd := exec.Command("sh", "-c", MemFractionShell("0.85")+`printf %s "$U"`)
+		cmd := exec.Command("sh", "-c", MemFractionShell("vllm")+`printf %s "$U"`)
 		cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "OPOD_VRAM_BUDGET_GB=" + budget}
 		out, err := cmd.Output()
 		if err != nil {
@@ -64,7 +64,7 @@ func TestSGLangGetsAFractionOnlyFromABudget(t *testing.T) {
 	}
 	run := func(budget string) string {
 		// printf '[%s]' shows each word the flag expands to, and nothing when it is empty.
-		cmd := exec.Command("sh", "-c", MemFractionShell("")+`printf '[%s]' x `+SGLangMemFractionFlag)
+		cmd := exec.Command("sh", "-c", MemFractionShell("sglang")+`printf '[%s]' x `+SGLangMemFractionFlag)
 		cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "OPOD_VRAM_BUDGET_GB=" + budget}
 		out, err := cmd.Output()
 		if err != nil {
@@ -77,5 +77,60 @@ func TestSGLangGetsAFractionOnlyFromABudget(t *testing.T) {
 	}
 	if got := run("6"); got != "[x][--mem-fraction-static][0.65]" {
 		t.Errorf("a 6 GB budget on an 8 GB card: got the words %s", got)
+	}
+}
+
+// The card's size comes from the manager first (OPOD_CARD_MIB, PLAN T23.3):
+// a host with no nvidia-smi — AMD, Intel — used to start every budgeted engine
+// at its default, the budget silently not applied. The manager's number also
+// wins over nvidia-smi's, so both repos divide by the same card.
+func TestTheCardSizeFromTheManagerWins(t *testing.T) {
+	if _, err := exec.LookPath("awk"); err != nil {
+		t.Skip("no awk on this machine")
+	}
+	empty := t.TempDir() // no nvidia-smi here
+	lying := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lying, "nvidia-smi"), []byte("#!/bin/sh\necho 49140\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(engine, pathDir, budget, card string) string {
+		cmd := exec.Command("sh", "-c", MemFractionShell(engine)+`printf %s "$U"`)
+		cmd.Env = []string{"PATH=" + pathDir + ":/usr/bin:/bin", "OPOD_VRAM_BUDGET_GB=" + budget}
+		if card != "" {
+			cmd.Env = append(cmd.Env, "OPOD_CARD_MIB="+card)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	for _, c := range []struct{ engine, dir, budget, card, want, why string }{
+		{"vllm", empty, "6", "8192", "0.65", "no nvidia-smi: the manager's card size applies the budget"},
+		{"vllm", lying, "6", "8192", "0.65", "the manager's card size wins over nvidia-smi's"},
+		{"vllm", lying, "6", "", "0.10", "unset: nvidia-smi as before ((6144-768)/49140)"},
+		{"vllm", empty, "6", "", "0.85", "neither: the default stands"},
+		{"vllm", empty, "6", "8 GiB", "0.85", "a value that is not a number is not a card size"},
+		{"vllm", empty, "0", "8192", "0.85", "no budget: the card size changes nothing"},
+		{"sglang", empty, "6", "8192", "0.65", "SGLang divides by the same card"},
+		{"sglang", empty, "0", "8192", "", "SGLang with no budget sizes itself"},
+	} {
+		if got := run(c.engine, c.dir, c.budget, c.card); got != c.want {
+			t.Errorf("%s: %s budget %s card %q: fraction %q, want %q", c.why, c.engine, c.budget, c.card, got, c.want)
+		}
+	}
+}
+
+// Every overhead number lives in one table, one row per engine whose fraction
+// a budget is translated into — the row T23.2's read-back will correct.
+func TestEveryFractionEngineHasOneOverheadRow(t *testing.T) {
+	for _, engine := range []string{"vllm", "sglang"} {
+		k, ok := memKnobs[engine]
+		if !ok || k.overheadMiB <= 0 {
+			t.Errorf("%s: no overhead row (%+v)", engine, k)
+		}
+	}
+	if got := MemFractionShell("llamacpp"); !strings.HasPrefix(got, "U=; ") {
+		t.Errorf("an engine with no fraction gets no default: %s", got)
 	}
 }

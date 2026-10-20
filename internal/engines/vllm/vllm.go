@@ -15,9 +15,12 @@
 package vllm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -79,7 +82,9 @@ var _ engines.Engine = (*Driver)(nil)
 
 // Load scrapes vLLM's own /metrics (build item 14): KV-cache usage,
 // requests waiting for a slot, generated tokens/s since the last sample and
-// the prefix-cache hit rate. Metric names moved across vLLM releases, so
+// the prefix-cache hit rate — and, from the same scrape, the KV pool it built
+// and its preemptions (PLAN T23.2). Its slot count is not here: vLLM publishes
+// none, and the worker reports the --max-num-seqs it launched it with. Metric names moved across vLLM releases, so
 // each signal reads the first alias present.
 func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.BaseURL+"/metrics", nil)
@@ -94,9 +99,17 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if resp.StatusCode != http.StatusOK {
 		return engines.EngineLoad{}, engines.Upstream(name, "GET /metrics", resp.StatusCode, nil)
 	}
-	m := engines.ParsePromText(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return engines.EngineLoad{}, engines.Unreachable(name, v.BaseURL, err)
+	}
+	m := engines.ParsePromText(bytes.NewReader(raw))
 	now := time.Now()
 	ld := engines.EngineLoad{SampledAt: now.Unix()}
+	ld.KVCapacityTokens = kvCapacity(string(raw))
+	if n, ok := engines.First(m, "vllm:num_preemptions_total", "vllm:num_preemptions"); ok {
+		ld.PreemptionsTotal = new(int64(n))
+	}
 	if kv, ok := engines.First(m, "vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"); ok {
 		ld.KVUsedPct = kv * 100
 	}
@@ -112,6 +125,29 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 		ld.PrefixHitPct = hits / queries * 100
 	}
 	return ld, nil
+}
+
+// kvCapacity is the KV pool vLLM built, in tokens: num_gpu_blocks ×
+// block_size from its cache_config_info, an info metric whose facts are its
+// labels — summed over its series, one per engine of a data-parallel server.
+// nil when vLLM does not publish it (before the profile run has sized the pool,
+// num_gpu_blocks is "None"): the engine has not said, and nothing is guessed
+// from the launch line. vLLM counts no tokens in use (only the fraction above)
+// and no evictions, so those stay unsaid.
+func kvCapacity(text string) *int64 {
+	var total int64
+	for _, l := range engines.PromLabels(text, "vllm:cache_config_info") {
+		blocks, err1 := strconv.ParseInt(l["num_gpu_blocks"], 10, 64)
+		size, err2 := strconv.ParseInt(l["block_size"], 10, 64)
+		if err1 != nil || err2 != nil || blocks <= 0 || size <= 0 {
+			return nil
+		}
+		total += blocks * size
+	}
+	if total == 0 {
+		return nil
+	}
+	return &total
 }
 
 // Sleep / Resume / Sleeping drive vLLM's sleep mode (`--enable-sleep-mode`

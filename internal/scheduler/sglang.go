@@ -113,6 +113,7 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 				NodeRank:  rank,
 				TP:        split.TP,
 				PP:        split.PP,
+				ToolArgs:  agent.ToolParserArgs("sglang", models.ToolParser(&entry, "sglang"), par.Flags["extra"]),
 			})},
 			// No HealthPort: SGLang binds its HTTP port only after the weights are
 			// loaded and the group has formed, which is minutes on a model worth
@@ -169,6 +170,7 @@ type sglangGang struct {
 	NodeRank  int
 	TP        int
 	PP        int
+	ToolArgs  []string // the model's tool-call parser flags (agent.ToolParserArgs); none = no parser known
 }
 
 // sglangGangCommand is the shell line one rank runs.
@@ -207,9 +209,12 @@ func sglangGangCommand(g sglangGang) string {
 		"--nnodes "+strconv.Itoa(g.NNodes),
 		"--node-rank "+strconv.Itoa(g.NodeRank),
 	)
+	for _, t := range g.ToolArgs {
+		args = append(args, "'"+shellQuote(t)+"'")
+	}
 	// The budget line runs BEFORE the exec: it writes $U, which the fraction
 	// flag above reads — empty when the part has no budget.
-	return agent.MemFractionShell("") + strings.Join(args, " ")
+	return agent.MemFractionShell("sglang") + strings.Join(args, " ")
 }
 
 // shellQuote escapes a value for the single quotes it is placed inside.

@@ -319,6 +319,32 @@ func contractFeatures() map[string]bool {
 		"worker_unload":         true, // POST /v1/model/unload on a worker (scheduler.UnloadFromNode): the engine's unload, or a stop of the engine process the worker launched; idempotent; 409 for a shard part or a held adapter, 501 when the engine cannot
 		"node_drain":            true, // POST /admin/v1/nodes/{id}/drain|undrain: a draining node gets no new request and no new shard part, in-flight finishes; the state survives heartbeats and a re-register; /readyz and the waking 503 do not count it
 		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
+
+		// OPOD_CARD_MIB: the card's size as the manager measured it. A budgeted
+		// vLLM or SGLang launch divides by it and asks nvidia-smi only when it
+		// is unset, so a budget applies on a host with no nvidia-smi (PLAN
+		// T23.3). Without this key a manager must assume a budget is applied
+		// only where nvidia-smi answers.
+		"card_mib": true,
+		// The engines' own word on the KV pool they built (PLAN T23.2): a
+		// heartbeat's load carries kv_capacity_tokens, kv_used_tokens,
+		// preemptions_total and evictions_total when the engine states them
+		// (vLLM, SGLang, llama.cpp — each from its own report, absent when it
+		// does not say); GET /admin/v1/nodes carries each worker's `load`, and
+		// /loadz the sums. Without this key the fields are never present.
+		"kv_readback": true,
+		// The policy snapshot's wake.noResumeInPlace names sleeping workers the
+		// request wake must not resume (PLAN T11.31): a request that finds only
+		// those is held by the admission hold, not served by a resume into a
+		// card the manager gave away. Without this key the leader resumes any
+		// sleeper, and a manager must park a worker before it hands its card on.
+		"wake_no_resume": true,
+		// A vLLM or SGLang launch — a worker's own, or a gang's — adds the
+		// tool-call parser the model's catalog entry names for that engine
+		// (tool_parser), unless the plan's extra already names one (PLAN
+		// T19.25). Without this key a manager that wants tool calls parsed puts
+		// the parser in extra itself.
+		"tool_parsers": true,
 	}
 }
 
