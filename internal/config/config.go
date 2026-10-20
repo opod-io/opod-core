@@ -43,6 +43,21 @@ type Config struct {
 	// carries prompts and keys, and asks nothing of the side that carries a
 	// number. Empty = off, and the probes stay on the main listener.
 	ProbeListen string `yaml:"probe_listen"`
+	// PlainListen (OPOD_PLAIN_LISTEN, e.g. ":8082") serves the WHOLE request
+	// API — the same handler as the main listener: /v1, /admin/v1, the join
+	// path and the probes — on a second listener that is always plain HTTP,
+	// whatever TLS the main one speaks.
+	//
+	// It exists for a leader that sits behind a load balancer which cannot
+	// originate TLS to it: a gateway in front of several leaders, each serving
+	// its own self-signed certificate under its own name, would have to trust
+	// every one of them and check a different host name per backend. This
+	// port asks nothing of that gateway, at a price stated plainly: whatever
+	// reaches it — prompts, answers, API keys — crosses the network in clear
+	// text. Bind it only where the network itself decides who may connect
+	// (a NetworkPolicy, a host firewall); the main listener keeps its
+	// certificate for everyone else. Empty = off.
+	PlainListen string `yaml:"plain_listen"`
 	DataDir     string `yaml:"data_dir"`
 	LogLevel    string `yaml:"log_level"`
 	CatalogDir  string `yaml:"catalog_dir"`
@@ -363,6 +378,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPOD_PROBE_LISTEN"); v != "" {
 		c.ProbeListen = v
+	}
+	if v := os.Getenv("OPOD_PLAIN_LISTEN"); v != "" {
+		c.PlainListen = v
 	}
 	if v := os.Getenv("OPOD_DATA_DIR"); v != "" {
 		c.DataDir = v

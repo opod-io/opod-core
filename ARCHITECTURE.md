@@ -1174,6 +1174,7 @@ All three bind to whichever Prometheus data source you pick at import time via t
 - Mesh = plain HTTP on a trusted LAN by default. Inter-node requests are authenticated (HMAC-signed) but not encrypted by Opod — run Tailscale/WireGuard at the host level, or keep the fleet on one trusted network. Embedded tsnet (WireGuard in-process) is planned — not implemented.
 - **The leader's own listener can speak TLS** (feature `tls_listener`): with `OPOD_TLS_CERT` + `OPOD_TLS_KEY` (`tls_cert` / `tls_key`) the one listener serves the gateway, `/admin/v1`, the probes and the join path over HTTPS — ADR-005's "TLS on the north side", and how a control plane mints a certificate per endpoint. A worker trusts exactly that certificate through `OPOD_LEADER_CA`. A reverse proxy (Caddy, nginx) is still a fine alternative, and is what you want for a public name and rotation you already run.
 - `OPOD_PROBE_LISTEN` (feature `probe_port`) serves `/healthz`, `/readyz`, `/loadz` and `/metrics` on a **second, always-plain** listener, so a scraper or an autoscaler reads a number without being handed the leader's CA — and nobody ends up skipping verification to get a scaling signal. Nothing authenticated is routed there and the router is built from scratch, so a new `/admin/v1` route cannot appear on that port by accident.
+- `OPOD_PLAIN_LISTEN` (feature `plain_listen`) is the opposite trade: the **whole** API — the main listener's own handler, so `/v1`, `/admin/v1`, the join path and the probes, with the same authentication, admission and usage — on a second listener that is **always plain HTTP**. It is for a load balancer that spreads requests over several leaders and cannot originate TLS to each one's own certificate (a Gateway API `InferencePool` whose members are leaders). Whatever reaches it — prompts, answers, API keys — crosses the network in clear text, so bind it only where the network decides who may connect (a NetworkPolicy, a host firewall); the main listener keeps its certificate for every other caller. A node route that requires a client certificate refuses there, because a plain connection carries none. Unlike the probe port, an address that cannot be bound stops the leader from starting.
 - **A worker's identity may be a client certificate** rather than the join token it holds (feature `mtls`): `OPOD_NODE_CERT` / `OPOD_NODE_KEY`, node id read from the SPIFFE URI SAN, mode and CA and revoked serials in the watched auth snapshot. See § Authentication and authorization.
 - Leader → worker is HMAC, always, TLS or not.
 - Workers must be reachable from the leader on their reported `host:port`.
@@ -1518,7 +1519,7 @@ list is:
   `DELETE /admin/v1/adapters/{name}`, `/shards/{model_id}`, `/shards/{model_id}/{gang_id}`
 
 The list is additive-only — a route on it is never removed, renamed or given another method, and its
-response shape only gains fields. `GET /admin/v1/capabilities` serves it together with the **63 feature
+response shape only gains fields. `GET /admin/v1/capabilities` serves it together with the **74 feature
 keys** a manager may probe for instead of sniffing behaviour, and `TestLeaderContract` walks the real router
 so a change that drops one of these routes fails `go test`. Everything else under `/admin/v1` — and
 `GET /gatewayz`, which is deliberately not frozen — may change between releases.
@@ -1526,7 +1527,7 @@ so a change that drops one of these routes fails `go test`. Everything else unde
 Rather than restate the key list here and let it rot, read it: `curl -s -H "Authorization: Bearer $KEY"
 localhost:8080/admin/v1/capabilities | jq .features`. Each key is commented at its declaration with what it
 promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `policy_file`,
-`events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`,
+`events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`, `plain_listen`,
 `engine_liveness`, `worker_goodbye`, `worker_sleep`, `request_wake`, `kv_block_events`, `node_drain`, `placement_drain`, `model_move`,
 `shards`, `shard_head`, `shard_groups`, `shard_sglang`, `shard_expert`, `plan_heal_gangs`, `shard_create_error_codes`, `shard_heal_failed_event`, `gateway_spend`, `mtls`,
 `tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.

@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`OPOD_PLAIN_LISTEN`** (feature `plain_listen`, `plain_listen` in `config.yaml`): the whole API — the main
+  listener's own handler, so `/v1`, `/admin/v1`, the join path and the probes with the same checks — on a second
+  listener that is always plain HTTP, beside a main one that may speak TLS. For a gateway that load-balances several
+  leaders and cannot originate TLS to each one's own certificate. The hop to it is **clear text**: bind it only where
+  the network decides who may connect. An address that cannot be bound stops the leader from starting. Unset = off,
+  and nothing changes.
 - **The engines say what KV pool they built** (T23.2, feature `kv_readback`). A heartbeat's `load` carries
   `kv_capacity_tokens`, `kv_used_tokens`, `preemptions_total` and `evictions_total`, each read from the engine's own
   report and absent when it does not say: vLLM's `cache_config_info` (`num_gpu_blocks × block_size`) and

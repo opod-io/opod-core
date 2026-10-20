@@ -800,6 +800,7 @@ when library code reads a variable that is not on it, so the list is the whole s
 | `OPOD_LISTEN` | `listen` |
 | `OPOD_TLS_CERT` / `OPOD_TLS_KEY` | `tls_cert` / `tls_key` — both set = the leader's listener speaks TLS |
 | `OPOD_PROBE_LISTEN` | `probe_listen` — the second, always-plain probe listener (`/healthz`, `/readyz`, `/loadz`, `/metrics`) |
+| `OPOD_PLAIN_LISTEN` | `plain_listen` — a second, always-plain listener serving the **whole** API (the main listener's own handler), for a load balancer that cannot originate TLS to the leader's certificate. Clear text: bind it only where the network decides who connects. Unset = off |
 | `OPOD_DATA_DIR` | `data_dir` |
 | `OPOD_STORAGE_DSN` | `storage.dsn` (also what gives a managed leader a durable store) |
 | `OPOD_LOG_LEVEL` | `log_level` |

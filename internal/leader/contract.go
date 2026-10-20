@@ -345,6 +345,14 @@ func contractFeatures() map[string]bool {
 		// T19.25). Without this key a manager that wants tool calls parsed puts
 		// the parser in extra itself.
 		"tool_parsers": true,
+		// OPOD_PLAIN_LISTEN: the whole request API — the main listener's own
+		// handler — on a second, always-plain listener, beside a main one that
+		// may speak TLS. For a gateway that load-balances several leaders and
+		// cannot originate TLS to each one's own certificate (an InferencePool's
+		// members). The hop to it is clear text; the network decides who may
+		// reach it. Without this key a manager must assume the leader serves its
+		// API on one listener only, and a second port it points at is closed.
+		"plain_listen": true,
 	}
 }
 

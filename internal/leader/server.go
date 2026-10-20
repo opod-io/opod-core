@@ -374,6 +374,12 @@ func (s *Server) Start(ctx context.Context) error {
 		s.http.TLSConfig = base
 	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "scheme", scheme)
+	stopPlain, err := s.servePlain(handler)
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	defer stopPlain()
 	stopProbe := s.serveProbes(ctx)
 	defer stopProbe()
 	errCh := make(chan error, 1)
@@ -783,6 +789,49 @@ func (s *Server) Addr() string {
 
 // TLS reports whether the listener speaks TLS.
 func (s *Server) TLS() bool { return s.cfg.TLSCert != "" && s.cfg.TLSKey != "" }
+
+// servePlain runs the plain listener when OPOD_PLAIN_LISTEN names an address:
+// the main listener's own handler — gateway, /admin/v1, the join path, the
+// probes — always over plain HTTP, whatever TLS the main listener speaks.
+//
+// The handler is the one Start built, not a second router, so the two ports
+// can never disagree about what a request may do: authentication, admission
+// and usage are the same code either way, and only the transport differs. A
+// node route that requires a client certificate refuses here, because a plain
+// connection carries none.
+//
+// Unlike the probe port, an address that cannot be bound fails Start: whoever
+// set it is sending requests there (a gateway in front of several leaders), and
+// a leader that came up Ready without it would answer its health checks on one
+// port and refuse every routed request on the other. Returns a stop function.
+func (s *Server) servePlain(handler http.Handler) (func(), error) {
+	addr := s.cfg.PlainListen
+	if addr == "" {
+		return func() {}, nil
+	}
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 30 * time.Second}
+	// HTTP/1.1 and h2c, as on the main listener, so a gRPC client (T19.5)
+	// behaves the same on either port.
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("plain listener %s: %w", addr, err)
+	}
+	s.log.Info("plain listener: the full API in clear text — reachable only where the network decides who may connect",
+		"addr", ln.Addr().String(), "scheme", "http")
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			s.log.Error("plain listener stopped", "err", err)
+		}
+	}()
+	return func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}, nil
+}
 
 // probeRoutes is the probe listener's whole router, built from scratch (see
 // serveProbes).
