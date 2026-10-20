@@ -142,12 +142,24 @@ func TestAnEngineChangeSendsTheHeartbeatAtOnce(t *testing.T) {
 		t.Fatalf("no change yet, hour-long interval: %d heartbeats", n)
 	}
 	sup.notifyChanged()
-	sup.notifyChanged() // coalesced with the first
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && count() == 0; time.Sleep(5 * time.Millisecond) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	if n := count(); n != 1 {
 		t.Fatalf("a change sends one heartbeat at once, got %d", n)
+	}
+}
+
+// Changes that arrive while one is pending are covered by it: two with no
+// reader leave one signal, so a burst of supervisor changes is one early beat.
+// Checked on the supervisor alone — with the loop running, whether the second
+// change lands before the loop takes the first is the scheduler's choice.
+func TestSupervisorChangesCoalesce(t *testing.T) {
+	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sup.notifyChanged()
+	sup.notifyChanged()
+	if n := len(sup.changed); n != 1 {
+		t.Fatalf("two changes with no reader leave one signal, got %d", n)
 	}
 }
 

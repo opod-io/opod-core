@@ -762,6 +762,13 @@ func waitReadyPath(ctx context.Context, host string, port int, path string, time
 			}
 			continue
 		}
+		// An exit wins over the deadline: a process that died is reported as
+		// dead (its output follows), never as a port that did not open.
+		select {
+		case <-exited:
+			return fmt.Errorf("process exited during startup")
+		default:
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("%s not reachable after %s", addr, timeout)
 		}

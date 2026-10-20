@@ -154,12 +154,15 @@ func TestSupervisor_RestartPendingDuringBackoff(t *testing.T) {
 	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer sup.StopAll()
 	if _, err := sup.Start(context.Background(), ProcessSpec{
-		ID: "dies", Command: script, Restart: true, MaxRestarts: 5, RestartBackoff: 2 * time.Second,
+		// A back-off far longer than the test: the state under test lasts the
+		// whole back-off, and the Stop below ends it, so a test process starved
+		// for seconds still sees it (T9.30) and the pass costs no more time.
+		ID: "dies", Command: script, Restart: true, MaxRestarts: 5, RestartBackoff: 30 * time.Second,
 	}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	var info *ProcessInfo
-	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if info, _ = sup.Get("dies"); info.RestartPending {
 			break
 		}
