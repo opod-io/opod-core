@@ -5,6 +5,27 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## Unreleased
+
+- **The engines say what KV pool they built** (T23.2, feature `kv_readback`). A heartbeat's `load` carries
+  `kv_capacity_tokens`, `kv_used_tokens`, `preemptions_total` and `evictions_total`, each read from the engine's own
+  report and absent when it does not say: vLLM's `cache_config_info` (`num_gpu_blocks × block_size`) and
+  `num_preemptions_total`; SGLang's `max_total_num_tokens`, `kv_used_tokens` and `num_retracted_requests_total`;
+  llama.cpp's `/props` slot context, times the slots when each has its own partition (the worker tells the driver the
+  layout it launched). `GET /admin/v1/nodes` gives each worker's sample as `load`; `/loadz` sums them.
+  `engines.EngineLoad` is now the SDK's `nodeapi.EngineLoad` itself, so the two cannot drift.
+- **`OPOD_CARD_MIB`** (T23.3, feature `card_mib`): the card's size from the manager. A budgeted vLLM or SGLang launch
+  divides by it and asks `nvidia-smi` only when it is unset, so a budget now applies on AMD and Intel hosts, where it
+  was silently ignored. One translation per engine, and the overhead numbers in one table (`memKnobs`).
+  `agent.MemFractionShell` now takes the engine name instead of a default fraction.
+- **A sleeper whose card was given away is not resumed by a request** (T11.31, feature `wake_no_resume`). The policy
+  snapshot's `wake.noResumeInPlace` names such workers; a request that finds only them is held by the admission hold
+  instead, and the change of marks is recorded as a `policy.wake_marks` event.
+- **vLLM and SGLang start with the model's tool-call parser** (T19.25, feature `tool_parsers`): the catalog's
+  `tool_parser` for the engine adds `--enable-auto-tool-choice --tool-call-parser <name>` (vLLM) or
+  `--tool-call-parser <name>` (SGLang) to a worker's launch and to the vLLM Ray, vLLM expert-parallel and SGLang gangs,
+  unless the plan's `extra` names a parser already. Before, a `tools` request came back as text.
+
 ## 2026-10-19 — Anthropic Messages on every chat model, and images reach the engine
 
 - **`POST /v1/messages` and `/v1/messages/count_tokens` are served again** (ADR-092 §1), translated to the chat path so

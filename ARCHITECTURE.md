@@ -978,7 +978,7 @@ Five, all linked by `internal/engines/all`. `GET /admin/v1/capabilities` reports
 | Driver | id (aliases) | Notes |
 |---|---|---|
 | **Ollama** | `ollama` | Easiest dev backend, and the only one that keeps several models installed and loads one on request. Driver pulls and serves through its HTTP API (`/api/pull`, `/api/ps`). Default `engine.preferred`. |
-| **vLLM** | `vllm` (`tt-openai`, `tenstorrent`, `tt`) | NVIDIA, ROCm and XPU builds, and Tenstorrent's tt-metal server — the wire is identical, so the aliases exist instead of a second driver. The worker launches `vllm serve` with `--tensor-parallel-size`, `--max-model-len`, `--gpu-memory-utilization` from the plan. |
+| **vLLM** | `vllm` (`tt-openai`, `tenstorrent`, `tt`) | NVIDIA, ROCm and XPU builds, and Tenstorrent's tt-metal server — the wire is identical, so the aliases exist instead of a second driver. The worker launches `vllm serve` with `--tensor-parallel-size`, `--max-model-len`, `--gpu-memory-utilization` from the plan, and `--enable-auto-tool-choice --tool-call-parser` when the model's catalog entry names a parser (`tool_parsers`, T19.25). |
 | **SGLang** | `sglang` (`sgl`) | The worker launches `python -m sglang.launch_server`; `engine.sglang_endpoint` / `OPOD_SGLANG_ENDPOINT` default `http://127.0.0.1:30000`. Its own multi-node launcher is a gang backend (below). No sleep mode. |
 | **MLX-LM** | `mlx` (`mlx-lm`) | Apple Silicon. Driver proxies to an `mlx_lm.server` started by the operator (`Pull` is a no-op; no unload). |
 | **llama.cpp** | `llamacpp` (`llama-cpp`, `llamacpp-rpc`) | Universal fallback. The worker launches `llama-server` with `-m` (or `-hf` for a Hub source), `-c`, `--n-gpu-layers`, `--metrics` and — for a gang — `--rpc`; the driver talks OpenAI to it. |
@@ -1560,6 +1560,29 @@ Mechanisms a manager drives through this surface:
   not become the coordinator's scrape rate. One sample speaks for the whole gang, so `reporting` counts it once and the
   mean prefix-hit rate is over samples, not workers. Before it, a sharded endpoint reported `kv_used_pct 0` and
   `queue_depth 0` however loaded it was (measured on the design-partner cell, 2026-09-20).
+- **KV read-back** (`kv_readback`, T23.2): the same sample carries what the engine says it BUILT, each from its own
+  report and absent when it does not say — `kv_capacity_tokens` (vLLM: `num_gpu_blocks × block_size` from the labels of
+  `vllm:cache_config_info`, summed over data-parallel engines; SGLang: `sglang:max_total_num_tokens`, else
+  `/server_info`'s `max_total_num_tokens`; llama.cpp: `/props` `default_generation_settings.n_ctx` — one slot's context —
+  times `total_slots` for partitioned slots, alone for a unified pool, which the launching worker tells the driver
+  through `engines.KVLayoutSetter` because `/props` does not say), `kv_used_tokens` (SGLang), `preemptions_total`
+  (vLLM's preemptions, SGLang's retractions) and `evictions_total` (no engine counts it yet). `GET /admin/v1/nodes`
+  carries each worker's fresh sample as `load`; `/loadz` sums each field over the samples that state it (a gang's
+  coordinator holds the whole gang's pool). vLLM's slot count is the `--max-num-seqs` the worker launched it with —
+  vLLM publishes none. An expert-parallel gang's per-rank figures are summed by vLLM's rank 0 and are not yet
+  confirmed on hardware.
+- **Memory translation** (`card_mib`, T23.3, `internal/agent/memfraction.go`): a worker's VRAM budget
+  (`OPOD_VRAM_BUDGET_GB`) becomes the engine's own fraction by one rule per engine — vLLM `--gpu-memory-utilization`,
+  SGLang `--mem-fraction-static` — dividing the budget less the engine's overhead by the card's size. The size is the
+  manager's `OPOD_CARD_MIB` when set, else `nvidia-smi`'s; with neither (an AMD or Intel host without it) the engine
+  keeps its default. The overheads live in one table (`memKnobs`, 768 MiB for both today) until the read-back above
+  measures each engine's. llama.cpp takes no fraction, and TensorRT-LLM's fraction is of the memory left after the
+  weights, which the worker cannot size at launch — it stays the plan's flag.
+- **Tool-call parsers** (`tool_parsers`, T19.25, `internal/agent/toolparser.go`): vLLM and SGLang return a tool call as
+  text unless started with a parser. A worker's launch and the gang backends add the parser the model's catalog entry
+  names for the engine (`tool_parser`, only on a `tools` model) — vLLM `--enable-auto-tool-choice --tool-call-parser`,
+  SGLang `--tool-call-parser` — unless the plan's `extra` already names one. A model whose entry names none (or a
+  model served by a scheme id, with no entry) starts with none, as before.
 - **Gateway spend** (`gateway_spend`, T11.1 slice 1, ADR-063): the leader is one BRAIN behind several front DOORS.
   `POST /admin/v1/usage/push` takes usage rows a copied front recorded — at-least-once, deduplicated by a row id the
   **gateway** mints, because only the gateway knows two pushes are the same request, and a retry after a response it
@@ -1585,6 +1608,9 @@ Mechanisms a manager drives through this surface:
 - **Request wake** (`request_wake`, `internal/leader/wakeonrequest.go`): a request for a model whose only
   holders sleep resumes one of them from the request path, single-flight per worker, holds the caller for up to
   3 s and serves; past that budget the caller gets `503` + `Retry-After` and the resume finishes for the next.
+  A worker the policy snapshot names in `wake.noResumeInPlace` (`wake_no_resume`, T11.31) is never resumed this way —
+  a manager gave its card to another workload while it slept — and a request that finds only such sleepers goes on to
+  the admission gate, which holds it for `admission.holdMs` until a worker can take it.
 - **Sleep tier** (`worker_sleep`): `engines.Sleeper` (vLLM sleep mode) behind the worker's
   `/v1/model/sleep|resume`; the heartbeat says `sleeping`, the leader keeps those placements as
   `sleeping` (not routable), `/readyz` answers `sleeping-workers`, requests get `503 waking`; an engine with
