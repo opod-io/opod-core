@@ -129,6 +129,22 @@ families() {
   ' images/images.yaml
 }
 
+# leader_features — the feature keys this tree's leader advertises on
+# /admin/v1/capabilities, comma-separated: `opod version --features`, run from
+# the SAME source as the image's binary (natively — dist/linux-* is a Linux
+# binary and does not run on the Mac). Stamped on the leader image as
+# io.opod.leader.features, so a control plane can read what a pinned leader
+# speaks (its TLS listener first) from the image itself instead of guessing
+# from a digest that is not its own chart's. One source, so it cannot drift.
+# Sets LEADER_FEATURES once, in this shell (not in a $(…) subshell, where a
+# die would only end the subshell and stamp an empty label).
+leader_features() {
+  [ -n "${LEADER_FEATURES:-}" ] && return 0
+  LEADER_FEATURES=$(go run ./cmd/opod version --features) \
+    || die "could not list the leader's features (go run ./cmd/opod version --features)"
+  [ -n "$LEADER_FEATURES" ] || die "the leader advertised no features"
+}
+
 push=0 multi=0 dry=0 tag="" images=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -247,6 +263,7 @@ build_one() {
         -t "$REG/$name:$t")
   local fams; fams=$(families "$name")
   [ -n "$fams" ] && args+=(--label "io.opod.gpu.families=$fams")
+  [ "$img" = leader ] && args+=(--label "io.opod.leader.features=$LEADER_FEATURES")
   [ "$base" != "-" ] && args+=(--build-arg "BASE=$base")
   case "$img" in llamacpp-*) args+=(--build-arg "LLAMA_RELEASE=$LLAMA_RELEASE") ;; esac
   local rv; rv=$(rpc_vendor_of "$img")
@@ -271,6 +288,7 @@ compile() {
 
 for img in "${images[@]}"; do
   read -r name file base arches <<<"$(spec "$img")"
+  [ "$img" = leader ] && leader_features
   if [ $multi = 1 ]; then
     # The index is composed from per-arch tags and then VERIFIED, because the one
     # thing that can silently go wrong here is publishing under a name nobody

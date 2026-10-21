@@ -63,6 +63,15 @@ some other way (upstream's own, a fork without the pair) has no label and should
 Read it from the registry without pulling: `crane config <image> | jq '.config.Labels'`, or
 `docker buildx imagetools inspect <image> --format '{{json .Image.Config.Labels}}'`. A drift test holds label ↔ pair.
 
+**The `io.opod.leader.features` label.** The leader image states what its `opod` speaks: the label's value is
+`opod version --features` — the leader's feature keys, comma-separated and sorted, the same list
+`/admin/v1/capabilities` advertises (`tls_listener`, `probe_port`, `wake_no_resume`, …). `build.sh` runs that command
+natively from the same checkout it cross-compiles, and the CI lane (`images.yml`) runs it in the leader's matrix row,
+so the label and the binary come from one source; a test holds the command's output equal to the advertised map. A
+manager that pins a leader by digest can read it from the registry before any pod of that image runs — for example to
+decide whether the pinned leader has a TLS listener. An image without the label (built before it existed, or some
+other way) says nothing, and a reader should assume the oldest leader. Read it the same way as the label above.
+
 **`images.yaml` is this table as data** — engine, vendor, platforms, weight format, gang scheme (`rpc` | `ray` | none),
 whether the image has served on the hardware it names, what the node must provide, and its limits. It is embedded in
 the binary and printed by `opod image ls | show <image> | recommend <model>` (`--json` for a script or an agent), so

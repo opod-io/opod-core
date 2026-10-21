@@ -204,6 +204,21 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      # The leader image says what it speaks (T7.10): io.opod.leader.features is
+      # `opod version --features` from this checkout — the same map the leader
+      # advertises on /admin/v1/capabilities, and the same command images/build.sh
+      # runs — so a control plane can tell a newer pinned leader (TLS listener)
+      # from an older one by the image instead of by whether the digest is its
+      # chart's. Empty for every other image.
+      - uses: actions/setup-go@v7
+        if: matrix.name == 'opod-leader'
+        with: { go-version-file: go.mod }
+      - id: features
+        if: matrix.name == 'opod-leader'
+        run: |
+          f=$(go run ./cmd/opod version --features)
+          [ -n "$f" ] || { echo "::error::the leader advertised no features"; exit 1; }
+          echo "label=io.opod.leader.features=$f" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -225,7 +240,9 @@ jobs:
           # Only the leader's base exists for arm64; the GPU bases are amd64-only.
           platforms: ${{ matrix.platforms || 'linux/amd64' }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            ${{ steps.features.outputs.label }}
           build-args: |
             ${{ matrix.base != '' && format('BASE={0}', matrix.base) || '' }}
             VERSION=${{ github.sha }}

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -82,6 +84,16 @@ func TestLeaderContract(t *testing.T) {
 		}
 	}
 	assertContractEngines(t, caps.Features, caps.Engines)
+	// The image label (io.opod.leader.features, from `opod version --features`)
+	// is FeatureKeys: it must name exactly what this route advertises.
+	advertised := make([]string, 0, len(caps.Features))
+	for k := range caps.Features {
+		advertised = append(advertised, k)
+	}
+	sort.Strings(advertised)
+	if got := FeatureKeys(); !slices.Equal(got, advertised) {
+		t.Errorf("FeatureKeys() = %v, capabilities advertises %v", got, advertised)
+	}
 
 	rec = httptest.NewRecorder()
 	srv.adminVersion(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/version", nil))

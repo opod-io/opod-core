@@ -1395,6 +1395,7 @@ opod update [--check] [--version vX.Y.Z] [--force]
 opod upgrade                     Alias for `update`
 opod completion <bash|zsh|fish>  Print a shell completion script
 opod version                     Print version
+opod version --features          Print the leader's feature keys (the leader image's io.opod.leader.features label)
 
 # --- nodes ---
 opod node ls                     List nodes

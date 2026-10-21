@@ -2,6 +2,7 @@ package leader
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/opod-io/opod-sdk/adminapi"
 
@@ -395,6 +396,23 @@ type EngineInfo struct {
 type capabilitiesResponse struct {
 	adminapi.Capabilities
 	Engines []EngineInfo `json:"engines"`
+}
+
+// FeatureKeys is the feature list this binary advertises on
+// /admin/v1/capabilities, sorted: the same map, so the two cannot disagree.
+// `opod version --features` prints it, and the image build stamps it on the
+// leader image as the io.opod.leader.features label, so a manager can learn
+// what a leader speaks from its image before any pod of it runs.
+func FeatureKeys() []string {
+	f := contractFeatures()
+	out := make([]string, 0, len(f))
+	for k, on := range f {
+		if on {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // contractEngines lists the linked drivers, sorted by id.

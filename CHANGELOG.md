@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **The leader image says what it speaks.** `opod version --features` prints the leader's feature keys —
+  comma-separated, sorted, the same list `/admin/v1/capabilities` advertises — and both image lanes (`images/build.sh`
+  and `images.yml`) stamp it on `opod-leader` as the OCI label `io.opod.leader.features`. A manager that pins a leader
+  by digest can then tell from the image whether that leader has, for example, a TLS listener (`tls_listener`),
+  instead of guessing from whether the digest matches the one it was configured with. A test holds the command's
+  output equal to the advertised map.
 - **An SGLang worker reports its load again.** SGLang serves `/metrics` only with `--enable-metrics`, and core never
   passed it, so every load sample failed with a 404: an SGLang worker or gang reported no KV use, queue depth,
   throughput or KV pool (T23.2) at all, and the router and autoscaler saw it as idle. Both the single-worker and the
