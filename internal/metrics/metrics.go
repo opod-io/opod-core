@@ -213,6 +213,16 @@ func SetModelLoaded(model, node string, loaded bool) {
 	modelLoaded.WithLabelValues(model, node).Set(v)
 }
 
+// ForgetNode drops every series labelled with a node the leader no longer
+// knows (T25.10): each replaced worker otherwise left its node_up,
+// model_loaded and router_inflight series behind for the process's life.
+func ForgetNode(node string) {
+	l := prometheus.Labels{"node": node}
+	nodeUp.DeletePartialMatch(l)
+	modelLoaded.DeletePartialMatch(l)
+	routerInflight.DeletePartialMatch(l)
+}
+
 // SetNodeUp marks a node as up (1) or down (0).
 func SetNodeUp(node, hostname string, up bool) {
 	v := 0.0

@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **A worker that stops heartbeating is forgotten.** Only an operator's `DELETE /admin/v1/nodes/{id}` ever removed a
+  node, so every replaced worker pod left its row, its placements, its in-memory samples and three metric series
+  (`opod_node_up`, `opod_model_loaded`, `opod_router_inflight`) on the leader for good. The leader now removes a
+  worker 15 minutes after its last heartbeat, exactly as that DELETE does, and records `node.forgotten` (with
+  `silent_for`) rather than the operator's `node.removed`; one that was only cut off re-registers on its next
+  heartbeat, as it already did on a 404. A front door (`--role gateway`) drops a worker its leader no longer
+  lists on its next fresh sync; a stale list still removes nothing.
 - **The leader's audit table holds actions, not traffic.** Every `/admin/v1` call wrote a row — reads and the five-second
   worker heartbeat included — and nothing trimmed it, so a leader's audit table (in memory, for a managed leader) grew
   for as long as the leader lived. Reads and the heartbeat now write nothing, the same rule the `admin.call` event

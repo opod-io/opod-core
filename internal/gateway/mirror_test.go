@@ -218,3 +218,86 @@ func TestTheMirrorCarriesPlacementsAndGangs(t *testing.T) {
 		t.Errorf("a coordinator that moved is followed, not kept: %+v", coord)
 	}
 }
+
+// T25.10 · a worker the leader stops listing leaves the door on the next fresh
+// sync — its row, its placements, and (OnForget) what the door holds in memory
+// — and a STALE list removes nothing, as it adds nothing.
+func TestAWorkerTheLeaderNoLongerListsLeavesTheDoor(t *testing.T) {
+	ctx := context.Background()
+	var body atomic.Value
+	var fail atomic.Bool
+	two := `[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1,"placements":[{"NodeID":"n_a","ModelID":"m","Status":"ready"}]},
+	         {"ID":"n_b","Hostname":"b","Address":"10.0.0.2:8081","state":"ready","heartbeat_age_seconds":1,"placements":[{"NodeID":"n_b","ModelID":"m","Status":"ready"}]}]`
+	one := `[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1,"placements":[{"NodeID":"n_a","ModelID":"m","Status":"ready"}]}]`
+	body.Store(two)
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, "leader down", http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/admin/v1/shards" {
+			fmt.Fprint(w, `[]`)
+			return
+		}
+		fmt.Fprint(w, body.Load().(string))
+	}))
+	defer leader.Close()
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := NewMirror(leader.URL, "tok", st)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+	var forgot []string
+	m.OnForget = func(id string) { forgot = append(forgot, id) }
+	ids := func() []string {
+		nodes, _ := st.Nodes().List(ctx)
+		out := []string{}
+		for _, n := range nodes {
+			out = append(out, n.ID)
+		}
+		return out
+	}
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(); len(got) != 2 {
+		t.Fatalf("the first sync populates both: %v", got)
+	}
+	if ps, _ := st.Placements().GetByNode(ctx, "n_b"); len(ps) != 1 {
+		t.Fatalf("the fixture did not mirror n_b's placement (%+v); the test would prove nothing", ps)
+	}
+
+	// The list goes stale, and the answer that ends it no longer names n_b:
+	// a stale pass removes nothing.
+	fail.Store(true)
+	clock = clock.Add(RegistryTTL + time.Second)
+	_ = m.Sync(ctx)
+	fail.Store(false)
+	body.Store(one)
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(); len(got) != 2 || len(forgot) != 0 {
+		t.Fatalf("a stale pass dropped a worker: %v, forgot %v", got, forgot)
+	}
+
+	// The door is fresh again: the next pass drops n_b everywhere.
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(); len(got) != 1 || got[0] != "n_a" {
+		t.Fatalf("a fresh list that no longer names n_b: %v", got)
+	}
+	if ps, _ := st.Placements().GetByNode(ctx, "n_b"); len(ps) != 0 {
+		t.Errorf("n_b's placements stayed: %+v", ps)
+	}
+	if len(forgot) != 1 || forgot[0] != "n_b" {
+		t.Errorf("OnForget heard %v, want [n_b]", forgot)
+	}
+	if m.known["n_b"] {
+		t.Error("the door still counts n_b as known")
+	}
+}

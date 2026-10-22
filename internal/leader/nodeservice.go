@@ -15,6 +15,7 @@ import (
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/metrics"
 	"github.com/opod-io/opod/internal/store"
 )
 
@@ -404,6 +405,13 @@ func (s *Server) setNodeState(ctx context.Context, id, state, event string) erro
 // RemoveNode forgets the node, its placements and the router's cached
 // engine for it, so in-flight routing stops picking it immediately.
 func (s *Server) RemoveNode(ctx context.Context, id string) error {
+	return s.removeNode(ctx, id, "node.removed", nil)
+}
+
+// removeNode is RemoveNode recording event: an operator's removal and the
+// sweep's forgetting of a worker that went silent are different facts on the
+// event stream, even though they do the same thing (T25.10).
+func (s *Server) removeNode(ctx context.Context, id, event string, data map[string]any) error {
 	if err := s.store.Nodes().Delete(ctx, id); err != nil {
 		return err
 	}
@@ -419,7 +427,7 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 		s.orch.EndFormationsOn(id)
 	}
 	s.capacityChanged() // its slots leave every pool (ADR-091)
-	s.record("node.removed", id, nil)
+	s.record(event, id, data)
 	return nil
 }
 
@@ -429,10 +437,10 @@ func (s *Server) RemoveNode(ctx context.Context, id string) error {
 // and the router's per-node state. Every one of these is a cache of a fact
 // the store held, so forgetting cannot lose anything — and without it the
 // maps grew by one entry per node id for the leader's whole life, a whole
-// cloned http.Transport each in the case of gangEng (PLAN T15.4). The
-// heartbeat reaper does not remove rows (it only skips stale nodes), so the
-// store's RemoveNode is the one call here; a node that comes back reuses its
-// id and simply repopulates.
+// cloned http.Transport each in the case of gangEng (PLAN T15.4). RemoveNode
+// is the one caller, for an operator's DELETE and for forgetDeadNodes' sweep
+// of workers that stopped heartbeating; a node that comes back reuses its id
+// and simply repopulates.
 func (s *Server) forgetNode(ctx context.Context, id string) {
 	s.nodeLoad.Delete(id)
 	s.noteSlots(id, 0)
@@ -449,6 +457,35 @@ func (s *Server) forgetNode(ctx context.Context, id string) {
 		}
 	}
 	s.router.InvalidateNode(id)
+	metrics.ForgetNode(id)
+}
+
+// forgetDeadNodes removes every worker whose last heartbeat is older than
+// after (T25.10). A replaced worker pod never says goodbye: its row, its
+// placements, its maps and its metric series stayed for the leader's whole
+// life, one set per pod a rollout or a reschedule ever made. Removing it is
+// RemoveNode's work, recorded as node.forgotten rather than node.removed — no
+// operator asked; a worker that was only cut
+// off re-registers on its next heartbeat (the agent answers a 404 so), and
+// the leader's own engine ("local") is never a candidate.
+func (s *Server) forgetDeadNodes(ctx context.Context, after time.Duration) int {
+	nodes, err := s.store.Nodes().List(ctx)
+	if err != nil {
+		return 0
+	}
+	cutoff := time.Now().Add(-after)
+	n := 0
+	for _, nd := range nodes {
+		if nd.ID == "local" || !nd.LastHeartbeat.Before(cutoff) {
+			continue
+		}
+		silent := time.Since(nd.LastHeartbeat).Round(time.Second)
+		if err := s.removeNode(ctx, nd.ID, "node.forgotten", map[string]any{"silent_for": silent.String(), "after": after.String()}); err == nil {
+			s.log.Info("forgot a worker that stopped heartbeating", "node", nd.ID, "lastHeartbeat", nd.LastHeartbeat, "after", after)
+			n++
+		}
+	}
+	return n
 }
 
 // forgetGang drops a coordinator's cached driver and sample, releasing the

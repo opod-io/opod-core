@@ -23,6 +23,11 @@ const (
 	keepUsageRows = 200_000
 	keepEventRows = 50_000
 	keepAuditRows = 50_000
+	// forgetNodeAfter is how long a worker may go without a heartbeat before
+	// the leader forgets it (T25.10). The router stops picking a worker after
+	// seconds; this is about memory and rows, so it is long enough that only a
+	// worker that is gone is gone, and one that comes back re-registers.
+	forgetNodeAfter = 15 * time.Minute
 )
 
 // StartTrimmer bounds the usage, event and audit tables every minute.
@@ -45,6 +50,7 @@ func (s *Server) StartTrimmer(ctx context.Context) {
 				if n, err := s.store.Audit().Trim(tctx, keepAuditRows); err == nil && n > 0 {
 					s.log.Info("audit ring trimmed", "deleted", n, "keep", keepAuditRows)
 				}
+				s.forgetDeadNodes(tctx, forgetNodeAfter)
 				cancel()
 			}
 		}

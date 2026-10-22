@@ -83,6 +83,10 @@ type Mirror struct {
 	// govern by the same numbers as the leader's (ADR-091).
 	OnSlots func(nodeID string, slots int)
 
+	// OnForget, when set, is told each worker that left the leader's list, so
+	// the door drops what it holds in memory about it too (T25.10).
+	OnForget func(nodeID string)
+
 	mu      sync.Mutex
 	lastOK  time.Time
 	lastErr string
@@ -163,6 +167,18 @@ func (m *Mirror) Sync(ctx context.Context) error {
 		m.known[n.ID] = true
 		m.mu.Unlock()
 	}
+	// A fresh list is the leader's whole registry, so a worker it no longer
+	// lists is gone (removed, or forgotten after it stopped heartbeating,
+	// T25.10): it leaves this door too, its rows and (OnForget) its memory. A
+	// stale list removes nothing, as it adds nothing.
+	if fresh {
+		if err := m.dropUnlisted(ctx, rows); err != nil {
+			m.mu.Lock()
+			m.lastErr = err.Error()
+			m.mu.Unlock()
+			return err
+		}
+	}
 	// Gangs: a SHARDED endpoint has no placement rows at all — its capacity is
 	// a coordinator plus its parts — so a door with no shard rows cannot route
 	// to a gang however fresh its node list is.
@@ -177,6 +193,37 @@ func (m *Mirror) Sync(ctx context.Context) error {
 	m.mu.Lock()
 	m.lastOK, m.lastErr = m.now(), ""
 	m.mu.Unlock()
+	return nil
+}
+
+// dropUnlisted removes every worker this door holds that the leader's list
+// does not name.
+func (m *Mirror) dropUnlisted(ctx context.Context, rows []leaderNode) error {
+	want := make(map[string]bool, len(rows))
+	for _, n := range rows {
+		want[n.ID] = true
+	}
+	local, err := m.st.Nodes().List(ctx)
+	if err != nil {
+		return fmt.Errorf("mirror nodes: local list: %w", err)
+	}
+	for _, n := range local {
+		if want[n.ID] {
+			continue
+		}
+		if err := m.st.Placements().ReplaceForNode(ctx, n.ID, nil); err != nil {
+			return fmt.Errorf("mirror: drop placements of %s: %w", n.ID, err)
+		}
+		if err := m.st.Nodes().Delete(ctx, n.ID); err != nil {
+			return fmt.Errorf("mirror: drop node %s: %w", n.ID, err)
+		}
+		if m.OnForget != nil {
+			m.OnForget(n.ID)
+		}
+		m.mu.Lock()
+		delete(m.known, n.ID)
+		m.mu.Unlock()
+	}
 	return nil
 }
 

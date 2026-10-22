@@ -92,6 +92,10 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 		s.noteSlots(id, n)
 		s.capacityChanged()
 	}
+	s.front.mirror.OnForget = func(id string) {
+		s.forgetNode(context.Background(), id)
+		s.capacityChanged() // its slots leave every pool, as on the leader
+	}
 	s.front.push.Trust(trust)
 	s.front.spend.Trust(trust)
 	// The leader's per-key counts for the day, every door's rows included:
