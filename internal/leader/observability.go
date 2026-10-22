@@ -73,7 +73,10 @@ func (s *Server) cacheFlush(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "flushed", "namespace": ns, "all": all})
 }
 
-// auditMiddleware records every admin action.
+// auditMiddleware records every state-changing admin action. Reads and the
+// worker heartbeat are not actions: the heartbeat alone wrote a row every five
+// seconds per worker, and a managed leader's store is in memory, so the table
+// grew for as long as the leader lived.
 //
 // Target is set to the caller's remote address (useful for forensics) rather
 // than the URL query string — RawQuery can contain secrets (?token=...) that
@@ -95,6 +98,9 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		// has already rewritten the latter from spoofable X-Forwarded-For,
 		// so logging it would let a caller forge the audit target.
 		target := realRemoteAddr(r)
+		if !auditable(r) {
+			return
+		}
 		_ = s.store.Audit().Record(ctx, store.AuditEntry{
 			TS: time.Now(), Actor: actor,
 			Action: action,
@@ -102,12 +108,15 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		})
 		// P12-3: the audit table above is a local cache; the durable record is
 		// the manager's. Every state-changing admin call rides the lifecycle
-		// stream as admin.call (reads and the heartbeat are not audit events —
-		// the manager polls this leader every few seconds).
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/admin/v1/nodes/heartbeat" {
-			s.logEvent("admin.call", action, map[string]any{"actor": actor, "status": ww.Status(), "from": target})
-		}
+		// stream as admin.call.
+		s.logEvent("admin.call", action, map[string]any{"actor": actor, "status": ww.Status(), "from": target})
 	})
+}
+
+// auditable says whether an admin call changes state: reads and the heartbeat
+// do not (the manager polls this leader every few seconds).
+func auditable(r *http.Request) bool {
+	return r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/admin/v1/nodes/heartbeat"
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

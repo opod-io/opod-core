@@ -18,6 +18,17 @@ func (s *sqliteAudit) Record(ctx context.Context, e AuditEntry) error {
 	return err
 }
 
+// Trim deletes every audit row older than the newest keep rows.
+func (s *sqliteAudit) Trim(ctx context.Context, keep int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM audit_log WHERE id < COALESCE((SELECT id FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET ?), 0)`, max(keep, 1)-1)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (s *sqliteAudit) Recent(ctx context.Context, limit int) ([]AuditEntry, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, actor, action, target, metadata_json

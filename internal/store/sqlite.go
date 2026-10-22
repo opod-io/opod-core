@@ -430,6 +430,8 @@ type AuditEntry struct {
 type AuditStore interface {
 	Record(ctx context.Context, e AuditEntry) error
 	Recent(ctx context.Context, limit int) ([]AuditEntry, error)
+	// Trim deletes every row older than the newest keep rows.
+	Trim(ctx context.Context, keep int) (int64, error)
 }
 
 // ---- open ----

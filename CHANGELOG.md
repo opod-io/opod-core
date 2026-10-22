@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **The leader's audit table holds actions, not traffic.** Every `/admin/v1` call wrote a row — reads and the five-second
+  worker heartbeat included — and nothing trimmed it, so a leader's audit table (in memory, for a managed leader) grew
+  for as long as the leader lived. Reads and the heartbeat now write nothing, the same rule the `admin.call` event
+  already followed, and the table is a ring of the newest 50 000 rows like the usage and event tables.
 - **The leader image says what it speaks.** `opod version --features` prints the leader's feature keys —
   comma-separated, sorted, the same list `/admin/v1/capabilities` advertises — and both image lanes (`images/build.sh`
   and `images.yml`) stamp it on `opod-leader` as the OCI label `io.opod.leader.features`. A manager that pins a leader
