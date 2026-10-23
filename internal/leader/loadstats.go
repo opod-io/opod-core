@@ -441,6 +441,13 @@ func (s *Server) gangEngine(coord store.Shard) (engines.Engine, bool) {
 		}
 	}
 	eng := engines.MustNew(router.CoordinatorEngine(coord), "http://"+coord.Address, "")
+	// llama-server's pool is unreadable without its layout (PLAN T23.13); the
+	// scheduler recorded the one the coordinator was launched with.
+	if kl, ok := eng.(engines.KVLayoutSetter); ok {
+		if unified, known := router.CoordinatorKVLayout(coord); known {
+			kl.SetKVUnified(unified)
+		}
+	}
 	if old, ok := s.gangEng.Swap(coord.ID, gangCoordEngine{addr: coord.Address, eng: eng}); ok {
 		releaseEngine(old.(gangCoordEngine).eng) // the gang moved: the old address is never dialled again
 	}

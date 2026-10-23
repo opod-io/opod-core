@@ -15,9 +15,11 @@ func TestTheLaunchLinesKVLayout(t *testing.T) {
 		{EngineFlags{"parallel": "4"}, false, "a stated slot count: a partition per slot"},
 		{EngineFlags{"extra": "-np 4"}, false, "a slot count in extra counts too"},
 		{EngineFlags{"parallel": "4", "kv_unified": "true"}, true, "the manager's flag"},
-		{EngineFlags{"kv_unified": "false"}, false, "the manager's flag"},
-		{EngineFlags{"kv_unified": "false", "extra": "--kv-unified"}, true, "extra is written last and wins"},
-		{EngineFlags{"kv_unified": "true", "extra": "-kvu --no-kv-unified"}, false, "the last word in extra"},
+		{EngineFlags{"parallel": "4", "kv_unified": "false"}, false, "the manager's flag"},
+		{EngineFlags{"kv_unified": "false"}, true, "slot count automatic: one shared pool whatever the flag (a coordinator with --no-kv-unified and no -np logged kv_unified = 'true', 2026-10-22)"},
+		{EngineFlags{"parallel": "4", "kv_unified": "false", "extra": "--kv-unified"}, true, "extra is written last and wins"},
+		{EngineFlags{"parallel": "4", "kv_unified": "true", "extra": "-kvu --no-kv-unified"}, false, "the last word in extra"},
+		{EngineFlags{"kv_unified": "true", "extra": "-kvu --no-kv-unified"}, true, "slot count automatic beats extra too"},
 	} {
 		if got, known := c.flags.llamaKVUnified(); got != c.want || !known {
 			t.Errorf("%v: unified=%v known=%v, want %v (%s)", c.flags, got, known, c.want, c.why)

@@ -672,3 +672,20 @@ func CoordinatorEngine(s store.Shard) string {
 	}
 	return "llamacpp"
 }
+
+// CoordinatorKVLayout reads the KV layout a llama.cpp coordinator row records
+// in its config ({"kv_unified":true}); known = false when it records none. The
+// leader tells its sampling driver, which cannot read llama-server's pool
+// without it (PLAN T23.13).
+func CoordinatorKVLayout(s store.Shard) (unified, known bool) {
+	if s.ConfigJSON == "" {
+		return false, false
+	}
+	var cfg struct {
+		KVUnified *bool `json:"kv_unified"`
+	}
+	if json.Unmarshal([]byte(s.ConfigJSON), &cfg) != nil || cfg.KVUnified == nil {
+		return false, false
+	}
+	return *cfg.KVUnified, true
+}

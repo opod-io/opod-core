@@ -18,6 +18,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -641,7 +642,8 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 		ID: coordID, ModelID: entry.ID, GangID: gangID, Role: "coordinator",
 		NodeID: coordNodeID, Address: coordAddr,
 		ProcessID: coordID, Status: "ready",
-		CreatedAt: time.Now(), LastSeen: time.Now(),
+		ConfigJSON: llamaCoordConfig(agent.EngineFlags(par.Flags)),
+		CreatedAt:  time.Now(), LastSeen: time.Now(),
 	}
 	if err := o.Store.Shards().Create(ctx, coordRec); err != nil {
 		// coordinator running but not persisted; try to stop + return error
@@ -913,4 +915,18 @@ func coordinatorArgs(modelPath string, port int, host string, rpcEndpoints []str
 		args = append(args, "--rpc", strings.Join(rpcEndpoints, ","))
 	}
 	return append(args, extra...)
+}
+
+// llamaCoordConfig is the llama.cpp coordinator row's config: the engine, and
+// the KV layout its launch line gives llama-server when that can be read. The
+// leader samples the coordinator for the gang's load, and llama-server's pool
+// cannot be read without its layout (PLAN T23.13): before this a gang reported
+// no KV pool at all.
+func llamaCoordConfig(f agent.EngineFlags) string {
+	cfg := map[string]any{"engine": "llamacpp"}
+	if unified, known := f.LlamaKVUnified(); known {
+		cfg["kv_unified"] = unified
+	}
+	b, _ := json.Marshal(cfg)
+	return string(b)
 }

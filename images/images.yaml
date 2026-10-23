@@ -132,6 +132,7 @@ images:
     notes:
       - One build per GPU family - the published image is the RDNA build. Instinct MI2xx/MI3xx needs the _cdna_ base (rebuild with VLLM_AMD_BASE=); neither runs the other's kernels.
       - 'Single card: served 2026-09-19. Two cards with tensor parallel: peer-to-peer between consumer Radeon cards faults, and with P2P disabled the collective returns bad data - the endpoint served noise. That is the machine, not this image.'
+      - 'Qwen3-8B (bf16) on one RX 7900 XTX, 2026-10-22: identical requests at temperature 0, sent straight to the engine, answered wrong text in 1 to 5 of every 6 tries on two different cards; prefix caching off and --enforce-eager did not change it. Qwen2.5-1.5B on a third card of the same host answered 8 of 8 correctly. Unproven for that model; check a model with an expected answer before serving it on this build.'
 
   - name: opod-worker-vllm-intel
     role: worker

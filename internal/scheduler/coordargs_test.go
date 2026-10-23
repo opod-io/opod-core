@@ -69,3 +69,21 @@ func TestCoordinatorTakesThePlansFlags(t *testing.T) {
 		t.Fatalf("the plan's knobs come after the fixed arguments: %q", got)
 	}
 }
+
+// T23.13: the coordinator row records the KV layout its launch line gives
+// llama-server, so the leader can read the gang's pool; a slot count left
+// automatic is one shared pool whatever kv_unified says.
+func TestTheCoordinatorRowRecordsItsKVLayout(t *testing.T) {
+	for _, c := range []struct {
+		flags agent.EngineFlags
+		want  string
+	}{
+		{agent.EngineFlags{"kv_unified": "false"}, `{"engine":"llamacpp","kv_unified":true}`},
+		{agent.EngineFlags{"parallel": "4", "kv_unified": "false"}, `{"engine":"llamacpp","kv_unified":false}`},
+		{agent.EngineFlags{"parallel": "4", "extra": "--kv-unified-per-slot 8192"}, `{"engine":"llamacpp"}`},
+	} {
+		if got := llamaCoordConfig(c.flags); got != c.want {
+			t.Errorf("%v: %s, want %s", c.flags, got, c.want)
+		}
+	}
+}

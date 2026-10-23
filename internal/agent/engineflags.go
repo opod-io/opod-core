@@ -170,6 +170,8 @@ func (f EngineFlags) llamaArgs() []string {
 	// (-c ÷ -np each). A build picks one when it is not told — unified only
 	// when the slot count is automatic, as of the build we ship — so the
 	// manager says which, and the layout no longer changes with the build.
+	// With the slot count left automatic the build shares one pool whatever
+	// it is told (llamaKVUnified).
 	switch v, _ := f.get("kv_unified"); strings.ToLower(v) {
 	case "true":
 		args = append(args, "--kv-unified")
@@ -193,20 +195,29 @@ func (f EngineFlags) llamaArgs() []string {
 // llamaKVUnified is the KV layout the launch line gives llama-server: true =
 // one pool every slot shares, false = a partition per slot. The engine does
 // not report it back, and its pool cannot be read without it (the llama.cpp
-// driver's SetKVUnified, PLAN T23.2). The last word wins, as on llama-server's
-// own command line: `extra` (written last), then the kv_unified flag, then the
-// build's own rule — unified only when the slot count is left automatic.
+// driver's SetKVUnified, PLAN T23.2).
+//
+// A slot count left automatic decides it alone: the build then sets four
+// slots and one shared pool together, whatever the line says — on the
+// design-partner cell (2026-10-22) a gang coordinator started with
+// --no-kv-unified and no -np logged `kv_unified = 'true'`. With a slot count
+// stated, the last word wins, as on llama-server's own command line: `extra`
+// (written last), then the kv_unified flag, else a partition per slot.
 // known = false when the line caps each slot with --kv-unified-per-slot: the
 // slot context /props reports is then that cap, not the pool, and neither
 // layout's arithmetic reads the pool from it.
 func (f EngineFlags) llamaKVUnified() (unified, known bool) {
-	if v, ok := f.get("extra"); ok {
-		toks := strings.Fields(v)
-		for _, t := range toks {
-			if t == "--kv-unified-per-slot" || strings.HasPrefix(t, "--kv-unified-per-slot=") {
-				return false, false
-			}
+	v, hasExtra := f.get("extra")
+	toks := strings.Fields(v)
+	for _, t := range toks {
+		if t == "--kv-unified-per-slot" || strings.HasPrefix(t, "--kv-unified-per-slot=") {
+			return false, false
 		}
+	}
+	if f.LaunchSlots("llamacpp") == 0 {
+		return true, true
+	}
+	if hasExtra {
 		for i := len(toks) - 1; i >= 0; i-- {
 			switch toks[i] {
 			case "--kv-unified", "-kvu":
@@ -222,8 +233,13 @@ func (f EngineFlags) llamaKVUnified() (unified, known bool) {
 	case "false":
 		return false, true
 	}
-	return f.LaunchSlots("llamacpp") == 0, true
+	return false, true
 }
+
+// LlamaKVUnified is llamaKVUnified for a caller outside the agent: the
+// scheduler records a gang coordinator's layout on its row, so the leader that
+// samples the coordinator can read its pool (PLAN T23.13).
+func (f EngineFlags) LlamaKVUnified() (unified, known bool) { return f.llamaKVUnified() }
 
 // isSplitList accepts a comma-separated list of non-negative numbers and
 // nothing else — "8,12,12,8", "12,8", "0.6,0.4". It is stricter than isToken

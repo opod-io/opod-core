@@ -136,3 +136,56 @@ func TestLoadzReadsGangPressureFromTheCoordinator(t *testing.T) {
 		t.Errorf("a gang missing a part reports nothing: %+v", broken)
 	}
 }
+
+// T23.13 — a gang's KV pool is its coordinator's, and the leader can only read
+// it when it knows the layout the coordinator was launched with: llama-server
+// reports each slot's context, which is the whole pool when the slots share
+// it and a share when they are partitioned. The scheduler records the layout
+// on the coordinator's row; without it a serving gang reported no pool at all
+// (design-partner cell, 2026-10-22: 4 slots of 40 960 tokens, one pool).
+func TestLoadzReadsAGangsKVPoolFromItsCoordinator(t *testing.T) {
+	ctx := context.Background()
+	coord := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			fmt.Fprint(w, "llamacpp:requests_processing 1\n")
+		case "/props":
+			fmt.Fprint(w, `{"total_slots":4,"default_generation_settings":{"n_ctx":40960}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer coord.Close()
+
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Router.HeartbeatMaxAgeSeconds = 30
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := NewServer(cfg, st, &downEngine{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	now := time.Now()
+	for _, id := range []string{"n1", "n2"} {
+		if err := st.Nodes().Upsert(ctx, store.Node{ID: id, Hostname: id, State: "ready", LastHeartbeat: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addr := strings.TrimPrefix(coord.URL, "http://")
+	for _, sh := range []store.Shard{
+		{ID: "c", ModelID: "sharded", GangID: "g0", Role: "coordinator", NodeID: "n1", Address: addr, Status: "ready",
+			ConfigJSON: `{"engine":"llamacpp","kv_unified":true}`, CreatedAt: now, LastSeen: now},
+		{ID: "p", ModelID: "sharded", GangID: "g0", Role: "rpc", NodeID: "n2", Address: "n2:50052", Status: "ready", CreatedAt: now, LastSeen: now},
+	} {
+		if err := st.Shards().Create(ctx, sh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out adminapi.Load
+	out.PlanModel = "sharded"
+	srv.aggregateWorkerLoad(ctx, &out, now)
+	if out.KVCapacityTokens == nil || *out.KVCapacityTokens != 40960 {
+		t.Fatalf("one shared pool of 40 960 tokens is the gang's KV pool: %v", out.KVCapacityTokens)
+	}
+}
