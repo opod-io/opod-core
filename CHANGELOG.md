@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **A batch sends lines that share a prompt together.** `opod batch run` sent lines in file order, so a document asked
+  many questions across a large batch could be evicted from the engine's prefix cache between them and computed again.
+  Lines are now grouped by a hash of their model and the first 2 KiB of their messages or prompt (held in memory only),
+  groups in the order they first appear; results, `sent.jsonl` and a resume stay keyed by line, so nothing reads
+  differently. `--file-order` keeps file order.
 - **A key is counted when keys are optional.** With `require_keys` off the leader never looked at a presented key, so
   every request to such an endpoint was recorded with no `api_key_id` — per-key showback read nothing — and the key's
   model allowlist and request class did not apply. A presented key that resolves (known, not revoked, not expired) is

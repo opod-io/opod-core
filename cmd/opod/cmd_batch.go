@@ -75,6 +75,7 @@ func cmdBatchRun(args []string) {
 	base := fs.String("base-url", os.Getenv("OPOD_BASE_URL"), "the OpenAI-compatible server, with or without /v1 (default $OPOD_BASE_URL)")
 	dir := fs.String("dir", "", "work directory: the progress record and the result files (required)")
 	conc := fs.Int("concurrency", 8, "requests in flight at once")
+	fileOrder := fs.Bool("file-order", false, "send lines in file order (default: lines sharing a leading prompt are sent together, so an engine's prefix cache reuses it)")
 	models := fs.String("model-map", "", "rewrite a line's model: alias=id[,alias=id]; other models are sent as written")
 	caFile := fs.String("ca", os.Getenv("OPOD_LEADER_CA"), "PEM certificate an https --base-url must be signed by (default $OPOD_LEADER_CA)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "per-request timeout")
@@ -120,7 +121,7 @@ func cmdBatchRun(args []string) {
 	})
 	defer stop()
 	res, err := batch.Run(ctx, batch.Options{
-		Input: in, InputPresigned: presigned, BaseURL: *base, Key: key, Dir: *dir, Concurrency: *conc, ModelMap: mm, CA: ca,
+		Input: in, InputPresigned: presigned, BaseURL: *base, Key: key, Dir: *dir, Concurrency: *conc, FileOrder: *fileOrder, ModelMap: mm, CA: ca,
 		RequestTimeout: *timeout, ReadyTimeout: *ready, Drain: *drain, Log: log, StopIsCancel: judge,
 		Progress:      func(c batch.Counts) { _ = enc.Encode(map[string]any{"progress": c}) },
 		ProgressEvery: *every,

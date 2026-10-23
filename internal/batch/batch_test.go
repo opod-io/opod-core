@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -456,4 +457,55 @@ func TestInputURLAndPutResults(t *testing.T) {
 	if w, err := PutResults(context.Background(), nil, out, errs, empty); err != nil || w.Output || w.Errors {
 		t.Fatalf("nothing to write: %+v %v", w, err)
 	}
+}
+
+// T9.38: lines that share a leading prompt are sent together, so the engine's
+// prefix cache still holds it; results keep their line ids; file order on ask.
+func TestLinesSharingAPrefixAreSentTogether(t *testing.T) {
+	fake := newFake("m")
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	dir := t.TempDir()
+	docs := []string{"doc-A", "doc-B", "doc-C", "doc-A", "doc-C", "doc-B", "doc-A"}
+	var sb strings.Builder
+	for i, d := range docs {
+		fmt.Fprintf(&sb, `{"custom_id":"c%d","method":"POST","url":"/v1/chat/completions","body":{"model":"m","user":"c%d","messages":[{"role":"system","content":%q},{"role":"user","content":"question %d"}]}}`+"\n", i, i, strings.Repeat(d+" ", 600), i)
+	}
+	in := filepath.Join(dir, "in.jsonl")
+	if err := os.WriteFile(in, []byte(sb.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(context.Background(), Options{Input: in, BaseURL: srv.URL, Dir: filepath.Join(dir, "w"), Concurrency: 1})
+	if err != nil || res.Completed != len(docs) {
+		t.Fatalf("run: %v %+v", err, res)
+	}
+	fake.mu.Lock()
+	got := strings.Join(fake.order, ",")
+	fake.mu.Unlock()
+	if want := "c0,c3,c6,c1,c5,c2,c4"; got != want {
+		t.Fatalf("dispatch order %s, want the doc-A lines, then doc-B, then doc-C (%s)", got, want)
+	}
+	for id, o := range readResults(t, res.OutputPath) {
+		if o.CustomID != id || o.ID != reqID(mustLine(t, id)) {
+			t.Fatalf("result %s carries id %s / custom_id %s: a line keeps its own id whatever the order", id, o.ID, o.CustomID)
+		}
+	}
+	fake2 := newFake("m")
+	srv2 := httptest.NewServer(fake2)
+	defer srv2.Close()
+	if _, err := Run(context.Background(), Options{Input: in, BaseURL: srv2.URL, Dir: filepath.Join(dir, "w2"), Concurrency: 1, FileOrder: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(fake2.order, ","); got != "c0,c1,c2,c3,c4,c5,c6" {
+		t.Fatalf("FileOrder sends in file order: %s", got)
+	}
+}
+
+func mustLine(t *testing.T, customID string) int {
+	t.Helper()
+	n, err := strconv.Atoi(strings.TrimPrefix(customID, "c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

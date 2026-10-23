@@ -1464,7 +1464,7 @@ opod cache prune [--dir D] [--keep a.gguf,repo@rev] [--min-age 24h] [--target-fr
 
 # --- offline batches (a generic OpenAI batch client) ---
 opod batch run (--input <file|url> | --input-url <signed url>) --base-url <url>
-               --dir D [--concurrency 8] [--model-map alias=id] [--ca PEM]
+               --dir D [--concurrency 8] [--file-order] [--model-map alias=id] [--ca PEM]
                [--ready-timeout 5m] [--drain 20s]
                [--output-url <signed PUT>] [--error-url <signed PUT>]
                [--status-url <…/v1/batches/<id>>]
@@ -1474,6 +1474,9 @@ opod batch run (--input <file|url> | --input-url <signed url>) --base-url <url>
                                   D is the progress record: run again to resume.
                                   A line is NEVER sent twice — one in flight at a
                                   kill lands in errors.jsonl as "interrupted".
+                                  Lines sharing a leading prompt are sent
+                                  together, so the engine's prefix cache reuses
+                                  it; --file-order sends in file order instead.
                                   SIGINT cancels at the next line; SIGTERM cancels
                                   only when the --status-url batch is no longer
                                   in_progress, else exits 75 to be resumed.

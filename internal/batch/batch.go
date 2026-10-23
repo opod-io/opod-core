@@ -42,6 +42,18 @@
 // directory that is lost with its pod takes the record with it, and a run on an
 // empty directory starts from line 0.
 //
+// # The order lines are sent in
+//
+// Lines sharing a leading prompt (the same document asked many questions) are
+// sent together, not in file order: an engine's prefix cache holds a prefix
+// only so long, and a shared prefix scattered across a large batch is computed
+// again each time it was evicted in between. The order groups lines by a hash
+// of their model and the first 2 KiB of their messages or prompt, groups in the
+// order they first appear and lines in file order within a group. The prompt
+// text is hashed in memory and never written anywhere. Every record above is
+// keyed by line number, so the output, the error file and a resume mean the
+// same whatever the order; Options.FileOrder keeps file order.
+//
 // # Cancel, and a stop that is not one
 //
 // Cancelling the context stops dispatch at the next line: no new line is sent.
@@ -74,12 +86,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,6 +137,9 @@ type Options struct {
 	Dir string
 	// Concurrency bounds the requests in flight (default 8).
 	Concurrency int
+	// FileOrder sends lines in file order instead of grouped by their leading
+	// prompt (see "The order lines are sent in").
+	FileOrder bool
 	// ModelMap rewrites a line's `model` when it is a key of the map. Lines
 	// naming any other model are sent as written, and the server's answer —
 	// a 404 for a model it does not serve — lands in the error file.
@@ -386,7 +403,7 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 		}()
 	}
 dispatch:
-	for n := range lines {
+	for _, n := range dispatchOrder(lines, opt.FileOrder) {
 		if rec.sent[n] || rec.finished[n] {
 			continue
 		}
@@ -425,6 +442,57 @@ dispatch:
 	}
 	report()
 	return res, fatal
+}
+
+// prefixBytes is how much of a line's prompt decides its group: about the
+// first five hundred tokens, enough to tell documents apart.
+const prefixBytes = 2 << 10
+
+// dispatchOrder is the order lines are sent in: grouped by leadingPrefix,
+// groups in the order they first appear, file order within a group — or plain
+// file order when asked.
+func dispatchOrder(lines []parsedLine, fileOrder bool) []int {
+	order := make([]int, len(lines))
+	for n := range order {
+		order[n] = n
+	}
+	if fileOrder {
+		return order
+	}
+	first := map[uint64]int{} // group → the first line of it
+	group := make([]int, len(lines))
+	for n := range lines {
+		k := leadingPrefix(lines[n], n)
+		if _, ok := first[k]; !ok {
+			first[k] = n
+		}
+		group[n] = first[k]
+	}
+	sort.SliceStable(order, func(i, j int) bool { return group[order[i]] < group[order[j]] })
+	return order
+}
+
+// leadingPrefix hashes a line's model and the start of its prompt — the chat
+// messages in order, or a completion's prompt. A line that does not parse is a
+// group of its own (keyed by its line number).
+func leadingPrefix(p parsedLine, n int) uint64 {
+	h := fnv.New64a()
+	var body struct {
+		Model    string          `json:"model"`
+		Messages json.RawMessage `json:"messages"`
+		Prompt   json.RawMessage `json:"prompt"`
+		Input    json.RawMessage `json:"input"`
+	}
+	if p.invalid != "" || json.Unmarshal(p.line.Body, &body) != nil {
+		fmt.Fprintf(h, "line:%d", n)
+		return h.Sum64()
+	}
+	text := append(append(append([]byte(body.Model+"\x00"), body.Messages...), body.Prompt...), body.Input...)
+	if len(text) > prefixBytes {
+		text = text[:prefixBytes]
+	}
+	h.Write(text)
+	return h.Sum64()
 }
 
 // judgeStop asks Options.StopIsCancel, bounded; no judge = a cancel.
