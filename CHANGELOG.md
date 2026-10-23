@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **A key is counted when keys are optional.** With `require_keys` off the leader never looked at a presented key, so
+  every request to such an endpoint was recorded with no `api_key_id` — per-key showback read nothing — and the key's
+  model allowlist and request class did not apply. A presented key that resolves (known, not revoked, not expired) is
+  now that request's caller: its usage row carries the key, and the key's own settings apply. A request with no key,
+  or one that does not resolve, is served as before; nothing is refused in this mode.
+- **A gang reports its KV pool.** The leader samples a llama.cpp gang's coordinator for `/loadz`, but could not read its
+  pool without the layout it was launched with; the coordinator's row now records it, so `kv_capacity_tokens` covers
+  gangs. A slot count left automatic now reads as one shared pool whatever `kv_unified` says, as llama-server builds it.
 - **A worker that stops heartbeating is forgotten.** Only an operator's `DELETE /admin/v1/nodes/{id}` ever removed a
   node, so every replaced worker pod left its row, its placements, its in-memory samples and three metric series
   (`opod_node_up`, `opod_model_loaded`, `opod_router_inflight`) on the leader for good. The leader now removes a

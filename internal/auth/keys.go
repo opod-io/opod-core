@@ -85,6 +85,16 @@ func MiddlewareFn(keys store.APIKeyStore, requireKeys func() bool) func(http.Han
 				// RequireScope/RequireScopeAny check 403s, which makes a
 				// keyless cluster unable to register nodes or be administered.
 				ctx := context.WithValue(r.Context(), ctxKeyScope, "admin")
+				// A caller who presents a valid key is still that key's caller
+				// when keys are not required: its usage rows carry the key, which
+				// is what per-key showback reads. Without this every request to
+				// an endpoint with optional keys was unattributed — on the
+				// design-partner cell no request row carried a key from
+				// 2026-10-19 on (PLAN T9.31). A key that does not resolve is
+				// ignored, as before: nothing is refused here.
+				if key := validKey(r, keys); key != nil {
+					ctx = context.WithValue(ctx, ctxKeyAPIKey, key)
+				}
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -112,6 +122,20 @@ func MiddlewareFn(keys store.APIKeyStore, requireKeys func() bool) func(http.Han
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// validKey is the key the request presents when it resolves to a live one —
+// known, not revoked, not expired — and nil otherwise, or with no key store.
+func validKey(r *http.Request, keys store.APIKeyStore) *store.APIKey {
+	plain, ok := extractKey(r)
+	if !ok || keys == nil {
+		return nil
+	}
+	key, err := keys.GetByHash(r.Context(), Hash(plain))
+	if err != nil || key == nil || key.Revoked || (!key.ExpiresAt.IsZero() && time.Now().After(key.ExpiresAt)) {
+		return nil
+	}
+	return key
 }
 
 // RequireScope returns a middleware that 403s if the request's scope doesn't match.
