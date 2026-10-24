@@ -114,6 +114,8 @@ images:
     requires:
       - NVIDIA driver and the NVIDIA container runtime on the node
     summary: vLLM on CUDA. Safetensors models from a Hugging Face repo; tensor parallel inside a node, Ray across nodes.
+    notes:
+      - 'KV connector (read 2026-10-23 on v0.27.1): carries nixl and nixl_cu12 1.3.1 (a NIXL agent starts and lists the UCX backend) and mooncake_transfer_engine 0.3.10.post2. A prefill/decode pair has not been run through it.'
 
   - name: opod-worker-vllm-amd
     role: worker
@@ -133,6 +135,7 @@ images:
       - One build per GPU family - the published image is the RDNA build. Instinct MI2xx/MI3xx needs the _cdna_ base (rebuild with VLLM_AMD_BASE=); neither runs the other's kernels.
       - 'Single card: served 2026-09-19. Two cards with tensor parallel: peer-to-peer between consumer Radeon cards faults, and with P2P disabled the collective returns bad data - the endpoint served noise. That is the machine, not this image.'
       - 'Qwen3-8B (bf16) on one RX 7900 XTX, 2026-10-22: identical requests at temperature 0, sent straight to the engine, answered wrong text in 1 to 5 of every 6 tries on two different cards; prefix caching off and --enforce-eager did not change it. Qwen2.5-1.5B on a third card of the same host answered 8 of 8 correctly. Unproven for that model; check a model with an expected answer before serving it on this build.'
+      - 'KV connector: the NixlConnector code is present but the NIXL runtime is not ("NIXL is not available"; the PyPI wheel is CUDA-only). A prefill/decode pair on this image needs UCX and NIXL built with ROCm from source.'
 
   - name: opod-worker-vllm-intel
     role: worker
@@ -153,6 +156,7 @@ images:
       - Single-card serving only - no Ray gang has been run on the XPU backend.
       - 'Arc A-series (Xe-HPG, e.g. A770) does not serve: run on an A770 2026-09-19 the engine needed --dtype=half (bfloat16 is refused on that card) and fp64 emulation (OverrideDefaultFP64Settings=1, IGC_EnableDPEmulation=1) to start, loaded the model, and died on the first request with "Only XE2/XE3 cutlass kernel is supported currently". Use the llama.cpp Intel image on those cards.'
       - No Xe2 card has served through this image yet.
+      - 'KV connector (read 2026-10-23 on 0.21.1 XPU): no nixl, no UCX library and no mooncake in the image, so no prefill/decode pair on this image.'
 
   - name: opod-worker-vllm-tt
     role: worker
@@ -191,6 +195,7 @@ images:
       - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
       - Served on an NVIDIA card 2026-09-19; the row had said proven false until 2026-09-21.
       - 'SGLang v0.5.21 cannot run a pipeline (pp > 1) of a Llama-family model with tied word embeddings (LlamaForCausalLM and the classes that reuse it - Mistral, Phi3, InternLM3, IQuestCoder): the last stage has no output layer and crashes in _compute_lm_head. Core reads the model config.json and refuses that gang by name (sglang_pp_tied_llama) before forming it; use tensor parallelism, one stage, or vLLM. Qwen2 with tied embeddings serves on pp=2.'
+      - 'KV connector (read 2026-10-23): carries nixl (a NIXL agent starts and lists the UCX backend) and mooncake. A prefill/decode pair has not been run through it.'
 
   - name: opod-worker-sglang-amd
     role: worker
@@ -229,3 +234,4 @@ images:
       - Not rebuilt or pushed by opod - NVIDIA's container licence forbids a derived copy, so the chart names nvcr.io directly.
       - One node only - its multi-node mode needs MPI, which core does not carry.
       - No runtime LoRA, no sleep mode; images are refused until a vision model is proven on it.
+      - 'KV connector (read 2026-10-23 on 1.2.1): NIXL is in /opt/nvidia/nvda_nixl (cu13; UCX and GDS plugins) with UCX from HPC-X, and TensorRT-LLM ships its own NIXL, UCX and Mooncake transceiver wrappers; cache_transceiver_config.backend takes DEFAULT, UCX, NIXL, MOONCAKE or MPI. No prefill/decode split on this engine is rendered or proven yet.'
