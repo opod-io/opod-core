@@ -114,3 +114,74 @@ func TestTheEnginesKVPoolsAreKeptPerWorkerAndSummed(t *testing.T) {
 		t.Fatalf("a stale sample's pool must leave the sum: %v", ld.KVCapacityTokens)
 	}
 }
+
+// PLAN T26.4: the engines' host KV tiers are summed on /loadz the same way —
+// counters over the workers that state them, the fill the fullest tier's, and
+// every key absent while no engine keeps a tier.
+func TestTheEnginesKVTiersAreSummed(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Router.HeartbeatMaxAgeSeconds = 30
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := NewServer(cfg, st, &deadEngine{&stubLeaderEngine{}}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	for _, id := range []string{"w1", "w2"} {
+		if err := st.Nodes().Upsert(ctx, store.Node{ID: id, Hostname: id, State: "ready", LastHeartbeat: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	heartbeat := func(id, load string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.heartbeatNode(rec, httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/heartbeat",
+			strings.NewReader(`{"id":"`+id+`","loaded_models":["m"],"load":`+load+`}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("heartbeat %s: %d %s", id, rec.Code, rec.Body.String())
+		}
+	}
+	loadz := func() (adminapi.Load, map[string]any) {
+		rec := httptest.NewRecorder()
+		srv.loadz(rec, httptest.NewRequest(http.MethodGet, "/loadz", nil))
+		var out adminapi.Load
+		var raw map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		_ = json.Unmarshal(rec.Body.Bytes(), &raw)
+		return out, raw
+	}
+	keys := []string{"tier_hit_tokens_total", "tier_query_tokens_total", "tier_load_bytes_total", "tier_store_bytes_total", "tier_used_pct", "tier_alloc_failures_total"}
+
+	heartbeat("w1", `{"kv_used_pct":10}`)
+	heartbeat("w2", `{"kv_used_pct":10}`)
+	if _, raw := loadz(); true {
+		for _, k := range keys {
+			if _, ok := raw[k]; ok {
+				t.Errorf("%s is on /loadz with no tier: %v", k, raw[k])
+			}
+		}
+	}
+
+	heartbeat("w1", `{"kv_used_pct":10,"tier_hit_tokens_total":12416,"tier_query_tokens_total":25000,"tier_load_bytes_total":356000000,"tier_store_bytes_total":357000000,"tier_used_pct":20,"tier_alloc_failures_total":1}`)
+	heartbeat("w2", `{"kv_used_pct":10,"tier_hit_tokens_total":584,"tier_query_tokens_total":1000,"tier_used_pct":35}`)
+	ld, _ := loadz()
+	for name, c := range map[string]struct {
+		got  *int64
+		want int64
+	}{
+		"hits":    {ld.TierHitTokensTotal, 13000},
+		"queries": {ld.TierQueryTokensTotal, 26000},
+		"loaded":  {ld.TierLoadBytesTotal, 356000000},
+		"stored":  {ld.TierStoreBytesTotal, 357000000},
+		"refused": {ld.TierAllocFailuresTotal, 1},
+	} {
+		if c.got == nil || *c.got != c.want {
+			t.Errorf("%s: %v, want %d", name, c.got, c.want)
+		}
+	}
+	if ld.TierUsedPct == nil || *ld.TierUsedPct != 35 {
+		t.Errorf("fill is the fullest tier's: %v", ld.TierUsedPct)
+	}
+}

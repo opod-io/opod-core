@@ -288,6 +288,16 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		addStated(&out.KVUsedTokens, ld.KVUsedTokens)
 		addStated(&out.PreemptionsTotal, ld.PreemptionsTotal)
 		addStated(&out.EvictionsTotal, ld.EvictionsTotal)
+		// The engines' host KV tiers (PLAN T26.4): counters summed like the
+		// pool's, the fill the fullest tier's.
+		addStated(&out.TierHitTokensTotal, ld.TierHitTokensTotal)
+		addStated(&out.TierQueryTokensTotal, ld.TierQueryTokensTotal)
+		addStated(&out.TierLoadBytesTotal, ld.TierLoadBytesTotal)
+		addStated(&out.TierStoreBytesTotal, ld.TierStoreBytesTotal)
+		addStated(&out.TierAllocFailuresTotal, ld.TierAllocFailuresTotal)
+		if v := ld.TierUsedPct; v != nil && (out.TierUsedPct == nil || *v > *out.TierUsedPct) {
+			out.TierUsedPct = new(*v)
+		}
 	}
 	for _, n := range nodes {
 		if n.ID == "local" || !n.TakesNewWork(maxAge, now) {

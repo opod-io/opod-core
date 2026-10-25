@@ -339,6 +339,15 @@ func contractFeatures() map[string]bool {
 		// does not say); GET /admin/v1/nodes carries each worker's `load`, and
 		// /loadz the sums. Without this key the fields are never present.
 		"kv_readback": true,
+		// The engines' host KV tiers summed on /loadz (PLAN T26.4): the tier
+		// counters of each counted sample's load added up, tier_used_pct the
+		// fullest. Without this key a manager reads tiers per worker only.
+		"kv_tier_load": true,
+		// OPOD_ENGINE_OVERHEAD_MIB: the engine's overhead outside its pool for
+		// the card's vendor, which a budgeted launch takes off the budget before
+		// dividing (PLAN T23.3). Unset, the launch uses the SDK table's figure
+		// for an unmeasured vendor (adminapi.EngineOverheadMiB).
+		"engine_overhead": true,
 		// The policy snapshot's wake.noResumeInPlace names sleeping workers the
 		// request wake must not resume (PLAN T11.31): a request that finds only
 		// those is held by the admission hold, not served by a resume into a

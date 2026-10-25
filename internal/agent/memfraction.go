@@ -1,6 +1,10 @@
 package agent
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/opod-io/opod-sdk/adminapi"
+)
 
 // MemFractionShell is the one rule for turning a worker's VRAM BUDGET into the
 // memory fraction an engine is started with, as the shell line that computes it.
@@ -52,7 +56,18 @@ func MemFractionShell(engine string) string {
 	return "U=" + k.defaultFraction + "; B=\"${OPOD_VRAM_BUDGET_GB:-0}\"; " +
 		"if [ \"$B\" -gt 0 ] 2>/dev/null; then T=\"${OPOD_CARD_MIB:-}\"; " +
 		"case \"$T\" in ''|*[!0-9]*) T=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ');; esac; " +
-		"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" -v o=\"" + strconv.Itoa(k.overheadMiB) + "\" 'BEGIN{u=(b*1024-o)/t; u=int(u*100)/100; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%.2f\", u}'); fi; "
+		"O=\"${" + adminapi.EnvOverheadMiB + ":-}\"; case \"$O\" in ''|*[!0-9]*) O=" + strconv.Itoa(overheadMiB(engine)) + ";; esac; " +
+		"[ -n \"$T\" ] && U=$(awk -v b=\"$B\" -v t=\"$T\" -v o=\"$O\" 'BEGIN{u=(b*1024-o)/t; u=int(u*100)/100; if(u>0.95)u=0.95; if(u<0.05)u=0.05; printf \"%.2f\", u}'); fi; "
+}
+
+// overheadMiB is the engine's overhead when the manager names none
+// (OPOD_ENGINE_OVERHEAD_MIB unset): the SDK table's figure for a vendor not
+// measured, which is the engine's largest, else the engine's own row here.
+func overheadMiB(engine string) int {
+	if mib := adminapi.EngineOverheadMiB(engine, ""); mib > 0 {
+		return mib
+	}
+	return memKnobs[engine].overheadMiB
 }
 
 // memKnob is one engine's translation from a budget to its memory fraction.
@@ -62,22 +77,19 @@ type memKnob struct {
 	// its own pool.
 	defaultFraction string
 	// overheadMiB is what the engine process holds on its card OUTSIDE the
-	// pool its fraction bounds, taken off the budget before dividing.
+	// pool its fraction bounds, taken off the budget before dividing, for an
+	// engine the SDK's EngineOverheadMiB has no figure for.
 	overheadMiB int
 }
 
-// memKnobs is every engine's translation, and the ONLY place an overhead
-// number lives.
-//
-// The overheads are today's constants, not measurements of each engine: 768
-// MiB is the CUDA context and allocator slack measured beside a vLLM pool (837
-// MiB over, of which ~100 was the rounding), and SGLang carries the same
-// number although its fraction also leaves out its activations and CUDA-graph
-// buffers. The engines' own read-back of the pool they built (the heartbeat's
-// kv_capacity_tokens, PLAN T23.2) is what measures the real figure per engine
-// — budget − allocated KV − weights — and replaces these numbers.
+// memKnobs is every engine's translation. vLLM's overhead is measured per
+// vendor and lives in the SDK (adminapi.EngineOverheadMiB, which the manager
+// passes as OPOD_ENGINE_OVERHEAD_MIB for the card's vendor); SGLang keeps
+// 768 MiB, an estimate beside vLLM's pool that no measurement of its own has
+// replaced yet (its fraction also leaves out its activations and CUDA-graph
+// buffers).
 var memKnobs = map[string]memKnob{
-	"vllm":   {defaultFraction: "0.85", overheadMiB: 768},
+	"vllm":   {defaultFraction: "0.85"},
 	"sglang": {defaultFraction: "", overheadMiB: 768},
 }
 

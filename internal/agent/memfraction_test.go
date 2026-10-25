@@ -31,9 +31,10 @@ func TestTheFractionKeepsTheProcessInsideItsBudget(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	for _, c := range []struct{ total, budget, want string }{
-		{"49140", "10", "0.19"}, // the measured case: 0.21 cost the card 11.08 GB
-		{"8192", "6", "0.65"},   // (6144-768)/8192 = 0.656, cut
-		{"8192", "8", "0.90"},   // the whole card as a budget still leaves the overhead
+		// No OPOD_ENGINE_OVERHEAD_MIB: vLLM's largest measured overhead, 1103 MiB.
+		{"49140", "10", "0.18"}, // the measured case: 0.21 cost the card 11.08 GB
+		{"8192", "6", "0.61"},   // (6144-1103)/8192 = 0.615, cut
+		{"8192", "8", "0.86"},   // the whole card as a budget still leaves the overhead
 		{"49140", "1", "0.05"},  // the floor: a budget no model fits is the engine's error to make
 		{"49140", "0", "0.85"},  // no budget: the default, untouched
 	} {
@@ -106,9 +107,9 @@ func TestTheCardSizeFromTheManagerWins(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	for _, c := range []struct{ engine, dir, budget, card, want, why string }{
-		{"vllm", empty, "6", "8192", "0.65", "no nvidia-smi: the manager's card size applies the budget"},
-		{"vllm", lying, "6", "8192", "0.65", "the manager's card size wins over nvidia-smi's"},
-		{"vllm", lying, "6", "", "0.10", "unset: nvidia-smi as before ((6144-768)/49140)"},
+		{"vllm", empty, "6", "8192", "0.61", "no nvidia-smi: the manager's card size applies the budget"},
+		{"vllm", lying, "6", "8192", "0.61", "the manager's card size wins over nvidia-smi's"},
+		{"vllm", lying, "6", "", "0.10", "unset: nvidia-smi as before ((6144-1103)/49140)"},
 		{"vllm", empty, "6", "", "0.85", "neither: the default stands"},
 		{"vllm", empty, "6", "8 GiB", "0.85", "a value that is not a number is not a card size"},
 		{"vllm", empty, "0", "8192", "0.85", "no budget: the card size changes nothing"},
@@ -121,16 +122,46 @@ func TestTheCardSizeFromTheManagerWins(t *testing.T) {
 	}
 }
 
-// Every overhead number lives in one table, one row per engine whose fraction
-// a budget is translated into — the row T23.2's read-back will correct.
+// Every engine whose fraction a budget is translated into has an overhead:
+// vLLM's from the SDK's per-vendor table, SGLang's from its own row.
 func TestEveryFractionEngineHasOneOverheadRow(t *testing.T) {
 	for _, engine := range []string{"vllm", "sglang"} {
-		k, ok := memKnobs[engine]
-		if !ok || k.overheadMiB <= 0 {
-			t.Errorf("%s: no overhead row (%+v)", engine, k)
+		if _, ok := memKnobs[engine]; !ok || overheadMiB(engine) <= 0 {
+			t.Errorf("%s: no overhead (%d)", engine, overheadMiB(engine))
 		}
 	}
 	if got := MemFractionShell("llamacpp"); !strings.HasPrefix(got, "U=; ") {
 		t.Errorf("an engine with no fraction gets no default: %s", got)
+	}
+}
+
+// The manager names the overhead for the card's vendor (OPOD_ENGINE_OVERHEAD_MIB,
+// PLAN T23.3): vLLM measured 837 MiB beside its pool on NVIDIA and 1103 on AMD.
+// Unset or not a number, the SDK's figure for an unmeasured vendor applies.
+func TestTheManagersOverheadWins(t *testing.T) {
+	if _, err := exec.LookPath("awk"); err != nil {
+		t.Skip("no awk on this machine")
+	}
+	run := func(overhead string) string {
+		cmd := exec.Command("sh", "-c", MemFractionShell("vllm")+`printf %s "$U"`)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "OPOD_VRAM_BUDGET_GB=6", "OPOD_CARD_MIB=8192"}
+		if overhead != "" {
+			cmd.Env = append(cmd.Env, "OPOD_ENGINE_OVERHEAD_MIB="+overhead)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	for _, c := range []struct{ overhead, want, why string }{
+		{"837", "0.64", "NVIDIA: (6144-837)/8192 = 0.648, cut"},
+		{"1103", "0.61", "AMD: (6144-1103)/8192 = 0.615, cut"},
+		{"", "0.61", "unset: the largest measured figure"},
+		{"lots", "0.61", "not a number: the largest measured figure"},
+	} {
+		if got := run(c.overhead); got != c.want {
+			t.Errorf("%s: overhead %q gives %s, want %s", c.why, c.overhead, got, c.want)
+		}
 	}
 }
