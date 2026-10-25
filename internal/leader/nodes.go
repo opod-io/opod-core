@@ -54,6 +54,14 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	inflight := s.router.Inflight()
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
+	// A gang's coordinator reports through the leader's gang driver, not its
+	// own heartbeat, so its sample is the one /loadz sums (gangSample, cached).
+	gangLoad := map[string]engines.EngineLoad{}
+	for _, coord := range s.gangCoordinators(r.Context(), "") {
+		if ld, ok := s.gangSample(r.Context(), coord); ok && coord.NodeID != "" {
+			gangLoad[coord.NodeID] = ld
+		}
+	}
 	out := make([]nodeView, 0, len(nodes))
 	for _, n := range nodes {
 		v := nodeView{
@@ -76,6 +84,9 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 			if ld := ls.(nodeLoadSample); now.Sub(ld.at) <= loadSampleMaxAge {
 				v.Load = &ld.EngineLoad
 			}
+		}
+		if ld, ok := gangLoad[n.ID]; ok && v.Load == nil {
+			v.Load = &ld
 		}
 		out = append(out, v)
 	}

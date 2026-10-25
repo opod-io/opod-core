@@ -2,6 +2,7 @@ package leader
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -187,5 +188,63 @@ func TestLoadzReadsAGangsKVPoolFromItsCoordinator(t *testing.T) {
 	srv.aggregateWorkerLoad(ctx, &out, now)
 	if out.KVCapacityTokens == nil || *out.KVCapacityTokens != 40960 {
 		t.Fatalf("one shared pool of 40 960 tokens is the gang's KV pool: %v", out.KVCapacityTokens)
+	}
+}
+
+// T23.17 — /admin/v1/nodes carries a gang coordinator's engine sample on the
+// coordinator's own row: the coordinator reports through the leader's gang
+// driver, never its heartbeat, so without this a manager reading the rows saw
+// no KV pool for any gang. The rpc part's row stays without one.
+func TestNodesCarryTheGangCoordinatorsSample(t *testing.T) {
+	ctx := context.Background()
+	coord := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/metrics" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, "llamacpp:kv_cache_usage_ratio 0.25\nllamacpp:requests_deferred 0\nllamacpp:tokens_predicted_total 1\n")
+	}))
+	defer coord.Close()
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Router.HeartbeatMaxAgeSeconds = 30
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := NewServer(cfg, st, &downEngine{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	now := time.Now()
+	for _, id := range []string{"n1", "n2"} {
+		if err := st.Nodes().Upsert(ctx, store.Node{ID: id, Hostname: id, State: "ready", LastHeartbeat: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sh := range []store.Shard{
+		{ID: "c", ModelID: "sharded", GangID: "g0", Role: "coordinator", NodeID: "n1", Address: strings.TrimPrefix(coord.URL, "http://"), Status: "ready", CreatedAt: now, LastSeen: now},
+		{ID: "p", ModelID: "sharded", GangID: "g0", Role: "rpc", NodeID: "n2", Address: "n2:50052", Status: "ready", CreatedAt: now, LastSeen: now},
+	} {
+		if err := st.Shards().Create(ctx, sh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := httptest.NewRecorder()
+	srv.listNodes(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/nodes", nil))
+	var rows []struct {
+		ID   string          `json:"ID"`
+		Load *map[string]any `json:"load"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.ID] = r.Load != nil
+	}
+	if !got["n1"] {
+		t.Errorf("the coordinator's row carries the gang's sample: %s", rec.Body.String())
+	}
+	if got["n2"] {
+		t.Errorf("an rpc part holds layers, not a pool: no sample on its row: %s", rec.Body.String())
 	}
 }

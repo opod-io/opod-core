@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **`/admin/v1/nodes` carries a gang coordinator's engine sample on its row.** The coordinator reports through the
+  leader's gang driver, not a heartbeat, so a manager reading the rows saw no KV pool for any gang while `/loadz`
+  summed it. Its row now carries the same cached sample; an rpc part's row stays without one.
 - **A vLLM worker reports its host-memory KV tier.** From the same `/metrics` scrape as its other load signals, the
   worker's heartbeat now carries the tier's hits and queries in tokens, the bytes loaded from and stored into it, its
   fill and its refused stores (`tier_*` in `nodeapi.EngineLoad`, SDK v0.4.5) — each only when the engine publishes it,
