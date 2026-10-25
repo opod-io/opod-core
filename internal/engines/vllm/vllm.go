@@ -124,7 +124,29 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if hok && qok && queries > 0 {
 		ld.PrefixHitPct = hits / queries * 100
 	}
+	readTier(m, &ld)
 	return ld, nil
+}
+
+// readTier fills the host-memory KV tier's figures (PLAN T26.4) from the same
+// scrape, each only when vLLM publishes it: a worker with no tier publishes
+// none of them, and nothing is stated. Counters appear with their _total
+// suffix; the bare names are what releases that declared them as gauges use.
+func readTier(m map[string]float64, ld *engines.EngineLoad) {
+	count := func(dst **int64, names ...string) {
+		if v, ok := engines.First(m, names...); ok {
+			*dst = new(int64(v))
+		}
+	}
+	count(&ld.TierHitTokensTotal, "vllm:external_prefix_cache_hits_total", "vllm:external_prefix_cache_hits")
+	count(&ld.TierQueryTokensTotal, "vllm:external_prefix_cache_queries_total", "vllm:external_prefix_cache_queries")
+	count(&ld.TierLoadBytesTotal, "vllm:kv_offload_load_bytes_total", "vllm:kv_offload_load_bytes")
+	count(&ld.TierStoreBytesTotal, "vllm:kv_offload_store_bytes_total", "vllm:kv_offload_store_bytes")
+	count(&ld.TierAllocFailuresTotal, "vllm:kv_offload_allocation_failure_total", "vllm:kv_offload_allocation_failure")
+	if v, ok := engines.First(m, "vllm:kv_offload_cpu_cache_usage_perc"); ok {
+		pct := v * 100 // a fraction, as vllm:kv_cache_usage_perc is
+		ld.TierUsedPct = &pct
+	}
 }
 
 // kvCapacity is the KV pool vLLM built, in tokens: num_gpu_blocks ×

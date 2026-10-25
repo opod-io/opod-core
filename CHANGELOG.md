@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **A vLLM worker reports its host-memory KV tier.** From the same `/metrics` scrape as its other load signals, the
+  worker's heartbeat now carries the tier's hits and queries in tokens, the bytes loaded from and stored into it, its
+  fill and its refused stores (`tier_*` in `nodeapi.EngineLoad`, SDK v0.4.5) — each only when the engine publishes it,
+  so a worker with no tier states none. `/admin/v1/nodes` passes them through per worker.
 - **The AMD vLLM worker no longer answers garbage for Qwen3.** On the vLLM 0.23 RDNA base, Model Runner V2 copied each
   step's `query_start_loc` to the GPU with a non_blocking copy from pageable memory, and on ROCm that copy intermittently
   did not land: Qwen3 1.7B and 8B answered nonsense after the first request (0 of 12 correct on an RX 7900 XTX). The
