@@ -134,7 +134,7 @@ images:
     notes:
       - One build per GPU family - the published image is the RDNA build. Instinct MI2xx/MI3xx needs the _cdna_ base (rebuild with VLLM_AMD_BASE=); neither runs the other's kernels.
       - 'Single card: served 2026-09-19. Two cards with tensor parallel: peer-to-peer between consumer Radeon cards faults, and with P2P disabled the collective returns bad data - the endpoint served noise. That is the machine, not this image.'
-      - 'Qwen3-8B (bf16) on one RX 7900 XTX, 2026-10-22: identical requests at temperature 0, sent straight to the engine, answered wrong text in 1 to 5 of every 6 tries on two different cards; prefix caching off and --enforce-eager did not change it. Qwen2.5-1.5B on a third card of the same host answered 8 of 8 correctly. Unproven for that model; check a model with an expected answer before serving it on this build.'
+      - 'Qwen3 (1.7B, 8B) on the vLLM 0.23 RDNA base answers garbage after the first request: Model Runner V2 copies query_start_loc to the GPU with a non_blocking copy from pageable memory, and on ROCm that copy intermittently does not land. The Dockerfile backports upstream''s pinned staging (vllm-project/vllm#56888; for the RDNA release, ROCm/vllm#1403). Measured on an RX 7900 XTX, 2026-10-25: 0 of 12 correct on the unpatched base, 12 of 12 with the patch; Qwen2.5 1.5B and 7B correct either way.'
       - 'KV connector: the NixlConnector code is present but the NIXL runtime is not ("NIXL is not available"; the PyPI wheel is CUDA-only). A prefill/decode pair on this image needs UCX and NIXL built with ROCm from source.'
 
   - name: opod-worker-vllm-intel

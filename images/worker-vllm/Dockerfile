@@ -26,6 +26,11 @@ RUN (apt-get update && apt-get install -y --no-install-recommends ca-certificate
 # imports it. The AMD base keeps its own.
 ARG RAY_VERSION=2.58.0
 RUN python3 -c "import ray" 2>/dev/null || pip install --no-cache-dir "ray[default]==${RAY_VERSION}"
+# vLLM releases whose async_copy_to_gpu copies step inputs from pageable memory
+# answer garbage on ROCm after the first request; this backports upstream's
+# pinned staging and changes nothing on a release that has it (see the file).
+COPY images/worker-vllm/stage-pageable-h2d.py /tmp/stage-pageable-h2d.py
+RUN python3 /tmp/stage-pageable-h2d.py && rm /tmp/stage-pageable-h2d.py
 COPY --from=opod /opod /usr/local/bin/opod
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Intel's XPU base sets up oneAPI in its own ENTRYPOINT (`source setvars.sh

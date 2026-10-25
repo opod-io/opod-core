@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **The AMD vLLM worker no longer answers garbage for Qwen3.** On the vLLM 0.23 RDNA base, Model Runner V2 copied each
+  step's `query_start_loc` to the GPU with a non_blocking copy from pageable memory, and on ROCm that copy intermittently
+  did not land: Qwen3 1.7B and 8B answered nonsense after the first request (0 of 12 correct on an RX 7900 XTX). The
+  worker image now backports upstream vLLM's pinned staging of that copy (vllm-project/vllm#56888; for the RDNA
+  release, ROCm/vllm#1403) at build time, and changes nothing on a vLLM that already has it: 12 of 12 correct.
 - **TensorRT-LLM serves tools and structured output, and a worker with no tool-call parser says so.** A TensorRT-LLM
   worker answered a `tools` request with the call as plain text and a `response_format` request in prose, both with a
   200. Its launch now adds the catalog's `--tool_parser` for the model (as vLLM and SGLang get theirs) and always names
