@@ -348,6 +348,11 @@ func contractFeatures() map[string]bool {
 		// dividing (PLAN T23.3). Unset, the launch uses the SDK table's figure
 		// for an unmeasured vendor (adminapi.EngineOverheadMiB).
 		"engine_overhead": true,
+		// /loadz carries tier_ghost (PLAN T26.14): from the workers' cache
+		// events, the blocks their engines computed and the evicted blocks they
+		// computed again, by eviction depth — what a host KV tier would have
+		// served. Without this key a manager cannot size a tier from traffic.
+		"tier_ghost": true,
 		// The policy snapshot's wake.noResumeInPlace names sleeping workers the
 		// request wake must not resume (PLAN T11.31): a request that finds only
 		// those is held by the admission hold, not served by a resume into a

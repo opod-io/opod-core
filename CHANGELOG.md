@@ -14,6 +14,10 @@ the last section.
 - **`/loadz` sums the engines' host KV tiers (feature `kv_tier_load`):** hits and queries in tokens, bytes loaded and
   stored, allocation failures, and the fullest tier's fill, from each counted worker's heartbeat; absent while no
   engine keeps a tier.
+- **`/loadz` says what a host KV tier would have served (feature `tier_ghost`).** The leader keeps a ghost list of the
+  blocks each worker's engine evicted (from its cache events); a block the engine stores again was computed again, and
+  is counted at the depth of the evictions in between. `tier_ghost` carries the blocks computed and those returns by
+  depth, so a manager can size a tier and state its hit rate from real traffic. Hashes only, never content.
 - **A rerank answer must score every document.** An engine that routes `/v1/rerank` for a model that does not rerank
   (seen on a vendor vLLM build serving a chat model) answered 200 with no scores, and the gateway relayed it as an
   answer. A 200 with no scores is now `rerank_not_supported` naming the documents; a partial answer is an engine error.

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -154,5 +155,60 @@ func TestPrefixIndexForgetsWorkersThatAreGone(t *testing.T) {
 	}
 	if id, _ := srv.liveReporter(ctx); id != "new" {
 		t.Fatalf("the reporter to ask is %q, want the live one", id)
+	}
+}
+
+// The ghost list (T26.14): a block the engine evicted and later stored again
+// was computed again, and counts as a return at the depth of the evictions in
+// between; a block never evicted, or evicted before the cap's window, does not.
+func TestTheGhostListCountsReturnsByDepth(t *testing.T) {
+	p := newPrefixIndex()
+	if p.ghostState() != nil {
+		t.Fatal("nothing reported, nothing to say")
+	}
+	seq := int64(0)
+	next := func(kb nodeapi.KVBlocks) {
+		seq++
+		kb.Seq, kb.BlockSize = seq, 16
+		p.apply("w1", &kb)
+	}
+	next(nodeapi.KVBlocks{Stored: []string{"a", "b", "c"}})
+	next(nodeapi.KVBlocks{Removed: []string{"a"}}) // eviction 1
+	next(nodeapi.KVBlocks{Stored: []string{"a"}})  // back after 0 others: bucket 1
+	// 2,000 more evictions between "b"'s and its return: bucket 2 (≤ 4,096).
+	next(nodeapi.KVBlocks{Removed: []string{"b"}})
+	filler := make([]string, 2000)
+	for i := range filler {
+		filler[i] = "f" + strconv.Itoa(i)
+	}
+	next(nodeapi.KVBlocks{Removed: filler})
+	next(nodeapi.KVBlocks{Stored: []string{"b", "new"}})
+	g := p.ghostState()
+	if g.BlockSize != 16 || g.StoredBlocks != 6 {
+		t.Fatalf("block size and computed blocks: %+v", g)
+	}
+	want := []int64{1, 1, 0, 0, 0}
+	for i, b := range g.Returns {
+		if b.MaxDepthBlocks != tierGhostBuckets[i] || b.Blocks != want[i] {
+			t.Fatalf("bucket %d: %+v, want %d returns at ≤ %d", i, b, want[i], tierGhostBuckets[i])
+		}
+	}
+	// A gap in the sequence restarts the set but keeps the history.
+	p.apply("w1", &nodeapi.KVBlocks{Seq: seq + 5, Stored: []string{"z"}})
+	if g := p.ghostState(); g.StoredBlocks != 7 || g.Returns[0].Blocks != 1 {
+		t.Fatalf("the counters survive a restart of the set: %+v", g)
+	}
+	// Past the cap a ghost is forgotten: its return is not counted.
+	w := p.workers["w1"]
+	w.evicted("old")
+	for i := 0; i < tierGhostCap; i++ {
+		w.evicted("g" + strconv.Itoa(i))
+	}
+	before := p.ghostState().Returns
+	w.computed("old")
+	for i, b := range p.ghostState().Returns {
+		if b.Blocks != before[i].Blocks {
+			t.Fatalf("a ghost past the cap counted a return in bucket %d", i)
+		}
 	}
 }

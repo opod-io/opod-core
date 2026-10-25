@@ -54,8 +54,8 @@ github.com/opod-io/opod-sdk v0.4.4 h1:y8mLyoi9wpsBD9wC8hYoCJiq7jiqGA0Hdc4D1GVc1G
 github.com/opod-io/opod-sdk v0.4.4/go.mod h1:3QDlAYpLBKLhkJCX1GNswOqjZVAMu54tWEEVqW3IKHU=
 github.com/opod-io/opod-sdk v0.4.5 h1:O9dfvj/d9DNcIWPK2Kt5U3orkbXO0+zkajncQj9fjLI=
 github.com/opod-io/opod-sdk v0.4.5/go.mod h1:3QDlAYpLBKLhkJCX1GNswOqjZVAMu54tWEEVqW3IKHU=
-github.com/opod-io/opod-sdk v0.4.6 h1:jVgv91rAE2zIhhAggDkqwj2JVWK/iNzO28m7gFRsBEI=
-github.com/opod-io/opod-sdk v0.4.6/go.mod h1:3QDlAYpLBKLhkJCX1GNswOqjZVAMu54tWEEVqW3IKHU=
+github.com/opod-io/opod-sdk v0.4.7 h1:ytpr3yqu+/CF6bvOAa2hW5Z6GVoxMawu6y/G/xVSkkI=
+github.com/opod-io/opod-sdk v0.4.7/go.mod h1:3QDlAYpLBKLhkJCX1GNswOqjZVAMu54tWEEVqW3IKHU=
 github.com/prometheus/client_golang v1.24.1 h1:JnJkREXzWxUdCuPFpIWZiPispT9xVV59uiuyR2bPlnU=
 github.com/prometheus/client_golang v1.24.1/go.mod h1:F+oSRECHg4sse5ucfYpYDeIv/hu68Zo0uoHKetWnzcE=
 github.com/prometheus/client_model v0.6.2 h1:oBsgwpGs7iVziMvrGhE53c/GrLUsZdHnqNwqPLxwZyk=

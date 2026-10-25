@@ -224,6 +224,8 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// operator who set the weight can see that the sticky pin is still deciding.
 	s.prunePrefixIndex(r.Context())
 	out.PrefixIndex = s.prefix.state()
+	// What a host KV tier would have served (feature "tier_ghost", T26.14).
+	out.TierGhost = s.prefix.ghostState()
 	out.AuthSnapshot = s.authSnapshotState(now)
 	writeJSON(w, http.StatusOK, out)
 }

@@ -42,7 +42,12 @@ const (
 	prefixChainTTL       = 10 * time.Minute
 	prefixTokenizeBudget = 250 * time.Millisecond // a tokenize slower than this is not worth waiting for
 	prefixTokenizeMax    = 2048                   // leading tokens that decide a match
+	tierGhostCap         = 131_072                // evicted hashes remembered per worker (≈ 2.1 M tokens at block size 16)
 )
+
+// tierGhostBuckets are TierGhost's depth buckets, in blocks evicted between a
+// block's eviction and its return; the last is the ghost list's cap.
+var tierGhostBuckets = []int64{1 << 10, 1 << 12, 1 << 14, 1 << 16, tierGhostCap}
 
 type workerBlocks struct {
 	seq       int64
@@ -50,6 +55,56 @@ type workerBlocks struct {
 	held      map[string]*list.Element
 	order     *list.List // oldest first
 	at        time.Time
+
+	// The ghost list (T26.14): blocks the engine evicted, by eviction number,
+	// so a block the engine stores again is a block it computed again — one a
+	// host tier holding that many evicted blocks would have handed back.
+	evictions  int64
+	ghost      map[string]int64 // hash → its eviction number
+	ghostOrder *list.List       // ghostEntry, oldest first
+	stored     int64            // blocks the engine computed (stored new)
+	returns    []int64          // returned blocks per tierGhostBuckets entry
+}
+
+type ghostEntry struct {
+	hash string
+	at   int64
+}
+
+func newWorkerBlocks() *workerBlocks {
+	return &workerBlocks{held: map[string]*list.Element{}, order: list.New(),
+		ghost: map[string]int64{}, ghostOrder: list.New(), returns: make([]int64, len(tierGhostBuckets))}
+}
+
+// evicted remembers an evicted block in the ghost list, oldest out first.
+func (w *workerBlocks) evicted(h string) {
+	w.evictions++
+	w.ghost[h] = w.evictions
+	w.ghostOrder.PushBack(ghostEntry{h, w.evictions})
+	for w.ghostOrder.Len() > tierGhostCap {
+		old := w.ghostOrder.Remove(w.ghostOrder.Front()).(ghostEntry)
+		if w.ghost[old.hash] == old.at {
+			delete(w.ghost, old.hash)
+		}
+	}
+}
+
+// computed counts a block the engine stored new, and a return when the ghost
+// list holds it: the evictions since its own are its depth.
+func (w *workerBlocks) computed(h string) {
+	w.stored++
+	at, ok := w.ghost[h]
+	if !ok {
+		return
+	}
+	delete(w.ghost, h)
+	depth := w.evictions - at
+	for i, max := range tierGhostBuckets {
+		if depth <= max {
+			w.returns[i]++
+			return
+		}
+	}
 }
 
 type prefixIndex struct {
@@ -78,8 +133,13 @@ func (p *prefixIndex) apply(nodeID string, kb *nodeapi.KVBlocks) {
 	defer p.mu.Unlock()
 	w := p.workers[nodeID]
 	if w == nil || kb.Cleared || (w.seq != 0 && kb.Seq != w.seq+1) {
-		// New worker, the worker's own word, or a batch we never saw: start over.
-		w = &workerBlocks{held: map[string]*list.Element{}, order: list.New()}
+		// New worker, the worker's own word, or a batch we never saw: start
+		// over. The ghost counters are a history, not a set, and survive it.
+		fresh := newWorkerBlocks()
+		if w != nil {
+			fresh.stored, fresh.returns = w.stored, w.returns
+		}
+		w = fresh
 		p.workers[nodeID] = w
 	}
 	w.seq, w.at = kb.Seq, time.Now()
@@ -91,12 +151,14 @@ func (p *prefixIndex) apply(nodeID string, kb *nodeapi.KVBlocks) {
 			w.order.Remove(e)
 			delete(w.held, h)
 		}
+		w.evicted(h)
 	}
 	for _, h := range kb.Stored {
 		if e, ok := w.held[h]; ok {
 			w.order.MoveToBack(e)
 			continue
 		}
+		w.computed(h)
 		w.held[h] = w.order.PushBack(h)
 		if w.order.Len() > prefixIndexPerWorker {
 			old := w.order.Front()
@@ -142,6 +204,28 @@ func (p *prefixIndex) state() *adminapi.PrefixIndex {
 	for _, w := range p.workers {
 		out.WorkersReporting++
 		out.Blocks += len(w.held)
+	}
+	return out
+}
+
+// ghostState is /loadz's TierGhost: the reporting workers' ghost counters
+// summed; nil when no worker publishes cache events.
+func (p *prefixIndex) ghostState() *adminapi.TierGhost {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if len(p.workers) == 0 {
+		return nil
+	}
+	out := &adminapi.TierGhost{Returns: make([]adminapi.GhostBucket, len(tierGhostBuckets))}
+	for i, max := range tierGhostBuckets {
+		out.Returns[i].MaxDepthBlocks = max
+	}
+	for _, w := range p.workers {
+		out.BlockSize = max(out.BlockSize, w.blockSize)
+		out.StoredBlocks += w.stored
+		for i, n := range w.returns {
+			out.Returns[i].Blocks += n
+		}
 	}
 	return out
 }
