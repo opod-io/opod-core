@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **TensorRT-LLM serves tools and structured output, and a worker with no tool-call parser says so.** A TensorRT-LLM
+  worker answered a `tools` request with the call as plain text and a `response_format` request in prose, both with a
+  200. Its launch now adds the catalog's `--tool_parser` for the model (as vLLM and SGLang get theirs) and always names
+  one options file that sets `guided_decoding_backend: xgrammar`, merged with any `--config` the plan's `extra` names,
+  and the driver sends a `json_schema` format as the engine's own `{"type": "json", "schema": …}` — release 1.2.1
+  reads OpenAI's `{name, schema}` wrapper as the schema itself and constrained nothing.
+  A vLLM, SGLang or TensorRT-LLM worker started with no parser — the model's catalog entry names none and `extra`
+  names none — now answers a request carrying `tools` with a 400 `unsupported_request` that names `tools` and the
+  flag to set, instead of a success in the wrong shape.
 - **A batch sends lines that share a prompt together.** `opod batch run` sent lines in file order, so a document asked
   many questions across a large batch could be evicted from the engine's prefix cache between them and computed again.
   Lines are now grouped by a hash of their model and the first 2 KiB of their messages or prompt (held in memory only),

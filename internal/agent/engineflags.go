@@ -18,9 +18,10 @@ package agent
 //	           (--max_seq_len), kv_cache_free_gpu_memory_fraction, extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
-//	vLLM/SGLang: no flag for the tool-call parser — the model's catalog entry names it (tool_parser)
-//	           and the launch adds it; an `extra` that already carries --tool-call-parser wins
-//	           and the catalog's is not added (toolparser.go)
+//	vLLM/SGLang/TensorRT-LLM: no flag for the tool-call parser — the model's catalog entry names it
+//	           (tool_parser) and the launch adds it; an `extra` that already carries the engine's
+//	           parser flag (--tool-call-parser, TensorRT-LLM --tool_parser) wins and the catalog's is
+//	           not added (toolparser.go)
 
 import (
 	"encoding/json"
@@ -353,8 +354,10 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 // into $TP, and the rest as trtllm-serve's own flag names. --max_batch_size is
 // ALWAYS on the line, as --max-num-seqs is for vLLM (ADR-091): it is the slot
 // count the worker reports, and TensorRT-LLM's own default is far above what
-// the leader should dispatch to one card.
-func (f EngineFlags) trtllmShellOverrides() (overrides string, extraArgs string) {
+// the leader should dispatch to one card. config, when set, is the one
+// --config file the engine reads: it replaces any the plan's extra names
+// (trtllm-serve takes one, and the worker's merges the plan's into it).
+func (f EngineFlags) trtllmShellOverrides(config string) (overrides string, extraArgs string) {
 	var sh []string
 	if tp, ok := f.posInt("tp", 1, 64); ok {
 		sh = append(sh, fmt.Sprintf("TP=%d;", tp))
@@ -372,9 +375,45 @@ func (f EngineFlags) trtllmShellOverrides() (overrides string, extraArgs string)
 		}
 	}
 	if v, ok := f.get("extra"); ok {
-		args = append(args, splitExtra(v)...)
+		extra := splitExtra(v)
+		for i := 0; i < len(extra); i++ {
+			if t := extra[i]; config != "" && isTRTLLMConfigFlag(t) {
+				if !strings.Contains(t, "=") {
+					i++ // and its value
+				}
+				continue
+			}
+			args = append(args, extra[i])
+		}
+	}
+	if config != "" {
+		args = append(args, "--config", config)
 	}
 	return strings.Join(sh, " "), shellQuoteAll(args)
+}
+
+// isTRTLLMConfigFlag reports whether t names trtllm-serve's options file, in
+// either of its spellings, as `--flag v` or `--flag=v`.
+func isTRTLLMConfigFlag(t string) bool {
+	name, _, _ := strings.Cut(t, "=")
+	return name == "--config" || name == "--extra_llm_api_options"
+}
+
+// trtllmConfigPath is the options file the plan's extra names, or "".
+func trtllmConfigPath(extra string) string {
+	f := splitExtra(extra)
+	for i, t := range f {
+		if !isTRTLLMConfigFlag(t) {
+			continue
+		}
+		if _, v, ok := strings.Cut(t, "="); ok {
+			return v
+		}
+		if i+1 < len(f) {
+			return f[i+1]
+		}
+	}
+	return ""
 }
 
 // DefaultTRTLLMMaxBatch is the --max_batch_size a TensorRT-LLM worker starts

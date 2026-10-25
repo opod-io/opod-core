@@ -2,7 +2,8 @@
 // `trtllm-serve <model>` serves an OpenAI-compatible API on the PyTorch backend
 // — safetensors from the Hub, no engine build — so requests go through the
 // shared openaicompat client, and this file is only what makes TensorRT-LLM
-// different on that wire: its load signals live at /prometheus/metrics.
+// different on that wire: its load signals live at /prometheus/metrics, and
+// its reading of a json_schema response_format (responseFormat).
 //
 // The worker starts the server (agent/server.go, launchTRTLLM); the driver
 // never does. One node only: TensorRT-LLM's multi-node mode needs MPI, which
@@ -13,6 +14,7 @@ package trtllm
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -51,6 +53,37 @@ func New(endpoint, apiKey string) *Driver {
 }
 
 func (d *Driver) Name() string { return name }
+
+// Chat is the shared client's, with the response_format rewritten for this
+// engine (responseFormat).
+func (d *Driver) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	req.ResponseFormat = responseFormat(req.ResponseFormat)
+	return d.Client.Chat(ctx, req)
+}
+
+// responseFormat turns OpenAI's {"type":"json_schema","json_schema":{"name",
+// "schema",…}} into trtllm-serve's own {"type":"json","schema":<schema>}.
+// Release 1.2.1 hands the whole json_schema object to its grammar as if it
+// were the schema, so the {"name","schema"} wrapper constrains nothing and a
+// schema-bound request comes back as any JSON at all (read on its
+// openai_protocol.py; PLAN T27.8). Every other value passes as written, and so
+// does a json_schema with no inner schema, which the engine then refuses itself.
+func responseFormat(raw json.RawMessage) json.RawMessage {
+	var rf struct {
+		Type       string `json:"type"`
+		JSONSchema struct {
+			Schema json.RawMessage `json:"schema"`
+		} `json:"json_schema"`
+	}
+	if err := json.Unmarshal(raw, &rf); err != nil || rf.Type != "json_schema" || !engines.HasJSON(rf.JSONSchema.Schema) {
+		return raw
+	}
+	out, err := json.Marshal(map[string]any{"type": "json", "schema": rf.JSONSchema.Schema})
+	if err != nil {
+		return raw
+	}
+	return out
+}
 
 // Pull is a no-op: the model is chosen when the server is launched.
 func (d *Driver) Pull(context.Context, string, func(string, int64, int64)) error { return nil }

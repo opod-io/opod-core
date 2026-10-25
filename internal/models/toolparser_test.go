@@ -4,13 +4,15 @@ import "testing"
 
 // knownToolParsers are the parser names each engine registers, read from the
 // releases our worker images pin (vLLM v0.27.1 vllm/tool_parsers, SGLang
-// v0.5.21 function_call_parser.py) — the subset the catalog uses. An engine
+// v0.5.21 function_call_parser.py, TensorRT-LLM 1.2.1 trtllm-serve
+// --tool_parser) — the subset the catalog uses. An engine
 // refuses an unknown name at start, so a typo here is a worker that never
 // comes up; a name added to the catalog is added here after it is checked
 // against the engine's own list.
 var knownToolParsers = map[string]map[string]bool{
 	"vllm":   {"hermes": true, "qwen3_coder": true, "llama3_json": true, "openai": true, "gemma4": true},
 	"sglang": {"qwen25": true, "qwen3_coder": true, "llama3": true, "gpt-oss": true, "gemma4": true},
+	"trtllm": {"qwen3": true, "qwen3_coder": true},
 }
 
 // PLAN T19.25: every tool_parser the bundled catalog names is for an engine

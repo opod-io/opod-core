@@ -9,6 +9,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -76,6 +77,10 @@ type Server struct {
 	// last launched (EngineFlags.LaunchSlots); 0 = none launched, or the line
 	// named none. The heartbeat reports it when the engine cannot say itself.
 	launchedSlots atomic.Int64
+	// toolsRefused is why the engine this worker last launched cannot serve a
+	// request that offers tools (a string; "" or unset = it can, or this
+	// worker launched nothing). noteToolParser sets it; toolparser.go.
+	toolsRefused atomic.Value
 	// ModelRevision / ModelSHA256 pin the model VERSION this worker serves
 	// (R15.16): the Hub revision to fetch and the digest the file must hash to.
 	// Empty revision = "main", which moves between pulls; a manager that cares
@@ -422,6 +427,10 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "messages required", http.StatusBadRequest)
 		return
 	}
+	if why := s.toolsRefusal(req.Tools, req.ToolChoice); why != "" {
+		writeOpenAIError(w, http.StatusBadRequest, "unsupported_request", why)
+		return
+	}
 	msgs := make([]engines.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		text, images := engines.ParseContent(m.Content)
@@ -749,6 +758,7 @@ func (s *Server) launchVLLM(model, servedName string) error {
 		return err
 	}
 	s.launchedSlots.Store(int64(s.EngineFlags.LaunchSlots("vllm")))
+	s.noteToolParser("vllm", cmp.Or(servedName, model))
 	_ = s.Supervisor.Stop("vllm-serve") // exclusive: one model per worker
 	env := map[string]string{"VLLM_WORKER_MULTIPROC_METHOD": "spawn"}
 	if len(s.Adapters) > 0 {
@@ -944,6 +954,7 @@ func (s *Server) launchSGLang(model, servedName string) error {
 		return err
 	}
 	s.launchedSlots.Store(int64(s.EngineFlags.LaunchSlots("sglang")))
+	s.noteToolParser("sglang", cmp.Or(servedName, model))
 	_ = s.Supervisor.Stop("sglang-serve") // exclusive: one model per worker
 	s.startKVEvents()
 	_, err = s.Supervisor.Start(context.Background(), ProcessSpec{

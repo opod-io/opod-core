@@ -1595,8 +1595,17 @@ Mechanisms a manager drives through this surface:
 - **Tool-call parsers** (`tool_parsers`, T19.25, `internal/agent/toolparser.go`): vLLM and SGLang return a tool call as
   text unless started with a parser. A worker's launch and the gang backends add the parser the model's catalog entry
   names for the engine (`tool_parser`, only on a `tools` model) — vLLM `--enable-auto-tool-choice --tool-call-parser`,
-  SGLang `--tool-call-parser` — unless the plan's `extra` already names one. A model whose entry names none (or a
-  model served by a scheme id, with no entry) starts with none, as before.
+  SGLang `--tool-call-parser`, TensorRT-LLM `--tool_parser` (T27.8) — unless the plan's `extra` already names one. A
+  model whose entry names none (or a model served by a scheme id, with no entry) starts with none, and then the worker
+  that launched it **refuses a request carrying `tools`** with a 400 `unsupported_request` that names `tools` and the
+  flag to set, instead of relaying a 200 whose tool call is plain text; `tool_choice: "none"` is relayed. A gang's
+  engines are started by the leader, so its head relays as before.
+- **TensorRT-LLM structured output** (T27.8, `internal/agent/launchers.go`): guided decoding has no flag on
+  trtllm-serve 1.2.1, only the options file, so every TensorRT-LLM launch names one `--config` that sets
+  `guided_decoding_backend: xgrammar`, merged with the file the plan's `extra` names (the control plane's KV tier)
+  unless that file already chooses a backend. Release 1.2.1 also reads an OpenAI `json_schema` `response_format` as if
+  the `{name, schema}` wrapper were the schema, which constrains nothing, so the driver sends the engine's own
+  `{"type": "json", "schema": …}` instead (`internal/engines/trtllm`).
 - **Gateway spend** (`gateway_spend`, T11.1 slice 1, ADR-063): the leader is one BRAIN behind several front DOORS.
   `POST /admin/v1/usage/push` takes usage rows a copied front recorded — at-least-once, deduplicated by a row id the
   **gateway** mints, because only the gateway knows two pushes are the same request, and a retry after a response it
