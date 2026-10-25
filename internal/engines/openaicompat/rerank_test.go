@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/opod-io/opod/internal/engines"
@@ -81,6 +82,7 @@ func TestRerankRejectsABadAnswer(t *testing.T) {
 		"out of range": `{"results":[{"index":5,"relevance_score":1}]}`,
 		"twice":        `{"results":[{"index":0,"relevance_score":1},{"index":0,"relevance_score":2}]}`,
 		"no score":     `{"results":[{"index":0}]}`,
+		"partial":      `{"results":[{"index":1,"relevance_score":1}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := embedServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(answer)) })
@@ -92,5 +94,18 @@ func TestRerankRejectsABadAnswer(t *testing.T) {
 	}
 	if _, err := Rerank(context.Background(), Client{Driver: "x"}, engines.RerankRequest{Query: "q"}); err == nil {
 		t.Fatal("no documents must be refused before any call")
+	}
+}
+
+// A 200 with no scores is a model that does not rerank behind an engine that
+// routes /rerank for any model (seen on a vendor vLLM build serving a chat
+// model): refused by name, not relayed as an empty answer.
+func TestRerankWithNoScoresIsNotSupported(t *testing.T) {
+	c := embedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"rerank-1","model":"chat-model","results":[],"usage":{"prompt_tokens":0}}`))
+	})
+	_, err := Rerank(context.Background(), c, engines.RerankRequest{Model: "m", Query: "q", Documents: []string{"a", "b"}})
+	if !errors.Is(err, engines.ErrRerankNotSupported) || !strings.Contains(err.Error(), "none of the 2 documents") {
+		t.Fatalf("err = %v, want ErrRerankNotSupported naming the documents", err)
 	}
 }

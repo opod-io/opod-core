@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **A rerank answer must score every document.** An engine that routes `/v1/rerank` for a model that does not rerank
+  (seen on a vendor vLLM build serving a chat model) answered 200 with no scores, and the gateway relayed it as an
+  answer. A 200 with no scores is now `rerank_not_supported` naming the documents; a partial answer is an engine error.
 - **`/admin/v1/nodes` carries a gang coordinator's engine sample on its row.** The coordinator reports through the
   leader's gang driver, not a heartbeat, so a manager reading the rows saw no KV pool for any gang while `/loadz`
   summed it. Its row now carries the same cached sample; an rpc part's row stays without one.

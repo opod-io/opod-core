@@ -115,6 +115,17 @@ func Rerank(ctx context.Context, c Client, req engines.RerankRequest) (engines.R
 		}
 		out.Results = append(out.Results, engines.RerankResult{Index: it.Index, Score: *score})
 	}
+	// No top_n is sent, so every document must come back scored. A 200 with
+	// no scores at all is an engine that routes rerank for a model that does
+	// not rerank: refused by name, never relayed as an answer.
+	switch {
+	case len(out.Results) == 0:
+		return engines.RerankResponse{}, notSupported(c.Driver, engines.Upstream(c.Driver, op, resp.StatusCode, body),
+			[]byte(fmt.Sprintf("the engine scored none of the %d documents: the served model does not rerank", len(req.Documents))))
+	case len(out.Results) != len(req.Documents):
+		return engines.RerankResponse{}, engines.Upstream(c.Driver, op, resp.StatusCode,
+			[]byte(fmt.Sprintf("scored %d of the %d documents", len(out.Results), len(req.Documents))))
+	}
 	return out, nil
 }
 
