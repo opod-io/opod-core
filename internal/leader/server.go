@@ -224,7 +224,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// The picker never sends a request to a worker whose slots are all in
 	// flight while another has one free (ADR-091): the gate admits against
 	// the pool's total, the picker lands each admitted request on a free slot.
-	routed.SetSlotSource(s.slotsOfKey)
+	routed.SetSlotSource(s.routerSlots)
 	// The blocks each worker's engine holds (prefixindex.go): wired always,
 	// scored only when the policy gives the weight.
 	s.prefix = newPrefixIndex()

@@ -1585,6 +1585,13 @@ Mechanisms a manager drives through this surface:
   coordinator holds the whole gang's pool). vLLM's slot count is the `--max-num-seqs` the worker launched it with —
   vLLM publishes none. An expert-parallel gang's per-rank figures are summed by vLLM's rank 0 and are not yet
   confirmed on hardware.
+- **Engine TTFT** (`engine_ttft`, T24.25; `internal/engines/histogram.go`): the same sample carries
+  `engine_ttft_p50_ms`, the engine's OWN median time to first token over about the last minute, from its histogram
+  (vLLM `vllm:time_to_first_token_seconds`, SGLang `sglang:time_to_first_token_seconds`): the driver keeps snapshots
+  of the cumulative buckets and takes `histogram_quantile(0.5)` over the difference from the one about a minute old.
+  Absent on the first scrape, after an engine restart, in a minute that served nothing, and always for llama.cpp,
+  which publishes no such histogram. `/loadz` carries the median over the samples that state it, so `ttft_p50_ms`
+  minus it is what the leader and the network add.
 - **Memory translation** (`card_mib`, T23.3, `internal/agent/memfraction.go`): a worker's VRAM budget
   (`OPOD_VRAM_BUDGET_GB`) becomes the engine's own fraction by one rule per engine — vLLM `--gpu-memory-utilization`,
   SGLang `--mem-fraction-static` — dividing the budget less the engine's overhead by the card's size. The size is the
@@ -1686,6 +1693,17 @@ Mechanisms a manager drives through this surface:
   `opod_admission_wait_seconds{class}` (every admitted request; 0 when a slot was free). The time to first token and
   the usage row's latency are measured from the request's arrival at the leader, before the gate, so both include
   that wait — and so does `/loadz` `ttft_p50_ms` / `ttft_p95_ms`.
+- **KV bound on admission** (`admission_kv_bound`, T23.11; `admission_slots.go`): an engine's slots are how many
+  requests it RUNS at once, not how many its KV pool holds — vLLM starts 256 slots whatever its pool. When the plan's
+  `workload` states the endpoint's context (`maxContext`, else `inputTokens + outputTokens`) and an engine states its
+  pool (`kv_capacity_tokens`), that worker or gang counts `min(slots, max(1, floor(pool ÷ context)))` in the pool and
+  in the picker, so the gate queues at the smaller bound instead of handing the engine requests it can only preempt.
+  It divides the pool the engine BUILT, never what is free of it right now: the gate already counts the requests in
+  flight against the bound, and taking their KV off as well would count each twice. A gang's pool is its
+  coordinator's last `/loadz` sample. `/loadz` `admission_bound` says `slots` or `kv` (`kv` only when a pool lowered
+  some count; absent when admission is unbounded or nothing serves), and `opod_admission_slots` carries the bounded
+  number. `GET /admin/v1/nodes` `slots` stays the engine's own count, and a door, which mirrors only that, still
+  bounds by slots. No workload in the plan, no KV bound.
 - **Probe header** (`probe_header`): a request carrying `X-Opod-Probe` is served like any other and counted like none
   — not in `/loadz`'s in-flight, `rpm_1m`, `unavailable_1m` or the idle clock — so a prover cannot move the number an
   autoscaler reads (`internal/leader/loadstats.go`).

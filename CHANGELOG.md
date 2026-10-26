@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **Admission queues at the KV bound when it is the smaller (feature `admission_kv_bound`).** An engine's slots say how
+  many requests it runs at once, not how many its KV pool holds (vLLM starts 256 whatever the pool). When the plan's
+  `workload` states the endpoint's context and an engine states its pool, that worker or gang counts
+  `min(slots, pool ÷ context)`, in the gate and in the picker; `/loadz` `admission_bound` says `slots` or `kv`.
+- **The engine's own time to first token (feature `engine_ttft`).** A vLLM or SGLang worker reads its engine's
+  `time_to_first_token_seconds` histogram and reports the last minute's median as `engine_ttft_p50_ms` (SDK v0.4.8);
+  `/loadz` carries the workers' median, so `ttft_p50_ms` minus it is what the leader and the network add. llama.cpp
+  publishes no such histogram and states none.
 - **A llama.cpp worker that holds a GPU it cannot reach refuses its load instead of serving from the CPU.** llama.cpp
   treats a backend that fails to start as a warning ("no usable GPU found") and loads the model into host RAM. Before
   a whole `llama-server` starts on an accelerated worker, the worker now runs `llama-server --list-devices`; no device

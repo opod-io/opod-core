@@ -50,6 +50,9 @@ aggregated over the workers that hold the leader's model. The typed shape is
 
 | `kv_capacity_tokens`, `kv_used_tokens`, `preemptions_total`, `evictions_total` | what the engines themselves say they built and did, summed over the samples that state each one: the KV pool in tokens, the tokens in use (SGLang), and counters since each engine started (feature `kv_readback`). **Absent** while no engine states the figure — never `0` for "unknown". Each worker's own figures are its `load` on `GET /admin/v1/nodes` | sizing, not scaling: compare the pool a plan predicted with the one the engine built; a rising `preemptions_total` says the pool is too small for the load |
 
+| `engine_ttft_p50_ms` | the median, over the samples that state one, of each engine's OWN time to first token over about the last minute, from its histogram (vLLM, SGLang; llama.cpp states none) (feature `engine_ttft`). **Absent** while none states it | not a scaling signal: `ttft_p50_ms` minus it is what the leader and the network add |
+| `admission_bound` | which bound the admission gate holds the model to: `slots` (the engines' slot counts) or `kv` (their KV pools hold fewer requests of the plan's `workload` context than they have slots) (feature `admission_kv_bound`). **Absent** when admission is unbounded (a worker states no slots) or nothing can serve | reporting: `kv` with a growing `queue_depth` says the pool, not the slot count, is the limit |
+
 CPU and memory are **not** useful signals for a GPU worker and the leader does not publish them.
 
 ### A sharded endpoint

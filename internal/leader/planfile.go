@@ -15,7 +15,12 @@ package leader
 //     an unknown suffix is refused here by name, listing what does exist;
 //   - the GANGS it declares, so the leader can form one that is entirely
 //     absent without being asked (planheal.go, §13 item 3). The shape was in
-//     this file all along and was read past.
+//     this file all along and was read past;
+//   - the endpoint's CONTEXT from its workload block (T23.11): the longest
+//     request a worker must hold (maxContext, else inputTokens +
+//     outputTokens — the control plane's Workload.Context). Admission divides
+//     each engine's KV pool by it and queues at the smaller of that and the
+//     engine's slots (admission_slots.go). No workload, no KV bound.
 //
 // SQLite stays the rebuildable cache; auth.yaml is the next file (TARGET).
 
@@ -38,6 +43,15 @@ type planFileState struct {
 	gangs     []planGang // the gangs the plan declares (planheal.go)
 	present   bool
 	zeroFloor bool // autoscale floor 0: all workers parked is a HEALTHY state
+	context   int  // the workload's longest request in tokens; 0 = the plan states none
+}
+
+// endpointContext is the longest request the plan's workload says a worker
+// must hold, in tokens; 0 when it states none.
+func (p *planFileState) endpointContext() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.context
 }
 
 func (p *planFileState) get() (int, string) {
@@ -93,6 +107,13 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 			Adapters []struct {
 				Name string `json:"name"`
 			} `json:"adapters"`
+			// Workload is the traffic the operator expects (the manager's
+			// plan.workload); only the context it implies is read.
+			Workload struct {
+				InputTokens  int `json:"inputTokens"`
+				OutputTokens int `json:"outputTokens"`
+				MaxContext   int `json:"maxContext"`
+			} `json:"workload"`
 			ShardGroups []struct {
 				ID          string     `json:"id"`
 				Parts       []struct{} `json:"parts"`
@@ -140,7 +161,16 @@ func (s *Server) StartPlanWatcher(ctx context.Context) {
 		s.plan.revision, s.plan.modelID, s.plan.adapters, s.plan.gangs = doc.Revision, doc.Model.ID, names, gangs
 		s.plan.present = true
 		s.plan.zeroFloor = doc.Autoscale.Max > 0 && doc.Autoscale.Floor == 0
+		context := doc.Workload.MaxContext
+		if context <= 0 {
+			context = doc.Workload.InputTokens + doc.Workload.OutputTokens
+		}
+		contextChanged := s.plan.context != max(context, 0)
+		s.plan.context = max(context, 0)
 		s.plan.mu.Unlock()
+		if contextChanged {
+			s.capacityChanged() // the KV bound of every pool moves with it (T23.11)
+		}
 		if changed {
 			s.log.Info("plan file applied", "revision", doc.Revision, "model", doc.Model.ID)
 			s.logEvent("plan.updated", doc.Model.ID, map[string]any{"revision": doc.Revision})

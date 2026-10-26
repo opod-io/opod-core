@@ -353,6 +353,20 @@ func contractFeatures() map[string]bool {
 		// computed again, by eviction depth — what a host KV tier would have
 		// served. Without this key a manager cannot size a tier from traffic.
 		"tier_ghost": true,
+		// Admission queues at the smaller of the engines' slots and the
+		// requests their KV pools hold at the endpoint's context — the plan's
+		// workload (maxContext, else inputTokens + outputTokens) — and /loadz
+		// says which bound it used in admission_bound: slots | kv (PLAN
+		// T23.11). Without this key admission counts slots only, and a vLLM
+		// worker queues the excess inside the engine.
+		"admission_kv_bound": true,
+		// A vLLM or SGLang worker's heartbeat load carries engine_ttft_p50_ms,
+		// the engine's own median time to first token over about the last
+		// minute (its time_to_first_token_seconds histogram), and /loadz the
+		// median over the workers that state it (PLAN T24.25). llama.cpp
+		// publishes none and states none. Without this key a manager cannot
+		// tell the leader's share of ttft_p50_ms from the engine's.
+		"engine_ttft": true,
 		// The policy snapshot's wake.noResumeInPlace names sleeping workers the
 		// request wake must not resume (PLAN T11.31): a request that finds only
 		// those is held by the admission hold, not served by a resume into a

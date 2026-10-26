@@ -19,6 +19,7 @@
 package sglang
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -46,7 +47,8 @@ func init() {
 // Driver is an Engine that proxies to a running SGLang server.
 type Driver struct {
 	openaicompat.Client
-	genRate engines.RateTracker // gen_throughput / generation_tokens_total → tokens/s between Load samples
+	genRate engines.RateTracker     // gen_throughput / generation_tokens_total → tokens/s between Load samples
+	ttft    engines.HistogramWindow // time_to_first_token_seconds → the last minute's median (T24.25)
 	// slots is the server's running-request limit, read once (Slots).
 	slotsMu sync.Mutex
 	slots   int
@@ -107,9 +109,15 @@ func (s *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if resp.StatusCode != http.StatusOK {
 		return engines.EngineLoad{}, engines.Upstream(name, "GET /metrics", resp.StatusCode, nil)
 	}
-	m := engines.ParsePromText(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return engines.EngineLoad{}, engines.Unreachable(name, s.BaseURL, err)
+	}
+	m := engines.ParsePromText(bytes.NewReader(raw))
 	now := time.Now()
 	ld := engines.EngineLoad{SampledAt: now.Unix()}
+	// The engine's own time to first token (PLAN T24.25).
+	ld.EngineTTFTP50Ms = s.ttft.TTFTP50Ms(string(raw), "sglang:time_to_first_token_seconds", now)
 	if kv, ok := engines.First(m, "sglang:token_usage", "sglang:kv_cache_usage_perc"); ok {
 		ld.KVUsedPct = kv * 100
 	}

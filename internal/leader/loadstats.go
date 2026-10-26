@@ -11,6 +11,7 @@ package leader
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/opod-io/opod-sdk/nodeapi"
 
@@ -214,6 +215,9 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// both zero when nothing was streamed — "not measured", never "instant".
 	out.TTFTP50Ms, out.TTFTP95Ms = s.ttft.percentiles(now)
 	s.aggregateWorkerLoad(r.Context(), &out.Load, now)
+	// Which bound admission queues at (feature "admission_kv_bound", T23.11):
+	// read after the aggregate, which refreshed the gangs' samples it uses.
+	out.AdmissionBound = s.admissionBound(r.Context(), planModel)
 	// How much of the worker count above is actually serving (feature
 	// "engine_liveness"): a worker whose engine crash-loops heartbeats like any
 	// other and holds its card, and a scaler that believes the count scales out
@@ -273,6 +277,7 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum, kvSum float64
 	var prefixSamples int
+	var engineTTFT []int64 // the samples' own TTFT medians, for theirs (T24.25)
 	fold := func(ld engines.EngineLoad) {
 		out.Reporting++
 		prefixSamples++
@@ -299,6 +304,9 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		addStated(&out.TierAllocFailuresTotal, ld.TierAllocFailuresTotal)
 		if v := ld.TierUsedPct; v != nil && (out.TierUsedPct == nil || *v > *out.TierUsedPct) {
 			out.TierUsedPct = new(*v)
+		}
+		if v := ld.EngineTTFTP50Ms; v != nil {
+			engineTTFT = append(engineTTFT, *v)
 		}
 	}
 	for _, n := range nodes {
@@ -352,6 +360,10 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	// that scales on queue_depth (the control plane's, a KEDA trigger, the
 	// vLLM-named alias) must see those requests, so they are added here.
 	out.QueueDepth += s.admission.held.Load()
+	// The engines' own time to first token (PLAN T24.25, feature
+	// "engine_ttft"): the median over the samples that state one, so the
+	// leader's ttft_p50_ms minus it is what the leader and the network add.
+	out.EngineTTFTP50Ms = medianStated(engineTTFT)
 	// The mean is over the SAMPLES, not the workers: one gang's sample speaks
 	// for every part of it, so dividing by the worker count would read a gang's
 	// prefix-cache hit rate as a fraction of itself.
@@ -379,6 +391,20 @@ func addStated(sum **int64, v *int64) {
 		*sum = new(int64(0))
 	}
 	**sum += *v
+}
+
+// medianStated is the median of the stated figures (the mean of the middle
+// two for an even count, rounded), nil when none is stated.
+func medianStated(v []int64) *int64 {
+	if len(v) == 0 {
+		return nil
+	}
+	slices.Sort(v)
+	m := len(v) / 2
+	if len(v)%2 == 1 {
+		return new(v[m])
+	}
+	return new((v[m-1] + v[m] + 1) / 2)
 }
 
 // workerLoadView is the worker half of /loadz with the mean KV fraction beside

@@ -145,6 +145,9 @@ var _ engines.Engine = (*Driver)(nil)
 // holds, so this number is slot occupancy and the manager does not read it as
 // KV use (G39 O-05). The ratio is still read first when a build emits it. The
 // slot count comes from /props (`total_slots`), read once and kept.
+// llama-server publishes no time-to-first-token histogram, so the engine's own
+// TTFT (EngineTTFTP50Ms, PLAN T24.25) is never stated here — not guessed from
+// its per-request timings either.
 func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.BaseURL+"/metrics", nil)
 	if err != nil {

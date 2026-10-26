@@ -118,6 +118,7 @@ func (a *admissionState) config() *classConfig {
 type capView struct {
 	slots      int    // governed slots across the workers that take requests now
 	ungoverned int    // workers/gangs serving with no slot count: unbounded
+	kvBound    bool   // a KV pool, not the slots, set some holder's number (T23.11)
 	reason     string // non-empty = no worker can serve (the 503 text)
 	gen        uint64 // the capacityChanged generation it was computed at
 	at         time.Time
@@ -337,13 +338,31 @@ func (s *Server) computeCapacity(ctx context.Context, model string) capView {
 	if why := s.unavailable(ctx, model); why != "" {
 		return capView{reason: why}
 	}
-	slots, ungoverned, holders := s.slotsOf(ctx, model)
+	slots, ungoverned, holders, kvBound := s.slotsOf(ctx, model)
 	if slots == 0 && ungoverned == 0 {
 		// Servable, yet no worker or gang counted: the leader's own engine
 		// (or one only the router can judge). Not governed.
 		ungoverned = 1
 	}
-	return capView{slots: slots, ungoverned: ungoverned, holders: holders}
+	return capView{slots: slots, ungoverned: ungoverned, holders: holders, kvBound: kvBound}
+}
+
+// admissionBound says which bound the gate holds model to, for /loadz (PLAN
+// T23.11): "kv" when a KV pool lowered the count, "slots" when the slots are
+// the limit, "" when it does not say — no model, nothing can serve, or a
+// worker reports no slot count and admission is unbounded.
+func (s *Server) admissionBound(ctx context.Context, model string) string {
+	if model == "" {
+		return ""
+	}
+	c := s.capacityFor(ctx, model)
+	switch {
+	case !c.servable() || !c.bounded():
+		return ""
+	case c.kvBound:
+		return adminapi.AdmissionBoundKV
+	}
+	return adminapi.AdmissionBoundSlots
 }
 
 // admit is the request path's gate. It returns a release to call when the

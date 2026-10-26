@@ -43,7 +43,8 @@ func init() {
 // Driver is an Engine that proxies to a running vLLM OpenAI-compatible server.
 type Driver struct {
 	openaicompat.Client
-	genRate engines.RateTracker // generation_tokens_total → tokens/s between Load samples
+	genRate engines.RateTracker     // generation_tokens_total → tokens/s between Load samples
+	ttft    engines.HistogramWindow // time_to_first_token_seconds → the last minute's median (T24.25)
 }
 
 // New returns a driver for a vLLM server at endpoint (e.g. http://gpu:8000).
@@ -83,7 +84,8 @@ var _ engines.Engine = (*Driver)(nil)
 // Load scrapes vLLM's own /metrics (build item 14): KV-cache usage,
 // requests waiting for a slot, generated tokens/s since the last sample and
 // the prefix-cache hit rate — and, from the same scrape, the KV pool it built
-// and its preemptions (PLAN T23.2). Its slot count is not here: vLLM publishes
+// and its preemptions (PLAN T23.2), and its own median time to first token
+// (PLAN T24.25). Its slot count is not here: vLLM publishes
 // none, and the worker reports the --max-num-seqs it launched it with. Metric names moved across vLLM releases, so
 // each signal reads the first alias present.
 func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
@@ -125,6 +127,9 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 		ld.PrefixHitPct = hits / queries * 100
 	}
 	readTier(m, &ld)
+	// The engine's own time to first token (PLAN T24.25): the leader's
+	// ttft_p50_ms minus this is what the leader and the network add.
+	ld.EngineTTFTP50Ms = v.ttft.TTFTP50Ms(string(raw), "vllm:time_to_first_token_seconds", now)
 	return ld, nil
 }
 

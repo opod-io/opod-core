@@ -265,7 +265,7 @@ var (
 	}, []string{"model", "class"})
 	admissionSlots = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "opod_admission_slots",
-		Help: "Worker slots a model can serve at once across the workers that take its requests now (ADR-091); 0 while none can serve. Ungoverned workers add none: see opod_admission_ungoverned_workers.",
+		Help: "Worker slots a model can serve at once across the workers that take its requests now (ADR-091), each lowered to the requests its KV pool holds at the endpoint's context when the plan states one (T23.11); 0 while none can serve. Ungoverned workers add none: see opod_admission_ungoverned_workers.",
 	}, []string{"model"})
 	admissionUngoverned = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "opod_admission_ungoverned_workers",
