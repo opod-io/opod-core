@@ -57,7 +57,7 @@ images:
     base: ghcr.io/ggml-org/llama.cpp:full-rocm
     weights: [gguf]
     gang: rpc
-    proven: false
+    proven: true   # served on a Radeon RDNA3 card 2026-10-23 and 2026-10-25 (one card, no RPC parts - see notes)
     hardware: AMD Radeon (gfx1030, gfx1100-1102, gfx1150-1151, gfx1200-1201) and Instinct (gfx908, gfx90a, gfx942)
     families: [amd:rdna2, amd:rdna3]
     requires:
@@ -224,7 +224,7 @@ images:
     upstream: true
     base: nvcr.io/nvidia/tensorrt-llm/release:1.2.1
     weights: [safetensors]
-    proven: false
+    proven: true   # served on one RTX 5090 2026-10-23 and 2026-10-25
     hardware: NVIDIA GPUs (CUDA; Ampere and newer)
     requires:
       - NVIDIA driver and the NVIDIA container runtime on the node
