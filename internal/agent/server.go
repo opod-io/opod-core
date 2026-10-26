@@ -1013,6 +1013,11 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 			}
 		}
 	}
+	// Before a pull that can be many GB: a worker holding a GPU that llama.cpp
+	// cannot reach would serve from the CPU (llamadevices.go).
+	if err := s.checkLlamaReachesDevice(context.Background()); err != nil {
+		return err
+	}
 	// Pull the file ourselves (exclusive, atomic — models.FetchGGUF) and hand
 	// llama-server a path: its own downloader wrote into the shared node cache
 	// beside other workers' and corrupted the file (cell, 2026-09-14).

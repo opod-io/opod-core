@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **A llama.cpp worker that holds a GPU it cannot reach refuses its load instead of serving from the CPU.** llama.cpp
+  treats a backend that fails to start as a warning ("no usable GPU found") and loads the model into host RAM. Before
+  a whole `llama-server` starts on an accelerated worker, the worker now runs `llama-server --list-devices`; no device
+  is a failed load carrying llama.cpp's own error, so the worker reports no model. A plan that pins `ngl` is not
+  checked, and a build whose answer cannot be read launches as before.
 - **A budgeted vLLM worker takes off the overhead measured for its vendor (feature `engine_overhead`).** The fraction a
   VRAM budget becomes now subtracts `OPOD_ENGINE_OVERHEAD_MIB`, which a manager sets from the SDK's per-vendor table
   (vLLM: 837 MiB on NVIDIA, 1,103 MiB on AMD); unset, the largest measured figure applies. It was 768 MiB for every
