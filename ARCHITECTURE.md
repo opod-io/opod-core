@@ -1630,6 +1630,17 @@ Mechanisms a manager drives through this surface:
   that launched it **refuses a request carrying `tools`** with a 400 `unsupported_request` that names `tools` and the
   flag to set, instead of relaying a 200 whose tool call is plain text; `tool_choice: "none"` is relayed. A gang's
   engines are started by the leader, so its head relays as before.
+- **Disk KV tier** (`kv_tier_fs`, T26.9, `internal/agent/engineflags.go`, `internal/fetch/kvtier.go`): the engine
+  flag `kv_tier_fs=<absolute dir>` puts vLLM's `fs` secondary tier (`TieringOffloadingSpec`, read on the pinned 0.27.1)
+  below the host tier the plan's `extra` already carries (`--kv-offloading-size N`). The worker adds one
+  `--kv-transfer-config` JSON — `OffloadingConnector`, the host tier as the CPU primary (`cpu_bytes_to_use`), and
+  `secondary_tiers: [{type: fs, root_dir}]` — because a list of objects cannot ride `extra`, which keeps plain tokens
+  only; vLLM merges `--kv-offloading-size` into the same config, so it stays one connector. `PYTHONHASHSEED` is
+  exported (0 unless set) so processes sharing the directory hash one prefix to one file. Without a host tier, with
+  another offloading backend, or beside the plan's own `--kv-transfer-config` the flag is ignored. vLLM's fs tier has
+  no capacity and no eviction, so `opod cache kv-prune` bounds the directory: oldest blocks first to 90 % of
+  `--max-gb`, crashed writes (`*.tmp`) after 10 minutes, only the tier's own files; `--max-gb 0` empties it but for
+  the `--keep` entries. Whoever names the directory runs it, beside the engine (`--every`) and after the engine is gone.
 - **TensorRT-LLM structured output** (T27.8, `internal/agent/launchers.go`): guided decoding has no flag on
   trtllm-serve 1.2.1, only the options file, so every TensorRT-LLM launch names one `--config` that sets
   `guided_decoding_backend: xgrammar`, merged with the file the plan's `extra` names (the control plane's KV tier)

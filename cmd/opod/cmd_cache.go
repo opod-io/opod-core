@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/opod-io/opod/internal/fetch"
@@ -25,14 +28,16 @@ func cmdCache(args []string) {
 	help := helpSpec{
 		name:    "cache",
 		summary: "the node's weight cache: list it, or remove what no plan references",
-		usage:   "opod cache ls [--dir <models dir>] [--json]\n  opod cache prune [--dir <models dir>] [--keep a.gguf,org-model@rev] [--min-age 24h] [--target-free 50] [--sweep 24h] [--apply] [--json]",
+		usage:   "opod cache ls [--dir <models dir>] [--json]\n  opod cache prune [--dir <models dir>] [--keep a.gguf,org-model@rev] [--min-age 24h] [--target-free 50] [--sweep 24h] [--apply] [--json]\n  opod cache kv-prune --dir <disk KV tier dir> --max-gb N [--keep a,b] [--every 10s] [--apply] [--json]",
 		examples: []string{
 			"opod cache ls --dir /data/models",
 			"opod cache prune --dir /data/models                       # dry run: what would go",
 			"opod cache prune --dir /data/models --keep org-model@rev --apply",
+			"opod cache kv-prune --dir /data/kvtier/ep --max-gb 100 --every 10s --apply   # keep a disk KV tier under 100 GB",
 		},
 		notes: []string{
 			"--dir defaults to $OPOD_MODELS_DIR. prune never removes a file opod did not fetch, and is a dry run without --apply.",
+			"kv-prune bounds a disk KV tier (an engine's kv_tier_fs directory), which the engine never deletes from: oldest blocks first, down to 90% of --max-gb; --max-gb 0 empties it but for the --keep entries. It touches only the tier's own files (*.bin, *.tmp, config.json).",
 		},
 	}
 	if len(args) == 0 {
@@ -46,8 +51,10 @@ func cmdCache(args []string) {
 		cacheLs(args[1:])
 	case "prune":
 		cachePrune(args[1:])
+	case "kv-prune":
+		cacheKVPrune(args[1:])
 	default:
-		dieUnknownSubcommand("cache", args[0], []string{"ls", "prune"})
+		dieUnknownSubcommand("cache", args[0], []string{"ls", "prune", "kv-prune"})
 	}
 }
 
@@ -128,6 +135,65 @@ func cachePrune(args []string) {
 	fmt.Println()
 	if !*apply {
 		fmt.Println("dry run: pass --apply to delete")
+	}
+}
+
+// cacheKVPrune bounds a disk KV tier (PLAN T26.9): one pass, or one every
+// --every until the process is stopped — the shape a manager runs beside the
+// engine that writes the directory, for as long as it writes.
+func cacheKVPrune(args []string) {
+	fs := flag.NewFlagSet("cache kv-prune", flag.ExitOnError)
+	dir := fs.String("dir", "", "the disk KV tier directory (the engine's kv_tier_fs)")
+	maxGb := fs.Float64("max-gb", -1, "cap on the tier's files, in GiB; 0 removes all of them but the --keep entries")
+	keep := fs.String("keep", "", "comma-separated top-level entries of --dir that are never touched")
+	every := fs.Duration("every", 0, "repeat the pass at this interval until stopped (0 = once)")
+	apply := fs.Bool("apply", false, "actually delete; without it this is a dry run")
+	asJSON := fs.Bool("json", false, "JSON output, one object per pass")
+	_ = fs.Parse(args)
+	if *dir == "" || *maxGb < 0 {
+		fmt.Fprintln(os.Stderr, "error: --dir and --max-gb are required")
+		os.Exit(2)
+	}
+	var keepList []string
+	if *keep != "" {
+		keepList = strings.Split(*keep, ",")
+	}
+	req := fetch.KVTierPruneRequest{Dir: *dir, MaxBytes: int64(*maxGb * (1 << 30)), Keep: keepList, DryRun: !*apply}
+	pass := func() bool {
+		res, err := fetch.PruneKVTier(req)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return false
+		}
+		switch {
+		case *asJSON:
+			_ = json.NewEncoder(os.Stdout).Encode(res)
+		case res.Removed > 0 || *every == 0:
+			verb := "would remove"
+			if *apply {
+				verb = "removed"
+			}
+			fmt.Printf("%s: %.2f GiB in the tier; %s %d file(s), %.2f GiB\n", res.Dir, float64(res.UsedBytes)/(1<<30), verb, res.Removed, float64(res.FreedBytes)/(1<<30))
+		}
+		return true
+	}
+	if *every <= 0 {
+		if !pass() {
+			os.Exit(1)
+		}
+		return
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	t := time.NewTicker(*every)
+	defer t.Stop()
+	for {
+		pass() // a failed pass is said and the next one tries again
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }
 

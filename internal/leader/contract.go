@@ -385,6 +385,13 @@ func contractFeatures() map[string]bool {
 		// T19.25). Without this key a manager that wants tool calls parsed puts
 		// the parser in extra itself.
 		"tool_parsers": true,
+		// A vLLM worker's engine flag kv_tier_fs=<dir> (PLAN T26.9): with the
+		// host tier on the line, the launch adds a disk tier below it in that
+		// directory — one --kv-transfer-config (TieringOffloadingSpec, an fs
+		// secondary tier), PYTHONHASHSEED fixed — and `opod cache kv-prune`
+		// bounds the directory, which the engine never deletes from. Without
+		// this key a worker drops the flag and keeps the host tier alone.
+		"kv_tier_fs": true,
 		// OPOD_PLAIN_LISTEN: the whole request API — the main listener's own
 		// handler — on a second, always-plain listener, beside a main one that
 		// may speak TLS. For a gateway that load-balances several leaders and

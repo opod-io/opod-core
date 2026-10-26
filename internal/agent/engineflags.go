@@ -18,6 +18,20 @@ package agent
 //	           (--max_seq_len), kv_cache_free_gpu_memory_fraction, extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
+//	vLLM:      kv_tier_fs (an absolute directory: a disk tier below the host
+//	           tier, PLAN T26.9). With the host tier on the line (`extra` carries
+//	           --kv-offloading-size N, backend native), the launch adds ONE
+//	           --kv-transfer-config JSON — OffloadingConnector, spec
+//	           TieringOffloadingSpec, the host tier as its CPU primary
+//	           (cpu_bytes_to_use = N GiB) and secondary_tiers [{type: fs,
+//	           root_dir: <dir>}] — and exports PYTHONHASHSEED (0 unless the
+//	           environment sets one), so every process sharing the directory
+//	           names one prefix with one file. Ignored without a host tier (the
+//	           fs tier is fed only from it), with another backend, or when
+//	           `extra` already carries a --kv-transfer-config of its own: a list
+//	           of objects cannot ride `extra`, which keeps plain tokens only.
+//	           Nothing in the engine deletes from the directory; whoever names
+//	           it bounds it (`opod cache kv-prune`).
 //	vLLM/SGLang/TensorRT-LLM: no flag for the tool-call parser — the model's catalog entry names it
 //	           (tool_parser) and the launch adds it; an `extra` that already carries the engine's
 //	           parser flag (--tool-call-parser, TensorRT-LLM --tool_parser) wins and the catalog's is
@@ -133,7 +147,109 @@ func (f EngineFlags) vllmShellOverrides() (overrides string, extraArgs string) {
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
 	}
+	if cfg, ok := f.vllmKVTierFS(); ok {
+		sh = append(sh, kvTierFSSeed)
+		args = append(args, "--kv-transfer-config", cfg)
+	}
 	return strings.Join(sh, " "), shellQuoteAll(args)
+}
+
+// kvTierFSSeed fixes the root of vLLM's block-hash chain (NONE_HASH): unseeded,
+// every process starts it from random bytes, so two processes sharing one fs
+// tier directory — replicas, or a worker restarted onto its own files — name
+// one prefix with two file names and never hit each other's blocks. An
+// environment that sets one keeps it.
+const kvTierFSSeed = `export PYTHONHASHSEED="${PYTHONHASHSEED:-0}";`
+
+// vllmKVTierFS is the --kv-transfer-config value of a disk tier (kv_tier_fs),
+// or ok=false when the key is unset or cannot apply. vLLM's
+// TieringOffloadingSpec (read on the pinned 0.27.1) is the CPU tier plus
+// secondary tiers; --kv-offloading-size still names the CPU tier's size, and
+// vLLM merges it into this config (config/vllm.py
+// _post_init_kv_transfer_config updates kv_connector_extra_config), so this is
+// the same one connector the host tier already is, never a second. The size is
+// written here as well so the JSON says the whole tier on its own.
+func (f EngineFlags) vllmKVTierFS() (string, bool) {
+	dir, ok := f.get("kv_tier_fs")
+	if !ok || !isTierDir(dir) {
+		return "", false
+	}
+	gib, sized := f.extraInt("--kv-offloading-size")
+	if !sized || gib <= 0 {
+		return "", false // no CPU primary: the fs tier is fed only from it
+	}
+	if b := f.extraValue("--kv-offloading-backend"); b != "" && b != "native" {
+		return "", false
+	}
+	if f.extraHasPrefix("--kv-transfer-config") {
+		return "", false // a connector of the plan's own: one connector, never two
+	}
+	type tier struct {
+		Type    string `json:"type"`
+		RootDir string `json:"root_dir"`
+	}
+	type extra struct {
+		SpecName       string `json:"spec_name"`
+		CPUBytesToUse  int64  `json:"cpu_bytes_to_use"`
+		SecondaryTiers []tier `json:"secondary_tiers"`
+	}
+	type config struct {
+		Connector string `json:"kv_connector"`
+		Role      string `json:"kv_role"`
+		Extra     extra  `json:"kv_connector_extra_config"`
+	}
+	b, err := json.Marshal(config{Connector: "OffloadingConnector", Role: "kv_both", Extra: extra{
+		SpecName: "TieringOffloadingSpec", CPUBytesToUse: int64(gib) << 30,
+		SecondaryTiers: []tier{{Type: "fs", RootDir: dir}},
+	}})
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// isTierDir accepts an absolute directory made of plain path characters, with
+// no `..` element: it lands in a JSON argument and names where the engine
+// writes, so nothing relative or escaping is taken.
+func isTierDir(s string) bool {
+	if !strings.HasPrefix(s, "/") || len(s) > 512 || !isToken(s) || strings.ContainsAny(s, "=,:") {
+		return false
+	}
+	for _, el := range strings.Split(s, "/") {
+		if el == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// extraValue is the value of a flag in the plan's raw `extra` ("--flag v" or
+// "--flag=v"), the last one written; "" when absent.
+func (f EngineFlags) extraValue(name string) string {
+	v, _ := f.get("extra")
+	toks := splitExtra(v)
+	out := ""
+	for i, t := range toks {
+		switch {
+		case t == name && i+1 < len(toks):
+			out = toks[i+1]
+		case strings.HasPrefix(t, name+"="):
+			out = strings.TrimPrefix(t, name+"=")
+		}
+	}
+	return out
+}
+
+// extraHasPrefix reports whether any token of the plan's raw `extra` starts
+// with prefix (a flag in any of its spellings, dotted keys included).
+func (f EngineFlags) extraHasPrefix(prefix string) bool {
+	v, _ := f.get("extra")
+	for _, t := range splitExtra(v) {
+		if strings.HasPrefix(t, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // VLLMShellOverrides is vllmShellOverrides for a caller outside the agent: the

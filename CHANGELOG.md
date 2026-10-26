@@ -7,6 +7,16 @@ the last section.
 
 ## Unreleased
 
+- **A vLLM worker can keep a disk KV tier below its host tier (feature `kv_tier_fs`).** The engine flag
+  `kv_tier_fs=<absolute dir>`, beside a host tier (`--kv-offloading-size N` in `extra`), adds one
+  `--kv-transfer-config` JSON to the launch — vLLM's `OffloadingConnector` with `TieringOffloadingSpec`, the host tier
+  as its CPU primary and an `fs` secondary tier in that directory — and exports `PYTHONHASHSEED` (0 unless the
+  environment sets one) so every process sharing the directory names one prefix with one file. It is the host tier's
+  connector, never a second one: without a host tier, with another backend, or beside a `--kv-transfer-config` of the
+  plan's own, the flag is ignored. The engine never deletes from the directory, so **`opod cache kv-prune --dir <dir>
+  --max-gb N [--every 10s] --apply`** bounds it: oldest blocks first down to 90 % of the cap, crashed writes after
+  10 minutes, only the tier's own files (`*.bin`, `*.tmp`, `config.json`); `--max-gb 0` empties it but for the
+  `--keep` entries.
 - **Admission queues at the KV bound when it is the smaller (feature `admission_kv_bound`).** An engine's slots say how
   many requests it runs at once, not how many its KV pool holds (vLLM starts 256 whatever the pool). When the plan's
   `workload` states the endpoint's context and an engine states its pool, that worker or gang counts

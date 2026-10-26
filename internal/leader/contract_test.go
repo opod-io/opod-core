@@ -142,6 +142,8 @@ var contractFeatureFloor = []string{
 	// a failed heal records shard.heal_failed {gang, revision, code, reason} and backs off
 	"shard_heal_failed_event",
 	"card_mib", "kv_readback", "wake_no_resume", "tool_parsers",
+	// a vLLM worker's disk KV tier below its host tier (kv_tier_fs, T26.9)
+	"kv_tier_fs",
 	// the KV bound on admission (T23.11) and the engine's own TTFT (T24.25)
 	"admission_kv_bound", "engine_ttft",
 	// the whole API on a second, always-plain listener (OPOD_PLAIN_LISTEN)
