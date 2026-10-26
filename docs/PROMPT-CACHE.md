@@ -40,6 +40,13 @@ Put the parts that are the same for many requests at the start, and the parts th
 - **Retrieved documents in a different order.** If several documents are retrieved, order them by a stable key, and
   keep the most shared ones first.
 
+## Who shares a cache
+
+An endpoint separates its callers' caches by team unless its policy says otherwise (`routing.cacheIsolation`:
+`team`, `key` or `none`). Two keys of one team reuse each other's prefixes; two teams never do, even with the same
+system prompt, so the first request of each team computes it once. On llama.cpp, which has no salt, every caller
+shares whatever the setting.
+
 ## How to see whether it works
 
 The engines count prefix-cache hits and queries; opod's leader reports the hit rate on `/loadz` as

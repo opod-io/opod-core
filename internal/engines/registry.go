@@ -40,6 +40,11 @@ type Descriptor struct {
 	// load another model stops what runs and starts the engine again for it.
 	// False for an engine that holds several models and loads on request.
 	SingleModel bool
+	// CacheSalt says the engine's server keys its prefix cache by a
+	// request's `cache_salt`, so requests with different salts never share a
+	// cached prefix (T26.8). Read on the pinned image of each engine: vLLM,
+	// SGLang and TensorRT-LLM take one; llama.cpp, Ollama and MLX do not.
+	CacheSalt bool
 	// StartHint is one lowercase clause telling an operator how to start
 	// the engine locally, e.g. "start it with: ollama serve".
 	StartHint string
@@ -102,6 +107,19 @@ func Canonical(name string) string {
 func SingleModel(name string) (single, known bool) {
 	d, ok := Lookup(name)
 	return ok && d.SingleModel, ok
+}
+
+// TakesCacheSalt reports Descriptor.CacheSalt for a name or alias; false for
+// a name no linked driver claims, so an engine nobody read gets no salt.
+func TakesCacheSalt(name string) bool {
+	d, ok := Lookup(name)
+	return ok && d.CacheSalt
+}
+
+// CacheSalted is a driver whose sending of ChatRequest.CacheSalt can be set:
+// the leader's client for a worker takes the answer for the worker's engine.
+type CacheSalted interface {
+	TakeCacheSalt(on bool)
 }
 
 // Names lists the canonical names of every linked driver, sorted.

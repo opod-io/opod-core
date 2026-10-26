@@ -27,7 +27,9 @@ package leader
 //   - wake.noResumeInPlace: sleeping workers the leader's request wake must
 //     not resume, because a manager gave their card away while they slept;
 //     a request that finds only those is held by the admission hold instead
-//     (PLAN T11.31; wakeonrequest.go).
+//     (PLAN T11.31; wakeonrequest.go);
+//   - routing.cacheIsolation: whose requests may share an engine's prefix
+//     cache — team, key or none (PLAN T26.8; cachesalt.go).
 //
 // No file → no-op: standalone `opod up` keeps its config behaviour. A bad
 // file keeps the last good policy (never a half-applied one).
@@ -158,6 +160,10 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
 	}
+	isolation, known := s.setCacheIsolation(r.CacheIsolation)
+	if !known {
+		s.log.Warn("policy routing.cacheIsolation unknown — isolating per team", "value", r.CacheIsolation)
+	}
 	s.policy.maxAuthAgeSec.Store(int64(max(doc.Auth.MaxSnapshotAgeSec, 0)))
 	marksChanged := s.applyWakeMarks(doc.Wake.NoResumeInPlace)
 	s.admission.set(doc.Admission)
@@ -172,7 +178,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	s.policy.rules = len(doc.Guardrails) - skipped
 	if changed {
 		s.log.Info("policy snapshot applied", "revision", doc.Revision, "guardrails", s.policy.rules, "skipped", skipped,
-			"fallback", r.FallbackURL != "", "accessLog", s.policy.accessLogEnabled())
+			"fallback", r.FallbackURL != "", "accessLog", s.policy.accessLogEnabled(), "cacheIsolation", isolation)
 		s.logEvent("policy.updated", doc.Revision, map[string]any{"guardrails": s.policy.rules, "skipped": skipped,
 			"fallback": r.FallbackURL != "", "accessLog": s.policy.accessLogEnabled()})
 	}

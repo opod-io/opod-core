@@ -398,6 +398,9 @@ type workerChatRequest struct {
 	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
 	Tools          json.RawMessage `json:"tools,omitempty"`
 	ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
+	// CacheSalt is the leader's (T26.8). Named here so it never rides Extra:
+	// this worker's own driver decides whether its engine takes one.
+	CacheSalt string `json:"cache_salt,omitempty"`
 }
 
 // workerChatKeys are the keys workerChatRequest consumes. Every other key the
@@ -453,6 +456,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		Tools:          req.Tools,
 		ToolChoice:     req.ToolChoice,
 		Extra:          extra,
+		CacheSalt:      req.CacheSalt,
 	}
 	stream, err := s.Engine.Chat(r.Context(), engReq)
 	if err != nil {

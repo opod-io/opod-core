@@ -22,8 +22,9 @@ import (
 // who could set them would break the request path. `model` is the endpoint's one
 // model identity (D5); `messages` is what the guardrails inspected; `stream` is
 // always true towards the engine (the gateway aggregates when the caller asked
-// for one answer); and `stream_options` carries `include_usage`, so a caller
-// who turned it off would silently break usage capture.
+// for one answer); `stream_options` carries `include_usage`, so a caller
+// who turned it off would silently break usage capture; and `cache_salt` is
+// the leader's cache isolation (ChatRequest.CacheSalt).
 
 // reservedChatKeys are the body keys opod owns on the way to an engine. A
 // caller's value for one of them is never forwarded as an extra.
@@ -32,6 +33,9 @@ var reservedChatKeys = map[string]bool{
 	"messages":       true,
 	"stream":         true,
 	"stream_options": true,
+	// The leader's salt for the engine's prefix cache (T26.8): a caller who
+	// could set it could share another team's cache, or opt out of theirs.
+	"cache_salt": true,
 }
 
 // IsReservedChatKey reports whether key belongs to opod rather than the caller.

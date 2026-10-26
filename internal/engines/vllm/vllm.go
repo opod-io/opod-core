@@ -36,6 +36,7 @@ func init() {
 		New:         func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
 		NativeName:  openaicompat.NativeName,
 		SingleModel: true,
+		CacheSalt:   true, // ChatCompletionRequest.cache_salt, mixed into the block hashes (v0.27.1)
 		StartHint:   "start vLLM (see https://docs.vllm.ai/) and ensure OPOD_VLLM_ENDPOINT matches",
 	})
 }
@@ -54,7 +55,9 @@ func New(endpoint, apiKey string) *Driver {
 	if apiKey != "" {
 		auth = func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+apiKey) }
 	}
-	return &Driver{Client: openaicompat.NewClient(name, endpoint, auth)}
+	c := openaicompat.NewClient(name, endpoint, auth)
+	c.CacheSalt = true
+	return &Driver{Client: c}
 }
 
 func (v *Driver) Name() string { return name }

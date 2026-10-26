@@ -570,6 +570,13 @@ func (r *Router) getOrCreateRemote(nodeID, address, token, engine string) engine
 	if signer, ok := eng.(engines.NodeSigned); ok {
 		signer.SignAsNode(nodeID, token)
 	}
+	// The worker's own driver sends the salt to its engine, or does not; this
+	// hop carries it only to a worker whose registered engine takes one, so
+	// a worker that registered none — or an older one that would pass the key
+	// on verbatim — is sent none (T26.8).
+	if c, ok := eng.(engines.CacheSalted); ok {
+		c.TakeCacheSalt(engines.TakesCacheSalt(engine))
+	}
 	if engine == "" {
 		engine = "worker"
 	}

@@ -15,6 +15,15 @@ the last section.
   `time_to_first_token_seconds` histogram and reports the last minute's median as `engine_ttft_p50_ms` (SDK v0.4.8);
   `/loadz` carries the workers' median, so `ttft_p50_ms` minus it is what the leader and the network add. llama.cpp
   publishes no such histogram and states none.
+- **Callers no longer share a prefix cache across teams (feature `cache_salt`).** The policy's `routing.cacheIsolation`
+  — `team` (the default: a team's keys share, teams never do; a key with no team is its own team), `key` or `none` —
+  says whose requests may reuse each other's cached prefix. The leader sends `cache_salt` to vLLM, SGLang and
+  TensorRT-LLM: an HMAC of the caller's team or key id under the endpoint's admin token, never the id, so every front
+  of an endpoint salts a caller alike. The prefix pins carry the same salt. `cache_salt` is now a reserved body key: a
+  caller's own value is dropped. llama.cpp takes no salt and shares its cache whatever the mode; a request with no key
+  carries none. The prefix-cache block index is not salted yet (the engines' cache events carry no salt). **A leader
+  whose own engine is a hosted vendor's API** (`OPOD_ENGINE=vllm` pointed at a vendor) must set
+  `routing.cacheIsolation: none` in its policy file: the vendor refuses a `cache_salt` field it does not know.
 - **A llama.cpp worker that holds a GPU it cannot reach refuses its load instead of serving from the CPU.** llama.cpp
   treats a backend that fails to start as a warning ("no usable GPU found") and loads the model into host RAM. Before
   a whole `llama-server` starts on an accelerated worker, the worker now runs `llama-server --list-devices`; no device

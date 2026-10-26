@@ -37,6 +37,13 @@ type Client struct {
 	// default, because the leader reaches its workers through this client and
 	// the worker's own driver is the one that knows.
 	NoImages string
+	// CacheSalt says this server keys its prefix cache by a request's
+	// `cache_salt` (T26.8): vLLM, SGLang and TensorRT-LLM, read on the pinned
+	// images. Only then is ChatRequest.CacheSalt sent. False drops it, because
+	// a server that does not know the key either ignores it — the cache is
+	// shared anyway — or refuses the request. The leader's client for a worker
+	// takes the worker's registered engine's answer (TakeCacheSalt).
+	CacheSalt bool
 }
 
 // ConnectTimeout bounds how long a connection to the engine (or to a worker: a
@@ -129,6 +136,11 @@ func (c *Client) LabelAs(engine string) {
 	}
 }
 
+// TakeCacheSalt sets whether this client sends a request's cache salt
+// (engines.CacheSalted). The router calls it on its client for a worker with
+// the answer for the engine the worker registered.
+func (c *Client) TakeCacheSalt(on bool) { c.CacheSalt = on }
+
 // Endpoint satisfies engines.Engine.
 func (c Client) Endpoint() string { return c.BaseURL }
 
@@ -198,6 +210,9 @@ func (c Client) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engin
 	if c.NoImages != "" && engines.HasImages(req.Messages) {
 		span.End()
 		return nil, engines.Unsupported(c.Driver, "image_url", c.NoImages)
+	}
+	if !c.CacheSalt {
+		req.CacheSalt = ""
 	}
 	out := make(chan engines.StreamEvent, 16)
 	raw, _ := json.Marshal(BuildChatBody(req))
@@ -311,6 +326,12 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 			continue
 		}
 		body[k] = v
+	}
+	// The leader's cache salt (T26.8). Reserved, so no caller's value reached
+	// Extra; set after it all the same. Client.Chat has already cleared it
+	// for a server that takes none.
+	if req.CacheSalt != "" {
+		body["cache_salt"] = req.CacheSalt
 	}
 	return body
 }

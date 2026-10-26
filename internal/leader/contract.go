@@ -367,6 +367,12 @@ func contractFeatures() map[string]bool {
 		// publishes none and states none. Without this key a manager cannot
 		// tell the leader's share of ttft_p50_ms from the engine's.
 		"engine_ttft": true,
+		// The policy snapshot's routing.cacheIsolation (team | key | none,
+		// default team) separates callers' prefix caches (PLAN T26.8): the
+		// leader sends `cache_salt` — an HMAC of the caller's team or key id —
+		// to vLLM, SGLang and TensorRT-LLM, and its prefix pins carry it too.
+		// Without this key every caller of an endpoint shares its cache.
+		"cache_salt": true,
 		// The policy snapshot's wake.noResumeInPlace names sleeping workers the
 		// request wake must not resume (PLAN T11.31): a request that finds only
 		// those is held by the admission hold, not served by a resume into a

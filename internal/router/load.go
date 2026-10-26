@@ -157,6 +157,10 @@ const (
 // prefix first (T19.23). A final partial chunk is a link too, so a short
 // prompt still has a key. Never the prompt itself: each key is 8 bytes of a
 // SHA-256. Nil when there is nothing to key on.
+//
+// The request's cache salt seeds the chain (T26.8): the same text under two
+// salts is two chains, as it is two prefixes in an engine that keys its cache
+// by the salt. With no salt the chain is exactly what it was before salts.
 func prefixKeysOf(req engines.ChatRequest) []string {
 	const capChars = prefixChunkChars * prefixMaxChunks
 	var head []byte
@@ -190,6 +194,9 @@ func prefixKeysOf(req engines.ChatRequest) []string {
 	}
 	keys := make([]string, 0, (len(head)+prefixChunkChars-1)/prefixChunkChars)
 	var prev [sha256.Size]byte
+	if req.CacheSalt != "" {
+		prev = sha256.Sum256([]byte("opod-cache-salt\x00" + req.CacheSalt))
+	}
 	for off := 0; off < len(head); off += prefixChunkChars {
 		h := sha256.New()
 		h.Write(prev[:])

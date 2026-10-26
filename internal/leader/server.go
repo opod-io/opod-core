@@ -91,6 +91,7 @@ type Server struct {
 	plan           planFileState
 	authf          authFileState
 	policy         policyFileState
+	cacheSalt      cacheSaltState // routing.cacheIsolation and the salt key (cachesalt.go)
 	admission      admissionState // the slot gate: dispatch while slots are free, hold the rest by class (ADR-091)
 
 	// movePoll / moveSettle shorten a model move's waits (modelmove.go); zero

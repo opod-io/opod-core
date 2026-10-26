@@ -104,6 +104,15 @@ type ChatRequest struct {
 	// adds. The reserved keys (IsReservedChatKey) never ride here. nil = the
 	// caller sent nothing else. Ollama builds its own body and ignores it.
 	Extra map[string]json.RawMessage
+
+	// CacheSalt is the leader's, never the caller's (PLAN T26.8, feature
+	// cache_salt): an opaque string an engine mixes into its prefix-cache
+	// keys, so requests with different salts never share a cached prefix.
+	// The leader derives it from the caller's team or key (an HMAC, never the
+	// id); `cache_salt` is a reserved body key, so a caller cannot set it.
+	// Sent only to a server that takes one (openaicompat.Client.CacheSalt).
+	// Empty = no salt: every caller shares.
+	CacheSalt string
 }
 
 // Message is a single chat turn.

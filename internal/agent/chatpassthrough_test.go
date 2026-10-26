@@ -238,3 +238,23 @@ func TestWorkerCarriesImagesToTheEngine(t *testing.T) {
 		t.Fatalf("the engine got %+v", m)
 	}
 }
+
+// The leader's cache salt reaches the worker's own driver as the typed field,
+// never as a caller extra: the driver decides whether its engine takes one,
+// and an extra would be forwarded to any engine verbatim (T26.8).
+func TestWorkerCarriesCacheSaltAsItsOwnField(t *testing.T) {
+	eng := &chatRecorder{}
+	s := &Server{Engine: eng}
+	w := httptest.NewRecorder()
+	s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}],"cache_salt":"abc123"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if eng.got.CacheSalt != "abc123" {
+		t.Fatalf("CacheSalt = %q, want abc123", eng.got.CacheSalt)
+	}
+	if _, inExtra := eng.got.Extra["cache_salt"]; inExtra {
+		t.Fatal("cache_salt rode Extra: it would reach an engine that takes none")
+	}
+}

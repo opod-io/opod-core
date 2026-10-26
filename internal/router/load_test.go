@@ -4,6 +4,8 @@ package router
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -229,5 +231,44 @@ func TestPrefixPinYieldsToSaturation(t *testing.T) {
 	}
 	if workers[0].NodeID != "w1" {
 		t.Fatalf("with headroom the pin wins: %v", workers)
+	}
+}
+
+// The cache salt seeds the prefix chain (T26.8): the same text under two salts
+// shares no link, so one team's pin never draws another team's request to a
+// worker whose engine holds that prefix only under the first team's salt;
+// one salt keys alike; and no salt is the chain as it was before salts.
+func TestPrefixKeysCarryTheSalt(t *testing.T) {
+	sys := strings.Repeat("Shared system prompt. ", 30)
+	req := func(salt string) engines.ChatRequest {
+		return engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "q"}}, CacheSalt: salt}
+	}
+	plain, a, a2, b := prefixKeysOf(req("")), prefixKeysOf(req("salt-a")), prefixKeysOf(req("salt-a")), prefixKeysOf(req("salt-b"))
+	if strings.Join(a, ",") != strings.Join(a2, ",") {
+		t.Fatal("one salt, one chain")
+	}
+	for i := range a {
+		if a[i] == b[i] || a[i] == plain[i] {
+			t.Fatalf("link %d is shared across salts", i)
+		}
+	}
+	// No salt: the first link is SHA-256 over a zero parent and the first
+	// chunk, exactly as before the salt existed.
+	head := []byte("system\x00" + sys)
+	h := sha256.New()
+	h.Write(make([]byte, sha256.Size))
+	h.Write(head[:prefixChunkChars])
+	if want := hex.EncodeToString(h.Sum(nil)[:8]); plain[0] != want {
+		t.Fatalf("an unsalted chain changed: %s, want %s", plain[0], want)
+	}
+
+	r := newLoadRouter(nil)
+	r.SetLoadAware(0, 0, true)
+	r.rememberPrefix(withPrefixKeys(context.Background(), a), "m", "w1")
+	if got := r.prefixPick(withPrefixKeys(context.Background(), a2), "m", nil); got != "w1" {
+		t.Fatalf("the same salt follows its pin: %q", got)
+	}
+	if got := r.prefixPick(withPrefixKeys(context.Background(), b), "m", nil); got != "" {
+		t.Fatalf("another salt must not follow it: %q", got)
 	}
 }

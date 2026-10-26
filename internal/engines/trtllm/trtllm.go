@@ -31,6 +31,7 @@ func init() {
 		New:         func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
 		NativeName:  openaicompat.NativeName,
 		SingleModel: true,
+		CacheSalt:   true, // ChatCompletionRequest.cache_salt, passed to generate (release 1.2.1, read from the source)
 		StartHint:   "start TensorRT-LLM (trtllm-serve <model> --port 8000) and ensure OPOD_TRTLLM_ENDPOINT matches",
 	})
 }
@@ -49,6 +50,7 @@ func New(endpoint, apiKey string) *Driver {
 	}
 	c := openaicompat.NewClient(name, endpoint, auth)
 	c.NoImages = "images are not proven on this engine yet (PLAN T16.2): serve vision models on vLLM, or send text only"
+	c.CacheSalt = true
 	return &Driver{Client: c}
 }
 

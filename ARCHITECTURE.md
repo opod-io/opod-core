@@ -808,6 +808,29 @@ Recent latency is used, but not as a per-node score: it feeds the p95 check that
 - Bound to the worker that last served that tuple for `router.sticky_session_ttl_seconds` (`OPOD_STICKY_SESSION_TTL_SECONDS`). **0 — the default — disables it**; the legacy `router.sticky_sessions` boolean is parsed and superseded.
 - Soft binding: the pin only reorders the candidates the load scorer already accepted, so a saturated or drained worker loses it and the cache miss is absorbed. `model=auto` is never pinned.
 
+### Cache isolation
+
+- Any prefix cache lets one caller's request reuse a prefix another caller computed, and the time to first token shows
+  it. The policy file's `routing.cacheIsolation` says whose requests may share (`internal/leader/cachesalt.go`, feature
+  `cache_salt`): **`team`** (the default, also for an empty or unknown value — every key of one team shares, teams never
+  do, and a key with no `team` in the auth snapshot is its own team), **`key`** (each key alone) or **`none`** (every
+  caller shares).
+- The leader turns the caller into a salt: 128 bits of HMAC-SHA256 over the team or key id, keyed by the endpoint's
+  admin token (`OPOD_ADMIN_TOKEN`; a leader without one draws a key at start). Never the id itself. Every `--role
+  gateway` door holds the same token, so a caller is salted alike whichever front took the request.
+- The router puts the salt on the request (`ChatRequest.CacheSalt`) and seeds the prefix-affinity chain with it, so a
+  pin never draws one team's request to a worker that holds the prefix only under another team's salt. A driver
+  sends it as `cache_salt` only when its engine keys its cache by one — vLLM (v0.27.1), SGLang (v0.5.21) and
+  TensorRT-LLM (1.2.1), read on the pinned images (`Descriptor.CacheSalt`). The leader's hop to a worker carries it
+  only when the worker registered such an engine; the worker's own driver decides again.
+- `cache_salt` is a reserved chat key: a caller's value never reaches an engine. A request with no key carries no
+  salt. llama.cpp, Ollama and MLX take none and share their cache whatever the mode — a manager says so.
+- A leader whose own engine is a hosted vendor's API (the vLLM driver pointed at a vendor) needs `cacheIsolation:
+  none`: the vendor refuses a `cache_salt` it does not know, and the leader cannot tell a vendor from a vLLM server.
+- Not salted yet: the block index (`kv_block_events`). Workers hash the engines' cache events from their token ids,
+  and those carry no salt, so `prefixBlockWeight` may credit a worker for blocks it holds under another salt — a cold
+  prefill there, never a shared prefix.
+
 ### Catalog fallback chain (failure-based retry)
 
 A catalog entry can declare an ordered list of fallback model IDs:
@@ -1656,7 +1679,8 @@ Mechanisms a manager drives through this surface:
   `admission.go` — and `admission.classes` — one queue per request class, `critical` before `standard` before
   `sheddable`, deficit round robin per flow (the key, or its `team`) inside a class, each class capped at its
   `maxShare` of the slots, the lowest class shed first; the class is the auth snapshot key's and `X-Opod-Class` may
-  only lower it, `admission_classes.go` — `policyfile.go`). See "Admission" below. `/loadz` reports the auth snapshot's revision and age (`auth_snapshot`). No plan file = standalone; the auth and policy watchers keep looking for a file that appears after
+  only lower it, `admission_classes.go` — and `routing.cacheIsolation`, whose requests may share a prefix cache,
+  `cachesalt.go` — `policyfile.go`). See "Admission" below. `/loadz` reports the auth snapshot's revision and age (`auth_snapshot`). No plan file = standalone; the auth and policy watchers keep looking for a file that appears after
   boot, and `off` disables them. A bad file keeps the last good snapshot.
 - **Admission** (`slot_admission`, `admission_hold`, `admission_classes`; `internal/leader/admission.go`,
   `admission_classes.go`, `admission_slots.go`): the leader dispatches a chat request to a worker only while that

@@ -13,6 +13,11 @@ import (
 )
 
 func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	// The leader's cache salt (cachesalt.go), before any path dispatches —
+	// the hedged one included.
+	if salt := cacheSaltFrom(ctx); salt != "" {
+		req.CacheSalt = salt
+	}
 	// Hedging short-circuit: when the request opts in and the router
 	// is configured for replicas > 1, fire concurrent calls and
 	// return whichever stream opens first. Retry / fallback are

@@ -40,6 +40,7 @@ func init() {
 		New:         func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
 		NativeName:  openaicompat.NativeName,
 		SingleModel: true,
+		CacheSalt:   true, // ChatCompletionRequest.cache_salt, keys the radix tree (v0.5.21; v0.5.19 on ROCm)
 		StartHint:   "start SGLang (python -m sglang.launch_server --model-path <repo>) and ensure OPOD_SGLANG_ENDPOINT matches",
 	})
 }
@@ -66,6 +67,7 @@ func New(endpoint, apiKey string) *Driver {
 	}
 	c := openaicompat.NewClient(name, endpoint, auth)
 	c.NoImages = "images are not proven on this engine yet (PLAN T16.2): serve vision models on vLLM, or send text only"
+	c.CacheSalt = true
 	return &Driver{Client: c}
 }
 

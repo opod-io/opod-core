@@ -56,6 +56,9 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	// a request stranded on a worker that left the pool holds none of the
 	// slots that remain (admission.go).
 	r = r.WithContext(router.WithTrace(r.Context()))
+	// The caller's cache salt (cachesalt.go): the router puts it on the
+	// request and in its prefix pins.
+	r = r.WithContext(router.WithCacheSalt(r.Context(), s.requestCacheSalt(r.Context())))
 	ctx := withAdmissionIdent(r.Context(), s.requestIdent(r))
 	if !s.capacityFor(ctx, model).servable() {
 		// A sleeping engine is resumed for this request (wakeonrequest.go);
