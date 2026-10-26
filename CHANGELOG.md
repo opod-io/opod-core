@@ -7,6 +7,17 @@ the last section.
 
 ## Unreleased
 
+- **The leader conducts a prefill/decode KV handoff for vLLM (feature `pd_handoff`).** A chat picked onto a decode
+  worker is first prefilled on a prefill worker of the same model (one non-streamed call, `max_tokens: 1`,
+  `kv_transfer_params: {do_remote_decode: true}`), and the decode call carries the `kv_transfer_params` that engine
+  answered with, so the decode engine pulls the prompt's KV instead of computing it. A request is served whole
+  instead, never failed, when no prefill worker takes requests, the prefill step fails, or a repetition penalty is in
+  force or cannot be read: vLLM's decode answers differently after a remote prefill whenever one is on
+  (vllm-project/vllm#63693). The worker reads the served model's default from its snapshot's
+  `generation_config.json` (`GET /v1/sampling-defaults`). A decode step that vLLM ends with no token and no finish
+  reason is a failed KV load, served whole, and that pair rests for a minute. Outcomes: `opod_pd_handoff_total`.
+- **Callers can no longer set `kv_transfer_params` or `bootstrap_host/port/room`** — reserved keys like `cache_salt`, so
+  a caller cannot steer a decode engine's KV pull.
 - **A TensorRT-LLM worker takes the KV cache's element type from a plan** (`flags.kv_cache_dtype`, e.g. `fp8`), as
   vLLM and SGLang do. `trtllm-serve` has no command-line flag for it, so it is merged into the one options file the
   worker writes, as `kv_cache_config.dtype` inside any `kv_cache_config` block already there; a file that chooses a
