@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **A TensorRT-LLM worker takes the KV cache's element type from a plan** (`flags.kv_cache_dtype`, e.g. `fp8`), as
+  vLLM and SGLang do. `trtllm-serve` has no command-line flag for it, so it is merged into the one options file the
+  worker writes, as `kv_cache_config.dtype` inside any `kv_cache_config` block already there; a file that chooses a
+  dtype keeps it. Whether the engine has an attention kernel for that mix on a given card is the engine's: TensorRT-LLM
+  1.2.1 has none for a 16-bit model with an fp8 KV on sm_120.
 - **A vLLM worker can keep a disk KV tier below its host tier (feature `kv_tier_fs`).** The engine flag
   `kv_tier_fs=<absolute dir>`, beside a host tier (`--kv-offloading-size N` in `extra`), adds one
   `--kv-transfer-config` JSON to the launch — vLLM's `OffloadingConnector` with `TieringOffloadingSpec`, the host tier
