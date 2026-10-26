@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/opod-io/opod/internal/fetch"
+	"gopkg.in/yaml.v3"
 )
 
 // Each launched engine is one row of the table (T19.15).
@@ -114,6 +115,54 @@ func TestTRTLLMAlwaysTurnsOnGuidedDecoding(t *testing.T) {
 	}
 	if _, _, err := (&Server{EngineFlags: EngineFlags{"extra": "--config /nonexistent/options.yaml"}}).trtllmCmdline("m", "", "127.0.0.1", 8000); err == nil || !strings.Contains(err.Error(), "/nonexistent/options.yaml") {
 		t.Errorf("an unreadable options file must fail the launch by name, got %v", err)
+	}
+}
+
+// PLAN T27.13: trtllm-serve takes the KV cache's element type only as
+// kv_cache_config.dtype in its one options file. It must land INSIDE the KV
+// tier's kv_cache_config block (a second block would drop host_cache_size),
+// stand alone with no tier, and leave a dtype the plan's file chose.
+func TestTRTLLMKVCacheDtypeMergesIntoTheOptionsFile(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	options := filepath.Join(os.TempDir(), "opod-trtllm-options.yaml")
+	tier := writeOptions(t, "kv_cache_config:\n  enable_block_reuse: true\n  host_cache_size: 1073741824\nreturn_perf_metrics: true\n")
+	for name, c := range map[string]struct {
+		extra, dtype string
+		want         map[string]any
+	}{
+		"no tier":           {"", "fp8", map[string]any{"dtype": "fp8"}},
+		"the tier's file":   {"--config " + tier, "fp8", map[string]any{"dtype": "fp8", "host_cache_size": 1073741824, "enable_block_reuse": true}},
+		"the plan's choice": {"--config " + writeOptions(t, "kv_cache_config:\n  dtype: auto\n"), "fp8", map[string]any{"dtype": "auto"}},
+		"no flag":           {"--config " + tier, "", map[string]any{"host_cache_size": 1073741824}},
+	} {
+		flags := EngineFlags{"extra": c.extra}
+		if c.dtype != "" {
+			flags["kv_cache_dtype"] = c.dtype
+		}
+		if _, _, err := (&Server{EngineFlags: flags}).trtllmCmdline("m", "", "127.0.0.1", 8000); err != nil {
+			t.Fatal(name, err)
+		}
+		body, _ := os.ReadFile(options)
+		var got map[string]any
+		if err := yaml.Unmarshal(body, &got); err != nil {
+			t.Fatalf("%s: the options file is not YAML: %v\n%s", name, err, body)
+		}
+		kv, _ := got["kv_cache_config"].(map[string]any)
+		for k, v := range c.want {
+			if kv[k] != v {
+				t.Errorf("%s: kv_cache_config.%s = %v, want %v\n%s", name, k, kv[k], v, body)
+			}
+		}
+		if name == "no flag" && kv["dtype"] != nil {
+			t.Errorf("no flag: a dtype appeared:\n%s", body)
+		}
+		if got["guided_decoding_backend"] != "xgrammar" {
+			t.Errorf("%s: guided decoding was lost:\n%s", name, body)
+		}
+	}
+	bad := writeOptions(t, "kv_cache_config: 3\n")
+	if _, _, err := (&Server{EngineFlags: EngineFlags{"extra": "--config " + bad, "kv_cache_dtype": "fp8"}}).trtllmCmdline("m", "", "127.0.0.1", 8000); err == nil || !strings.Contains(err.Error(), bad) {
+		t.Errorf("a kv_cache_config that is not a mapping must fail the launch by name, got %v", err)
 	}
 }
 

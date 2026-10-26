@@ -15,7 +15,8 @@ package agent
 //	SGLang:    tp, mem_fraction_static, max_model_len (--context-length), max_running_requests,
 //	           kv_cache_dtype (--kv-cache-dtype), extra (raw args)
 //	TensorRT-LLM: tp (--tp_size), max_num_seqs (--max_batch_size, always set), max_model_len
-//	           (--max_seq_len), kv_cache_free_gpu_memory_fraction, extra (raw args)
+//	           (--max_seq_len), kv_cache_free_gpu_memory_fraction, kv_cache_dtype (merged into the
+//	           --config file as kv_cache_config.dtype: no flag exists), extra (raw args)
 //	vLLM/SGLang: pp_layer_partition (VLLM_/SGLANG_PP_LAYER_PARTITION: layers per pipeline stage —
 //	           the only way either engine holds a model across cards of different sizes)
 //	vLLM:      kv_tier_fs (an absolute directory: a disk tier below the host

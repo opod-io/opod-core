@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // An engine the worker launches for the model it is told to serve: vLLM,
@@ -151,6 +153,13 @@ func (s *Server) trtllmConfig() (string, error) {
 		}
 		body = b
 	}
+	if v, ok := s.EngineFlags.get("kv_cache_dtype"); ok && isToken(v) {
+		merged, err := withKVCacheDtype(body, v)
+		if err != nil {
+			return "", fmt.Errorf("trtllm-serve options %s: %w", trtllmConfigPath(extra), err)
+		}
+		body = merged
+	}
 	if !yamlHasTopKey(body, "guided_decoding_backend") {
 		if len(body) > 0 && body[len(body)-1] != '\n' {
 			body = append(body, '\n')
@@ -160,6 +169,39 @@ func (s *Server) trtllmConfig() (string, error) {
 	out := filepath.Join(os.TempDir(), "opod-trtllm-options.yaml")
 	if err := os.WriteFile(out, body, 0o644); err != nil {
 		return "", fmt.Errorf("write trtllm-serve options %s: %w", out, err)
+	}
+	return out, nil
+}
+
+// withKVCacheDtype sets kv_cache_config.dtype (the KV cache's element type,
+// "fp8" …; PLAN T27.13) in a trtllm-serve options document. trtllm-serve has
+// no flag for it on release 1.2.1, and the control plane's KV tier file
+// already carries a kv_cache_config block, so the key is merged into that
+// block — a second top-level kv_cache_config would replace the first. A file
+// that already chooses a dtype keeps it, as it keeps its decoding backend.
+func withKVCacheDtype(doc []byte, dtype string) ([]byte, error) {
+	opts := map[string]any{}
+	if err := yaml.Unmarshal(doc, &opts); err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	if opts == nil {
+		opts = map[string]any{}
+	}
+	kv, _ := opts["kv_cache_config"].(map[string]any)
+	if kv == nil {
+		if _, set := opts["kv_cache_config"]; set {
+			return nil, fmt.Errorf("kv_cache_config is not a mapping")
+		}
+		kv = map[string]any{}
+	}
+	if _, chosen := kv["dtype"]; chosen {
+		return doc, nil
+	}
+	kv["dtype"] = dtype
+	opts["kv_cache_config"] = kv
+	out, err := yaml.Marshal(opts)
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
 	}
 	return out, nil
 }
