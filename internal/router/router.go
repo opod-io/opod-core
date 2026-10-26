@@ -189,6 +189,8 @@ type Router struct {
 	// sampling: each decode worker's model defaults, for the handoff's
 	// penalty rule (pdhandoff.go).
 	sampling samplingCache
+	// pdFailing: prefill/decode pairs whose last transfer failed (pdhandoff.go).
+	pdFailing failingPairs
 }
 
 // stickySweepEvery and stickySweepThreshold tune the opportunistic

@@ -59,6 +59,36 @@ const samplingDefaultsTTL = 10 * time.Minute
 // splitting for ten minutes after its snapshot landed).
 const samplingUnknownTTL = 30 * time.Second
 
+// pairBackoff is how long a prefill/decode pair is not split onto after its
+// decode step failed with the KV. A pair whose engines disagree — a prefill
+// worker restarted onto its prefetched snapshot while the decode engine still
+// runs the copy it pulled by name, so their NIXL compatibility hashes differ —
+// fails every transfer, and without this each request would pay a prefill
+// that is thrown away before it is served whole.
+const pairBackoff = time.Minute
+
+// failingPairs remembers each pair's last failed transfer.
+type failingPairs struct {
+	mu sync.Mutex
+	m  map[[2]string]time.Time
+}
+
+func (f *failingPairs) failed(prefill, decode string, now time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.m == nil {
+		f.m = map[[2]string]time.Time{}
+	}
+	f.m[[2]string{prefill, decode}] = now
+}
+
+func (f *failingPairs) failing(prefill, decode string, now time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	at, ok := f.m[[2]string{prefill, decode}]
+	return ok && now.Sub(at) < pairBackoff
+}
+
 type samplingKey struct{ node, boot, model string }
 
 type samplingEntry struct {
@@ -103,36 +133,46 @@ type samplingDefaulter interface {
 }
 
 // prefillHandoff runs the prefill step for a request already picked onto
-// decodeNode and returns the kv_transfer_params for its decode call, or false
-// when the request is to be served whole (the reason is counted).
-func (r *Router) prefillHandoff(ctx context.Context, model, decodeNode string, req engines.ChatRequest) (json.RawMessage, bool) {
+// decodeNode and returns the kv_transfer_params for its decode call and the
+// prefill worker that computed them, or false when the request is to be
+// served whole (the reason is counted).
+func (r *Router) prefillHandoff(ctx context.Context, model, decodeNode string, req engines.ChatRequest) (json.RawMessage, string, bool) {
 	placements, err := r.store.Placements().GetByModel(ctx, model)
 	if err != nil {
-		return nil, false // no store, no roles: nothing to split by
+		return nil, "", false // no store, no roles: nothing to split by
 	}
 	workers, nodes := r.takingRequests(ctx, model, placements)
 	workers = withoutSkipped(ctx, workers)
 	dn, ok := nodes[decodeNode]
 	if !ok || r.capsOf(dn).role != "decode" {
-		return nil, false // a complete server was picked: nothing to hand off
+		return nil, "", false // a complete server was picked: nothing to hand off
 	}
 	var prefill []store.Placement
+	failing := 0
 	for _, w := range workers {
 		if n, ok := nodes[w.NodeID]; ok && r.capsOf(n).role == "prefill" {
+			if r.pdFailing.failing(w.NodeID, decodeNode, time.Now()) {
+				failing++
+				continue
+			}
 			prefill = append(prefill, w)
 		}
 	}
 	if len(prefill) == 0 {
+		if failing > 0 {
+			metrics.ObservePDHandoff("pair-failing")
+			return nil, "", false
+		}
 		metrics.ObservePDHandoff("no-prefill")
-		return nil, false
+		return nil, "", false
 	}
 	if !handoffEngines[r.capsOf(dn).engine] {
 		metrics.ObservePDHandoff("engine")
-		return nil, false
+		return nil, "", false
 	}
 	if why := r.penaltyBlocksSplit(ctx, dn, model, req); why != "" {
 		metrics.ObservePDHandoff(why)
-		return nil, false
+		return nil, "", false
 	}
 
 	r.mu.RLock()
@@ -181,14 +221,14 @@ func (r *Router) prefillHandoff(ctx context.Context, model, decodeNode string, r
 		r.decInflight(n.ID, model)
 		if err == nil && engines.HasJSON(ans.KVTransfer) {
 			metrics.ObservePDHandoff("split")
-			return ans.KVTransfer, true
+			return ans.KVTransfer, n.ID, true
 		}
 		if r.log != nil {
 			r.log.Warn("prefill step failed; trying the next prefill worker or serving whole", "model", model, "node", n.ID, "err", err, "kv_transfer_params", engines.HasJSON(ans.KVTransfer))
 		}
 	}
 	metrics.ObservePDHandoff("prefill-failed")
-	return nil, false
+	return nil, "", false
 }
 
 // penaltyBlocksSplit says why a request may not be split because of its

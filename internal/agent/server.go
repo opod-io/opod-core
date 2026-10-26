@@ -488,6 +488,9 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeEngineFailure(w, err)
 		return
 	}
+	if engines.HasJSON(req.KVTransfer) {
+		stream = kvLoadGuard(stream)
+	}
 
 	if req.Stream {
 		writeSSE(w, r, stream, req.Model)
@@ -524,6 +527,38 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request, req engines.Ch
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// errKVLoadFailed is what a decode step's engine said by saying nothing.
+var errKVLoadFailed = errors.New("kv load failed: the engine ended the decode step with no token and no finish reason — vLLM's answer to a KV transfer it could not complete (a lost transfer, or a prefill engine whose compatibility hash differs)")
+
+// kvLoadGuard watches a DECODE step's stream (T16.9). vLLM fails a KV load it
+// cannot complete (kv_load_failure_policy: fail) by ending the stream with no
+// token and no finish_reason, and writeSSE would write that as a clean "stop"
+// — so the caller got an empty answer and the leader saw a success (the
+// design-partner cell, 2026-10-26: a prefill worker restarted onto its
+// snapshot, its NIXL compatibility hash no longer matched, and every split
+// answered ""). A stream like that ends here in an error instead, before any
+// token, which the leader serves whole on this worker.
+func kvLoadGuard(in <-chan engines.StreamEvent) <-chan engines.StreamEvent {
+	out := make(chan engines.StreamEvent, 16)
+	go func() {
+		defer close(out)
+		produced := false
+		for ev := range in {
+			if ev.Done && ev.Reason == "" && !produced {
+				out <- engines.StreamEvent{Err: errKVLoadFailed}
+				for range in { // drain: the producer must never block
+				}
+				return
+			}
+			if ev.Delta != "" || engines.HasJSON(ev.ToolCalls) {
+				produced = true
+			}
+			out <- ev
+		}
+	}()
+	return out
 }
 
 // writeEngineFailure answers a request whose engine call failed before any

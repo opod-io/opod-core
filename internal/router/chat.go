@@ -165,17 +165,21 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			// attempt, after this request's slot on the decode worker is
 			// counted above.
 			call := attempt
+			prefillNode := ""
 			if retry == 0 {
-				if kv, ok := r.prefillHandoff(thisCtx, candidate, nodeID, attempt); ok {
-					call.KVTransfer = kv
+				if kv, p, ok := r.prefillHandoff(thisCtx, candidate, nodeID, attempt); ok {
+					call.KVTransfer, prefillNode = kv, p
 				}
 			}
 			s, err := start(call)
 			if err != nil && engines.HasJSON(call.KVTransfer) && thisCtx.Err() == nil {
 				// The decode step failed with the KV (its engine fails fast on a
-				// lost transfer, kv_load_failure_policy: fail). Nothing reached
-				// the caller: the same decode worker serves the request whole.
+				// lost or incompatible transfer, kv_load_failure_policy: fail;
+				// the worker turns vLLM's silent empty stream into an error).
+				// Nothing reached the caller: the same decode worker serves the
+				// request whole, and the pair rests for a minute.
 				metrics.ObservePDHandoff("retried")
+				r.pdFailing.failed(prefillNode, nodeID, time.Now())
 				s, err = start(attempt)
 			}
 			if err == nil {

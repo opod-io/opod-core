@@ -167,6 +167,17 @@ func TestADecodeStepThatFailsWithTheKVIsServedWhole(t *testing.T) {
 	if _, kv := dec[1]["kv_transfer_params"]; kv {
 		t.Error("the retry must be the whole request, with no KV reference")
 	}
+	// The pair rests: the next request is not prefilled onto it at all, so a
+	// pair whose engines disagree does not pay a wasted prefill per request.
+	r := pdPair(t, p, d)
+	r.pdFailing.failed("wp", "wd", time.Now())
+	before := len(p.chats())
+	if got := pdChat(t, r, nil); got != "decoded" {
+		t.Fatalf("answer = %q", got)
+	}
+	if len(p.chats()) != before {
+		t.Fatal("a failing pair must not be prefilled onto during its back-off")
+	}
 }
 
 // "Cannot say" is not remembered for long: the snapshot a worker reads its

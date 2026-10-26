@@ -115,3 +115,48 @@ func TestTheWorkerReadsTheServedModelsSamplingDefaults(t *testing.T) {
 		}
 	}
 }
+
+// scriptedEngine streams the events it is given.
+type scriptedEngine struct {
+	chatRecorder
+	events []engines.StreamEvent
+}
+
+func (s *scriptedEngine) Chat(_ context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	s.got = req
+	ch := make(chan engines.StreamEvent, len(s.events))
+	for _, ev := range s.events {
+		ch <- ev
+	}
+	close(ch)
+	return ch, nil
+}
+
+// vLLM fails a KV load it cannot complete by ending the decode step's stream
+// with no token and no finish_reason; the worker must say so as an error,
+// never write it as a clean "stop" (design-partner cell, 2026-10-26: every
+// split answered "" after a prefill worker's restart changed its NIXL hash).
+// A normal answer, and a request with no KV reference, are untouched.
+func TestADecodeStepThatProducesNothingIsAnError(t *testing.T) {
+	silent := []engines.StreamEvent{{Done: true}}
+	for _, c := range []struct {
+		name, body string
+		events     []engines.StreamEvent
+		failed     bool
+	}{
+		{"silent decode step", `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"kv_transfer_params":{"remote_engine_id":"e"}}`, silent, true},
+		{"decode step that answers", `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"kv_transfer_params":{"remote_engine_id":"e"}}`, []engines.StreamEvent{{Delta: "Paris"}, {Done: true, Reason: "stop"}}, false},
+		{"no KV reference", `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`, silent, false},
+	} {
+		s := &Server{Engine: &scriptedEngine{events: c.events}}
+		w := httptest.NewRecorder()
+		s.chatCompletions(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(c.body)))
+		out := w.Body.String()
+		if got := strings.Contains(out, "kv load failed"); got != c.failed {
+			t.Errorf("%s: kv-load error = %v, want %v:\n%s", c.name, got, c.failed, out)
+		}
+		if c.failed && strings.Contains(out, `"finish_reason":"stop"`) {
+			t.Errorf("%s: a failed load must not end as a clean stop:\n%s", c.name, out)
+		}
+	}
+}
