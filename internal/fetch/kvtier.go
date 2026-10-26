@@ -27,6 +27,7 @@ package fetch
 // pinned vLLM 0.27.1).
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -44,6 +45,13 @@ const KVTierStaleWrite = 10 * time.Minute
 
 // kvTierLowWatermark is the share of the cap a prune over it trims down to.
 const kvTierLowWatermark = 0.9
+
+// KVTierHotDelay is how soon the next pass follows one that found the tier
+// growing or had to trim it. The engine writes a burst far faster than an idle
+// period allows for: on the design-partner cell a 4 GiB tier took ≈7 GB in a
+// minute (≈120 MB/s), so a fixed 10 s period let it reach twice its cap (PLAN
+// T26.20). One second of writes is a few percent of any sensible cap.
+const KVTierHotDelay = time.Second
 
 // KVTierPruneRequest is one pass over a disk tier directory.
 type KVTierPruneRequest struct {
@@ -65,6 +73,11 @@ type KVTierPruneResult struct {
 	TotalBytes int64  `json:"totalBytes,omitempty"`
 	FreeBytes  int64  `json:"freeBytes,omitempty"`
 	VolumeErr  string `json:"volumeErr,omitempty"`
+	// WalkMs and RemoveMs are how long the pass spent listing the tier and
+	// deleting from it: a pass much longer than the loop's period is what
+	// lets a burst outrun the cap (PLAN T26.20).
+	WalkMs   int64 `json:"walkMs"`
+	RemoveMs int64 `json:"removeMs"`
 }
 
 type kvTierFile struct {
@@ -113,6 +126,7 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 		}
 	}
 	var files []kvTierFile
+	walkStart := time.Now()
 	err := filepath.WalkDir(req.Dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -144,6 +158,7 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("kv tier prune: walk %s: %w", req.Dir, err)
 	}
+	res.WalkMs = time.Since(walkStart).Milliseconds()
 	var drop []kvTierFile
 	if req.MaxBytes == 0 {
 		drop = files
@@ -172,15 +187,18 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 			}
 		}
 	}
+	removeStart := time.Now()
 	for _, f := range drop {
 		if !req.DryRun {
 			if err := os.Remove(f.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				res.RemoveMs = time.Since(removeStart).Milliseconds()
 				return res, fmt.Errorf("kv tier prune: remove %s: %w", f.path, err)
 			}
 		}
 		res.Removed++
 		res.FreedBytes += f.size
 	}
+	res.RemoveMs = time.Since(removeStart).Milliseconds()
 	if req.MaxBytes == 0 && !req.DryRun {
 		removeEmptyDirs(req.Dir, keep)
 	}
@@ -204,5 +222,38 @@ func removeEmptyDirs(dir string, keep map[string]bool) {
 	})
 	for i := len(dirs) - 1; i >= 0; i-- {
 		_ = os.Remove(dirs[i])
+	}
+}
+
+// RunKVTierPruner makes passes over a disk tier until ctx ends, reporting each
+// one. The idle period is every; a pass that trimmed the tier, or found it
+// larger than the previous pass left it, is followed after hot instead — so
+// the tier is re-read every second for as long as the engine writes to it and
+// every idle period once it stops. A pass in progress is never interrupted,
+// and the delay counts from its end. A failed pass is reported and the next
+// one tries again at the idle period.
+func RunKVTierPruner(ctx context.Context, req KVTierPruneRequest, every, hot time.Duration, report func(KVTierPruneResult, error)) {
+	if hot <= 0 || hot > every {
+		hot = every
+	}
+	left := int64(-1) // the tier's bytes after the previous pass; -1 = none yet
+	for {
+		res, err := PruneKVTier(req)
+		report(res, err)
+		delay := every
+		if err == nil {
+			now := res.UsedBytes - res.FreedBytes
+			if (res.Removed > 0 && !req.DryRun) || (left >= 0 && now > left) {
+				delay = hot
+			}
+			left = now
+		}
+		t := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
 	}
 }

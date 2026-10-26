@@ -17,6 +17,11 @@ the last section.
   --max-gb N [--every 10s] --apply`** bounds it: oldest blocks first down to 90 % of the cap, crashed writes after
   10 minutes, only the tier's own files (`*.bin`, `*.tmp`, `config.json`); `--max-gb 0` empties it but for the
   `--keep` entries.
+- **`opod cache kv-prune --every` follows a burst instead of a clock.** A pass that trimmed the tier, or found it larger
+  than the previous pass left it, is followed after 1 s; `--every` is now the idle period. With a fixed 10 s period a
+  burst of ≈120 MB/s took a 4 GiB tier to twice its cap before the next pass; the next pass now comes within a second
+  of writes, so the overshoot is about one second of writes plus the pass. Each pass reports how long it walked and
+  removed (`walkMs`, `removeMs`, and in the text line), so a pass slower than the period shows in the log.
 - **Admission queues at the KV bound when it is the smaller (feature `admission_kv_bound`).** An engine's slots say how
   many requests it runs at once, not how many its KV pool holds (vLLM starts 256 whatever the pool). When the plan's
   `workload` states the endpoint's context and an engine states its pool, that worker or gang counts

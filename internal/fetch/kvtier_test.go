@@ -1,6 +1,9 @@
 package fetch
 
 import (
+	"context"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,5 +112,120 @@ func TestKVTierPruneEdges(t *testing.T) {
 	}
 	if _, err := PruneKVTier(KVTierPruneRequest{Dir: "rel/dir"}); err == nil {
 		t.Fatal("a relative directory must be refused")
+	}
+}
+
+// kvTierBytes is what the tier's own files hold right now.
+func kvTierBytes(dir string) int64 {
+	var n int64
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() || kvTierKind(d.Name()) == "" {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			n += info.Size()
+		}
+		return nil
+	})
+	return n
+}
+
+// A burst far faster than the idle period stays under 1.25 × the cap (PLAN
+// T26.20): the loop re-reads a growing tier after the hot delay, not the idle
+// one. The ratios are the cell's, compressed: there a 10 s idle period let a
+// burst of about one cap every 37 s reach 2× the cap. Here the writer puts the
+// whole cap down every 0.5 s, the idle period alone would let 40 % of the cap
+// through, and the hot delay lets through about 2 %.
+func TestKVTierPrunerBoundsABurst(t *testing.T) {
+	dir := t.TempDir()
+	const (
+		capBytes = 4 << 20
+		fileSize = 32 << 10
+		every    = 200 * time.Millisecond
+		hot      = 10 * time.Millisecond
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunKVTierPruner(ctx, KVTierPruneRequest{Dir: dir, MaxBytes: capBytes}, every, hot, func(_ KVTierPruneResult, err error) {
+			if err != nil {
+				t.Errorf("pass: %v", err)
+			}
+		})
+	}()
+
+	var peak int64
+	stopSample := make(chan struct{})
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		for {
+			if n := kvTierBytes(dir); n > peak {
+				peak = n
+			}
+			select {
+			case <-stopSample:
+				return
+			case <-time.After(2 * time.Millisecond):
+			}
+		}
+	}()
+
+	// vLLM's layout and its write: <root>_r0/<hhh>/<hh>_g0/<hash>.bin through a
+	// .tmp renamed into place. 6 × the cap at 8 MiB/s: one file every ~4 ms.
+	blob := make([]byte, fileSize)
+	for i := 0; i < 6*capBytes/fileSize; i++ {
+		sub := filepath.Join(dir, "x_r0", fmt.Sprintf("%03x", i%7), fmt.Sprintf("%02x_g0", i%3))
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(sub, fmt.Sprintf("%08d.bin", i))
+		if err := os.WriteFile(p+".tmp", blob, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(p+".tmp", p); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(4 * time.Millisecond)
+	}
+	time.Sleep(every + 50*time.Millisecond)
+	close(stopSample)
+	<-sampled
+	cancel()
+	<-done
+
+	if limit := int64(capBytes) * 5 / 4; peak > limit {
+		t.Fatalf("the tier peaked at %d bytes during the burst, over 1.25 × the %d-byte cap", peak, capBytes)
+	}
+	if end := kvTierBytes(dir); end > capBytes {
+		t.Fatalf("the tier settled at %d bytes, over its %d-byte cap", end, capBytes)
+	}
+	t.Logf("peak %.2f × the cap", float64(peak)/capBytes)
+}
+
+// An idle tier is read at the idle period; a tier that grew since the last
+// pass is read again after the hot delay.
+func TestKVTierPrunerCadence(t *testing.T) {
+	dir := t.TempDir()
+	writeAged(t, dir, "a.bin", 100, time.Hour)
+	const every = 300 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	passes := make(chan time.Time, 16)
+	go RunKVTierPruner(ctx, KVTierPruneRequest{Dir: dir, MaxBytes: 1 << 20}, every, time.Millisecond, func(KVTierPruneResult, error) {
+		passes <- time.Now()
+	})
+	first := <-passes
+	second := <-passes // nothing to compare the first against: the idle period
+	if gap := second.Sub(first); gap < every*2/3 {
+		t.Fatalf("an idle tier was read again after %v, not the %v idle period", gap, every)
+	}
+	writeAged(t, dir, "b.bin", 100, 0) // grows before the third pass
+	third := <-passes
+	fourth := <-passes // the third saw growth: the hot delay
+	if gap := fourth.Sub(third); gap > every/2 {
+		t.Fatalf("a growing tier waited %v for its next pass, not the hot delay", gap)
 	}
 }

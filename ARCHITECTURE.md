@@ -1641,6 +1641,9 @@ Mechanisms a manager drives through this surface:
   no capacity and no eviction, so `opod cache kv-prune` bounds the directory: oldest blocks first to 90 % of
   `--max-gb`, crashed writes (`*.tmp`) after 10 minutes, only the tier's own files; `--max-gb 0` empties it but for
   the `--keep` entries. Whoever names the directory runs it, beside the engine (`--every`) and after the engine is gone.
+  `--every` is the idle period only: a pass that trimmed the tier or found it grown is followed after 1 s, because the
+  fs tier has no backpressure and a burst outruns any fixed period (T26.20: ≈120 MB/s took a 4 GiB tier to 2× its cap
+  under a 10 s one). Each pass reports `walkMs` and `removeMs`.
 - **TensorRT-LLM structured output** (T27.8, `internal/agent/launchers.go`): guided decoding has no flag on
   trtllm-serve 1.2.1, only the options file, so every TensorRT-LLM launch names one `--config` that sets
   `guided_decoding_backend: xgrammar`, merged with the file the plan's `extra` names (the control plane's KV tier)

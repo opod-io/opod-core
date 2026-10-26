@@ -37,7 +37,7 @@ func cmdCache(args []string) {
 		},
 		notes: []string{
 			"--dir defaults to $OPOD_MODELS_DIR. prune never removes a file opod did not fetch, and is a dry run without --apply.",
-			"kv-prune bounds a disk KV tier (an engine's kv_tier_fs directory), which the engine never deletes from: oldest blocks first, down to 90% of --max-gb; --max-gb 0 empties it but for the --keep entries. It touches only the tier's own files (*.bin, *.tmp, config.json).",
+			"kv-prune bounds a disk KV tier (an engine's kv_tier_fs directory), which the engine never deletes from: oldest blocks first, down to 90% of --max-gb, re-read every second while the tier grows; --max-gb 0 empties it but for the --keep entries. It touches only the tier's own files (*.bin, *.tmp, config.json).",
 		},
 	}
 	if len(args) == 0 {
@@ -146,7 +146,7 @@ func cacheKVPrune(args []string) {
 	dir := fs.String("dir", "", "the disk KV tier directory (the engine's kv_tier_fs)")
 	maxGb := fs.Float64("max-gb", -1, "cap on the tier's files, in GiB; 0 removes all of them but the --keep entries")
 	keep := fs.String("keep", "", "comma-separated top-level entries of --dir that are never touched")
-	every := fs.Duration("every", 0, "repeat the pass at this interval until stopped (0 = once)")
+	every := fs.Duration("every", 0, "repeat the pass at this idle interval until stopped (0 = once); while the tier grows or is trimmed the next pass follows within 1s")
 	apply := fs.Bool("apply", false, "actually delete; without it this is a dry run")
 	asJSON := fs.Bool("json", false, "JSON output, one object per pass")
 	_ = fs.Parse(args)
@@ -159,12 +159,7 @@ func cacheKVPrune(args []string) {
 		keepList = strings.Split(*keep, ",")
 	}
 	req := fetch.KVTierPruneRequest{Dir: *dir, MaxBytes: int64(*maxGb * (1 << 30)), Keep: keepList, DryRun: !*apply}
-	pass := func() bool {
-		res, err := fetch.PruneKVTier(req)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return false
-		}
+	show := func(res fetch.KVTierPruneResult) {
 		switch {
 		case *asJSON:
 			_ = json.NewEncoder(os.Stdout).Encode(res)
@@ -173,28 +168,29 @@ func cacheKVPrune(args []string) {
 			if *apply {
 				verb = "removed"
 			}
-			fmt.Printf("%s: %.2f GiB in the tier; %s %d file(s), %.2f GiB\n", res.Dir, float64(res.UsedBytes)/(1<<30), verb, res.Removed, float64(res.FreedBytes)/(1<<30))
+			fmt.Printf("%s: %.2f GiB in the tier; %s %d file(s), %.2f GiB (walk %d ms, remove %d ms)\n", res.Dir, float64(res.UsedBytes)/(1<<30), verb, res.Removed, float64(res.FreedBytes)/(1<<30), res.WalkMs, res.RemoveMs)
 		}
-		return true
 	}
 	if *every <= 0 {
-		if !pass() {
+		res, err := fetch.PruneKVTier(req)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
+		show(res)
 		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	t := time.NewTicker(*every)
-	defer t.Stop()
-	for {
-		pass() // a failed pass is said and the next one tries again
-		select {
-		case <-ctx.Done():
+	// A failed pass is said and the next one tries again; a pass that found
+	// the tier growing is followed within a second, not a whole --every.
+	fetch.RunKVTierPruner(ctx, req, *every, fetch.KVTierHotDelay, func(res fetch.KVTierPruneResult, err error) {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
 			return
-		case <-t.C:
 		}
-	}
+		show(res)
+	})
 }
 
 func needDir(dir string) string {
