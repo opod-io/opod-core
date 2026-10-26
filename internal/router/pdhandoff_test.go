@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
@@ -33,11 +34,14 @@ func newPDWorker(t *testing.T, defaults string) *pdWorker {
 	w := &pdWorker{defaults: defaults}
 	w.srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/sampling-defaults" {
-			if w.defaults == "" {
+			w.mu.Lock()
+			defaults := w.defaults
+			w.mu.Unlock()
+			if defaults == "" {
 				http.NotFound(rw, r)
 				return
 			}
-			_, _ = io.WriteString(rw, w.defaults)
+			_, _ = io.WriteString(rw, defaults)
 			return
 		}
 		var body map[string]any
@@ -162,5 +166,33 @@ func TestADecodeStepThatFailsWithTheKVIsServedWhole(t *testing.T) {
 	}
 	if _, kv := dec[1]["kv_transfer_params"]; kv {
 		t.Error("the retry must be the whole request, with no KV reference")
+	}
+}
+
+// "Cannot say" is not remembered for long: the snapshot a worker reads its
+// defaults from arrives with a rollout's prefetch, without restarting it.
+func TestAnUnknownDefaultIsAskedAgainSoon(t *testing.T) {
+	p, d := newPDWorker(t, `{"known":true}`), newPDWorker(t, `{"known":false}`)
+	r := pdPair(t, p, d)
+	pdChat(t, r, nil)
+	if len(p.chats()) != 0 {
+		t.Fatal("an unknown default must not split")
+	}
+	d.mu.Lock()
+	d.defaults = `{"known":true,"repetition_penalty":1}`
+	d.mu.Unlock()
+	pdChat(t, r, nil) // still inside the short window: the cached unknown holds
+	if len(p.chats()) != 0 {
+		t.Fatal("the unknown answer is kept for its short window")
+	}
+	r.sampling.mu.Lock()
+	for k, e := range r.sampling.m {
+		e.at = e.at.Add(-samplingUnknownTTL - time.Second)
+		r.sampling.m[k] = e
+	}
+	r.sampling.mu.Unlock()
+	pdChat(t, r, nil)
+	if len(p.chats()) != 1 {
+		t.Fatalf("once the window passes, the now-known default must split: %d prefill steps", len(p.chats()))
 	}
 }

@@ -52,6 +52,13 @@ var handoffEngines = map[string]bool{"vllm": true}
 // this only covers a model reloaded inside one process.
 const samplingDefaultsTTL = 10 * time.Minute
 
+// samplingUnknownTTL is how long "the worker cannot say" is kept: briefly,
+// because what makes it known arrives without restarting the worker — a
+// rollout's prefetch writes the snapshot the worker reads (design-partner
+// cell, 2026-10-26: an unknown cached for the full TTL kept a pair from
+// splitting for ten minutes after its snapshot landed).
+const samplingUnknownTTL = 30 * time.Second
+
 type samplingKey struct{ node, boot, model string }
 
 type samplingEntry struct {
@@ -70,7 +77,11 @@ func (c *samplingCache) get(k samplingKey, now time.Time) (samplingEntry, bool) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.m[k]
-	if !ok || now.Sub(e.at) > samplingDefaultsTTL {
+	ttl := samplingDefaultsTTL
+	if !e.known {
+		ttl = samplingUnknownTTL
+	}
+	if !ok || now.Sub(e.at) > ttl {
 		return samplingEntry{}, false
 	}
 	return e, true
