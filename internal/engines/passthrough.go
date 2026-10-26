@@ -36,6 +36,17 @@ var reservedChatKeys = map[string]bool{
 	// The leader's salt for the engine's prefix cache (T26.8): a caller who
 	// could set it could share another team's cache, or opt out of theirs.
 	"cache_salt": true,
+	// The KV handoff of a prefill/decode pair (PLAN T16.18): these steer an
+	// engine's KV connector — vLLM's NixlConnector pulls blocks from the host,
+	// port and block ids in kv_transfer_params, SGLang's decode joins the
+	// prefill named by bootstrap_*. A caller who could set them could make a
+	// decode engine fetch another caller's prompt cache, or dial a host of the
+	// caller's choosing. Only the leader's own handoff sets them, through a
+	// typed field (ChatRequest.KVTransfer), never as an extra.
+	"kv_transfer_params": true,
+	"bootstrap_host":     true,
+	"bootstrap_port":     true,
+	"bootstrap_room":     true,
 }
 
 // IsReservedChatKey reports whether key belongs to opod rather than the caller.

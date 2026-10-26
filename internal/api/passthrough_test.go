@@ -166,3 +166,24 @@ func TestOnTTFTHearsStreamedAnswersOnly(t *testing.T) {
 		t.Fatalf("a streamed answer reported %v, want one positive TTFT", heard)
 	}
 }
+
+// PLAN T16.18: the keys of a prefill/decode handoff steer an engine's KV
+// connector (which host it pulls blocks from, which blocks). A caller's value
+// for any of them never reaches an engine, on any endpoint.
+func TestTheCallerCannotSteerAKVHandoff(t *testing.T) {
+	for _, key := range []string{"kv_transfer_params", "bootstrap_host", "bootstrap_port", "bootstrap_room"} {
+		eng := &recordingEngine{}
+		h := &Handler{Engine: eng, Store: usageTestStore(t), Default: "m"}
+		body := `{"model":"m","` + key + `":{"do_remote_prefill":true,"remote_host":"203.0.113.9","remote_port":5600,"remote_block_ids":[[1,2,3]]},"messages":[{"role":"user","content":"hi"}]}`
+		if rec := postChat(t, h, body); rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d: %s", key, rec.Code, rec.Body.String())
+		}
+		if _, ok := eng.got.Extra[key]; ok {
+			t.Errorf("%s rode as an extra", key)
+		}
+		raw, _ := json.Marshal(openaicompat.BuildChatBody(*eng.got))
+		if strings.Contains(string(raw), key) || strings.Contains(string(raw), "203.0.113.9") {
+			t.Errorf("%s reached the engine body: %s", key, raw)
+		}
+	}
+}
