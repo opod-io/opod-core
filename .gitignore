@@ -44,9 +44,6 @@ web/.next/
 *.out
 coverage.txt
 
-# Private working docs (not for the public repo)
-ENTERPRISE.md
-
 # Local planning workspace (per-task plans, sprint notes — never committed)
 /planning/
 
