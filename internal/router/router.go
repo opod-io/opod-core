@@ -186,6 +186,9 @@ type Router struct {
 	blockHeld     BlockHolder
 	prefixPins    map[string]stickyEntry // prefix hash|model → pinned node + expiry
 	prefixInserts int
+	// sampling: each decode worker's model defaults, for the handoff's
+	// penalty rule (pdhandoff.go).
+	sampling samplingCache
 }
 
 // stickySweepEvery and stickySweepThreshold tune the opportunistic

@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -251,6 +252,95 @@ func (c Client) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engin
 	return out, nil
 }
 
+// ChatOnce POSTs one NON-streamed chat completion and returns the answer whole,
+// with the server's kv_transfer_params (engines.OneShotChatter). It exists for
+// the first step of a prefill/decode handoff (T16.9): vLLM returns
+// kv_transfer_params only on a non-streamed answer, and the decode step cannot
+// start without them. Every other request keeps streaming through Chat.
+func (c Client) ChatOnce(ctx context.Context, req engines.ChatRequest) (engines.ChatAnswer, error) {
+	if !c.CacheSalt {
+		req.CacheSalt = ""
+	}
+	req.Stream = false
+	raw, _ := json.Marshal(BuildChatBody(req))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return engines.ChatAnswer{}, fmt.Errorf("chat once %s: new request: %w", c.BaseURL, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return engines.ChatAnswer{}, engines.Unreachable(c.Driver, c.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxOneShotAnswer))
+	if err != nil {
+		return engines.ChatAnswer{}, fmt.Errorf("chat once %s: read answer: %w", c.BaseURL, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return engines.ChatAnswer{}, engines.FromWorkerAnswer(c.Driver, c.BaseURL, "chat", resp.StatusCode, b)
+	}
+	var ans struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+		KVTransfer json.RawMessage `json:"kv_transfer_params"`
+	}
+	if err := json.Unmarshal(b, &ans); err != nil {
+		return engines.ChatAnswer{}, fmt.Errorf("chat once %s: decode answer: %w", c.BaseURL, err)
+	}
+	out := engines.ChatAnswer{KVTransfer: ans.KVTransfer}
+	if len(ans.Choices) > 0 {
+		out.Text, out.FinishReason = ans.Choices[0].Message.Content, ans.Choices[0].FinishReason
+	}
+	if u := ans.Usage; u != nil {
+		out.Usage = &engines.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	}
+	return out, nil
+}
+
+// SamplingDefaults asks an opod WORKER (not a plain OpenAI server) for the
+// served model's own sampling defaults: GET /v1/sampling-defaults (T16.9).
+// known is false when the worker could not read them — an older worker that
+// lacks the route included — and the caller must then assume nothing.
+func (c Client) SamplingDefaults(ctx context.Context, model string) (known bool, repetitionPenalty float64, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/v1/sampling-defaults?model="+url.QueryEscape(model), nil)
+	if err != nil {
+		return false, 0, fmt.Errorf("sampling defaults %s: new request: %w", c.BaseURL, err)
+	}
+	c.applyAuth(req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return false, 0, engines.Unreachable(c.Driver, c.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, 0, nil
+	}
+	var ans struct {
+		Known             bool    `json:"known"`
+		RepetitionPenalty float64 `json:"repetition_penalty"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&ans); err != nil {
+		return false, 0, fmt.Errorf("sampling defaults %s: decode: %w", c.BaseURL, err)
+	}
+	return ans.Known, ans.RepetitionPenalty, nil
+}
+
+// maxOneShotAnswer bounds what ChatOnce reads: a prefill step's answer is one
+// token and a small kv_transfer_params object, so anything near this is not
+// an answer it asked for.
+const maxOneShotAnswer = 4 << 20
+
 // NativeName is the OpenAI-family naming rule: these servers load a
 // Hugging Face repo or a local weights path; the catalog id is only an alias.
 func NativeName(src engines.Source) string {
@@ -332,6 +422,11 @@ func BuildChatBody(req engines.ChatRequest) map[string]any {
 	// for a server that takes none.
 	if req.CacheSalt != "" {
 		body["cache_salt"] = req.CacheSalt
+	}
+	// The leader's prefill/decode handoff (T16.9). Reserved like the salt, so
+	// a caller's value never reached Extra (T16.18).
+	if engines.HasJSON(req.KVTransfer) {
+		body["kv_transfer_params"] = req.KVTransfer
 	}
 	return body
 }

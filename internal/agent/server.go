@@ -118,11 +118,12 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
-	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))    // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
-	mux.HandleFunc("/v1/rerank", s.auth(s.rerank))            // and rerank (ADR-084): a route the worker does not expose is a 404 the leader cannot explain
-	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))     // leader-side placement: pull+load a model on this worker
-	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload)) // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
-	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))   // sleep tier (build item 13): engine drops its GPU working set, process stays
+	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))              // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
+	mux.HandleFunc("/v1/rerank", s.auth(s.rerank))                      // and rerank (ADR-084): a route the worker does not expose is a 404 the leader cannot explain
+	mux.HandleFunc("/v1/sampling-defaults", s.auth(s.samplingDefaults)) // the served model's own sampling defaults (T16.9's penalty gate)
+	mux.HandleFunc("/v1/model/load", s.auth(s.modelLoad))               // leader-side placement: pull+load a model on this worker
+	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload))           // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
+	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))             // sleep tier (build item 13): engine drops its GPU working set, process stays
 	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume))
 	mux.HandleFunc(nodeapi.PathTokenize, s.auth(s.tokenize))    // the leader has no tokenizer (feature "kv_block_events")   // wake it (sub-second on vLLM)
 	mux.HandleFunc("/v1/adapters", s.auth(s.adaptersList))      // LoRA variants held (adapters.go, feature lora)
@@ -401,6 +402,10 @@ type workerChatRequest struct {
 	// CacheSalt is the leader's (T26.8). Named here so it never rides Extra:
 	// this worker's own driver decides whether its engine takes one.
 	CacheSalt string `json:"cache_salt,omitempty"`
+	// KVTransfer is the leader's prefill/decode handoff (T16.9). Named here,
+	// like the salt, so it never rides Extra: the leader reserves the key
+	// against callers (T16.18) and is the only one that sends it.
+	KVTransfer json.RawMessage `json:"kv_transfer_params,omitempty"`
 }
 
 // workerChatKeys are the keys workerChatRequest consumes. Every other key the
@@ -457,6 +462,14 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		ToolChoice:     req.ToolChoice,
 		Extra:          extra,
 		CacheSalt:      req.CacheSalt,
+		KVTransfer:     req.KVTransfer,
+	}
+	// The prefill step of a handoff (T16.9): one non-streamed answer, so the
+	// engine's kv_transfer_params come back with it — vLLM sends them on no
+	// stream. Every other request streams, as always.
+	if !req.Stream && engines.HasJSON(req.KVTransfer) {
+		s.chatOnce(w, r, engReq, req.Model)
+		return
 	}
 	stream, err := s.Engine.Chat(r.Context(), engReq)
 	if err != nil {
@@ -481,6 +494,36 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeAggregate(w, stream, req.Model)
 	}
+}
+
+// chatOnce answers the prefill step of a handoff from one non-streamed engine
+// call, in the OpenAI shape plus the engine's kv_transfer_params. An engine
+// that cannot answer without a stream is refused by name: the leader then
+// sends the request unsplit (T16.9's fall-back), never a silent stream.
+func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request, req engines.ChatRequest, model string) {
+	one, ok := s.Engine.(engines.OneShotChatter)
+	if !ok {
+		writeOpenAIError(w, http.StatusBadRequest, "unsupported_request", "this worker's engine answers no prefill step: it has no non-streamed chat")
+		return
+	}
+	ans, err := one.ChatOnce(r.Context(), req)
+	if err != nil {
+		writeEngineFailure(w, err)
+		return
+	}
+	body := map[string]any{
+		"object":  "chat.completion",
+		"model":   model,
+		"choices": []map[string]any{{"index": 0, "message": map[string]any{"role": "assistant", "content": ans.Text}, "finish_reason": ans.FinishReason}},
+	}
+	if u := ans.Usage; u != nil {
+		body["usage"] = map[string]int{"prompt_tokens": u.PromptTokens, "completion_tokens": u.CompletionTokens, "total_tokens": u.TotalTokens}
+	}
+	if engines.HasJSON(ans.KVTransfer) {
+		body["kv_transfer_params"] = ans.KVTransfer
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // writeEngineFailure answers a request whose engine call failed before any

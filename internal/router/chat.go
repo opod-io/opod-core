@@ -145,17 +145,38 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			}
 			r.incInflight(nodeID, candidate)
 			thisCtx, thisCancel := context.WithCancel(attemptCtx)
-			s, err := eng.Chat(thisCtx, attempt)
-			if err == nil {
-				// The engine answered; nothing has gone to the caller yet.
-				// A stream that breaks before its first event is a failed
-				// start like any other (engines.ErrBrokeBeforeFirstEvent).
-				var ev *engines.StreamEvent
-				if ev, err = firstEvent(thisCtx, s); err != nil {
-					go drainWithTimeout(s, 30*time.Second)
-				} else {
-					first = ev
+			start := func(call engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+				s, err := eng.Chat(thisCtx, call)
+				if err == nil {
+					// The engine answered; nothing has gone to the caller yet.
+					// A stream that breaks before its first event is a failed
+					// start like any other (engines.ErrBrokeBeforeFirstEvent).
+					var ev *engines.StreamEvent
+					if ev, err = firstEvent(thisCtx, s); err != nil {
+						go drainWithTimeout(s, 30*time.Second)
+					} else {
+						first = ev
+					}
 				}
+				return s, err
+			}
+			// A decode worker of a prefill/decode pair gets the prompt's KV
+			// from a prefill worker first (pdhandoff.go, T16.9) — once per
+			// attempt, after this request's slot on the decode worker is
+			// counted above.
+			call := attempt
+			if retry == 0 {
+				if kv, ok := r.prefillHandoff(thisCtx, candidate, nodeID, attempt); ok {
+					call.KVTransfer = kv
+				}
+			}
+			s, err := start(call)
+			if err != nil && engines.HasJSON(call.KVTransfer) && thisCtx.Err() == nil {
+				// The decode step failed with the KV (its engine fails fast on a
+				// lost transfer, kv_load_failure_policy: fail). Nothing reached
+				// the caller: the same decode worker serves the request whole.
+				metrics.ObservePDHandoff("retried")
+				s, err = start(attempt)
 			}
 			if err == nil {
 				inner = s

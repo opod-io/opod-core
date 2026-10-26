@@ -113,6 +113,14 @@ type ChatRequest struct {
 	// Sent only to a server that takes one (openaicompat.Client.CacheSalt).
 	// Empty = no salt: every caller shares.
 	CacheSalt string
+
+	// KVTransfer is the leader's prefill/decode handoff (PLAN T16.9, feature
+	// pd_handoff), never the caller's (a reserved key, T16.18): on the
+	// prefill step {"do_remote_decode": true, …}, on the decode step the
+	// kv_transfer_params the prefill engine answered with, which tell the
+	// decode engine where to pull the prompt's KV cache from. Raw: the shape
+	// is the engine's connector's (vLLM NixlConnector), carried as it stands.
+	KVTransfer json.RawMessage
 }
 
 // Message is a single chat turn.
@@ -161,6 +169,23 @@ type StreamEvent struct {
 	// relays it on the chunk; an aggregating one merges it
 	// (LogprobsAccumulator).
 	Logprobs json.RawMessage
+}
+
+// ChatAnswer is one non-streamed chat answer, whole (OneShotChatter).
+type ChatAnswer struct {
+	Text         string
+	FinishReason string
+	Usage        *Usage
+	// KVTransfer is the server's kv_transfer_params, when it sent any: what a
+	// prefill engine answers so a decode engine can pull the KV it computed.
+	KVTransfer json.RawMessage
+}
+
+// OneShotChatter is an engine that can answer one chat request without a
+// stream. A prefill/decode handoff's first step needs it: vLLM returns
+// kv_transfer_params only on a non-streamed answer (PLAN T16.9).
+type OneShotChatter interface {
+	ChatOnce(ctx context.Context, req ChatRequest) (ChatAnswer, error)
 }
 
 // Usage is the token accounting for a single completion.

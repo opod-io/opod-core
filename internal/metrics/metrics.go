@@ -62,6 +62,11 @@ var (
 		Help: "Current in-flight request count per node, as seen by the router.",
 	}, []string{"node"})
 
+	pdHandoffTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "opod_pd_handoff_total",
+		Help: "Prefill/decode handoffs by outcome: split (KV computed on a prefill worker and pulled by decode) | retried (the decode step failed with the KV and was served unsplit) | not split, with why (penalty | penalty-unknown | engine | prefill-failed | no-prefill).",
+	}, []string{"outcome"})
+
 	routerFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_router_fallback_total",
 		Help: "Fallback chain activations by operation (chat|embed) and reason (primary-error|latency-reorder|cap-exhausted).",
@@ -171,6 +176,9 @@ func ObserveRouterPick(path, outcome string) {
 func SetRouterInflight(node string, n int) {
 	routerInflight.WithLabelValues(node).Set(float64(n))
 }
+
+// ObservePDHandoff counts one request's prefill/decode outcome (PLAN T16.9).
+func ObservePDHandoff(outcome string) { pdHandoffTotal.WithLabelValues(outcome).Inc() }
 
 // ObserveRouterFallback records a fallback activation. op is chat | embed;
 // reason is primary-error | latency-reorder | cap-exhausted.
