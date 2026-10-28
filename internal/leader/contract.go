@@ -322,7 +322,14 @@ func contractFeatures() map[string]bool {
 		// error a client cannot act on, where 503 + Retry-After is the truth.
 		// A manager reading this key knows a park window costs refusals a
 		// caller can retry, not failures.
-		"worker_goodbye":        true,
+		"worker_goodbye": true,
+		// A stopping worker DRAINS (OPOD_DRAIN_SECONDS, T31.6): after its
+		// goodbye it lets the requests already running on it finish, up to the
+		// bound, and only then stops its engine. A gang member waits while a
+		// peer still holds a connection to it — the leader dials a gang's head
+		// process directly, and the head holds its parts — so parking a gang
+		// does not cut a stream either. 0 = stop at once; unset = 10 s.
+		"worker_drain":          true,
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one

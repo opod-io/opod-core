@@ -143,6 +143,14 @@ func cmdJoin(args []string) {
 		vramBudget = env.VRAMBudgetGB
 	}
 
+	// T31.6: how long a stop lets the work on this worker finish. A value it
+	// would not understand is refused, like the role below: a manager that
+	// meant "drain" must not get "stop at once" in silence.
+	drain, err := agent.ParseDrain(env.DrainSeconds)
+	if err != nil {
+		die("%v", err)
+	}
+
 	caps := agent.Detect()
 	switch role := strings.TrimSpace(env.WorkerRole); role {
 	case "", "prefill", "decode":
@@ -286,6 +294,7 @@ func cmdJoin(args []string) {
 		ModelRevision: env.ModelRevision,
 		ModelSHA256:   env.ModelSHA256,
 		Log:           log,
+		Drain:         drain,
 	}
 	// The tool-call parser a vLLM or SGLang launch needs for its model is the
 	// catalog's word (T19.25). An unreadable catalog costs only the parser: the
@@ -323,7 +332,9 @@ func cmdJoin(args []string) {
 	// Heartbeat loop. On the way out it says goodbye (T11.2): the engine dies
 	// with this process, and a leader that only learns it by silence goes on
 	// routing into a dead engine for the heartbeat bound — which is a 502 to a
-	// caller, the one error class a client cannot act on.
+	// caller, the one error class a client cannot act on. The goodbye goes at
+	// once; the server below then drains (T31.6), and the engine stops only
+	// after both (the deferred StopAll).
 	go func() {
 		defer wg.Done()
 		defer a.Goodbye(ctx)

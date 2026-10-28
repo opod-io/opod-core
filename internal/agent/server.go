@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -105,6 +106,15 @@ type Server struct {
 	launched  atomic.Pointer[launchedEngine]
 	launchGen atomic.Int64
 
+	// Drain (OPOD_DRAIN_SECONDS, ParseDrain) bounds how long a stop lets the
+	// work already on this worker finish before Start returns and the engine
+	// goes (drain.go, T31.6). 0 = stop at once.
+	Drain time.Duration
+	// gang is set once the leader started a process here (/v1/process/start):
+	// this worker is a gang member, reached by peers on its processes' own
+	// ports, so its stop also waits for them (waitForPeers).
+	gang atomic.Bool
+
 	http *http.Server
 }
 
@@ -136,24 +146,52 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/v1/process/logs", s.auth(s.processLogs))
 	mux.HandleFunc("/v1/process/file", s.auth(s.fileCheck))    // HEAD: does this GGUF exist with matching sha?
 	mux.HandleFunc("/v1/process/upload", s.auth(s.fileUpload)) // POST: stream a GGUF up
+	return s.serve(ctx, listen, mux)
+}
 
+// serve listens until ctx is done, then drains (drain.go).
+func (s *Server) serve(ctx context.Context, listen string, h http.Handler) error {
 	s.http = &http.Server{
 		Addr:              listen,
-		Handler:           mux,
+		Handler:           h,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.http.ListenAndServe() }()
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return s.http.Shutdown(shutdownCtx)
+		s.drain(listen)
+		return nil
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
 			return fmt.Errorf("worker listen: %w", err)
 		}
 		return nil
+	}
+}
+
+// drain is the stop (drain.go): no new connection is taken, the requests
+// already running finish, and a gang member waits for its peers — all under one
+// bound that starts now. A request still running when the bound passes is cut:
+// the manager's grace period is longer than the bound, so the bound is ours to
+// spend, not Kubernetes'.
+func (s *Server) drain(listen string) {
+	deadline := time.Now().Add(s.Drain)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if err := s.http.Shutdown(ctx); err != nil {
+		_ = s.http.Close()
+		s.logger().Warn("drain bound passed with requests still running on this worker — cut them", "bound", s.Drain)
+	}
+	if !s.gang.Load() {
+		return
+	}
+	port := 0
+	if _, p, err := net.SplitHostPort(listen); err == nil {
+		port, _ = strconv.Atoi(p)
+	}
+	if held := waitForPeers(deadline, port); held > 0 {
+		s.logger().Warn("drain bound passed with gang peers still connected — stopping the processes anyway", "bound", s.Drain, "connections", held)
 	}
 }
 
@@ -1171,6 +1209,7 @@ func (s *Server) processStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.gang.Store(true) // a part (or a gang's head) — its stop waits for peers (drain.go)
 	info, err := s.Supervisor.StartAsync(spec)
 	if err != nil {
 		// Registration errors only (bad spec, duplicate id). A spawn/readiness

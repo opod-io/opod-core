@@ -78,11 +78,16 @@ log() { printf '[entrypoint] %s\n' "$*" >&2; }
 # after a dial timeout — after every park and every rolling update
 # (design-partner cell, 2026-10-18). So a worker's stop is forwarded to the
 # processes it ran, and the shell waits for them to finish.
+#
+# The stop goes to `opod join` only. It drains (OPOD_DRAIN_SECONDS, T31.6): it
+# says goodbye, lets the requests already running finish, and only then stops
+# the engines it launched. A vendor engine this script started itself
+# (OPOD_ENGINE_START) is stopped after `opod join` has exited, for the same
+# reason — stopped together, it would cut every stream the drain waits for.
 STOPPING=0
 forward_stop() {
   STOPPING=1
-  # shellcheck disable=SC2086 # the pids are numbers, one or two of them
-  kill -TERM ${WORKER_PIDS:-} 2>/dev/null || true
+  kill -TERM "$JOIN_PID" 2>/dev/null || true
 }
 # reap PID: wait for PID to exit — a trapped signal interrupts `wait`, so it
 # waits again while the process lives — and leave its exit status in REAPED
@@ -179,7 +184,6 @@ log "worker: joining $OPOD_LEADER_URL engine=$ENGINE advertise=${OPOD_ADVERTISE_
 # who can list the pod's (or the host's) processes (PLAN T8.20).
 opod join "$OPOD_LEADER_URL" &
 JOIN_PID=$!
-WORKER_PIDS="$JOIN_PID ${ENGINE_PID:-}"
 trap forward_stop TERM INT
 
 # The model this worker exists to serve (OPOD_LOAD_MODEL, with
@@ -202,7 +206,9 @@ if [ -n "${ENGINE_PID:-}" ]; then
     forward_stop # the one still running says goodbye too
     STOPPING=0
   fi
-  reap "$JOIN_PID"; reap "$ENGINE_PID"
+  reap "$JOIN_PID"
+  kill -TERM "$ENGINE_PID" 2>/dev/null || true # after the drain, never before it
+  reap "$ENGINE_PID"
   [ "$STOPPING" = 1 ] && exit 0
   exit 1
 fi

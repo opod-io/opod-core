@@ -152,7 +152,6 @@ func TestAWorkersStopReachesTheJoinProcess(t *testing.T) {
 eval "$(sed -n '/^STOPPING=0$/,/^# A DOOR is/p' entrypoint.sh)"
 bash "$JOIN" &
 JOIN_PID=$!
-WORKER_PIDS="$JOIN_PID"
 trap forward_stop TERM INT
 while [ ! -f "$UP" ]; do sleep 0.02; done
 echo READY
@@ -188,5 +187,77 @@ exit "$REAPED"`
 	}
 	if b, err := os.ReadFile(said); err != nil || strings.TrimSpace(string(b)) != "goodbye" {
 		t.Fatalf("the join process never got the stop, so it could not say goodbye: %q %v", b, err)
+	}
+}
+
+// T31.6: `opod join` drains on a stop — it lets the requests already running
+// finish before its engines go. An engine this script started itself
+// (OPOD_ENGINE_START) used to get the same SIGTERM at the same instant and died
+// under the streams the drain was waiting for. It must still be running while
+// the join process drains, and be stopped once that process has exited.
+func TestAVendorEngineOutlivesTheJoinProcessDrain(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	dir := t.TempDir()
+	seen := filepath.Join(dir, "engine-during-drain")
+	engineDone := filepath.Join(dir, "engine-stopped")
+	up := filepath.Join(dir, "up")
+	join := filepath.Join(dir, "join.sh")
+	engine := filepath.Join(dir, "engine.sh")
+	// The join process drains for a moment, and while it does it looks at
+	// the engine.
+	if err := os.WriteFile(join, []byte("trap 'sleep 0.3; if kill -0 \"$ENGINE\" 2>/dev/null; then echo alive; else echo dead; fi > \"$SEEN\"; exit 0' TERM\n: > \"$UP\"\nwhile :; do sleep 0.05; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(engine, []byte("trap ': > \"$DONE\"; exit 0' TERM\nwhile :; do sleep 0.05; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := `set -euo pipefail
+eval "$(sed -n '/^STOPPING=0$/,/^# A DOOR is/p' entrypoint.sh)"
+log() { :; }
+bash "$ENGINE_SH" &
+ENGINE_PID=$!
+export ENGINE=$ENGINE_PID
+bash "$JOIN" &
+JOIN_PID=$!
+trap forward_stop TERM INT
+while [ ! -f "$UP" ]; do sleep 0.02; done
+echo READY
+eval "$(sed -n '/^if \[ -n "\${ENGINE_PID:-}" \]; then$/,/^fi$/p' entrypoint.sh)"`
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Dir = "."
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "JOIN=" + join, "ENGINE_SH=" + engine, "SEEN=" + seen, "DONE=" + engineDone, "UP=" + up}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready := make([]byte, 6)
+	if _, err := io.ReadFull(out, ready); err != nil || string(ready) != "READY\n" {
+		t.Fatalf("the script did not start: %q %v", ready, err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a stopped worker exits 0: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("the shell did not exit after SIGTERM")
+	}
+	if b, err := os.ReadFile(seen); err != nil || strings.TrimSpace(string(b)) != "alive" {
+		t.Fatalf("the engine must still run while the join process drains: %q %v", b, err)
+	}
+	if _, err := os.Stat(engineDone); err != nil {
+		t.Fatalf("the engine must be stopped once the join process has exited: %v", err)
 	}
 }

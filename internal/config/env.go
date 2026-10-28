@@ -50,6 +50,7 @@ type Env struct {
 	KVEvents      bool   `env:"OPOD_KV_EVENTS" side:"worker" doc:"1 = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds"`
 	SleepMode     bool   `env:"OPOD_SLEEP_MODE" side:"worker" doc:"1 = vLLM starts with sleep mode on (the sleep autoscale tier)"`
 	WorkerRole    string `env:"OPOD_WORKER_ROLE" side:"worker" doc:"prefill | decode for disaggregated serving; unset = a whole worker"`
+	DrainSeconds  string `env:"OPOD_DRAIN_SECONDS" side:"worker" doc:"how many seconds a stopping worker lets the requests already running on it finish: it says goodbye at once (no new requests), and its engine stops when nothing is in flight or the bound passes, whichever is first. 0 = stop at once. Unset = 10. A manager gives the pod a grace period longer than this"`
 	KVTier        string `env:"OPOD_KV_TIER" side:"worker" doc:"cpu | peer: the tier below VRAM the engine keeps its KV cache in, stated on registration; with peer the leader counts a prefix a sibling peer holds as a peer hit for this worker. Unset = VRAM only"`
 	PlanRevision  string `env:"OPOD_PLAN_REVISION" side:"worker" doc:"the plan revision this worker process was started for; the leader routes a share of traffic per revision (R15.17)"`
 	AdvertiseAddr string `env:"OPOD_ADVERTISE_ADDR" side:"worker" doc:"the host:port the leader should dial (overlay / multi-NIC hosts)"`

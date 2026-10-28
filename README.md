@@ -848,6 +848,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_KV_EVENTS` | worker | `1` = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds |
 | `OPOD_SLEEP_MODE` | worker | `1` = vLLM starts with sleep mode on (the sleep autoscale tier) |
 | `OPOD_WORKER_ROLE` | worker | `prefill` \| `decode` for disaggregated serving; unset = a whole worker |
+| `OPOD_DRAIN_SECONDS` | worker | how long a stopping worker lets the requests already running on it finish (it says goodbye at once; the engine stops when nothing is in flight or the bound passes). `0` = stop at once; unset = `10`. Give the pod a longer grace period |
 | `OPOD_KV_TIER` | worker | `cpu` \| `peer`: the tier below VRAM the engine keeps its KV cache in, stated on registration; with `peer` the leader counts a prefix a sibling peer holds as a peer hit for this worker. Unset = VRAM only |
 | `OPOD_PLAN_REVISION` | worker | the plan revision this worker process was started for; the leader splits traffic per revision |
 | `OPOD_ADVERTISE_ADDR` | worker | the `host:port` the leader should dial (overlay / multi-NIC hosts) |
