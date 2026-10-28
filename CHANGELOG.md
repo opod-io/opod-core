@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`GET /admin/v1/nodes` says which worker's engine is down.** Each row carries `engine` — the worker's last
+  statement on its engine process (`state`: serving · starting · restarting · crash-looping · stopped, with `restarts`,
+  `since` and `detail`) while it is fresh, and nothing when it is stale or was never sent. `/loadz` already counted the
+  unhealthy ones (`engines_unhealthy`); a manager can now act on the one worker and the card it holds. Additive: a
+  reader that ignores the key sees the same row.
 - **The leader conducts a prefill/decode KV handoff for vLLM (feature `pd_handoff`).** A chat picked onto a decode
   worker is first prefilled on a prefill worker of the same model (one non-streamed call, `max_tokens: 1`,
   `kv_transfer_params: {do_remote_decode: true}`), and the decode call carries the `kv_transfer_params` that engine

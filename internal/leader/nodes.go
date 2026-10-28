@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
@@ -51,6 +52,13 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		// and its preemption and eviction counters (PLAN T23.2) — the per
 		// worker figures /loadz sums. Omitted when the worker sent none lately.
 		Load *engines.EngineLoad `json:"load,omitempty"`
+		// Engine is the worker's last word on its engine PROCESS while it is
+		// fresh (feature engine_liveness): serving, starting, restarting,
+		// crash-looping or stopped, with its restart count, since when and why.
+		// /loadz counts the unhealthy ones; this row says WHICH worker it is,
+		// so a manager can act on the one pod and the card it holds. Omitted
+		// when the worker sent none lately — the same 30 s rule as /loadz.
+		Engine *nodeapi.EngineState `json:"engine,omitempty"`
 	}
 	inflight := s.router.Inflight()
 	maxAge, now := s.heartbeatMaxAge(), time.Now()
@@ -87,6 +95,11 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		}
 		if ld, ok := gangLoad[n.ID]; ok && v.Load == nil {
 			v.Load = &ld
+		}
+		if es, ok := s.nodeEngine.Load(n.ID); ok {
+			if e := es.(nodeEngineSample); now.Sub(e.at) <= loadSampleMaxAge {
+				v.Engine = &e.EngineState
+			}
 		}
 		out = append(out, v)
 	}
