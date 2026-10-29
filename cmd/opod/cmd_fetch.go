@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/opod-io/opod-sdk/adminapi"
 
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/fetch"
@@ -86,7 +89,30 @@ func cmdFetch(args []string) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+	if env.FetchResult != "" {
+		var repo string
+		if *snap != "" {
+			repo, _, _ = strings.Cut(*snap, "@")
+		} else {
+			repo = pos[0]
+		}
+		writeFetchResult(env.FetchResult, path, fetch.SignatureOf(ctx, repo, opt), log)
+	}
 	fmt.Println(path)
+}
+
+// writeFetchResult leaves the fetch's result where its manager asked
+// ($OPOD_FETCH_RESULT, T32.23): one JSON line, written only once the weights
+// are in place. Failing to write it does not fail the fetch — the weights are
+// there — and the manager, finding no result, reports the signature unknown.
+func writeFetchResult(dst, path string, sig adminapi.FetchSignature, log *slog.Logger) {
+	line, err := json.Marshal(adminapi.FetchResult{Path: path, Signature: sig})
+	if err == nil {
+		err = os.WriteFile(dst, append(line, '\n'), 0o644)
+	}
+	if err != nil {
+		log.Warn("fetch result not written", "to", dst, "err", err)
+	}
 }
 
 // snapshotTarget splits `<repo>[@rev]`. A revision written on the argument is
