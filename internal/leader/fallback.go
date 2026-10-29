@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/httpsafe"
 )
 
@@ -47,6 +48,9 @@ func (s *Server) forwardToFallback(w http.ResponseWriter, r *http.Request, body 
 	}
 	req.Header.Set("X-Opod-Forwarded-By", s.cfg.Router.DefaultModel)
 	client := httpsafe.NewClient(fallbackTimeout, false) // in-cluster targets are the point
+	// The forward is a hop of the caller's trace (T32.42): another opod
+	// endpoint, or any OpenAI-compatible target that reads traceparent.
+	client.Transport = engines.TraceTransport(client.Transport)
 	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Warn("fallback unreachable — answering 503", "target", fb.FallbackURL, "err", err)

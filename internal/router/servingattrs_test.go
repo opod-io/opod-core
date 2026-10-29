@@ -39,7 +39,7 @@ func spanAttrs(exp *tracetest.InMemoryExporter, name string) map[string]attribut
 }
 
 // T32.6: a traced request's attempt span says what served it — the worker
-// key (opod.node_id), the gang when the target is a gang's head, and the
+// (opod.node_id; for a gang, its head worker), the gang when the target is a gang's head, and the
 // admission class that ranked the request. The model id carries a ':' on
 // purpose: the gang is read by matching the model whole, never by a split.
 func TestTheAttemptSpanSaysWhichGangAndClassServed(t *testing.T) {
@@ -68,8 +68,13 @@ func TestTheAttemptSpanSaysWhichGangAndClassServed(t *testing.T) {
 	if got := a["opod.class"].AsString(); got != "sheddable" {
 		t.Errorf("opod.class = %q, want sheddable", got)
 	}
-	if got := a["opod.node_id"].AsString(); got != gangKey(model, "g7") {
-		t.Errorf("opod.node_id = %q, want the gang's key", got)
+	// T32.42: the span names the worker that heads the gang, not the gang's
+	// pseudo node; the usage row still counts the request under the key.
+	if got := a["opod.node_id"].AsString(); got != "n1" {
+		t.Errorf("opod.node_id = %q, want the gang's head worker n1", got)
+	}
+	if got := NodeFrom(ctx); got != gangKey(model, "g7") {
+		t.Errorf("usage node = %q, want the gang's key", got)
 	}
 }
 

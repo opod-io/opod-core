@@ -367,6 +367,7 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	}
 
 	key := gangKey(modelID, best.gang)
+	noteGangHead(ctx, best.coord.NodeID) // the attempt span names the head worker, not the key (T32.42)
 	r.mu.RLock()
 	eng, cached := r.remotes[key]
 	r.mu.RUnlock()

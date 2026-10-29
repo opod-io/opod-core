@@ -91,6 +91,9 @@ func (s *ChatSpan) SetCachedTokens(cached int) {
 // worker (the leader's client for a worker is the OpenAI-wire driver) and
 // worker → engine. A worker exports no spans of its own; ContinueTrace reads
 // the leader's header on the way in so the worker's engine call carries it on.
+// The leader's other calls for a request use it too (T32.42): load and unload
+// (scheduler.New), sleep, resume and tokenize (leader.workerHTTP) and the
+// fallback forward.
 //
 // Header only: no client span and nothing per chunk — engine tracing is the
 // engine's. The propagator is W3C trace context, named here rather than read

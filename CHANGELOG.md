@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **The leader's own calls join the trace too (T32.42).** A model load or unload, a worker's sleep or resume, the
+  pre-route tokenize and the external fallback forward now carry the request's W3C `traceparent`, like the chat
+  dispatch does (`engines.TraceTransport`). A door already passed the caller's header through untouched; a test now
+  holds that. A gang's `router.*.attempt` span names the worker that heads the gang in `opod.node_id`, not the
+  pseudo node `shard:<model>:<gang>`; the usage row still counts the request under that key.
 - **`opod fetch` reports what it fetched, and whether it is signed (T32.23).** With `OPOD_FETCH_RESULT` set, the fetch
   writes one JSON line there once the weights are in the cache (`adminapi.FetchResult`): the path, and whether the
   repository publishes a model-transparency signature beside the weights (`model.sig`, OpenSSF model signing) —

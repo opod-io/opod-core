@@ -23,6 +23,11 @@ type routeTrace struct {
 	// standard, sheddable), noted by the leader's gate only while the
 	// request's span records — read back onto the attempt span (T32.6).
 	class string
+	// head is the worker that heads the gang the last pick chose (its
+	// coordinator's node), noted by shardCoordinator: the attempt span names
+	// it as opod.node_id, where the router key is the gang's pseudo node
+	// (T32.42). Spans only; the usage row keeps the gang key.
+	head string
 }
 
 type traceKey struct{}
@@ -103,6 +108,25 @@ func NoteClass(ctx context.Context, class string) {
 	}
 }
 
+// noteGangHead records the worker heading the gang a pick chose. A no-op
+// when no trace is installed.
+func noteGangHead(ctx context.Context, nodeID string) {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		t.head = nodeID
+		t.mu.Unlock()
+	}
+}
+
+func gangHeadFrom(ctx context.Context) string {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.head
+	}
+	return ""
+}
+
 func classFrom(ctx context.Context) string {
 	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
 		t.mu.Lock()
@@ -114,8 +138,8 @@ func classFrom(ctx context.Context) string {
 
 // servingAttrs puts what served an attempt on its span (T32.6): the gang
 // when the target is a gang's head (its router key is shard:<model>:<gang>,
-// gangKey — the worker key is already opod.node_id), and the request's
-// admission class. Serving facts only: never a key, a user or a team.
+// gangKey), with opod.node_id then naming the head worker rather than that
+// pseudo node (T32.42), and the request's admission class. Serving facts only: never a key, a user or a team.
 // Nothing is computed unless the span records, so with tracing off — or a
 // request the sampler dropped — this is one interface call.
 func servingAttrs(ctx context.Context, sp trace.Span, model, nodeID string) {
@@ -126,6 +150,9 @@ func servingAttrs(ctx context.Context, sp trace.Span, model, nodeID string) {
 	// (llama3.2:1b) carries one.
 	if gang, ok := strings.CutPrefix(nodeID, gangKey(model, "")); ok && gang != "" {
 		sp.SetAttributes(attribute.String("opod.gang.id", gang))
+		if head := gangHeadFrom(ctx); head != "" {
+			sp.SetAttributes(attribute.String("opod.node_id", head)) // replaces the pseudo node set by the caller
+		}
 	}
 	if c := classFrom(ctx); c != "" {
 		sp.SetAttributes(attribute.String("opod.class", c))
