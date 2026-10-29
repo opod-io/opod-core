@@ -112,16 +112,6 @@ func SetCallbackQueueDepth(sink string, n int) {
 	callbackQueueDepth.WithLabelValues(sink).Set(float64(n))
 }
 
-var guardrailActionTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-	Name: "opod_guardrail_action_total",
-	Help: "Guardrail verdicts per guardrail name and action (allow|block|rewrite|flag).",
-}, []string{"name", "action"})
-
-// ObserveGuardrail records the verdict of one guardrail check.
-func ObserveGuardrail(name, action string) {
-	guardrailActionTotal.WithLabelValues(name, action).Inc()
-}
-
 var (
 	cacheHitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_cache_hits_total",

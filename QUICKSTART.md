@@ -621,9 +621,8 @@ If you're not on a trusted LAN, run the cluster **over a VPN or zero-trust overl
 | → `api.github.com/repos/opod-io/opod-core/releases/latest` (and the release download from `github.com/opod-io/opod-core/releases`) | Only when you run `opod update` / `opod update --check`. Anonymous; no Opod-specific identifier sent. **Never at `opod up`.** | Don't run `opod update`. |
 | → OTLP collector (traces) | If `OPOD_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector. | Unset `OPOD_OTLP_ENDPOINT`. |
 | → OTLP collector (logs) | If `OPOD_OTLP_LOGS_ENDPOINT` is set. This process's log records, beside stderr, to your own collector. | Unset `OPOD_OTLP_LOGS_ENDPOINT`. |
-| → guardrail webhook URL(s) | Every `/v1/chat/completions` if a guardrail rule is present in the **policy snapshot** a manager mounts (`OPOD_POLICY_FILE`, default `/etc/opod-auth/policy.json`) — there is no `config.yaml` key for it. **Synchronous on the request path**; the gateway waits for the answer. | Remove the rule from the policy file, or run with `OPOD_POLICY_FILE=off`. |
 
-That is the whole list. Opod does not forward requests to any cloud model vendor, holds no vendor API keys, and has no usage callbacks; with no OTLP endpoint and no guardrail configured, `opod up` makes **zero** outbound calls beyond the engines and nodes you chose.
+That is the whole list. Opod does not forward requests to any cloud model vendor, holds no vendor API keys, and has no usage callbacks; with no OTLP endpoint configured, `opod up` makes **zero** outbound calls beyond the engines and nodes you chose.
 
 ---
 

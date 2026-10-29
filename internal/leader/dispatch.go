@@ -68,14 +68,9 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	release, reason := s.admit(ctx, model, started)
 	if reason != "" {
 		// Policy fallback (P12-2): forward instead of 503 when the snapshot
-		// names a target — after the pre guardrail chain, so a blocked prompt
-		// is refused here and never leaves the endpoint.
+		// names a target.
 		if fb := s.policy.fallbackRouting(); fb != nil {
-			checked, ok := api.ApplyPreCallGuardrails(r.Context(), w, s.store, s.openaiH.Policy().Guardrails, body)
-			if !ok {
-				return
-			}
-			if s.forwardToFallback(w, r, checked, fb) {
+			if s.forwardToFallback(w, r, body, fb) {
 				return
 			}
 		}

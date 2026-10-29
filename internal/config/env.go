@@ -22,7 +22,7 @@ type Env struct {
 	// leader
 	PlanFile         string `env:"OPOD_PLAN_FILE" side:"leader" doc:"the mounted plan the leader serves within (default /etc/opod/plan.json; absent = standalone)"`
 	AuthFile         string `env:"OPOD_AUTH_FILE" side:"leader" doc:"the mounted auth snapshot: keys + requireKeys (default /etc/opod-auth/auth.json; \"off\" = no watcher)"`
-	PolicyFile       string `env:"OPOD_POLICY_FILE" side:"leader" doc:"the mounted policy snapshot: routing, logging, guardrails (default /etc/opod-auth/policy.json; \"off\" = no watcher)"`
+	PolicyFile       string `env:"OPOD_POLICY_FILE" side:"leader" doc:"the mounted policy snapshot: routing, logging, auth bounds, admission, wake (default /etc/opod-auth/policy.json; \"off\" = no watcher)"`
 	CoordinatorNode  string `env:"OPOD_COORDINATOR_NODE" side:"leader" doc:"pin the llama.cpp RPC coordinator to a node id (\"local\" = the leader itself)"`
 	OTLPLogsEndpoint string `env:"OPOD_OTLP_LOGS_ENDPOINT" side:"leader" doc:"OTLP/HTTP collector for the leader's own log records (URL or host:port); stderr keeps working, the queue is bounded and never blocks. Empty = off"`
 	// gateway (T11.1, ADR-063) — a copied FRONT of a leader: it serves /v1 and

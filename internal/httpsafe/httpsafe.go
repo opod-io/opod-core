@@ -1,6 +1,6 @@
 // Package httpsafe builds HTTP clients that can optionally refuse to connect
 // to private network targets — defense in depth against SSRF when an outbound
-// URL (a webhook, a guardrail endpoint, a probe target) may originate from a
+// URL (a webhook, a fallback target, a probe target) may originate from a
 // less-trusted source.
 //
 // The guard runs in the dialer's Control callback, so it inspects the actual

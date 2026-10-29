@@ -1,6 +1,6 @@
 # Opod Architecture
 
-> Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs and guardrail implementations moved to the control plane; this document describes what remains. The stable manager surface is listed at the end.
+> Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs moved to the control plane, and guardrails left opod altogether (2026-10-28: prompt checks are the job of the gateway in front of the leader); this document describes what remains. The stable manager surface is listed at the end.
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For what shipped when, see [CHANGELOG.md](CHANGELOG.md); for what this project deliberately will not do, see the README's [Deliberately out of scope](README.md#deliberately-out-of-scope).
 
@@ -709,7 +709,7 @@ A GGUF is one file (`opod fetch <repo> <file>`). A safetensors model is a direct
 
 Rerank and Anthropic Messages. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); `/v1/rerank` came back on 2026-10-06 (ADR-084, amending ADR-022) — one non-streaming POST the engines already serve, where the engine is a scorer and the gateway orders, truncates to `top_n` and attaches the text.
 
-Anthropic Messages came back on 2026-10-19 (ADR-092 §1, `internal/api/anthropic.go`, `internal/leader/anthropic.go`) as a translator, not an engine path: `POST /v1/messages` becomes a chat request — `system`, text and base64 image blocks, `tool_use` / `tool_result`, `tools`, `tool_choice`, `stop_sequences`, `max_tokens`, `temperature`, `top_p`, `top_k` — and rides the chat route's admission, router, guardrails and usage row (protocol `anthropic`). The answer is rewritten on the way out: an aggregated answer into a Message, a stream into Anthropic's events as each chunk arrives, an error into Anthropic's envelope. `/v1/messages/count_tokens` serves the prompt as a one-token generation and answers the engine's own `prompt_tokens`, so it is exact on every engine and counts as a request. Extended thinking, server tools, documents, image URLs, `mcp_servers`, `container` and unknown fields are refused 400 before admission. Audio stays out.
+Anthropic Messages came back on 2026-10-19 (ADR-092 §1, `internal/api/anthropic.go`, `internal/leader/anthropic.go`) as a translator, not an engine path: `POST /v1/messages` becomes a chat request — `system`, text and base64 image blocks, `tool_use` / `tool_result`, `tools`, `tool_choice`, `stop_sequences`, `max_tokens`, `temperature`, `top_p`, `top_k` — and rides the chat route's admission, router and usage row (protocol `anthropic`). The answer is rewritten on the way out: an aggregated answer into a Message, a stream into Anthropic's events as each chunk arrives, an error into Anthropic's envelope. `/v1/messages/count_tokens` serves the prompt as a one-token generation and answers the engine's own `prompt_tokens`, so it is exact on every engine and counts as a request. Extended thinking, server tools, documents, image URLs, `mcp_servers`, `container` and unknown fields are refused 400 before admission. Audio stays out.
 
 A Vertex AI custom container (2026-10-19, ADR-092 §1, `internal/leader/vertex.go`) is a switch, `OPOD_VERTEX=1`: the leader also serves `POST $AIP_PREDICT_ROUTE` (default `/v1/vertex:predict`) and `GET $AIP_HEALTH_ROUTE` (default `/v1/vertex/health`), the two routes Vertex sends to a container it runs (on `AIP_HTTP_PORT`, 8080 by default, which is the leader's listener). `{"instances": […], "parameters": {…}}` runs each instance as a chat request — `parameters` fill the keys it leaves out — in parallel through the chat route, so admission bounds them, and answers `{"predictions": […]}`, each the chat answer; one failed instance fails the request, naming it in `X-Opod-Vertex-Instance`. A body without `instances` is rawPredict: a chat body passed through, streamed when it asks. Vertex's IAM authenticates the caller first, so these routes take no key; usage rows say protocol `vertex`. Refused 400: a Gemini `contents` body, empty or non-array `instances`, an instance without `messages` or with `stream: true`, more than 16 instances. To run on Vertex, deploy one image that starts a leader with `OPOD_VERTEX=1` and its worker in the same container (`opod up` then `opod join http://127.0.0.1:8080`); nothing in opod deploys to Vertex itself.
 
@@ -1154,7 +1154,6 @@ Router subsystem:
 Cache and hooks:
 
 - `opod_cache_hits_total{path}` / `opod_cache_misses_total{path}` — the response cache, per endpoint path.
-- `opod_guardrail_action_total{name,action}` — a policy-file guardrail's verdicts (`allow|block|rewrite|flag`).
 - `opod_callback_sent_total` / `opod_callback_queue_depth` are **declared but never incremented** — the
   callback sinks left with ADR-022 and the declarations are the last thing to remove. Do not build a panel
   on them.
@@ -1311,7 +1310,7 @@ opod/
 │   ├── leader/                # leader HTTP server + admin API + middlewares + plan/auth/policy watchers + the door role (doorrole.go, doorauto.go)
 │   ├── gateway/               # the front-door role (`--role gateway`): registry mirror, usage push, spend poll
 │   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
-│   ├── api/                   # the OpenAI protocol adapter + request overrides, usage recording, guardrail hook
+│   ├── api/                   # the OpenAI protocol adapter + request overrides, usage recording
 │   ├── router/                # model → node dispatch, load-aware pick, gangs, revisions, sticky, hedge
 │   ├── scheduler/             # gang orchestration (rpc / ray / sglang) + llama-server bootstrap + GGUF distribute + model move
 │   ├── mesh/                  # mesh.go — LAN backend (tsnet planned)
@@ -1325,7 +1324,6 @@ opod/
 │   ├── cache/                 # response cache (memory + SQLite drivers)
 │   ├── kvevents/              # engine prefix-cache events → block hashes on the heartbeat (kv_block_events)
 │   ├── lifecycle/             # local-engine memory lifecycle (load/evict/pin)
-│   ├── guardrails/            # the webhook hook interface a policy-file rule drives
 │   ├── httpsafe/              # SSRF guard for outbound hook clients (block_private_targets)
 │   ├── update/                # `opod update`: release lookup, checksum, atomic binary swap
 │   ├── config/                # YAML + env loader (config.go) + the process-environment contract (env.go)
@@ -1687,7 +1685,7 @@ Mechanisms a manager drives through this surface:
   the endpoint's one model, its revision, adapter names and gangs, `internal/leader/planfile.go`), the auth snapshot
   (`/etc/opod-auth/auth.json`, `OPOD_AUTH_FILE`: keys + `requireKeys`, key tombstones `revokedKeys` that a later
   snapshot never undoes, and `issuedAt`, `authfile.go`) and the policy snapshot
-  (`/etc/opod-auth/policy.json`, `OPOD_POLICY_FILE`: `routing`, `logging.accessLog`, guardrail webhooks,
+  (`/etc/opod-auth/policy.json`, `OPOD_POLICY_FILE`: `routing`, `logging.accessLog`,
   `auth.maxSnapshotAgeSec` — past it `/v1` answers 503 naming the stale snapshot, `authstale.go` — and
   `admission.holdMs`/`maxHeld` — a request that finds no worker slot waits up to that long for one before the 503,
   `admission.go` — and `admission.classes` — one queue per request class, `critical` before `standard` before

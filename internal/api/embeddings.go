@@ -63,15 +63,6 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-call guardrails see the embedding input text too. Applied
-	// before the cache lookup so a rewrite (e.g. PII masking) drives the
-	// cache key and a blocked request can't be served from cache.
-	body, ok := h.applyPreCallGuardrails(r.Context(), w, body)
-	if !ok {
-		// Guardrail blocked the request; response already written.
-		return
-	}
-
 	// Cache lookup: embeddings are deterministic for fixed
 	// (model, input), so this is the highest-ROI cache path. Skipped
 	// when Cache-Control: no-cache / no-store is set, or when the

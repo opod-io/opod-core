@@ -43,7 +43,7 @@ func newPolicyTestServer(t *testing.T, eng interface{ Health(context.Context) er
 }
 
 // chatStubEngine is healthy but answers every chat with an engine error, so a
-// prompt that passes the guardrails ends as a 5xx — never a hang on the stub's
+// prompt ends as a 5xx — never a hang on the stub's
 // nil stream, never a 403.
 type chatStubEngine struct{ stubLeaderEngine }
 
@@ -80,13 +80,7 @@ func TestPolicyFileWatcher(t *testing.T) {
 	path := filepath.Join(dir, "policy.json")
 	off := false
 	doc := PolicySnapshot{Revision: "p1", Routing: PolicyRouting{FallbackURL: "http://fb.opod.svc/v1/"},
-		Logging: PolicyLogging{AccessLog: &off},
-		Guardrails: []GuardrailRule{
-			{ID: "pii", Phase: "pre", URL: "http://guard.opod.svc/check"},
-			{ID: "shadow", Phase: "logging_only", URL: "http://guard.opod.svc/observe"},
-			{ID: "broken", Phase: "sideways", URL: "http://x"},
-			{ID: "nourl", Phase: "pre"},
-		}}
+		Logging: PolicyLogging{AccessLog: &off}}
 	raw, _ := json.Marshal(doc)
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
@@ -96,15 +90,8 @@ func TestPolicyFileWatcher(t *testing.T) {
 	defer cancel()
 	srv.StartPolicyWatcher(ctx)
 
-	reg := srv.openaiH.Policy().Guardrails
-	if reg == nil || len(reg.Pre.Guards()) != 1 || len(reg.LoggingOnly.Guards()) != 1 || !reg.Post.IsEmpty() {
-		t.Fatalf("registry from file: %+v", reg)
-	}
-	if reg.Pre.Guards()[0].Name() != "pii" {
-		t.Fatalf("rule id must name the guard: %q", reg.Pre.Guards()[0].Name())
-	}
-	if srv.policy.rules != 2 {
-		t.Fatalf("2 valid rules expected, got %d", srv.policy.rules)
+	if srv.policy.revision != "p1" {
+		t.Fatalf("revision from file: %q", srv.policy.revision)
 	}
 	if fb := srv.policy.fallbackRouting(); fb == nil || fb.FallbackURL != "http://fb.opod.svc" {
 		t.Fatalf("fallback base url must lose the trailing /v1: %+v", fb)
@@ -115,11 +102,11 @@ func TestPolicyFileWatcher(t *testing.T) {
 
 	// a bad file keeps the last good policy
 	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "p2"})
-	if srv.openaiH.Policy().Guardrails != nil || srv.policy.fallbackRouting() != nil || !srv.policy.accessLogEnabled() {
+	if srv.policy.fallbackRouting() != nil || !srv.policy.accessLogEnabled() {
 		t.Fatal("an empty snapshot must clear every knob")
 	}
 	var bad PolicySnapshot
-	if err := json.Unmarshal([]byte(`{"revision": "p3", "guardrails": "nope"}`), &bad); err == nil {
+	if err := json.Unmarshal([]byte(`{"revision": "p3", "routing": "nope"}`), &bad); err == nil {
 		t.Fatal("test expects the malformed doc to fail to parse")
 	}
 	if srv.policy.revision != "p2" {
@@ -127,56 +114,30 @@ func TestPolicyFileWatcher(t *testing.T) {
 	}
 }
 
-// TestPolicyGuardrailBlocks: a pre-phase webhook from the snapshot blocks a
-// prompt end to end with the OpenAI guardrail_blocked shape; a later snapshot
-// without the rule lets the same prompt through to the engine.
-func TestPolicyGuardrailBlocks(t *testing.T) {
+// TestPolicySnapshotGuardrailsKeyIgnored (T32.29, ADR-113): the leader has no
+// guardrail webhook. A snapshot that still names one — the shape a manager
+// wrote before the removal — parses, and the prompt goes to the engine: the
+// receiver is never called and nothing answers 403.
+func TestPolicySnapshotGuardrailsKeyIgnored(t *testing.T) {
 	srv, ts := newPolicyTestServer(t, nil)
-	var seen string
+	called := false
 	guard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		seen = string(b)
-		if r.Header.Get("Authorization") != "Bearer g-secret" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if strings.Contains(seen, "@example.com") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"action": "block", "reason": "email address in prompt"})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"action": "allow"})
+		called = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"action": "block", "reason": "blocked"})
 	}))
 	defer guard.Close()
-
-	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "g1", Guardrails: []GuardrailRule{
-		{ID: "pii", Phase: "pre", URL: guard.URL, AuthKey: "g-secret", TimeoutMs: 2000},
-	}})
-	body := `{"model":"m1","messages":[{"role":"user","content":"mail jane@example.com"}]}`
-	resp, out := chat(t, ts, body, "")
-	if resp.StatusCode != http.StatusForbidden || !strings.Contains(out, "guardrail_blocked") || !strings.Contains(out, "email address in prompt") {
-		t.Fatalf("blocked prompt: %d %s", resp.StatusCode, out)
+	var doc PolicySnapshot
+	raw := `{"revision":"g1","guardrails":[{"id":"pii","phase":"pre","url":"` + guard.URL + `"}]}`
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("a snapshot with a stray guardrails key must still parse: %v", err)
 	}
-	if !strings.Contains(seen, "jane@example.com") {
-		t.Fatalf("webhook must see the request body: %s", seen)
+	srv.applyPolicySnapshot(&doc)
+	resp, out := chat(t, ts, `{"model":"m1","messages":[{"role":"user","content":"mail jane@example.com"}]}`, "")
+	if resp.StatusCode == http.StatusForbidden || strings.Contains(out, "guardrail") {
+		t.Fatalf("the leader must not run a guardrail: %d %s", resp.StatusCode, out)
 	}
-	// fail-closed by default: an unreachable receiver blocks
-	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "g2", Guardrails: []GuardrailRule{
-		{ID: "dead", Phase: "pre", URL: "http://127.0.0.1:1/never", TimeoutMs: 300},
-	}})
-	if resp, _ := chat(t, ts, body, ""); resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("fail-closed rule with a dead receiver must block: %d", resp.StatusCode)
-	}
-	// fail-open: the same dead receiver lets the prompt through (to the stub engine)
-	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "g3", Guardrails: []GuardrailRule{
-		{ID: "dead", Phase: "pre", URL: "http://127.0.0.1:1/never", TimeoutMs: 300, FailOpen: true},
-	}})
-	if resp, _ := chat(t, ts, body, ""); resp.StatusCode == http.StatusForbidden {
-		t.Fatal("fail-open rule must not block")
-	}
-	// rule removed: through
-	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "g4"})
-	if resp, _ := chat(t, ts, body, ""); resp.StatusCode == http.StatusForbidden {
-		t.Fatal("no rules: nothing may block")
+	if called {
+		t.Fatal("the guardrail receiver must never be called")
 	}
 }
 
@@ -218,28 +179,6 @@ func TestPolicyFallbackForward(t *testing.T) {
 	chat(t, ts, body, "caller-key")
 	if gotModel != "m1" || gotAuth != "Bearer caller-key" {
 		t.Fatalf("passthrough: model=%q auth=%q", gotModel, gotAuth)
-	}
-	// a pre guardrail still runs before the forward: blocked prompts never leave the endpoint
-	guard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(b), "secret") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"action": "block", "reason": "secret in prompt"})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"action": "rewrite", "replacement": json.RawMessage(setModel(b, "rewritten"))})
-	}))
-	defer guard.Close()
-	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "f2b", Routing: PolicyRouting{FallbackURL: fb.URL},
-		Guardrails: []GuardrailRule{{ID: "g", Phase: "pre", URL: guard.URL}}})
-	gotModel = ""
-	if resp, out := chat(t, ts, `{"model":"m1","messages":[{"role":"user","content":"my secret"}]}`, ""); resp.StatusCode != http.StatusForbidden || !strings.Contains(out, "secret in prompt") {
-		t.Fatalf("blocked prompt must not be forwarded: %d %s", resp.StatusCode, out)
-	}
-	if gotModel != "" {
-		t.Fatal("fallback must not see a blocked prompt")
-	}
-	if resp, _ := chat(t, ts, body, ""); resp.StatusCode != http.StatusOK || gotModel != "rewritten" {
-		t.Fatalf("rewritten body must be what the fallback receives: %d model=%q", resp.StatusCode, gotModel)
 	}
 	// dead fallback → honest 503
 	srv.applyPolicySnapshot(&PolicySnapshot{Revision: "f3", Routing: PolicyRouting{FallbackURL: "http://127.0.0.1:1"}})

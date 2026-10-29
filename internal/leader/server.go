@@ -189,8 +189,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		return native
 	})
 	// The request-path policy is one value the handler serves under (P13-8):
-	// catalog (label bounding), rate-limit buckets, response cache; the
-	// guardrail registry is swapped in by the policy-file watcher.
+	// catalog (label bounding) and the response cache.
 	openaiH.SetPolicy(&api.Policy{Catalog: cat, Cache: buildResponseCache(cfg.Observability.ResponseCache, st, log)})
 	s := &Server{
 		cfg:        cfg,

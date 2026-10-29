@@ -75,7 +75,7 @@ type Config struct {
 	// override: OPOD_TRUST_PROXY_HEADERS.
 	TrustProxyHeaders bool `yaml:"trust_proxy_headers"`
 	// BlockPrivateTargets, when true, refuses outbound connections from the
-	// observability callback / guardrail / catalog-probe HTTP clients to
+	// observability callback / catalog-probe HTTP clients to
 	// loopback, link-local, and RFC-1918 private addresses — defense in depth
 	// against SSRF when those URLs come from a less-trusted source. Off by
 	// default because on-prem webhooks at private addresses are common. Env
@@ -249,13 +249,6 @@ type ObservabilityConfig struct {
 	// in its own goroutine with a bounded queue — a slow receiver
 	// can't stall the gateway. Drops on overflow are counted via
 	// opod_callback_sent_total{outcome="dropped"}.
-
-	// Guardrails run synchronously on the request path. Each entry
-	// chooses a mode (pre | post | logging_only) and a driver (today:
-	// `webhook`). Pre guardrails can rewrite or block the request
-	// before the engine sees it; logging_only entries observe without
-	// intervening. Post mode is reserved for a follow-up — see the
-	// CHANGELOG for the streaming-response design limitation.
 
 	// ResponseCache stores deterministic responses (embeddings today;
 	// chat completions to follow). Disabled when Enabled=false.

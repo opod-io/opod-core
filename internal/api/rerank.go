@@ -70,12 +70,6 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 		BodyReadError(w, err)
 		return
 	}
-	// The query and the documents are content, so pre-call guardrails see
-	// them, exactly as they see an embedding's input.
-	body, ok := h.applyPreCallGuardrails(r.Context(), w, body)
-	if !ok {
-		return
-	}
 	var req rerankRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())

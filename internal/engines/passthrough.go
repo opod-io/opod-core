@@ -20,7 +20,7 @@ import (
 //
 // It is a deny-list, not a blind merge: the keys below are opod's, and a caller
 // who could set them would break the request path. `model` is the endpoint's one
-// model identity (D5); `messages` is what the guardrails inspected; `stream` is
+// model identity (D5); `messages` is the conversation as the leader parsed it; `stream` is
 // always true towards the engine (the gateway aggregates when the caller asked
 // for one answer); `stream_options` carries `include_usage`, so a caller
 // who turned it off would silently break usage capture; and `cache_salt` is

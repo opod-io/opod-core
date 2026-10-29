@@ -284,7 +284,7 @@
           <li>Endpoints as plans: engine, flags, replicas, autoscale, images pinned by digest</li>
           <li>Verified rollouts that restore the previous plan on failure, plus one-click rollback</li>
           <li>Autoscaling with scale to zero; the leader answers <code>503</code> + <code>Retry-After</code> while it wakes</li>
-          <li>API keys, guardrail webhooks, fallback target, audit log, usage facts and export, alerts</li>
+          <li>API keys, fallback target, audit log, usage facts and export, alerts</li>
           <li>Local users or OIDC SSO with viewer, operator and admin roles, team scoping, backup and restore</li>
         </ul>
         <span class="licence">Proprietary · free with no key up to 4 GPUs in one cell (chart 0.1.0 still enforces the earlier 8) · public images</span>
@@ -507,12 +507,12 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
 
       <div class="card">
         <div class="card-head"><h3>Govern it like production</h3><span class="chip ready">ready</span></div>
-        <p>Add guardrail webhooks before each request and a fallback target when capacity is gone. You also get an audit log of every state change and alert rules that notify Slack, PagerDuty, Alertmanager or a webhook. Usage facts export to CSV, Parquet, ClickHouse or S3.</p>
+        <p>Add a fallback target for when capacity is gone. You also get an audit log of every state change and alert rules that notify Slack, PagerDuty, Alertmanager or a webhook. Usage facts export to CSV, Parquet, ClickHouse or S3.</p>
       </div>
 
       <div class="card">
         <div class="card-head"><h3>Front a hosted model with the same controls</h3><span class="chip ready">ready</span></div>
-        <p>A <em>remote</em> endpoint is a leader with no GPU. It proxies an OpenAI-compatible vendor with a write-only key, and gets the same keys, limits, guardrails, audit and usage facts as your own models.</p>
+        <p>A <em>remote</em> endpoint is a leader with no GPU. It proxies an OpenAI-compatible vendor with a write-only key, and gets the same keys, limits, audit and usage facts as your own models.</p>
         <div class="block code"><pre>"model": { "source": "remote",
   "remoteUrl": "https://api.vendor.example/v1" }</pre></div>
       </div>
@@ -552,7 +552,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
     <p class="lede">You could wire up vLLM, a gateway, KEDA, a metrics stack and a rollout system yourself. Opod gives you that as one install, with a few properties that are hard to get from parts.</p>
 
     <div class="grid g3" style="margin-top:28px">
-      <div class="card"><h3>Never on the request path</h3><p>The control plane writes policy into files the leader mounts: the plan, keys and guardrails. Kill it and every endpoint keeps serving, enforcing keys and recording usage. This was proven by killing it during load.</p></div>
+      <div class="card"><h3>Never on the request path</h3><p>The control plane writes policy into files the leader mounts: the plan, keys and routing policy. Kill it and every endpoint keeps serving, enforcing keys and recording usage. This was proven by killing it during load.</p></div>
       <div class="card"><h3>Measured, not assumed</h3><p>VRAM comes from the vendor probe on the node, load from the leader itself, and GPU-seconds from pod lifetimes. "Serving" means a token came back. When a number isn't measured, the console says so.</p></div>
       <div class="card"><h3>More models per card</h3><p>Kubernetes hands out whole GPUs. Opod's ledger packs several models onto one card under explicit VRAM budgets, and refuses an overcommit with the number it measured.</p></div>
       <div class="card"><h3>Nothing extra to operate</h3><p>SQLite on a volume, an in-process event bus and <code>/metrics</code> are all built in. On day two, <code>helm upgrade --set</code> connects the Postgres, ClickHouse, NATS, OIDC, Vault or KEDA you already run.</p></div>
@@ -595,7 +595,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
         <!-- leader -->
         <rect x="420" y="50" width="200" height="130" rx="10" fill="#0f2a24" stroke="#34d399"/>
         <text x="520" y="78" text-anchor="middle" fill="#e6ebf5" font-size="14" font-weight="600">Leader · opod up</text>
-        <text x="520" y="102" text-anchor="middle" fill="#aab5c9" font-size="12">keys · limits · guardrails</text>
+        <text x="520" y="102" text-anchor="middle" fill="#aab5c9" font-size="12">keys · limits · policy</text>
         <text x="520" y="122" text-anchor="middle" fill="#aab5c9" font-size="12">router · fallback · usage</text>
         <text x="520" y="150" text-anchor="middle" fill="#34d399" font-size="11" font-family="JetBrains Mono, monospace">Apache-2.0 core</text>
 
@@ -776,7 +776,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
     <div style="margin-top:18px">
       <details><summary>Is opod open source?</summary><p>The core runtime (<code>opod</code>) and the SDK are Apache-2.0 with no usage limit. The control plane (<code>opodcp</code>) is proprietary. Its images are publicly pullable, and it is free with no key up to 4 GPUs in one cell. The runtime never depends on the control plane: you can run core on its own, or manage it with your own tooling through <code>/admin/v1</code>.</p></details>
       <details><summary>Do I need Kubernetes?</summary><p>For the control plane, yes: Kubernetes is its only executor. If you don't have a cluster, <code>opodcp infra up</code> builds k3s on your Linux machines over SSH. The core runtime alone needs no Kubernetes and runs on a Mac or Linux box.</p></details>
-      <details><summary>Does traffic flow through the control plane?</summary><p>No. Clients call the endpoint's Service, and the leader answers. The control plane writes the plan, keys and guardrail rules into a Secret the leader mounts, and pulls events and usage from the leader. Its console includes a playground proxy for convenience, but your applications never need it.</p></details>
+      <details><summary>Does traffic flow through the control plane?</summary><p>No. Clients call the endpoint's Service, and the leader answers. The control plane writes the plan, keys and routing policy into a Secret the leader mounts, and pulls events and usage from the leader. Its console includes a playground proxy for convenience, but your applications never need it.</p></details>
       <details><summary>What happens above the free tier, or when a key expires?</summary><p>The free tier is 4 GPUs in one cell. Only new placements beyond the licensed number of GPUs are refused, and the refusal includes the remedy. Running workers are never stopped. An expired key keeps its ceiling through a grace period, then the free tier applies to new placements. Keys are verified offline against a public key built into the binary.</p></details>
       <details><summary>Does anything phone home?</summary><p>No. Core has no telemetry. The control plane needs no connection to us: there is no licence server and no remote kill switch. It needs to reach your registry and model hub (or your mirrors) to pull images and weights.</p></details>
       <details><summary>Which models can I run?</summary><p>Anything in the catalog (Qwen, Llama, Gemma, GLM, DeepSeek, gpt-oss, Mistral, Phi, vision and embedding models), or a Hugging Face GGUF or safetensors repo you add. Sizing is up to you: the ledger tells you what fits on each card before anything is scheduled.</p></details>
