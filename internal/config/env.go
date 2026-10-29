@@ -69,6 +69,8 @@ type Env struct {
 	LoadModel string `env:"OPOD_LOAD_MODEL" side:"worker" doc:"the catalog id this worker loads once its engine answers; repo and file come from the catalog"`
 	LoadRepo  string `env:"OPOD_LOAD_REPO" side:"worker" doc:"override the catalog's repo for that load"`
 	LoadFile  string `env:"OPOD_LOAD_FILE" side:"worker" doc:"override the catalog's file (the GGUF within the repo) for that load"`
+	// T32.23: what `opod fetch` found, for the manager that ran it as a Job.
+	FetchResult string `env:"OPOD_FETCH_RESULT" side:"worker" doc:"a path opod fetch writes its result to once the weights are in the cache: one JSON line (adminapi.FetchResult: the path and the signature check). A manager points it at /dev/termination-log to read the result from the pod's status. Empty = no result file"`
 	// both
 	CatalogDir      string `env:"OPOD_CATALOG_DIR" side:"both" doc:"a catalog directory that overrides the bundled entries (beaten only by ~/.opod/catalog)"`
 	CatalogPubKey   string `env:"OPOD_CATALOG_PUBKEY" side:"both" doc:"a minisign public key (the base64 line, or a file holding one): a catalog file in a directory that has a <file>.minisig beside it must verify against it, and a signature that does not is always a refusal. The embedded catalog is never checked. Empty = signatures are ignored"`

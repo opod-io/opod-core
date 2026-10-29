@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`opod fetch` reports what it fetched, and whether it is signed (T32.23).** With `OPOD_FETCH_RESULT` set, the fetch
+  writes one JSON line there once the weights are in the cache (`adminapi.FetchResult`): the path, and whether the
+  repository publishes a model-transparency signature beside the weights (`model.sig`, OpenSSF model signing) —
+  `unsigned`, `unverified` or `unknown` when the Hub could not be asked. The signature is looked for and **not
+  verified**: there is no `verified` state yet, and verifying a model signature on the node is still to be built.
 - **Per-key limits leave core again (ADR-112): feature `key_limits` is gone.** A key in a manager's auth snapshot no
   longer carries `rpmLimit`, `tpmLimit`, `quotaDailyTokens` or `allowedModels`; the leader and its doors enforce none
   of them, `/v1/models` is no longer filtered per key, the refusals `rate_limit_rpm`, `rate_limit_tpm`, `quota_daily`
