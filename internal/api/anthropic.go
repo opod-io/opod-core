@@ -527,6 +527,7 @@ type AnthropicWriter struct {
 	status int
 	header bool // the handler has written its status
 	stream bool // the handler answers with an event stream
+	done   bool // Finish has written the buffered answer
 	buf    bytes.Buffer
 
 	// stream state
@@ -576,11 +577,19 @@ func (a *AnthropicWriter) Flush() {
 	}
 }
 
-// Finish writes what was buffered: the translated error or Message.
+// Finish writes what was buffered: the translated error or Message. The chat
+// handler calls it once its answer is complete (deliver), and the route calls
+// it again when the handler returns; only the first call writes.
 func (a *AnthropicWriter) Finish() {
-	if a.stream {
+	if a.stream || a.done {
 		return
 	}
+	a.done = true
+	defer func() {
+		if a.flush != nil {
+			a.flush.Flush()
+		}
+	}()
 	raw := a.buf.Bytes()
 	if a.status >= 300 {
 		var e struct {

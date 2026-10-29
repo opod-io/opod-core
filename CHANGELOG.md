@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **A non-streamed answer reaches the client before its usage row is written.** Chat, embeddings, rerank and Messages
+  answers that were not streamed used to sit in the server's buffer until the handler returned, so the caller waited
+  for the usage row's SQLite insert (up to its 5 s busy timeout) — and embeddings and rerank wrote the row, and the
+  embedding cache, before writing the answer at all. Each now hands its answer over first; the row and the cache are
+  written after.
 - **A stopping worker drains (feature `worker_drain`, `OPOD_DRAIN_SECONDS`).** On SIGTERM it says goodbye at once, so
   no new request reaches it, lets the requests already running on it finish, and stops its engine when nothing is in
   flight or the bound passes, whichever is first. A gang member waits while a peer still holds a connection to it (the

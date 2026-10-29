@@ -154,8 +154,9 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 		out.Usage = usage{PromptTokens: res.Usage.PromptTokens, TotalTokens: res.Usage.TotalTokens}
 		u = &engines.Usage{PromptTokens: res.Usage.PromptTokens, TotalTokens: res.Usage.TotalTokens}
 	}
-	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
 	writeJSON(w, http.StatusOK, out)
+	deliver(w)
+	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
 }
 
 // writeRerankError answers a failed rerank. An engine without a rerank route

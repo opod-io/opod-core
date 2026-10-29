@@ -647,6 +647,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+	deliver(w)
 	h.recordUsage(r.Context(), "openai", modelOut, u, time.Since(start), "ok")
 }
 
@@ -923,6 +924,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// deliver hands a non-streamed answer to the client before anything else
+// runs on the request. Without it the body sat in the server's buffer until
+// the handler returned, so the client waited for the usage row's SQLite
+// insert (up to its 5 s busy timeout) on every chat, embeddings and rerank
+// answer that was not streamed. A wrapper that buffers the whole answer (the
+// Messages translation) writes it here instead of when the route returns.
+func deliver(w http.ResponseWriter) {
+	if f, ok := w.(interface{ Finish() }); ok {
+		f.Finish()
+		return
+	}
+	_ = http.NewResponseController(w).Flush()
 }
 
 func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
