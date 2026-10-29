@@ -352,7 +352,6 @@ type Usage struct {
 
 type UsageStore interface {
 	Record(ctx context.Context, u Usage) error
-	SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
 	// LastUsedByModel returns the most recent request timestamp per model
 	// id. Models with no usage rows are absent from the map — eviction
 	// treats them as least-recently-used. Used by the lifecycle manager's

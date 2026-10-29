@@ -87,9 +87,6 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		NodeID:           router.NodeFrom(ctx), // "" when answered locally / never dispatched
 		TTFTMS:           int(ttft.Milliseconds()),
 	}
-	if h.OnKeyTokens != nil && keyID != "" {
-		h.OnKeyTokens(keyID, int64(prompt+completion), rec.TS)
-	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageWriteTimeout)
 	defer cancel()
 	if err := st.Usage().Record(writeCtx, rec); err != nil {
@@ -110,10 +107,4 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		h.OnUsage(rec, id)
 	}
 
-}
-
-// RecordRefusal records a request a per-key limit refused before it reached an
-// engine (T19.17): a usage row and the metrics, with outcome naming the limit.
-func (h *Handler) RecordRefusal(ctx context.Context, protocol, model, outcome string) {
-	h.recordUsageTTFT(ctx, protocol, model, nil, 0, 0, outcome)
 }

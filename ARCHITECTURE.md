@@ -664,7 +664,8 @@ shards              (id, model_id, gang_id, role, node_id, address, process_id, 
                      created_at, last_seen)
 api_keys            (id, hash, name, scope, user_id, expires_at, created_at, revoked;
                      quota_daily_tokens, rpm_limit, tpm_limit, allowed_models left on 2026-09-28
-                     and are dropped from an older database at open — `runColumnDrops`)
+                     and are dropped from an older database at open — `runColumnDrops`; the limits a
+                     manager delivered later were memory only, and left too)
 usage               (id, ts, api_key_id, user_id, model, protocol, prompt_tokens, completion_tokens,
                      latency_ms, outcome, cost_usd, node_id, ttft_ms)
 event_log           (id, ts, type, subject, data)
@@ -1094,15 +1095,12 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
 - Stored as sha256 hashes — only the hex digest is persisted, never the plaintext
 - Scopes: `user`, `admin`, `node` — exactly one scope per key
 - Per-key controls: optional expiry (`--ttl` / `--expires-at`). A key minted with `opod token create` carries no limits.
-- **Per-key limits from a manager** (contract feature `key_limits`): a key delivered in the auth snapshot may carry
-  `rpmLimit`, `tpmLimit`, `quotaDailyTokens` and `allowedModels`. They are enforced from memory and nothing else
-  (`internal/leader/keylimits.go`) — the first version, removed on 2026-09-28, ran a SUM over the usage table before
-  every request. Requests and tokens per minute are token buckets per key; each replica that serves keyed traffic
-  (the leader and every gateway) takes `limit ÷ fronts`, the doors heard from plus the leader. The daily quota is a counter per key and UTC day: the leader
-  counts its own answers and its doors' pushed rows on top of a base taken once when the quota reaches the pod — the
-  larger of one store read and the manager's `spentToday` — and publishes the count in the spend snapshot; a door adds its own tokens to the count it
-  last polled. Over a limit the answer is 429 with Retry-After (`rate_limit_rpm` | `rate_limit_tpm` | `quota_daily`);
-  a model off the allowlist is 403 `model_not_allowed` and is left out of `GET /v1/models`. Each refusal is a usage row
+- **No per-key limits.** A key — minted with `opod token create` or delivered in a manager's auth snapshot — is an
+  identity: who is calling, with which scope and class, until when. Requests and tokens per minute, quotas and model
+  access per key, user or team are the job of the gateway the owner runs in front of an endpoint (LiteLLM, for
+  example). Core enforced them twice (before 2026-09-28, and `key_limits` from 2026-10-17) and both times they left:
+  a serving runtime that limits only by key cannot limit by user or team, and a gateway does both. Overload is
+  handled by request classes (`admission_classes`).
 - Revocable at any time
 
 ### Key scopes

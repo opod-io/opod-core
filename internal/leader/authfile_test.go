@@ -77,9 +77,9 @@ func TestAuthSnapshotSync(t *testing.T) {
 		t.Fatalf("local admin key: %d", c)
 	}
 
-	// second snapshot: limits change, key b leaves, requireKeys off
-	// Per-key limits (T19.17) are held in the leader's memory, not in its key
-	// store: a snapshot that changes only them leaves the key record as it was.
+	// second snapshot: key b leaves, requireKeys off. It still names the per-key
+	// limits a manager wrote before ADR-112: the leader enforces none of them —
+	// limits are the owner's gateway's job — and the key stays as it was.
 	snap2 := &AuthSnapshot{}
 	if err := json.Unmarshal([]byte(`{"revision":"r2","requireKeys":false,"keys":[{"id":"a","name":"team-a","hash":"`+auth.Hash(plainA)+`","rpmLimit":20,"tpmLimit":5,"quotaDailyTokens":1000,"allowedModels":["x"]}]}`), snap2); err != nil {
 		t.Fatal(err)
@@ -88,10 +88,7 @@ func TestAuthSnapshotSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ka, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainA)); ka == nil || ka.Revoked {
-		t.Fatalf("key a stays live across a snapshot that only changed its limits: %+v", ka)
-	}
-	if kl, ok := srv.keyLimits.limitOf(SnapshotKeyPrefix + "a"); !ok || kl.rpm != 20 || kl.tpm != 5 || kl.quota != 1000 || !kl.allowed["x"] {
-		t.Fatalf("the limits are the limiter's: %+v", kl)
+		t.Fatalf("key a stays live across a snapshot that names limits: %+v", ka)
 	}
 	kb, _ := st.APIKeys().GetByHash(ctx, auth.Hash(plainB))
 	if kb == nil || !kb.Revoked {
@@ -109,5 +106,11 @@ func TestAuthSnapshotSync(t *testing.T) {
 	}
 	if c := code(plainB); c != http.StatusOK { // keys not required: revoked key is simply ignored
 		t.Fatalf("keyless mode ignores keys: %d", c)
+	}
+	// Twenty-five calls on a key whose old snapshot said rpmLimit 20: no 429.
+	for i := 0; i < 25; i++ {
+		if c := code(plainA); c != http.StatusOK {
+			t.Fatalf("call %d on key a: %d — the leader must enforce no per-key limit (ADR-112)", i+1, c)
+		}
 	}
 }

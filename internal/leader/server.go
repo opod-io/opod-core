@@ -51,9 +51,6 @@ type Server struct {
 	listener  net.Listener
 	lifecycle *lifecycle.Manager
 	openaiH   *api.Handler
-	// keyLimits enforces each key's limits from the auth snapshot, in memory
-	// (T19.17, keylimits.go).
-	keyLimits *keyLimiter
 	load      loadStats
 	ttft      ttftWindow // streamed answers' time to first token, for /loadz (ttftwindow.go)
 	// metricsH serves /metrics on both listeners: the opod_* names and this
@@ -207,14 +204,6 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	}
 	// Every streamed answer's time to first token feeds /loadz (T16.3).
 	openaiH.OnTTFT = s.observeTTFT
-	// Per-key limits (T19.17): each replica takes limit ÷ (doors + 1) of a
-	// per-minute limit; every keyed answer's tokens feed the key's meters.
-	s.keyLimits = newKeyLimiter(s.frontCount)
-	openaiH.OnKeyTokens = s.keyLimits.record
-	openaiH.ModelAllowed = func(ctx context.Context, model string) bool {
-		k := auth.KeyFrom(ctx)
-		return k == nil || s.keyLimits.allowedModel(k.ID, model)
-	}
 	// A door's usage rows belong to the leader's store, not its own (ADR-063).
 	if s.isGateway() {
 		openaiH.OnUsage = s.recordUsageForGateway
@@ -467,14 +456,12 @@ func (s *Server) routes() http.Handler {
 		// Load accounting next so /loadz sees every inference request,
 		// including ones a later middleware rejects.
 		r.Use(s.trackLoad)
-		// Cap request bodies first so nothing downstream (rate-limit
-		// estimation, the dispatch handlers) buffers an unbounded body.
+		// Cap request bodies first so nothing downstream (the dispatch
+		// handlers) buffers an unbounded body.
 		r.Use(s.limitRequestBody)
 		r.Use(auth.MiddlewareFn(s.store.APIKeys(), s.requireKeys))
-		// The per-key limits — a model allowlist, RPM/TPM ceilings, a daily
-		// token quota — enforced from memory (ADR-092 §8, keylimits.go): the
-		// first version ran a SUM per request and ADR-077 removed it.
-		r.Use(s.keyLimitsMiddleware)
+		// No per-key limit runs here: limits, quotas and model access are the
+		// owner's gateway's job in front of the endpoint (ADR-111, ADR-112).
 		//
 		// Stamp a request id on every response so client SDKs and the usage
 		// row share one correlation token.

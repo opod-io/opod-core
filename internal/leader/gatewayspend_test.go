@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
@@ -56,11 +55,14 @@ func TestPushedUsageIsDeduplicatedByTheGatewaysRowID(t *testing.T) {
 	if got := push(rows); got["accepted"] != float64(0) || got["duplicate"] != float64(2) {
 		t.Fatalf("a retry must be recognised, not billed again: %v", got)
 	}
-	// 40 tokens, once: the quota the gateway subtracts from must not have
-	// doubled.
-	sum, err := st.Usage().SumTokensSince(ctx, "k1", time.Now().Add(-time.Hour))
+	// 40 tokens, once: a retry must not have doubled the record.
+	recent, err := st.Usage().Recent(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
+	}
+	sum := 0
+	for _, u := range recent {
+		sum += u.PromptTokens + u.CompletionTokens
 	}
 	if sum != 40 {
 		t.Errorf("tokens recorded = %d, want 40 (a retry doubled the bill)", sum)

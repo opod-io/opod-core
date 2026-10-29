@@ -51,12 +51,6 @@ type Handler struct {
 	// finished well, with the request's context. The leader keeps a rolling
 	// window of them for /loadz (T16.3); nil = nobody is counting.
 	OnTTFT func(ctx context.Context, ttft time.Duration)
-	// OnKeyTokens is told the tokens each keyed answer used (T19.17): the
-	// per-key TPM bucket and the day's count are the leader's memory.
-	OnKeyTokens func(keyID string, tokens int64, at time.Time)
-	// ModelAllowed filters GET /v1/models by the calling key's allowlist
-	// (T19.17). nil = every model.
-	ModelAllowed func(ctx context.Context, model string) bool
 	// Unavailable says why nothing can take a new request for model right
 	// now, or "" when something can — the leader's own gate (capacity.go),
 	// asked again when a request it let through found no worker left
@@ -149,15 +143,6 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 				out.Data = append(out.Data, modelObj{ID: id, Object: "model", Created: now.Unix(), OwnedBy: "opod"})
 			}
 		}
-	}
-	if h.ModelAllowed != nil {
-		kept := out.Data[:0]
-		for _, m := range out.Data {
-			if h.ModelAllowed(r.Context(), m.ID) {
-				kept = append(kept, m)
-			}
-		}
-		out.Data = kept
 	}
 	writeJSON(w, http.StatusOK, out)
 }

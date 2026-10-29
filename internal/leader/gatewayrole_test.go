@@ -170,9 +170,15 @@ func TestAGatewayIsASecondFrontForOneBrain(t *testing.T) {
 	if err := door.front.push.Flush(ctx, 100); err != nil {
 		t.Fatalf("second push: %v", err)
 	}
-	used, err := leaderStore.Usage().SumTokensSince(ctx, custRec.ID, time.Now().Add(-time.Hour))
+	recent, err := leaderStore.Usage().Recent(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
+	}
+	used := 0
+	for _, u := range recent {
+		if u.APIKeyID == custRec.ID {
+			used += u.PromptTokens + u.CompletionTokens
+		}
 	}
 	if used != 120 {
 		t.Errorf("the leader's store is the record, and the retry is deduplicated: tokens=%d want 120", used)
@@ -372,18 +378,10 @@ func TestTheLeaderPublishesWhatEveryDoorIsCarrying(t *testing.T) {
 		t.Errorf("the published bound travels with the fleet view: %d", z.SpendLagBoundS)
 	}
 
-	// The idle door is in the spend snapshot's divisor too — that is the whole
-	// reason the heartbeat exists.
+	// The idle door is in the spend snapshot's door count too — that is the
+	// whole reason the heartbeat exists.
 	if n, names := leader.gateways.doors(time.Now()); n != 2 || len(names) != 2 {
 		t.Errorf("both doors count as doors: %d %v", n, names)
-	}
-	// A key's per-minute limit is shared by everything that admits it: the
-	// two doors and the leader's own front (T19.17).
-	if f := leader.gateways.fronts(time.Now()); f != 3 {
-		t.Errorf("two doors and the leader are three fronts: %d", f)
-	}
-	if f := leader.frontCount(); f != 3 {
-		t.Errorf("the key limiter divides by the fronts: %d", f)
 	}
 }
 

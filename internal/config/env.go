@@ -27,10 +27,10 @@ type Env struct {
 	OTLPLogsEndpoint string `env:"OPOD_OTLP_LOGS_ENDPOINT" side:"leader" doc:"OTLP/HTTP collector for the leader's own log records (URL or host:port); stderr keeps working, the queue is bounded and never blocks. Empty = off"`
 	// gateway (T11.1, ADR-063) — a copied FRONT of a leader: it serves /v1 and
 	// nothing of /admin/v1, mirrors the leader's worker registry, pushes its
-	// usage rows there and enforces from the spend snapshot it polls back.
+	// usage rows there and polls the door count back (the spend snapshot).
 	Role      string `env:"OPOD_ROLE" side:"leader" doc:"leader (default) | gateway | door. A gateway serves /v1 only: no join surface, no engine of its own, its worker list mirrored from the leader and its usage pushed there (T11.1). A door is one URL for a cell's endpoints: it forwards each request to the endpoint its model names (ADR-087)"`
 	LeaderURL string `env:"OPOD_LEADER_URL" side:"leader" doc:"the leader a GATEWAY mirrors and pushes to (http://host:8080); required when OPOD_ROLE=gateway"`
-	GatewayID string `env:"OPOD_GATEWAY_ID" side:"leader" doc:"this door's name in the leader's door count, which sets each key's 1/N rate share; unset = the hostname"`
+	GatewayID string `env:"OPOD_GATEWAY_ID" side:"leader" doc:"this door's name in the leader's door count; unset = the hostname"`
 	// cell door (ADR-087) — a name lookup in front of a cell's endpoints: it
 	// reads a request's model, finds the endpoint in the routes file and
 	// forwards the request there. No store, no engine, no credential.

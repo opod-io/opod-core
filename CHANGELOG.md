@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **Per-key limits leave core again (ADR-112): feature `key_limits` is gone.** A key in a manager's auth snapshot no
+  longer carries `rpmLimit`, `tpmLimit`, `quotaDailyTokens` or `allowedModels`; the leader and its doors enforce none
+  of them, `/v1/models` is no longer filtered per key, the refusals `rate_limit_rpm`, `rate_limit_tpm`, `quota_daily`
+  and `model_not_allowed` are gone, and the spend snapshot carries only the door count and the lag bound. Limits,
+  quotas and model access per key, user or team are the job of the gateway the owner runs in front of the endpoint
+  (LiteLLM, for example). Request classes still shed load.
 - **A non-streamed answer reaches the client before its usage row is written.** Chat, embeddings, rerank and Messages
   answers that were not streamed used to sit in the server's buffer until the handler returned, so the caller waited
   for the usage row's SQLite insert (up to its 5 s busy timeout) — and embeddings and rerank wrote the row, and the
