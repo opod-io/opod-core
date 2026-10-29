@@ -334,6 +334,7 @@ func contractFeatures() map[string]bool {
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one
 		"otlp_logs":             true, // OPOD_OTLP_LOGS_ENDPOINT: the leader's own log records over OTLP/HTTP, teed beside stderr; bounded queue, never blocks
+		"trace_sample_ratio":    true, // OPOD_TRACE_SAMPLE_RATIO: the share of root traces recorded (0–1, unset = 1); a request with a traceparent follows its caller's decision (parent-based)
 		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)
 		"placement_drain":       true, // a placement the leader marks draining stays out of rotation across the worker's heartbeats, until it is set back, the model leaves the worker, or the leader restarts
 		"heartbeat_no_report":   true, // a heartbeat with loaded_models null changes no placement row (marks survive a slow engine tick); an engine silent past the heartbeat bound takes the node out of rotation — state engine-silent, events node.engine_silent|engine_reporting

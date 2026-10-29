@@ -299,7 +299,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.Version = "dev"
 	}
 	// Init OTLP tracing (no-op if endpoint not configured).
-	shutdown, err := initTracing(ctx, s.cfg.Observability.OTLPEndpoint, s.Version, s.log)
+	shutdown, err := initTracing(ctx, s.cfg.Observability.OTLPEndpoint, s.cfg.Env.TraceSampleRatio, s.Version, s.log)
 	if err != nil {
 		return fmt.Errorf("init tracing: %w", err)
 	}

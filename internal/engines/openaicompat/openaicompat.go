@@ -85,12 +85,14 @@ const IdleConnTimeout = 2 * time.Second
 
 // streamingHTTPClient has no overall deadline, a bounded connect and an idle
 // timeout below the engines' keep-alive. Everything else is Go's default
-// transport.
+// transport. Every request carries its trace on (engines.TraceTransport,
+// T32.7): this client is every OpenAI-wire driver's and the leader's client
+// for a worker, so the header is set once for all of them.
 func streamingHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DialContext = (&net.Dialer{Timeout: ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
 	tr.IdleConnTimeout = IdleConnTimeout
-	return &http.Client{Timeout: 0, Transport: tr}
+	return &http.Client{Timeout: 0, Transport: engines.TraceTransport(tr)}
 }
 
 // NewClient returns a Client for driver at endpoint. auth may be nil.
@@ -288,11 +290,7 @@ func (c Client) ChatOnce(ctx context.Context, req engines.ChatRequest) (engines.
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
+		Usage      *wireUsage      `json:"usage"`
 		KVTransfer json.RawMessage `json:"kv_transfer_params"`
 	}
 	if err := json.Unmarshal(b, &ans); err != nil {
@@ -302,8 +300,8 @@ func (c Client) ChatOnce(ctx context.Context, req engines.ChatRequest) (engines.
 	if len(ans.Choices) > 0 {
 		out.Text, out.FinishReason = ans.Choices[0].Message.Content, ans.Choices[0].FinishReason
 	}
-	if u := ans.Usage; u != nil {
-		out.Usage = &engines.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	if ans.Usage != nil {
+		out.Usage = ans.Usage.usage()
 	}
 	return out, nil
 }
@@ -503,11 +501,7 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			} `json:"usage"`
+			Usage *wireUsage `json:"usage"`
 			// The server's own error, sent in the stream after its 200
 			// (vLLM, llama-server, and a worker relaying its engine's).
 			Error json.RawMessage `json:"error"`
@@ -551,21 +545,13 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 				// Don't return — wait for the usage-only chunk or [DONE].
 				// If the same chunk carries Usage, emit final immediately.
 				if ev.Usage != nil {
-					emitFinal(&engines.Usage{
-						PromptTokens:     ev.Usage.PromptTokens,
-						CompletionTokens: ev.Usage.CompletionTokens,
-						TotalTokens:      ev.Usage.TotalTokens,
-					})
+					emitFinal(ev.Usage.usage())
 					return
 				}
 			}
 		}
 		if ev.Usage != nil && len(ev.Choices) == 0 {
-			emitFinal(&engines.Usage{
-				PromptTokens:     ev.Usage.PromptTokens,
-				CompletionTokens: ev.Usage.CompletionTokens,
-				TotalTokens:      ev.Usage.TotalTokens,
-			})
+			emitFinal(ev.Usage.usage())
 			return
 		}
 	}
@@ -577,6 +563,26 @@ func consumeStream(ctx context.Context, body io.ReadCloser, out chan<- engines.S
 	}
 	// stream ended without explicit [DONE] — synthesize one
 	emitFinal(nil)
+}
+
+// wireUsage is an OpenAI usage object as a server sends it. The cached count
+// is optional: vLLM, SGLang and llama-server put it in prompt_tokens_details
+// when they have one, and an opod worker passes it on.
+type wireUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func (u *wireUsage) usage() *engines.Usage {
+	out := &engines.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	if d := u.PromptTokensDetails; d != nil {
+		out.CachedTokens = d.CachedTokens
+	}
+	return out
 }
 
 // streamError types an error event a server sent in its stream. A worker
@@ -613,9 +619,12 @@ func streamError(raw json.RawMessage) error {
 // default config. It runs in the caller's goroutine and starts none.
 func ConsumeStreamWithSpan(ctx context.Context, body io.ReadCloser, out chan<- engines.StreamEvent, span *engines.ChatSpan) {
 	defer span.End()
-	var promptTokens, completionTokens int
+	var promptTokens, completionTokens, cachedTokens int
 	consumeStream(ctx, body, out, func(u *engines.Usage) {
-		promptTokens, completionTokens = u.PromptTokens, u.CompletionTokens
+		promptTokens, completionTokens, cachedTokens = u.PromptTokens, u.CompletionTokens, u.CachedTokens
 	})
-	span.SetTokens(promptTokens, completionTokens)
+	if span.IsRecording() {
+		span.SetTokens(promptTokens, completionTokens)
+		span.SetCachedTokens(cachedTokens)
+	}
 }

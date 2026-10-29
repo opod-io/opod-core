@@ -39,7 +39,7 @@ type Driver struct {
 func New(endpoint string) *Driver {
 	return &Driver{
 		endpoint: strings.TrimRight(endpoint, "/"),
-		client:   &http.Client{Timeout: 0}, // streaming — no overall deadline
+		client:   &http.Client{Timeout: 0, Transport: engines.TraceTransport(nil)}, // streaming — no overall deadline; the trace goes on into ollama (T32.7)
 	}
 }
 
