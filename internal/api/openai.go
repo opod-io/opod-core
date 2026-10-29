@@ -267,20 +267,14 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r = r.WithContext(router.WithTrace(r.Context())) // which worker served it → usage row
 	// The body as the middleware chain already read it (body.go) — one read
-	// per request — so pre-call guardrails can inspect (or rewrite) it before
-	// we decode. The hot-path short-circuits when no guardrails are configured.
+	// per request.
 	body, r, err := requestBody(r)
 	if err != nil {
 		BodyReadError(w, err)
 		return
 	}
-	rewritten, ok := h.applyPreCallGuardrails(r.Context(), w, body)
-	if !ok {
-		// Guardrail blocked the request; response already written.
-		return
-	}
 	var req chatRequest
-	if err := json.Unmarshal(rewritten, &req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
 		return
 	}
@@ -288,9 +282,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "messages cannot be empty")
 		return
 	}
-	// The fields we do not model, from the same (possibly rewritten) bytes the
-	// struct came from: a guardrail rewrite drives what the engine sees.
-	extra, err := engines.ExtraFields(rewritten, chatRequestKeys)
+	// The fields we do not model, from the same bytes the struct came from.
+	extra, err := engines.ExtraFields(body, chatRequestKeys)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
 		return

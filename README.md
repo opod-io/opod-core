@@ -21,7 +21,8 @@
 > **Scope (ADR-022, 2026-09-06).** Core is the CLI-only inference runtime: `opod up` / `opod join`, the OpenAI-compatible
 > gateway, API keys + join tokens, engine adapters, model load, multi-machine sharding (llama.cpp RPC · vLLM + Ray · SGLang), and a stable `/admin/v1` surface for an
 > external manager. Everything product-shaped — console, invites, vendor egress and cloud key pools, routing chains, callbacks and
-> sinks, dollar budgets, usage/audit query APIs, guardrail implementations, automatic update checks — lives in the control plane (`opodcp`).
+> sinks, dollar budgets, usage/audit query APIs, automatic update checks — lives in the control plane (`opodcp`). Prompt checks (PII,
+> injection) are your gateway's job: the leader runs no guardrail webhook.
 
 ```
            ┌──────────────────────────────────────────────────────────────┐
@@ -432,7 +433,7 @@ of these will be declined for the same reason, so the table is here to save you 
 | **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
 | **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
 | **Audio surfaces** (transcription and speech) | removed in the 2026-09 contraction (ADR-022). `/v1/rerank` came back on 2026-10-06 (ADR-084) because a retrieval stack asks for it, and Anthropic Messages on 2026-10-19 (ADR-092 §1), translated to the chat path so every engine serves it. |
-| **Content policies, output filtering, guardrail implementations** | the interface and the event stream stay; the policies belong where the request originates. |
+| **Content policies, output filtering, prompt checks** | none of it is in core; the policies belong in the gateway in front of the leader, where the request originates. |
 | **Kubernetes, Helm, operators, CRDs** | `opod` runs as a process. Anything that schedules processes across a fleet is an orchestrator's job, not the runtime's. |
 | **Training and fine-tuning** | use `axolotl`, `unsloth`, or `torchtune`. |
 | **A vector store** | an adapter for SQLite-VSS / pgvector may ship with signed catalogs; running one will not. |
@@ -784,9 +785,8 @@ surfaces:
                                       # A file that still carries the retired `ui`/`egress`/`callbacks` keys loads fine
 ```
 
-There is no `observability.guardrails:` and no `observability.callbacks:` key: guardrail rules arrive in the
-**policy snapshot** a manager mounts (`OPOD_POLICY_FILE`, default `/etc/opod-auth/policy.json`) and the
-callback sinks left with ADR-022. Beyond this file, a manager steers a leader or a worker through the
+There is no `observability.guardrails:` and no `observability.callbacks:` key: the leader runs no guardrail
+(prompt checks are a gateway's job) and the callback sinks left with ADR-022. Beyond this file, a manager steers a leader or a worker through the
 **process-environment contract** — `internal/config/env.go`, exported as a table for a manager as
 `leader.EnvContract` (`internal/leader/contract.go`) and reproduced below. A test (`TestEnvSurfaceOutsideConfigIsTheAllowlist`) fails
 when library code reads a variable that is not on it, so the list is the whole surface.
@@ -834,7 +834,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 |---|---|---|
 | `OPOD_PLAN_FILE` | leader | the mounted plan the leader serves within (default `/etc/opod/plan.json`; absent = standalone) |
 | `OPOD_AUTH_FILE` | leader | the mounted auth snapshot — keys, `requireKeys`, key tombstones (`revokedKeys`), `issuedAt`, the worker-certificate policy (default `/etc/opod-auth/auth.json`; `off` = no watcher) |
-| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, guardrail webhook rules, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission gate — a request waits for a free worker slot, ranked by class (`admission.holdMs`, `admission.maxHeld`, and per request class `admission.classes[]{name, holdMs, maxHeld, maxShare}`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
+| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission gate — a request waits for a free worker slot, ranked by class (`admission.holdMs`, `admission.maxHeld`, and per request class `admission.classes[]{name, holdMs, maxHeld, maxShare}`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
 | `OPOD_COORDINATOR_NODE` | leader | pin the llama.cpp RPC coordinator to a node id (`local` = the leader itself). Default: the worker with the most **GPU** memory, falling back to host RAM for a worker with no card |
 | `OPOD_OTLP_LOGS_ENDPOINT` | leader | the leader's own log records over OTLP/HTTP, beside stderr (URL or bare `host:port`). Bounded queue, never blocks. Empty = off |
 | `OPOD_ROLE` | leader | `leader` (default), `gateway` — a front door that serves `/v1` only for one endpoint (`opod up --role gateway`) — or `door`, one URL for many endpoints chosen by `model` (`opod up --role door`) |

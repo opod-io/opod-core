@@ -22,8 +22,7 @@ feels), the router series (`opod_router_picks_total{path,outcome}`, `opod_router
 `opod_router_fallback_total{op,reason}`, `opod_router_attempt_duration_seconds{model,outcome}`,
 `opod_router_cooldowns_active`, `opod_router_sticky_hits_total{outcome}`,
 `opod_router_hedge_total{outcome}`), the response cache
-(`opod_cache_hits_total{path}` / `opod_cache_misses_total{path}`) and
-`opod_guardrail_action_total{name,action}`. Two names you will see in the registry are
+(`opod_cache_hits_total{path}` / `opod_cache_misses_total{path}`). Two names you will see in the registry are
 **declared but never incremented** — `opod_callback_sent_total` and `opod_callback_queue_depth`:
 the callback sinks left core with ADR-022 and the declarations are the last thing to remove. Do not
 build a panel on them. `internal/metrics/metrics.go` is the list that decides.

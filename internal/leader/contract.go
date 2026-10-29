@@ -336,7 +336,7 @@ func contractFeatures() map[string]bool {
 		"resident_models":       true, // heartbeats from an engine that loads on request carry resident_models beside loaded_models; the rest of its placements are cold — routable, holding no memory
 		"worker_unload":         true, // POST /v1/model/unload on a worker (scheduler.UnloadFromNode): the engine's unload, or a stop of the engine process the worker launched; idempotent; 409 for a shard part or a held adapter, 501 when the engine cannot
 		"node_drain":            true, // POST /admin/v1/nodes/{id}/drain|undrain: a draining node gets no new request and no new shard part, in-flight finishes; the state survives heartbeats and a re-register; /readyz and the waking 503 do not count it
-		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
+		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log // stream batches carry "boot": cursor ids restart when the leader restarts
 
 		// OPOD_CARD_MIB: the card's size as the manager measured it. A budgeted
 		// vLLM or SGLang launch divides by it and asks nvidia-smi only when it

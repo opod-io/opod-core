@@ -13,6 +13,12 @@ the last section.
   and `model_not_allowed` are gone, and the spend snapshot carries only the door count and the lag bound. Limits,
   quotas and model access per key, user or team are the job of the gateway the owner runs in front of the endpoint
   (LiteLLM, for example). Request classes still shed load.
+- **Removed: the pre-request guardrail webhook.** The leader no longer reads `guardrails` from the policy snapshot,
+  calls no webhook before a chat, embeddings, rerank or Messages request or before a fallback forward, answers no
+  `403 guardrail_blocked`, writes no `guardrail.block|flag` event or audit row, and exports no
+  `opod_guardrail_action_total`. The `internal/guardrails` package is gone. Checking a prompt for PII or injection is
+  the job of the gateway in front of the leader (LiteLLM's guardrail hooks, for one). A snapshot that still carries the
+  key is read and the key ignored. Post-response guardrails were never built.
 - **A non-streamed answer reaches the client before its usage row is written.** Chat, embeddings, rerank and Messages
   answers that were not streamed used to sit in the server's buffer until the handler returned, so the caller waited
   for the usage row's SQLite insert (up to its 5 s busy timeout) — and embeddings and rerank wrote the row, and the

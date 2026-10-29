@@ -2,8 +2,8 @@ package leader
 
 // Anthropic Messages on the leader (ADR-092 §1, PLAN T19.3): the request is
 // translated to a chat request (api/anthropic.go) and served by the same path
-// as /v1/chat/completions — the plan's one model, admission, the router, the
-// guardrails, the usage row (protocol "anthropic") — and the answer is
+// as /v1/chat/completions — the plan's one model, admission, the router,
+// the usage row (protocol "anthropic") — and the answer is
 // translated back on the way out.
 
 import (
