@@ -3,7 +3,11 @@ package router
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // routeTrace is a per-request slot the router fills with the node it
@@ -15,6 +19,10 @@ import (
 type routeTrace struct {
 	mu   sync.Mutex
 	node string
+	// class is the admission class that ranked the request (critical,
+	// standard, sheddable), noted by the leader's gate only while the
+	// request's span records — read back onto the attempt span (T32.6).
+	class string
 }
 
 type traceKey struct{}
@@ -81,4 +89,45 @@ func NodeFrom(ctx context.Context) string {
 		return t.node
 	}
 	return ""
+}
+
+// NoteClass records the admission class that ranked the request, for the
+// attempt span. The leader's gate calls it only when the request is traced
+// (its span records), so an untraced request takes no lock for it. A no-op
+// when no trace is installed.
+func NoteClass(ctx context.Context, class string) {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		t.class = class
+		t.mu.Unlock()
+	}
+}
+
+func classFrom(ctx context.Context) string {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.class
+	}
+	return ""
+}
+
+// servingAttrs puts what served an attempt on its span (T32.6): the gang
+// when the target is a gang's head (its router key is shard:<model>:<gang>,
+// gangKey — the worker key is already opod.node_id), and the request's
+// admission class. Serving facts only: never a key, a user or a team.
+// Nothing is computed unless the span records, so with tracing off — or a
+// request the sampler dropped — this is one interface call.
+func servingAttrs(ctx context.Context, sp trace.Span, model, nodeID string) {
+	if !sp.IsRecording() {
+		return
+	}
+	// The model id is matched whole, never split on ':': an ollama tag
+	// (llama3.2:1b) carries one.
+	if gang, ok := strings.CutPrefix(nodeID, gangKey(model, "")); ok && gang != "" {
+		sp.SetAttributes(attribute.String("opod.gang.id", gang))
+	}
+	if c := classFrom(ctx); c != "" {
+		sp.SetAttributes(attribute.String("opod.class", c))
+	}
 }

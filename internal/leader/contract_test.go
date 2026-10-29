@@ -148,6 +148,8 @@ var contractFeatureFloor = []string{
 	"admission_kv_bound", "engine_ttft",
 	// the whole API on a second, always-plain listener (OPOD_PLAIN_LISTEN)
 	"plain_listen",
+	// OPOD_TRACE_SAMPLE_RATIO: parent-based sampling of root traces (T32.8)
+	"trace_sample_ratio",
 }
 
 // contractEngineNames is the engine half of the additive-only rule: every id

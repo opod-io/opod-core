@@ -1179,10 +1179,14 @@ http.request
 
 Per-span attributes:
 - `router.Chat` / `router.Embed`: `opod.model.requested`, `opod.fallback.chain_length`, `opod.fallback.used_at` (if fallback fired), `opod.model.served`, `opod.stream.events`
-- `router.Chat.attempt` / `router.Embed.attempt`: `opod.attempt`, `opod.model.candidate`, `opod.is_fallback`, `opod.engine`, `opod.node_id`
-- `ollama.Chat`: `opod.engine`, `opod.model`, `opod.engine.endpoint`, `opod.messages`, `http.status_code`, `opod.tokens.prompt`, `opod.tokens.completion`
+- `router.Chat.attempt` / `router.Embed.attempt`: `opod.attempt`, `opod.model.candidate`, `opod.is_fallback`, `opod.engine`, `opod.node_id` (the worker, or `shard:<model>:<gang>` for a gang), and — set only while the span records — `opod.gang.id` when the target is a gang's head and `opod.class` (the admission class that ranked the request: `critical` · `standard` · `sheddable`). Serving facts only: no key, user or team is ever put on a span. A gateway in front (LiteLLM) already emits the OTel GenAI span names for its own hop; opod's spans add only what served the request.
+- `ollama.Chat`: `opod.engine`, `opod.model`, `opod.engine.endpoint`, `opod.messages`, `http.status_code`, `opod.tokens.prompt`, `opod.tokens.completion`, and `opod.tokens.cached` when the engine reports a prefix-cache count (`usage.prompt_tokens_details.cached_tokens`; a worker passes its engine's count on in its own usage chunk)
 
-vLLM / MLX / llamacpp drivers all carry the same `<driver>.Chat` span shape via the shared `engines.StartChatSpan()` helper in `internal/engines/tracing.go`. W3C `traceparent` propagation is always on (even when export is disabled), so Opod participates correctly when sandwiched between two services that both export upstream.
+vLLM / SGLang / MLX / llamacpp / TensorRT-LLM drivers all carry the same `<driver>.Chat` span shape via the shared `engines.StartChatSpan()` helper in `internal/engines/tracing.go`. W3C `traceparent` propagation is always on (even when export is disabled), so Opod participates correctly when sandwiched between two services that both export upstream.
+
+**The trace goes on into the engine (T32.7).** Every HTTP call an engine driver makes goes through `engines.TraceTransport` — the transport of the shared OpenAI-wire client (`openaicompat`, which is also the leader's client for a worker) and of the ollama driver — so a request made under a span leaves with that span's `traceparent`. On a worker, `engines.ContinueTrace` wraps the API and makes the leader's header the parent of the request's context (a worker exports no spans of its own), so the engine behind it receives the same trace id. It is the header only: no client span, nothing per chunk; an engine started with its own OTLP exporter (vLLM `--otlp-traces-endpoint`) then joins the caller's trace.
+
+**Sampling (T32.8, feature `trace_sample_ratio`).** `OPOD_TRACE_SAMPLE_RATIO` (0–1; unset = 1, every request) is the share of the traces the leader *starts* that it records, decided by trace id (`TraceIDRatioBased`). It is parent-based: a request that arrives with a `traceparent` follows its caller's decision — a sampled parent is always kept, an unsampled one never — so a trace is never cut in the middle. A value that is not a ratio fails the start with an error that names the variable, even with no collector set. Attributes that cost anything to compute are set only when the span records, so a dropped request pays for none.
 
 ### Logs
 

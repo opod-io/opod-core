@@ -104,6 +104,7 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 		}()
 	}
 	span.SetAttributes(attribute.String("opod.hedge.winner", winner.nodeID))
+	servingAttrs(ctx, span, req.Model, winner.nodeID) // the request's class, only when traced (T32.6)
 	span.SetStatus(codes.Ok, "hedge winner")
 	// Defer winner's cleanup to a goroutine that watches the stream
 	// close. (The winning attempt's incInflight stays in effect until

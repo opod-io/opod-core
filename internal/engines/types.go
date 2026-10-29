@@ -193,4 +193,8 @@ type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	// CachedTokens is how many of the prompt tokens the engine served from
+	// its prefix cache, when it says (OpenAI usage.prompt_tokens_details.
+	// cached_tokens). 0 = none reported. Read by the driver span (T32.6).
+	CachedTokens int
 }

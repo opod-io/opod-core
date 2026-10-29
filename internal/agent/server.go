@@ -146,7 +146,10 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/v1/process/logs", s.auth(s.processLogs))
 	mux.HandleFunc("/v1/process/file", s.auth(s.fileCheck))    // HEAD: does this GGUF exist with matching sha?
 	mux.HandleFunc("/v1/process/upload", s.auth(s.fileUpload)) // POST: stream a GGUF up
-	return s.serve(ctx, listen, mux)
+	// The leader's traceparent becomes the parent of the request's context, so
+	// this worker's call to its engine carries the same trace on (T32.7). The
+	// worker exports no spans itself.
+	return s.serve(ctx, listen, engines.ContinueTrace(mux))
 }
 
 // serve listens until ctx is done, then drains (drain.go).
@@ -558,7 +561,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request, req engines.Ch
 		"choices": []map[string]any{{"index": 0, "message": map[string]any{"role": "assistant", "content": ans.Text}, "finish_reason": ans.FinishReason}},
 	}
 	if u := ans.Usage; u != nil {
-		body["usage"] = map[string]int{"prompt_tokens": u.PromptTokens, "completion_tokens": u.CompletionTokens, "total_tokens": u.TotalTokens}
+		body["usage"] = usageBody(u)
 	}
 	if engines.HasJSON(ans.KVTransfer) {
 		body["kv_transfer_params"] = ans.KVTransfer
@@ -703,11 +706,7 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 				}},
 			}
 			if ev.Usage != nil {
-				final["usage"] = map[string]int{
-					"prompt_tokens":     ev.Usage.PromptTokens,
-					"completion_tokens": ev.Usage.CompletionTokens,
-					"total_tokens":      ev.Usage.TotalTokens,
-				}
+				final["usage"] = usageBody(ev.Usage)
 			}
 			sendChunk(final)
 			_, _ = io.WriteString(w, "data: [DONE]\n\n")
@@ -1471,14 +1470,25 @@ func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, mo
 		resp["choices"].([]map[string]any)[0]["logprobs"] = lp
 	}
 	if usage != nil {
-		resp["usage"] = map[string]int{
-			"prompt_tokens":     usage.PromptTokens,
-			"completion_tokens": usage.CompletionTokens,
-			"total_tokens":      usage.TotalTokens,
-		}
+		resp["usage"] = usageBody(usage)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// usageBody is an engine's usage in the OpenAI shape the leader reads. The
+// cached count rides in prompt_tokens_details only when the engine reported
+// one, so the leader's span can say it (T32.6).
+func usageBody(u *engines.Usage) map[string]any {
+	m := map[string]any{
+		"prompt_tokens":     u.PromptTokens,
+		"completion_tokens": u.CompletionTokens,
+		"total_tokens":      u.TotalTokens,
+	}
+	if u.CachedTokens > 0 {
+		m["prompt_tokens_details"] = map[string]int{"cached_tokens": u.CachedTokens}
+	}
+	return m
 }
 
 // sleepModeArgs: a manager sets OPOD_SLEEP_MODE=1 on a worker whose plan uses

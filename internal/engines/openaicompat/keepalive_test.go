@@ -66,7 +66,11 @@ func TestTheClientRetiresAnIdleConnectionBeforeTheEngines(t *testing.T) {
 		t.Fatalf("IdleConnTimeout %s is not below the engines' %s keep-alive", IdleConnTimeout, engineKeepAlive)
 	}
 	c := NewClient("llamacpp", "http://x", nil)
-	if tr, ok := c.HTTP.Transport.(*http.Transport); !ok || tr.IdleConnTimeout != IdleConnTimeout {
+	traced, ok := c.HTTP.Transport.(*engines.TracedTransport) // the trace wrapper (T32.7) around the real transport
+	if !ok {
+		t.Fatalf("the engine client's transport is %T, want the trace wrapper", c.HTTP.Transport)
+	}
+	if tr, ok := traced.Base.(*http.Transport); !ok || tr.IdleConnTimeout != IdleConnTimeout {
 		t.Fatalf("the engine client's transport does not carry IdleConnTimeout")
 	}
 

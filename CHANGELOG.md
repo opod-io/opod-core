@@ -19,6 +19,20 @@ the last section.
   `opod_guardrail_action_total`. The `internal/guardrails` package is gone. Checking a prompt for PII or injection is
   the job of the gateway in front of the leader (LiteLLM's guardrail hooks, for one). A snapshot that still carries the
   key is read and the key ignored. Post-response guardrails were never built.
+- **A trace goes on into the engine (T32.7).** Every engine call — leader → worker and worker → engine, for vLLM,
+  SGLang, llama.cpp, MLX, TensorRT-LLM and ollama — carries the W3C `traceparent` of the request it serves, set once in
+  the drivers' shared transport (`engines.TraceTransport`); a worker reads the leader's header on the way in. Header
+  only: no client span and nothing per chunk. An engine that exports its own spans (vLLM `--otlp-traces-endpoint`)
+  now lands in the caller's trace instead of one of its own.
+- **Trace sampling (feature `trace_sample_ratio`, `OPOD_TRACE_SAMPLE_RATIO`, T32.8).** `0`–`1`, the share of the traces
+  the leader starts that it records; unset = `1`, so nothing changes. Parent-based: a request whose caller sampled it
+  (LiteLLM in front) is always recorded, one whose caller did not is never. Any other value fails the start and names
+  the variable.
+- **Attempt and driver spans say what served the request (T32.6).** `router.*.attempt` spans carry `opod.gang.id` when
+  the target is a gang's head and `opod.class` (the admission class that ranked the request); `<driver>.Chat` spans
+  carry `opod.tokens.cached` when the engine reports a prefix-cache count, which a worker now passes on in its usage
+  (`prompt_tokens_details.cached_tokens`). Serving facts only — never a key, user or team — and computed only while the
+  span records.
 - **A non-streamed answer reaches the client before its usage row is written.** Chat, embeddings, rerank and Messages
   answers that were not streamed used to sit in the server's buffer until the handler returned, so the caller waited
   for the usage row's SQLite insert (up to its 5 s busy timeout) — and embeddings and rerank wrote the row, and the
