@@ -114,7 +114,7 @@ leader publishes the aggregate instead — also unauthenticated, and carrying no
 | `doors_in_flight`, `doors_rpm_1m` | the endpoint's totals across the doors |
 | `in_flight_per_door`, `rpm_1m_per_door` | the totals divided by the doors, rounded **up** — this is what to compare against a per-door target |
 | `live_for_s` | how long a silent door still counts (deliberately longer than the 10 s rebalance, so one missed push does not make every other door overshoot) |
-| `spend_lag_bound_s` | how far a per-key daily quota may lag across doors |
+| `spend_lag_bound_s` | how old a door's view of the door count may be (one spend poll) |
 | `gateways` | the doors the leader has heard from, by name, with their age — which is how a door that stopped pushing is visible at all |
 
 On a **door**, the same path answers that door's own view: how stale its mirrored worker registry is

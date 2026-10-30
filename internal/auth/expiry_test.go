@@ -23,13 +23,10 @@ func (f *fakeKeyStore) GetByHash(_ context.Context, h string) (*store.APIKey, er
 	}
 	return nil, nil
 }
-func (f *fakeKeyStore) GetByID(context.Context, string) (*store.APIKey, error)      { return f.key, nil }
-func (f *fakeKeyStore) List(context.Context) ([]store.APIKey, error)                { return nil, nil }
-func (f *fakeKeyStore) Revoke(context.Context, string) error                        { return nil }
-func (f *fakeKeyStore) UpdateAllowedModels(context.Context, string, []string) error { return nil }
-func (f *fakeKeyStore) UpdateRateLimits(context.Context, string, int, int) error    { return nil }
-func (f *fakeKeyStore) UpdateExpiresAt(context.Context, string, time.Time) error    { return nil }
-func (f *fakeKeyStore) UpdateDailyQuota(context.Context, string, int64) error       { return nil }
+func (f *fakeKeyStore) GetByID(context.Context, string) (*store.APIKey, error)   { return f.key, nil }
+func (f *fakeKeyStore) List(context.Context) ([]store.APIKey, error)             { return nil, nil }
+func (f *fakeKeyStore) Revoke(context.Context, string) error                     { return nil }
+func (f *fakeKeyStore) UpdateExpiresAt(context.Context, string, time.Time) error { return nil }
 
 func TestMiddleware_ExpiredKeyReturns401KeyExpired(t *testing.T) {
 	expired := &store.APIKey{
