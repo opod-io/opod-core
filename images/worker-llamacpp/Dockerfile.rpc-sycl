@@ -96,8 +96,19 @@ LABEL io.opod.llamacpp.rpc="true"
 
 # rpc-server wrapper: run from /opt/llama-rpc so only OUR ggml backends are
 # discoverable; PREPEND our libs, then fall through to the base's oneAPI.
+#
+# GGML_SYCL_ENABLE_OPT=0: the SYCL backend's "reorder" optimisation (on by
+# default) hangs backend data off every Q4_0/Q8_0/Q3_K-Q6_K tensor
+# (tensor->extra), and ggml's RPC server refuses any such tensor ("tensor->extra
+# populated by the backend, this is currently unsupported"). The coordinator then
+# aborts loading with "Remote RPC server crashed or returned malformed response",
+# so no Intel gang of a k-quant GGUF ever formed (two Arc A770s, 2026-10-28,
+# PLAN T31.9). Off in the rpc-server only — every part, the head's own part
+# included — whose tensors all cross the wire; llama-server's local backend
+# keeps it. The cost is the reorder speed-up on gang parts. An operator's own
+# value of the variable wins.
 RUN set -eux; \
-    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
+    printf '#!/bin/sh\ncd /opt/llama-rpc\nexport LD_LIBRARY_PATH=/opt/llama-rpc:${LD_LIBRARY_PATH}\nexport GGML_SYCL_ENABLE_OPT=${GGML_SYCL_ENABLE_OPT:-0}\nexec /opt/llama-rpc/ggml-rpc-server "$@"\n' \
       > /usr/local/bin/rpc-server; \
     chmod +x /usr/local/bin/rpc-server
 

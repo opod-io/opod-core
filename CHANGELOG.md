@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **An Intel (SYCL) llama.cpp gang forms.** The SYCL backend's reorder optimisation attaches backend data to every
+  Q4_0/Q8_0/Q3_K–Q6_K tensor, and ggml's RPC server refuses such a tensor, so the coordinator aborted loading with
+  "Remote RPC server crashed or returned malformed response" and no Intel gang of a k-quant GGUF ever formed. The
+  Intel image's `rpc-server` now starts with `GGML_SYCL_ENABLE_OPT=0` (an operator's own value wins); llama-server's
+  local backend keeps the optimisation. Proven on two Arc A770 nodes.
 - **A stopping worker drains (feature `worker_drain`, `OPOD_DRAIN_SECONDS`).** On SIGTERM it says goodbye at once, so
   no new request reaches it, lets the requests already running on it finish, and stops its engine when nothing is in
   flight or the bound passes, whichever is first. A gang member waits while a peer still holds a connection to it (the
