@@ -8,6 +8,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -168,4 +169,14 @@ func overrideAuditMetaWithReq(ctx context.Context, keyID string, o router.Overri
 // can't inject extra JSON into the audit metadata.
 func kv(k, v string) string {
 	return jsonQuote(k) + ":" + jsonQuote(v)
+}
+
+// jsonQuote escapes s as a JSON string through json.Marshal, so quotes and
+// newlines come out right.
+func jsonQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
 }

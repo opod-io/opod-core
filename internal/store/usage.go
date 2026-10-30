@@ -22,18 +22,6 @@ func (s *sqliteUsage) Record(ctx context.Context, u Usage) error {
 	return err
 }
 
-func (s *sqliteUsage) SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error) {
-	var sum sql.NullInt64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)
-		 FROM usage WHERE api_key_id = ? AND ts >= ?`,
-		apiKeyID, since.Unix()).Scan(&sum)
-	if err != nil {
-		return 0, err
-	}
-	return sum.Int64, nil
-}
-
 func (s *sqliteUsage) LastUsedByModel(ctx context.Context) (map[string]time.Time, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT model, MAX(ts) FROM usage GROUP BY model`)

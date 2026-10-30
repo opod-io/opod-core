@@ -6,9 +6,9 @@ package gateway
 //
 // The snapshot used to carry each key's daily quota and rate limit, which a door
 // enforced from it (a 1/N share per door, eventually consistent within the
-// published bound). Per-key quotas and rate limits left core on 2026-09-28
-// (ADR-077): they belong to the application layer in front of an endpoint. What
-// remains is the door count and the lag bound.
+// published bound). Per-key quotas and rate limits left core (ADR-077, and
+// again ADR-112 after T19.17 brought them back): they are the owner's gateway's
+// job in front of an endpoint. What remains is the door count and the lag bound.
 //
 // Fail-static: a door that cannot reach the leader keeps the last snapshot it
 // has, and says how old it is.
@@ -31,13 +31,6 @@ type Snapshot struct {
 	TS         int64 `json:"ts"`
 	Doors      int   `json:"doors"`
 	LagBoundMS int   `json:"lag_bound_ms"`
-	// Fronts is every replica serving keyed traffic — the doors and the
-	// leader — the divisor of a key's per-minute limit (T19.17).
-	Fronts int `json:"fronts"`
-	// Day and Keys are each quota'd key's tokens that UTC day as the leader
-	// counts them (T19.17), every door's pushed rows included.
-	Day  string           `json:"day,omitempty"`
-	Keys map[string]int64 `json:"key_tokens_today,omitempty"`
 }
 
 // Spend polls the snapshot and keeps the last good one.
@@ -47,24 +40,18 @@ type Spend struct {
 	http      *http.Client
 	now       func() time.Time
 
-	mu       sync.RWMutex
-	snap     Snapshot
-	at       time.Time
-	lastErr  string
-	localUse map[string]int64 // key → tokens this door has spent since the last snapshot
-	// OnSnapshot is called with each snapshot taken (T19.17: the door's
-	// per-key counts restart from the leader's).
-	OnSnapshot func(Snapshot)
+	mu      sync.RWMutex
+	snap    Snapshot
+	at      time.Time
+	lastErr string
 }
 
 func NewSpend(leaderURL, token string) *Spend {
 	return &Spend{leaderURL: leaderURL, token: token, now: time.Now,
-		http: &http.Client{Timeout: 10 * time.Second}, localUse: map[string]int64{}}
+		http: &http.Client{Timeout: 10 * time.Second}}
 }
 
-// Poll refreshes the snapshot. On success this door's local tally resets: the
-// leader's number now includes everything it has pushed and been credited for,
-// and keeping the local count on top would double it.
+// Poll refreshes the snapshot.
 func (s *Spend) Poll(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.leaderURL+"/admin/v1/spend", nil)
 	if err != nil {
@@ -92,12 +79,7 @@ func (s *Spend) Poll(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.snap, s.at, s.lastErr = snap, s.now(), ""
-	s.localUse = map[string]int64{}
-	on := s.OnSnapshot
 	s.mu.Unlock()
-	if on != nil {
-		on(snap)
-	}
 	return nil
 }
 
@@ -111,14 +93,6 @@ func (s *Spend) Age() (age time.Duration, bound time.Duration, doors int, lastEr
 		return 0, time.Duration(s.snap.LagBoundMS) * time.Millisecond, s.snap.Doors, s.lastErr
 	}
 	return s.now().Sub(s.at), time.Duration(s.snap.LagBoundMS) * time.Millisecond, s.snap.Doors, s.lastErr
-}
-
-// Fronts is the held snapshot's count of replicas serving keyed traffic; 0
-// before the first successful poll.
-func (s *Spend) Fronts() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.snap.Fronts
 }
 
 // Run polls every SpendPollEvery until ctx is done.

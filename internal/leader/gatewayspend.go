@@ -151,14 +151,6 @@ func (g *gatewayFront) doors(now time.Time) (n int, names []string) {
 	return len(names), names
 }
 
-// fronts is every replica serving keyed traffic: the live doors plus the
-// leader's own front. Unlike doors() it counts the leader whether or not a
-// door exists, because a key's limit is shared by everything that admits it.
-func (g *gatewayFront) fronts(now time.Time) int {
-	_, names := g.doors(now)
-	return len(names) + 1
-}
-
 // seenDoors is every door the leader has EVER heard from with the age of its
 // last push, live or not. doors() deliberately hides a door that went quiet
 // (a share of 1/N must not count a dead door); this is where it is still
@@ -255,13 +247,7 @@ func (s *Server) pushUsage(w http.ResponseWriter, r *http.Request) {
 			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
 			LatencyMS: row.LatencyMS, TTFTMS: row.TTFTMS, Outcome: row.Outcome, NodeID: row.NodeID,
 		}
-		err := s.store.Usage().Record(r.Context(), u)
-		if err == nil && s.keyLimits != nil {
-			// A door's tokens count toward the key's day here, the one place
-			// that sees every replica's answers (T19.17).
-			s.keyLimits.record(u.APIKeyID, int64(u.PromptTokens+u.CompletionTokens), u.TS)
-		}
-		if err != nil {
+		if err := s.store.Usage().Record(r.Context(), u); err != nil {
 			// Partial success is reported, not hidden: the gateway retries the
 			// rest, and the rows already written are deduplicated on the retry.
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -284,29 +270,14 @@ type spendSnapshot struct {
 	Gateways []string `json:"gateways,omitempty"`
 	// LagBoundMS is published, not implied (ADR-063).
 	LagBoundMS int `json:"lag_bound_ms"`
-	// Fronts is every replica that serves keyed traffic: the doors heard from
-	// plus the leader, which serves /v1 itself and sits behind the endpoint's
-	// front Service with them. It divides a key's per-minute limit (T19.17);
-	// Doors stays the gateways alone, the unit their scaler counts.
-	Fronts int `json:"fronts"`
-	// Day and Keys are each quota'd key's tokens on that UTC day as the leader
-	// counts them (T19.17): a door adds its own tokens since this poll.
-	Day  string           `json:"day,omitempty"`
-	Keys map[string]int64 `json:"key_tokens_today,omitempty"`
 }
 
-// spend serves the snapshot every gateway polls: what has been spent per key,
-// the ceilings, and this door's share of them.
+// spend serves the snapshot every gateway polls: who the doors are, and the
+// lag bound the poll publishes. It carried per-key ceilings and day counts
+// twice (before ADR-077, and T19.17 until ADR-112); per-key limits are the
+// owner's gateway's job in front of the endpoint.
 func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
-	// The snapshot used to carry every key's ceilings and this door's share of
-	// them. The per-key policy left core (ADR-077 §5, 2026-09-28); what stays is
-	// what the doors and the leader still need from each other — who the doors
-	// are, and the lag bound the poll publishes.
 	now := time.Now()
 	doors, names := s.gateways.doors(now)
-	snap := spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS, Fronts: len(names) + 1}
-	if s.keyLimits != nil {
-		snap.Day, snap.Keys = s.keyLimits.todayByKey()
-	}
-	writeJSON(w, http.StatusOK, snap)
+	writeJSON(w, http.StatusOK, spendSnapshot{TS: now.Unix(), Doors: doors, Gateways: names, LagBoundMS: spendLagBoundMS})
 }

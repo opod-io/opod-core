@@ -263,4 +263,10 @@ func (s *Server) callWorkerSleep(ctx context.Context, n *store.Node, action stri
 	return resp.StatusCode, body, nil
 }
 
-func (s *Server) workerHTTP() *http.Client { return &http.Client{Timeout: 2 * time.Minute} }
+// workerHTTP is the client for the leader's own calls to a worker: sleep and
+// resume, and the pre-route tokenize. It carries the request's trace on
+// (engines.TraceTransport, T32.42), so a wake or a tokenize made for a traced
+// chat is a hop of that chat's trace, as the chat itself is.
+func (s *Server) workerHTTP() *http.Client { return workerClient }
+
+var workerClient = &http.Client{Timeout: 2 * time.Minute, Transport: engines.TraceTransport(nil)}

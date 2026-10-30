@@ -108,6 +108,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attribute.String("opod.engine", eng.Name()),
 			attribute.String("opod.node_id", nodeID),
 		)
+		servingAttrs(attemptCtx, attemptSpan, candidate, nodeID) // gang and class, only when traced (T32.6)
 		// pick() matched placements by CATALOG id. Now translate to the name the
 		// chosen engine actually serves under, at DISPATCH. The resolver is engine-
 		// aware: for ollama-native models it returns the native tag (e.g.

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/agent"
+	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/store"
 )
@@ -158,12 +159,14 @@ func New(st store.Store, sup *agent.Supervisor, log *slog.Logger, modelsDir stri
 	if log == nil {
 		log = slog.Default()
 	}
+	// Both clients carry the caller's trace on (T32.42): a load, an unload or
+	// a process call made under an admin request's span joins its trace.
 	return &Orchestrator{
 		Store:       st,
 		Supervisor:  sup,
 		Log:         log,
-		HTTP:        &http.Client{Timeout: 60 * time.Second},
-		WeightsHTTP: &http.Client{Timeout: 6 * time.Hour},
+		HTTP:        &http.Client{Timeout: 60 * time.Second, Transport: engines.TraceTransport(nil)},
+		WeightsHTTP: &http.Client{Timeout: 6 * time.Hour, Transport: engines.TraceTransport(nil)},
 		ModelsDir:   modelsDir,
 	}
 }

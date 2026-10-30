@@ -21,10 +21,12 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Fixture describes one driver under test.
@@ -82,7 +84,13 @@ func Run(t *testing.T, f Fixture) {
 		t.Errorf("descriptor %q has no StartHint", desc.Name)
 	}
 
-	srv := httptest.NewServer(f.Backend)
+	// Every request the driver sends is seen here first: the traceparent it
+	// carried (T32.7), then the fixture's own backend answers it.
+	var seenTrace atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenTrace.Store(r.Header.Get("traceparent"))
+		f.Backend.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	// Trailing slash on purpose: drivers must normalise the endpoint.
 	eng, err := engines.NewWithAuth(f.Name, srv.URL+"/", "test-key")
@@ -174,6 +182,10 @@ func Run(t *testing.T, f Fixture) {
 			}
 		}
 	})
+
+	// T32.7: a chat made under a traced request carries its trace into the
+	// engine — the W3C header only, so the engine's own spans join the trace.
+	t.Run("chat/traceparent", func(t *testing.T) { assertTraceparent(t, eng, model, &seenTrace) })
 
 	t.Run("chat/cancelled-context", func(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
@@ -385,6 +397,28 @@ func OpenAIBackend(models, deltas []string, usage engines.Usage) http.Handler {
 		})
 	})
 	return mux
+}
+
+// assertTraceparent: a chat made under a traced request reaches the engine
+// with that trace's W3C header (seen records what the fake engine received).
+func assertTraceparent(t *testing.T, eng engines.Engine, model string, seen *atomic.Value) {
+	t.Helper()
+	tid, _ := trace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	sid, _ := trace.SpanIDFromHex("00f067aa0ba902b7")
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: tid, SpanID: sid, TraceFlags: trace.FlagsSampled}))
+	seen.Store("")
+	ch, err := eng.Chat(ctx, engines.ChatRequest{
+		Model: model, Messages: []engines.Message{{Role: "user", Content: "hi"}}, Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	drain(t, ch)
+	got, _ := seen.Load().(string)
+	if !strings.HasPrefix(got, "00-"+tid.String()+"-") {
+		t.Fatalf("the engine saw traceparent %q, want one of trace %s", got, tid)
+	}
 }
 
 // assertRerankClaim checks only the claim: a driver that says it reranks and

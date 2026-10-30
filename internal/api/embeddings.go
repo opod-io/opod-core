@@ -63,15 +63,6 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-call guardrails see the embedding input text too. Applied
-	// before the cache lookup so a rewrite (e.g. PII masking) drives the
-	// cache key and a blocked request can't be served from cache.
-	body, ok := h.applyPreCallGuardrails(r.Context(), w, body)
-	if !ok {
-		// Guardrail blocked the request; response already written.
-		return
-	}
-
 	// Cache lookup: embeddings are deterministic for fixed
 	// (model, input), so this is the highest-ROI cache path. Skipped
 	// when Cache-Control: no-cache / no-store is set, or when the
@@ -180,26 +171,30 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Record the call so quota + audit + cost analytics all see it.
+	// The call's usage, recorded below once the answer is delivered.
 	var u *engines.Usage
 	if res.Usage != nil {
 		u = &engines.Usage{PromptTokens: res.Usage.PromptTokens, TotalTokens: res.Usage.TotalTokens}
 	}
-	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
-
 	encoded, err := json.Marshal(out)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "encode_error", err.Error())
+		h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "error")
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Opod-Cache", "miss")
+	_, _ = w.Write(encoded)
+	deliver(w)
+
+	// Only once the client has its answer: the cache may be a network store and
+	// the usage row is a SQLite insert, and neither is the caller's to wait for.
 	if h.Policy().Cache != nil {
 		if key, ok := embeddingCacheKeyFrom(r.Context()); ok {
 			h.Policy().Cache.Set(r.Context(), key, encoded, 0) // use driver default TTL
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Opod-Cache", "miss")
-	_, _ = w.Write(encoded)
+	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
 }
 
 // cacheBypass honors RFC-7234 Cache-Control directives for opt-out.

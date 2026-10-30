@@ -1,6 +1,6 @@
 # Opod Architecture
 
-> Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs and guardrail implementations moved to the control plane; this document describes what remains. The stable manager surface is listed at the end.
+> Scope note (ADR-022, 2026-09-06): core is the CLI-only inference runtime. The dashboard, invites, vendor egress, routing chains, callbacks, budgets, usage/audit query APIs moved to the control plane, and guardrails left opod altogether (2026-10-28: prompt checks are the job of the gateway in front of the leader); this document describes what remains. The stable manager surface is listed at the end.
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For what shipped when, see [CHANGELOG.md](CHANGELOG.md); for what this project deliberately will not do, see the README's [Deliberately out of scope](README.md#deliberately-out-of-scope).
 
@@ -66,7 +66,7 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
                        ▼  one endpoint, one key
    ┌──────────────────────────────────────────────────┐
    │  GATEWAY (leader)                                │
-   │  OpenAI-compatible · auth · quotas               │
+   │  OpenAI-compatible · auth · request classes      │
    └────────────────────┬─────────────────────────────┘
                         │
    ┌────────────────────▼─────────────────────────────┐
@@ -110,7 +110,7 @@ One binary, seven modes determined by subcommand (and by `--role` on `opod up`):
 | Mode | What runs in-process |
 |---|---|
 | `opod up` | **Leader**: HTTP gateway · Router · Control plane (`/admin/v1`) · embedded SQLite · local engine adapter. No UI: `/` answers 404 (ADR-022) |
-| `opod up --role gateway --leader <url>` | **Gateway (front door)**: the same HTTP gateway and Router, and nothing else. No `/admin/v1`, no join surface, no engine of its own: the worker registry, the join tokens, the gang calls and the plan revision belong to exactly ONE process. Its worker list (nodes, placements, gang parts) is mirrored from the leader every 10 s and a stale list keeps workers but adopts none; its usage rows are pushed to the leader — the single writer — and deduplicated there by a row id the door mints; every 10 s it polls a spend snapshot back (`GET /admin/v1/spend`: the doors the leader has heard from and the published lag bound, 10 s, also on `/gatewayz`) — and, for each key with a daily quota, the leader's count of its tokens that UTC day (`day`, `key_tokens_today`), which the door adds its own tokens to between polls (per-key limits, below). Serves the probes (`/healthz`, `/readyz`, `/loadz`, `/metrics`) plus `/gatewayz`, which is its staleness and backlog. Every push doubles as a heartbeat carrying the door's own load, so an idle door still counts as a door and the LEADER's `/gatewayz` can publish the endpoint's total across doors — the only aggregate a scaler for the doors can honestly read, since keep-alive pins a client to one door |
+| `opod up --role gateway --leader <url>` | **Gateway (front door)**: the same HTTP gateway and Router, and nothing else. No `/admin/v1`, no join surface, no engine of its own: the worker registry, the join tokens, the gang calls and the plan revision belong to exactly ONE process. Its worker list (nodes, placements, gang parts) is mirrored from the leader every 10 s and a stale list keeps workers but adopts none; its usage rows are pushed to the leader — the single writer — and deduplicated there by a row id the door mints; every 10 s it polls a spend snapshot back (`GET /admin/v1/spend`: the doors the leader has heard from and the published lag bound, 10 s, also on `/gatewayz`). A door holds no per-key limit (No per-key limits, below). Serves the probes (`/healthz`, `/readyz`, `/loadz`, `/metrics`) plus `/gatewayz`, which is its staleness and backlog. Every push doubles as a heartbeat carrying the door's own load, so an idle door still counts as a door and the LEADER's `/gatewayz` can publish the endpoint's total across doors — the only aggregate a scaler for the doors can honestly read, since keep-alive pins a client to one door |
 | `opod up --role door --routes <file>` | **Door (one URL for many endpoints, ADR-087)**: an HTTP surface and a watched routes file (`adminapi.DoorRoutes`), nothing else — no store, no engine, no catalog, no key, no Router. Reads each request's `model`, looks the alias up and forwards the request to that endpoint through the stdlib reverse proxy, headers and body as sent (`Authorization` included; the one change is `model`, rewritten to the route's `model` when it differs from the alias, because a leader routes by its own model id) and every stream chunk flushed as it arrives. Chooses no worker: there is still one router per endpoint, its leader. A name route retries nothing and falls back to nothing. An **auto route** (ADR-092 §8, `doorauto.go`) is a name the owner maps to an ordered `candidates` list: `pick` `first` (the owner's order) or `least-loaded` (each candidate's `/loadz`, in-flight plus queued per serving worker, cached 2 s; no serving worker or no answer → last); the door tries the next candidate up to `maxHops` (default 1) on 429, any 5xx (a status line precedes the first token, so a started stream is never retried), a context-length refusal or no answer, and a request carrying `tools` skips a candidate without `tools`. Every answer carries `X-Opod-Endpoint` (the endpoint that served); that endpoint's leader records the usage. The endpoint's leader verifies the caller's key, so a key for A sent with B's model is refused by B. `GET /v1/models` asks every endpoint with the caller's key and lists the aliases answered 200, cached 10 s per SHA-256 of the key. Unknown / empty model, or `auto` with no auto route of that name → `404 model_not_found`; an unreachable endpoint → `502 upstream_unavailable` for that model only. Body caps are the leader's per route. An https upstream is trusted through the route's `ca` PEM only. Serves `/healthz`, `/readyz` (ready once a routes file has been read) and `/gatewayz` (`role: door`, routes revision and age) |
 | `opod join "<url>?token=…"` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `opod <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
@@ -664,7 +664,8 @@ shards              (id, model_id, gang_id, role, node_id, address, process_id, 
                      created_at, last_seen)
 api_keys            (id, hash, name, scope, user_id, expires_at, created_at, revoked;
                      quota_daily_tokens, rpm_limit, tpm_limit, allowed_models left on 2026-09-28
-                     and are dropped from an older database at open — `runColumnDrops`)
+                     and are dropped from an older database at open — `runColumnDrops`; the limits a
+                     manager delivered later were memory only, and left too)
 usage               (id, ts, api_key_id, user_id, model, protocol, prompt_tokens, completion_tokens,
                      latency_ms, outcome, cost_usd, node_id, ttft_ms)
 event_log           (id, ts, type, subject, data)
@@ -709,11 +710,11 @@ A GGUF is one file (`opod fetch <repo> <file>`). A safetensors model is a direct
 
 Rerank and Anthropic Messages. Anthropic Messages, audio and rerank adapters left core on 2026-09-07 (ADR-022 step 4); `/v1/rerank` came back on 2026-10-06 (ADR-084, amending ADR-022) — one non-streaming POST the engines already serve, where the engine is a scorer and the gateway orders, truncates to `top_n` and attaches the text.
 
-Anthropic Messages came back on 2026-10-19 (ADR-092 §1, `internal/api/anthropic.go`, `internal/leader/anthropic.go`) as a translator, not an engine path: `POST /v1/messages` becomes a chat request — `system`, text and base64 image blocks, `tool_use` / `tool_result`, `tools`, `tool_choice`, `stop_sequences`, `max_tokens`, `temperature`, `top_p`, `top_k` — and rides the chat route's admission, router, guardrails and usage row (protocol `anthropic`). The answer is rewritten on the way out: an aggregated answer into a Message, a stream into Anthropic's events as each chunk arrives, an error into Anthropic's envelope. `/v1/messages/count_tokens` serves the prompt as a one-token generation and answers the engine's own `prompt_tokens`, so it is exact on every engine and counts as a request. Extended thinking, server tools, documents, image URLs, `mcp_servers`, `container` and unknown fields are refused 400 before admission. Audio stays out.
+Anthropic Messages came back on 2026-10-19 (ADR-092 §1, `internal/api/anthropic.go`, `internal/leader/anthropic.go`) as a translator, not an engine path: `POST /v1/messages` becomes a chat request — `system`, text and base64 image blocks, `tool_use` / `tool_result`, `tools`, `tool_choice`, `stop_sequences`, `max_tokens`, `temperature`, `top_p`, `top_k` — and rides the chat route's admission, router and usage row (protocol `anthropic`). The answer is rewritten on the way out: an aggregated answer into a Message, a stream into Anthropic's events as each chunk arrives, an error into Anthropic's envelope. `/v1/messages/count_tokens` serves the prompt as a one-token generation and answers the engine's own `prompt_tokens`, so it is exact on every engine and counts as a request. Extended thinking, server tools, documents, image URLs, `mcp_servers`, `container` and unknown fields are refused 400 before admission. Audio stays out.
 
 A Vertex AI custom container (2026-10-19, ADR-092 §1, `internal/leader/vertex.go`) is a switch, `OPOD_VERTEX=1`: the leader also serves `POST $AIP_PREDICT_ROUTE` (default `/v1/vertex:predict`) and `GET $AIP_HEALTH_ROUTE` (default `/v1/vertex/health`), the two routes Vertex sends to a container it runs (on `AIP_HTTP_PORT`, 8080 by default, which is the leader's listener). `{"instances": […], "parameters": {…}}` runs each instance as a chat request — `parameters` fill the keys it leaves out — in parallel through the chat route, so admission bounds them, and answers `{"predictions": […]}`, each the chat answer; one failed instance fails the request, naming it in `X-Opod-Vertex-Instance`. A body without `instances` is rawPredict: a chat body passed through, streamed when it asks. Vertex's IAM authenticates the caller first, so these routes take no key; usage rows say protocol `vertex`. Refused 400: a Gemini `contents` body, empty or non-array `instances`, an instance without `messages` or with `stream: true`, more than 16 instances. To run on Vertex, deploy one image that starts a leader with `OPOD_VERTEX=1` and its worker in the same container (`opod up` then `opod join http://127.0.0.1:8080`); nothing in opod deploys to Vertex itself.
 
-Vertex's gRPC `PredictionService` (2026-10-19, T19.5, `internal/leader/grpcvertex.go`) is served on the same port: the listener speaks HTTP/2 beside HTTP/1.1 (h2 by ALPN under TLS, h2c in the clear), and `/google.cloud.aiplatform.v1.PredictionService/*` is grpc-go mounted as a handler with a bytes codec and one generic method handler — no generated Vertex code. `ChatCompletions` and `StreamRawPredict` stream and `RawPredict` answers once; each carries OpenAI JSON in a `google.api.HttpBody`, so a call is re-framed into an internal `POST /v1/chat/completions` served by the leader's own router: keys (the call's `authorization` / `x-api-key` metadata), per-key limits, the stale-auth gate, `/loadz` and the usage row (protocol `grpc-vertex`) are the chat route's. The answer goes back as one JSON `HttpBody`, or one SSE event per `HttpBody`; an HTTP error is its gRPC status (401 Unauthenticated, 429 ResourceExhausted, 503 Unavailable, …). `Predict`, `Explain`, `GenerateContent` and every other method are `Unimplemented`; vLLM's own engine gRPC is not used (engines stay on HTTP).
+Vertex's gRPC `PredictionService` (2026-10-19, T19.5, `internal/leader/grpcvertex.go`) is served on the same port: the listener speaks HTTP/2 beside HTTP/1.1 (h2 by ALPN under TLS, h2c in the clear), and `/google.cloud.aiplatform.v1.PredictionService/*` is grpc-go mounted as a handler with a bytes codec and one generic method handler — no generated Vertex code. `ChatCompletions` and `StreamRawPredict` stream and `RawPredict` answers once; each carries OpenAI JSON in a `google.api.HttpBody`, so a call is re-framed into an internal `POST /v1/chat/completions` served by the leader's own router: keys (the call's `authorization` / `x-api-key` metadata), the stale-auth gate, `/loadz` and the usage row (protocol `grpc-vertex`) are the chat route's. The answer goes back as one JSON `HttpBody`, or one SSE event per `HttpBody`; an HTTP error is its gRPC status (401 Unauthenticated, 429 ResourceExhausted, 503 Unavailable, …). `Predict`, `Explain`, `GenerateContent` and every other method are `Unimplemented`; vLLM's own engine gRPC is not used (engines stay on HTTP).
 
 ### Internal request shape
 
@@ -1094,15 +1095,12 @@ Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `fil
 - Stored as sha256 hashes — only the hex digest is persisted, never the plaintext
 - Scopes: `user`, `admin`, `node` — exactly one scope per key
 - Per-key controls: optional expiry (`--ttl` / `--expires-at`). A key minted with `opod token create` carries no limits.
-- **Per-key limits from a manager** (contract feature `key_limits`): a key delivered in the auth snapshot may carry
-  `rpmLimit`, `tpmLimit`, `quotaDailyTokens` and `allowedModels`. They are enforced from memory and nothing else
-  (`internal/leader/keylimits.go`) — the first version, removed on 2026-09-28, ran a SUM over the usage table before
-  every request. Requests and tokens per minute are token buckets per key; each replica that serves keyed traffic
-  (the leader and every gateway) takes `limit ÷ fronts`, the doors heard from plus the leader. The daily quota is a counter per key and UTC day: the leader
-  counts its own answers and its doors' pushed rows on top of a base taken once when the quota reaches the pod — the
-  larger of one store read and the manager's `spentToday` — and publishes the count in the spend snapshot; a door adds its own tokens to the count it
-  last polled. Over a limit the answer is 429 with Retry-After (`rate_limit_rpm` | `rate_limit_tpm` | `quota_daily`);
-  a model off the allowlist is 403 `model_not_allowed` and is left out of `GET /v1/models`. Each refusal is a usage row
+- **No per-key limits.** A key — minted with `opod token create` or delivered in a manager's auth snapshot — is an
+  identity: who is calling, with which scope and class, until when. Requests and tokens per minute, quotas and model
+  access per key, user or team are the job of the gateway the owner runs in front of an endpoint (LiteLLM, for
+  example). Core enforced them twice (before 2026-09-28, and `key_limits` from 2026-10-17) and both times they left:
+  a serving runtime that limits only by key cannot limit by user or team, and a gateway does both. Overload is
+  handled by request classes (`admission_classes`).
 - Revocable at any time
 
 ### Key scopes
@@ -1154,7 +1152,6 @@ Router subsystem:
 Cache and hooks:
 
 - `opod_cache_hits_total{path}` / `opod_cache_misses_total{path}` — the response cache, per endpoint path.
-- `opod_guardrail_action_total{name,action}` — a policy-file guardrail's verdicts (`allow|block|rewrite|flag`).
 - `opod_callback_sent_total` / `opod_callback_queue_depth` are **declared but never incremented** — the
   callback sinks left with ADR-022 and the declarations are the last thing to remove. Do not build a panel
   on them.
@@ -1182,10 +1179,14 @@ http.request
 
 Per-span attributes:
 - `router.Chat` / `router.Embed`: `opod.model.requested`, `opod.fallback.chain_length`, `opod.fallback.used_at` (if fallback fired), `opod.model.served`, `opod.stream.events`
-- `router.Chat.attempt` / `router.Embed.attempt`: `opod.attempt`, `opod.model.candidate`, `opod.is_fallback`, `opod.engine`, `opod.node_id`
-- `ollama.Chat`: `opod.engine`, `opod.model`, `opod.engine.endpoint`, `opod.messages`, `http.status_code`, `opod.tokens.prompt`, `opod.tokens.completion`
+- `router.Chat.attempt` / `router.Embed.attempt`: `opod.attempt`, `opod.model.candidate`, `opod.is_fallback`, `opod.engine`, `opod.node_id` (the worker; for a gang, the worker that heads it — the usage row still counts a gang request under `shard:<model>:<gang>`), and — set only while the span records — `opod.gang.id` when the target is a gang's head and `opod.class` (the admission class that ranked the request: `critical` · `standard` · `sheddable`). Serving facts only: no key, user or team is ever put on a span. A gateway in front (LiteLLM) already emits the OTel GenAI span names for its own hop; opod's spans add only what served the request.
+- `ollama.Chat`: `opod.engine`, `opod.model`, `opod.engine.endpoint`, `opod.messages`, `http.status_code`, `opod.tokens.prompt`, `opod.tokens.completion`, and `opod.tokens.cached` when the engine reports a prefix-cache count (`usage.prompt_tokens_details.cached_tokens`; a worker passes its engine's count on in its own usage chunk)
 
-vLLM / MLX / llamacpp drivers all carry the same `<driver>.Chat` span shape via the shared `engines.StartChatSpan()` helper in `internal/engines/tracing.go`. W3C `traceparent` propagation is always on (even when export is disabled), so Opod participates correctly when sandwiched between two services that both export upstream.
+vLLM / SGLang / MLX / llamacpp / TensorRT-LLM drivers all carry the same `<driver>.Chat` span shape via the shared `engines.StartChatSpan()` helper in `internal/engines/tracing.go`. W3C `traceparent` propagation is always on (even when export is disabled), so Opod participates correctly when sandwiched between two services that both export upstream.
+
+**The trace goes on into the engine (T32.7).** Every HTTP call an engine driver makes goes through `engines.TraceTransport` — the transport of the shared OpenAI-wire client (`openaicompat`, which is also the leader's client for a worker) and of the ollama driver — so a request made under a span leaves with that span's `traceparent`. On a worker, `engines.ContinueTrace` wraps the API and makes the leader's header the parent of the request's context (a worker exports no spans of its own), so the engine behind it receives the same trace id. It is the header only: no client span, nothing per chunk; an engine started with its own OTLP exporter (vLLM `--otlp-traces-endpoint`) then joins the caller's trace. The leader's own calls carry it the same way (T32.42): a model load or unload and a process call (the orchestrator's two clients), a worker's sleep or resume and the pre-route tokenize (`workerHTTP`), and the external fallback forward. A door (`--role door`) starts no span: its reverse proxy passes the caller's `traceparent` to the endpoint untouched, so the leader behind it continues the caller's trace.
+
+**Sampling (T32.8, feature `trace_sample_ratio`).** `OPOD_TRACE_SAMPLE_RATIO` (0–1; unset = 1, every request) is the share of the traces the leader *starts* that it records, decided by trace id (`TraceIDRatioBased`). It is parent-based: a request that arrives with a `traceparent` follows its caller's decision — a sampled parent is always kept, an unsampled one never — so a trace is never cut in the middle. A value that is not a ratio fails the start with an error that names the variable, even with no collector set. Attributes that cost anything to compute are set only when the span records, so a dropped request pays for none.
 
 ### Logs
 
@@ -1311,7 +1312,7 @@ opod/
 │   ├── leader/                # leader HTTP server + admin API + middlewares + plan/auth/policy watchers + the door role (doorrole.go, doorauto.go)
 │   ├── gateway/               # the front-door role (`--role gateway`): registry mirror, usage push, spend poll
 │   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
-│   ├── api/                   # the OpenAI protocol adapter + request overrides, usage recording, guardrail hook
+│   ├── api/                   # the OpenAI protocol adapter + request overrides, usage recording
 │   ├── router/                # model → node dispatch, load-aware pick, gangs, revisions, sticky, hedge
 │   ├── scheduler/             # gang orchestration (rpc / ray / sglang) + llama-server bootstrap + GGUF distribute + model move
 │   ├── mesh/                  # mesh.go — LAN backend (tsnet planned)
@@ -1325,7 +1326,6 @@ opod/
 │   ├── cache/                 # response cache (memory + SQLite drivers)
 │   ├── kvevents/              # engine prefix-cache events → block hashes on the heartbeat (kv_block_events)
 │   ├── lifecycle/             # local-engine memory lifecycle (load/evict/pin)
-│   ├── guardrails/            # the webhook hook interface a policy-file rule drives
 │   ├── httpsafe/              # SSRF guard for outbound hook clients (block_private_targets)
 │   ├── update/                # `opod update`: release lookup, checksum, atomic binary swap
 │   ├── config/                # YAML + env loader (config.go) + the process-environment contract (env.go)
@@ -1656,9 +1656,7 @@ Mechanisms a manager drives through this surface:
   never saw must not bill twice. `GET /admin/v1/spend` serves `{ts, doors, gateways, lag_bound_ms}`: the doors the
   leader has actually heard from (45 s of silence and a door stops counting, deliberately longer than the 10 s poll;
   with no gateway at all there is one door — the leader's own) and the 10 s lag bound, published in the snapshot
-  itself rather than left in our documentation. For each key with a daily quota it also carries the leader's count of
-  that key's tokens today (`day`, `key_tokens_today`); `fronts` (the doors plus the leader) divides a key's per-minute limit, while `doors` stays the gateways alone,
-  the unit their scaler counts.
+  itself rather than left in our documentation. `doors` is the gateways alone, the unit their scaler counts.
   The dedup window is in memory on purpose: it guards a gateway's
   retry, which happens in seconds, and a leader restart that re-accepted a row shows as a duplicate in the usage
   export rather than as a silent double charge.
@@ -1687,7 +1685,7 @@ Mechanisms a manager drives through this surface:
   the endpoint's one model, its revision, adapter names and gangs, `internal/leader/planfile.go`), the auth snapshot
   (`/etc/opod-auth/auth.json`, `OPOD_AUTH_FILE`: keys + `requireKeys`, key tombstones `revokedKeys` that a later
   snapshot never undoes, and `issuedAt`, `authfile.go`) and the policy snapshot
-  (`/etc/opod-auth/policy.json`, `OPOD_POLICY_FILE`: `routing`, `logging.accessLog`, guardrail webhooks,
+  (`/etc/opod-auth/policy.json`, `OPOD_POLICY_FILE`: `routing`, `logging.accessLog`,
   `auth.maxSnapshotAgeSec` — past it `/v1` answers 503 naming the stale snapshot, `authstale.go` — and
   `admission.holdMs`/`maxHeld` — a request that finds no worker slot waits up to that long for one before the 503,
   `admission.go` — and `admission.classes` — one queue per request class, `critical` before `standard` before

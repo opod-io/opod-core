@@ -51,12 +51,6 @@ type Handler struct {
 	// finished well, with the request's context. The leader keeps a rolling
 	// window of them for /loadz (T16.3); nil = nobody is counting.
 	OnTTFT func(ctx context.Context, ttft time.Duration)
-	// OnKeyTokens is told the tokens each keyed answer used (T19.17): the
-	// per-key TPM bucket and the day's count are the leader's memory.
-	OnKeyTokens func(keyID string, tokens int64, at time.Time)
-	// ModelAllowed filters GET /v1/models by the calling key's allowlist
-	// (T19.17). nil = every model.
-	ModelAllowed func(ctx context.Context, model string) bool
 	// Unavailable says why nothing can take a new request for model right
 	// now, or "" when something can — the leader's own gate (capacity.go),
 	// asked again when a request it let through found no worker left
@@ -149,15 +143,6 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 				out.Data = append(out.Data, modelObj{ID: id, Object: "model", Created: now.Unix(), OwnedBy: "opod"})
 			}
 		}
-	}
-	if h.ModelAllowed != nil {
-		kept := out.Data[:0]
-		for _, m := range out.Data {
-			if h.ModelAllowed(r.Context(), m.ID) {
-				kept = append(kept, m)
-			}
-		}
-		out.Data = kept
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -282,20 +267,14 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r = r.WithContext(router.WithTrace(r.Context())) // which worker served it → usage row
 	// The body as the middleware chain already read it (body.go) — one read
-	// per request — so pre-call guardrails can inspect (or rewrite) it before
-	// we decode. The hot-path short-circuits when no guardrails are configured.
+	// per request.
 	body, r, err := requestBody(r)
 	if err != nil {
 		BodyReadError(w, err)
 		return
 	}
-	rewritten, ok := h.applyPreCallGuardrails(r.Context(), w, body)
-	if !ok {
-		// Guardrail blocked the request; response already written.
-		return
-	}
 	var req chatRequest
-	if err := json.Unmarshal(rewritten, &req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
 		return
 	}
@@ -303,9 +282,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "messages cannot be empty")
 		return
 	}
-	// The fields we do not model, from the same (possibly rewritten) bytes the
-	// struct came from: a guardrail rewrite drives what the engine sees.
-	extra, err := engines.ExtraFields(rewritten, chatRequestKeys)
+	// The fields we do not model, from the same bytes the struct came from.
+	extra, err := engines.ExtraFields(body, chatRequestKeys)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
 		return
@@ -647,6 +625,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+	deliver(w)
 	h.recordUsage(r.Context(), "openai", modelOut, u, time.Since(start), "ok")
 }
 
@@ -923,6 +902,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// deliver hands a non-streamed answer to the client before anything else
+// runs on the request. Without it the body sat in the server's buffer until
+// the handler returned, so the client waited for the usage row's SQLite
+// insert (up to its 5 s busy timeout) on every chat, embeddings and rerank
+// answer that was not streamed. A wrapper that buffers the whole answer (the
+// Messages translation) writes it here instead of when the route returns.
+func deliver(w http.ResponseWriter) {
+	if f, ok := w.(interface{ Finish() }); ok {
+		f.Finish()
+		return
+	}
+	_ = http.NewResponseController(w).Flush()
 }
 
 func writeJSONError(w http.ResponseWriter, status int, code, msg string) {

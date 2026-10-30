@@ -81,21 +81,10 @@ type APIKeyStore interface {
 	GetByID(ctx context.Context, id string) (*APIKey, error)
 	List(ctx context.Context) ([]APIKey, error)
 	Revoke(ctx context.Context, id string) error
-	// UpdateAllowedModels replaces the allowlist for the given key id.
-	// Pass nil for "unrestricted", an empty slice for "deny all", or a
-	// list (each entry may include a `*` suffix wildcard).
-	// UpdateRateLimits replaces the RPM/TPM ceilings on the given key.
-	// Passing 0 means "unlimited" — restores the legacy behavior. Both
-	// fields are set atomically so a partial edit can't accidentally
-	// leave one ceiling set and the other clear.
 	// UpdateExpiresAt sets the key's expiry. A zero time clears the
 	// expiry ("never expires"); a past time effectively expires the
 	// key immediately.
 	UpdateExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
-	// UpdateDailyQuota replaces the key's daily token ceiling. 0 means
-	// "no quota", which is what QuotaMiddleware reads as unlimited. It
-	// exists for the same reason UpdateRateLimits does: a managed key's
-	// ceiling is edited by whoever minted it, not by the key's holder.
 }
 
 type Model struct {
@@ -352,7 +341,6 @@ type Usage struct {
 
 type UsageStore interface {
 	Record(ctx context.Context, u Usage) error
-	SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
 	// LastUsedByModel returns the most recent request timestamp per model
 	// id. Models with no usage rows are absent from the map — eviction
 	// treats them as least-recently-used. Used by the lifecycle manager's

@@ -214,12 +214,6 @@ func contractFeatures() map[string]bool {
 		// once carried left with ADR-077). Without it a manager must keep every
 		// request on one front door.
 		"gateway_spend": true,
-		// Per-key limits (ADR-092 §8, T19.17): the snapshot key's rpmLimit,
-		// tpmLimit, quotaDailyTokens and allowedModels are enforced from memory
-		// — 429 with Retry-After naming the limit, 403 model_not_allowed, and
-		// /v1/models filtered. A manager must not set a limit on an endpoint
-		// whose leader lacks this: an older leader ignores the fields.
-		"key_limits": true,
 		// A revocation is a TOMBSTONE (ADR-085): the auth snapshot's
 		// revokedKeys refuses a key id even while its row is still in keys,
 		// and a tombstone seen once is never undone by a later snapshot.
@@ -334,6 +328,7 @@ func contractFeatures() map[string]bool {
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one
 		"otlp_logs":             true, // OPOD_OTLP_LOGS_ENDPOINT: the leader's own log records over OTLP/HTTP, teed beside stderr; bounded queue, never blocks
+		"trace_sample_ratio":    true, // OPOD_TRACE_SAMPLE_RATIO: the share of root traces recorded (0–1, unset = 1); a request with a traceparent follows its caller's decision (parent-based)
 		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)
 		"placement_drain":       true, // a placement the leader marks draining stays out of rotation across the worker's heartbeats, until it is set back, the model leaves the worker, or the leader restarts
 		"heartbeat_no_report":   true, // a heartbeat with loaded_models null changes no placement row (marks survive a slow engine tick); an engine silent past the heartbeat bound takes the node out of rotation — state engine-silent, events node.engine_silent|engine_reporting
@@ -342,7 +337,7 @@ func contractFeatures() map[string]bool {
 		"resident_models":       true, // heartbeats from an engine that loads on request carry resident_models beside loaded_models; the rest of its placements are cold — routable, holding no memory
 		"worker_unload":         true, // POST /v1/model/unload on a worker (scheduler.UnloadFromNode): the engine's unload, or a stop of the engine process the worker launched; idempotent; 409 for a shard part or a held adapter, 501 when the engine cannot
 		"node_drain":            true, // POST /admin/v1/nodes/{id}/drain|undrain: a draining node gets no new request and no new shard part, in-flight finishes; the state survives heartbeats and a re-register; /readyz and the waking 503 do not count it
-		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log, guardrail webhook rules // stream batches carry "boot": cursor ids restart when the leader restarts
+		"gang_devices_per_rank": true, // POST /admin/v1/shards/create accepts devices (GPUs per part); TP × PP is checked against parts × devices // /etc/opod-auth/policy.json watched: fallback target, access log // stream batches carry "boot": cursor ids restart when the leader restarts
 
 		// OPOD_CARD_MIB: the card's size as the manager measured it. A budgeted
 		// vLLM or SGLang launch divides by it and asks nvidia-smi only when it

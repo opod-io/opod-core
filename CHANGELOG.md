@@ -12,6 +12,47 @@ the last section.
   "Remote RPC server crashed or returned malformed response" and no Intel gang of a k-quant GGUF ever formed. The
   Intel image's `rpc-server` now starts with `GGML_SYCL_ENABLE_OPT=0` (an operator's own value wins); llama-server's
   local backend keeps the optimisation. Proven on two Arc A770 nodes.
+- **The leader's own calls join the trace too (T32.42).** A model load or unload, a worker's sleep or resume, the
+  pre-route tokenize and the external fallback forward now carry the request's W3C `traceparent`, like the chat
+  dispatch does (`engines.TraceTransport`). A door already passed the caller's header through untouched; a test now
+  holds that. A gang's `router.*.attempt` span names the worker that heads the gang in `opod.node_id`, not the
+  pseudo node `shard:<model>:<gang>`; the usage row still counts the request under that key.
+- **`opod fetch` reports what it fetched, and whether it is signed (T32.23).** With `OPOD_FETCH_RESULT` set, the fetch
+  writes one JSON line there once the weights are in the cache (`adminapi.FetchResult`): the path, and whether the
+  repository publishes a model-transparency signature beside the weights (`model.sig`, OpenSSF model signing) —
+  `unsigned`, `unverified` or `unknown` when the Hub could not be asked. The signature is looked for and **not
+  verified**: there is no `verified` state yet, and verifying a model signature on the node is still to be built.
+- **Per-key limits leave core again (ADR-112): feature `key_limits` is gone.** A key in a manager's auth snapshot no
+  longer carries `rpmLimit`, `tpmLimit`, `quotaDailyTokens` or `allowedModels`; the leader and its doors enforce none
+  of them, `/v1/models` is no longer filtered per key, the refusals `rate_limit_rpm`, `rate_limit_tpm`, `quota_daily`
+  and `model_not_allowed` are gone, and the spend snapshot carries only the door count and the lag bound. Limits,
+  quotas and model access per key, user or team are the job of the gateway the owner runs in front of the endpoint
+  (LiteLLM, for example). Request classes still shed load.
+- **Removed: the pre-request guardrail webhook.** The leader no longer reads `guardrails` from the policy snapshot,
+  calls no webhook before a chat, embeddings, rerank or Messages request or before a fallback forward, answers no
+  `403 guardrail_blocked`, writes no `guardrail.block|flag` event or audit row, and exports no
+  `opod_guardrail_action_total`. The `internal/guardrails` package is gone. Checking a prompt for PII or injection is
+  the job of the gateway in front of the leader (LiteLLM's guardrail hooks, for one). A snapshot that still carries the
+  key is read and the key ignored. Post-response guardrails were never built.
+- **A trace goes on into the engine (T32.7).** Every engine call — leader → worker and worker → engine, for vLLM,
+  SGLang, llama.cpp, MLX, TensorRT-LLM and ollama — carries the W3C `traceparent` of the request it serves, set once in
+  the drivers' shared transport (`engines.TraceTransport`); a worker reads the leader's header on the way in. Header
+  only: no client span and nothing per chunk. An engine that exports its own spans (vLLM `--otlp-traces-endpoint`)
+  now lands in the caller's trace instead of one of its own.
+- **Trace sampling (feature `trace_sample_ratio`, `OPOD_TRACE_SAMPLE_RATIO`, T32.8).** `0`–`1`, the share of the traces
+  the leader starts that it records; unset = `1`, so nothing changes. Parent-based: a request whose caller sampled it
+  (LiteLLM in front) is always recorded, one whose caller did not is never. Any other value fails the start and names
+  the variable.
+- **Attempt and driver spans say what served the request (T32.6).** `router.*.attempt` spans carry `opod.gang.id` when
+  the target is a gang's head and `opod.class` (the admission class that ranked the request); `<driver>.Chat` spans
+  carry `opod.tokens.cached` when the engine reports a prefix-cache count, which a worker now passes on in its usage
+  (`prompt_tokens_details.cached_tokens`). Serving facts only — never a key, user or team — and computed only while the
+  span records.
+- **A non-streamed answer reaches the client before its usage row is written.** Chat, embeddings, rerank and Messages
+  answers that were not streamed used to sit in the server's buffer until the handler returned, so the caller waited
+  for the usage row's SQLite insert (up to its 5 s busy timeout) — and embeddings and rerank wrote the row, and the
+  embedding cache, before writing the answer at all. Each now hands its answer over first; the row and the cache are
+  written after.
 - **A stopping worker drains (feature `worker_drain`, `OPOD_DRAIN_SECONDS`).** On SIGTERM it says goodbye at once, so
   no new request reaches it, lets the requests already running on it finish, and stops its engine when nothing is in
   flight or the bound passes, whichever is first. A gang member waits while a peer still holds a connection to it (the

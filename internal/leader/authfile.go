@@ -172,7 +172,6 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	}
 	want := map[string]bool{}
 	ranks := map[string]keyRank{}
-	limits := map[string]keyLimit{}
 	created, updated, revoked := 0, 0, 0
 	for _, sk := range doc.Keys {
 		if sk.ID == "" || sk.Hash == "" {
@@ -185,9 +184,6 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		want[id] = true
 		if sk.Class != "" || sk.Team != "" {
 			ranks[id] = keyRank{class: sk.Class, team: strings.TrimSpace(sk.Team)}
-		}
-		if kl := keyLimitOf(sk); kl.limited() {
-			limits[id] = kl
 		}
 		scope := sk.Scope
 		if scope == "" {
@@ -222,10 +218,6 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	}
 	revoked += s.applyKeyTombstones(ctx, keys, tomb, byID)
 	s.authf.ranks.Store(&ranks)
-	if s.keyLimits != nil {
-		s.keyLimits.set(limits)
-		s.seedKeyQuotas(ctx, limits)
-	}
 	mtlsChanged := s.applyNodeMTLS(doc)
 	// IssuedAt is deliberately NOT part of "changed": a manager that sets a
 	// staleness bound re-issues the snapshot on a period, and each re-issue

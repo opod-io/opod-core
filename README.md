@@ -21,7 +21,8 @@
 > **Scope (ADR-022, 2026-09-06).** Core is the CLI-only inference runtime: `opod up` / `opod join`, the OpenAI-compatible
 > gateway, API keys + join tokens, engine adapters, model load, multi-machine sharding (llama.cpp RPC · vLLM + Ray · SGLang), and a stable `/admin/v1` surface for an
 > external manager. Everything product-shaped — console, invites, vendor egress and cloud key pools, routing chains, callbacks and
-> sinks, dollar budgets, usage/audit query APIs, guardrail implementations, automatic update checks — lives in the control plane (`opodcp`).
+> sinks, dollar budgets, usage/audit query APIs, automatic update checks — lives in the control plane (`opodcp`). Prompt checks (PII,
+> injection) are your gateway's job: the leader runs no guardrail webhook.
 
 ```
            ┌──────────────────────────────────────────────────────────────┐
@@ -391,7 +392,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 ### Multi-tenancy
 
 - Per-user API keys with revocation, scopes (admin / user / node), and **TTL expiry** (`--ttl 7d`, `--expires-at 2026-07-01`, `opod token renew/expire`)
-- **A key is an identity — who is calling, with which scope, until when.** A key minted with `opod token create` carries no limits. A key a manager delivers in the auth snapshot may carry requests and tokens per minute, a daily token quota and a model allowlist, which the leader enforces from memory (feature `key_limits`; 429 with Retry-After, or 403 for a model off the list). Accounts, users and billing plans still belong to the layer in front of an endpoint; every request is recorded per key in the usage stream, which is what such a layer meters from. Older clients that send `rpm_limit`, `tpm_limit`, `quota_daily_tokens` or `allowed_models` to `opod token` are accepted and the fields are ignored.
+- **A key is an identity — who is calling, with which scope, until when.** A key minted with `opod token create` carries no limits. Neither does a key a manager delivers in the auth snapshot: rate limits, quotas, model access, accounts, users and billing plans belong to the gateway in front of an endpoint (LiteLLM, for example); every request is recorded per key in the usage stream, which is what such a layer meters from. Older clients that send `rpm_limit`, `tpm_limit`, `quota_daily_tokens` or `allowed_models` to `opod token` are accepted and the fields are ignored.
 - An always-on `X-Opod-Request-Id` correlation token on every `/v1/*` response (also embedded in audit rows for traceability)
 - OIDC / SSO — **not in core** (explicitly [out of scope](#deliberately-out-of-scope)). Core authenticates API keys only; per-user keys and the event stream cover accountability, and SSO belongs to the control plane
 
@@ -406,7 +407,7 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 - `GET /loadz` for an external autoscaler: in-flight, rpm, waking 503s, TTFT p50/p95, how many workers hold a card with a dead engine, plus the workers' own engine signals (KV-cache %, queue depth, tokens/s, prefix-cache hits) gathered from their heartbeats — a sharded endpoint's pressure comes from its gang coordinator. `OPOD_PROBE_LISTEN` puts the probes on a second, always-plain port so a scraper needs no certificate, and a request marked `X-Opod-Probe` is served like any other and counted in none of it. `GET /gatewayz` is the same idea for the front doors: how many there are and what the endpoint carries across them. See [docs/SCALING-SIGNALS.md](docs/SCALING-SIGNALS.md). How to lay out prompts so the prefix cache is reused: [docs/PROMPT-CACHE.md](docs/PROMPT-CACHE.md)
 - Per-call usage records (model, protocol, tokens, latency, outcome — `ok`, `error` and `cancelled` alike: a caller who hangs up mid-stream still leaves a row) on `/admin/v1/usage/stream` (cursor + replay) — the control plane pulls and exports them
 - Admin actions are recorded and streamed to the control plane on `/admin/v1/events/stream`
-- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Opod emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All five engine drivers (ollama, vllm, sglang, mlx, llamacpp) export the same span shape. W3C `traceparent` propagation is always on so Opod participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
+- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Opod emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All five engine drivers (ollama, vllm, sglang, mlx, llamacpp) export the same span shape. W3C `traceparent` propagation is always on so Opod participates correctly between two services that both export, and every engine call carries the trace on (through the worker, into vLLM, SGLang, llama.cpp, TensorRT-LLM or ollama), so an engine that exports its own spans joins the caller's trace; the leader's own load, unload, wake, tokenize and fallback calls carry it too. Attempt spans name the gang, its head worker and the request class; driver spans carry the engine's cached-token count when it reports one. `OPOD_TRACE_SAMPLE_RATIO` (0–1, default 1) samples the traces the leader starts; a sampled caller is always kept. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 - OTLP logs. Set `OPOD_OTLP_LOGS_ENDPOINT` and the leader's own `slog` records also go to your collector (and through it to Loki, Splunk, Datadog, Elastic…), beside stderr, never instead of it. `log_level` applies to both; a slow or absent collector drops the oldest queued records and never delays a request.
 
 ### Developer experience
@@ -432,7 +433,7 @@ of these will be declined for the same reason, so the table is here to save you 
 | **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
 | **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. |
 | **Audio surfaces** (transcription and speech) | removed in the 2026-09 contraction (ADR-022). `/v1/rerank` came back on 2026-10-06 (ADR-084) because a retrieval stack asks for it, and Anthropic Messages on 2026-10-19 (ADR-092 §1), translated to the chat path so every engine serves it. |
-| **Content policies, output filtering, guardrail implementations** | the interface and the event stream stay; the policies belong where the request originates. |
+| **Content policies, output filtering, prompt checks** | none of it is in core; the policies belong in the gateway in front of the leader, where the request originates. |
 | **Kubernetes, Helm, operators, CRDs** | `opod` runs as a process. Anything that schedules processes across a fleet is an orchestrator's job, not the runtime's. |
 | **Training and fine-tuning** | use `axolotl`, `unsloth`, or `torchtune`. |
 | **A vector store** | an adapter for SQLite-VSS / pgvector may ship with signed catalogs; running one will not. |
@@ -784,9 +785,8 @@ surfaces:
                                       # A file that still carries the retired `ui`/`egress`/`callbacks` keys loads fine
 ```
 
-There is no `observability.guardrails:` and no `observability.callbacks:` key: guardrail rules arrive in the
-**policy snapshot** a manager mounts (`OPOD_POLICY_FILE`, default `/etc/opod-auth/policy.json`) and the
-callback sinks left with ADR-022. Beyond this file, a manager steers a leader or a worker through the
+There is no `observability.guardrails:` and no `observability.callbacks:` key: the leader runs no guardrail
+(prompt checks are a gateway's job) and the callback sinks left with ADR-022. Beyond this file, a manager steers a leader or a worker through the
 **process-environment contract** — `internal/config/env.go`, exported as a table for a manager as
 `leader.EnvContract` (`internal/leader/contract.go`) and reproduced below. A test (`TestEnvSurfaceOutsideConfigIsTheAllowlist`) fails
 when library code reads a variable that is not on it, so the list is the whole surface.
@@ -834,9 +834,10 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 |---|---|---|
 | `OPOD_PLAN_FILE` | leader | the mounted plan the leader serves within (default `/etc/opod/plan.json`; absent = standalone) |
 | `OPOD_AUTH_FILE` | leader | the mounted auth snapshot — keys, `requireKeys`, key tombstones (`revokedKeys`), `issuedAt`, the worker-certificate policy (default `/etc/opod-auth/auth.json`; `off` = no watcher) |
-| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, guardrail webhook rules, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission gate — a request waits for a free worker slot, ranked by class (`admission.holdMs`, `admission.maxHeld`, and per request class `admission.classes[]{name, holdMs, maxHeld, maxShare}`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
+| `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission gate — a request waits for a free worker slot, ranked by class (`admission.holdMs`, `admission.maxHeld`, and per request class `admission.classes[]{name, holdMs, maxHeld, maxShare}`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
 | `OPOD_COORDINATOR_NODE` | leader | pin the llama.cpp RPC coordinator to a node id (`local` = the leader itself). Default: the worker with the most **GPU** memory, falling back to host RAM for a worker with no card |
 | `OPOD_OTLP_LOGS_ENDPOINT` | leader | the leader's own log records over OTLP/HTTP, beside stderr (URL or bare `host:port`). Bounded queue, never blocks. Empty = off |
+| `OPOD_TRACE_SAMPLE_RATIO` | leader | the share of the traces the leader starts that it records, `0`–`1`, when `OPOD_OTLP_ENDPOINT` is set; unset = `1` (every request). A request that arrives with a `traceparent` follows its caller's sampling decision whatever the ratio. Anything else fails the start |
 | `OPOD_ROLE` | leader | `leader` (default), `gateway` — a front door that serves `/v1` only for one endpoint (`opod up --role gateway`) — or `door`, one URL for many endpoints chosen by `model` (`opod up --role door`) |
 | `OPOD_LEADER_URL` | leader | the leader a **gateway** mirrors and pushes to (`http://host:8080`); required with `OPOD_ROLE=gateway` (`--leader`) |
 | `OPOD_GATEWAY_ID` | leader | this door's name in the leader's door count, which sets each key's 1/N rate share; unset = the hostname |
@@ -860,6 +861,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_CARD_MIB` | worker | the card's memory in MiB, as the manager measured it. The engine launch turns `OPOD_VRAM_BUDGET_GB` into the engine's own memory knob against it (feature `card_mib`). Unset → `nvidia-smi` is asked, and a host without it (AMD, Intel) starts the engine with no budget applied |
 | `OPOD_GPU_INDEX` | worker | the device index the worker was pinned to (informational; also `opod join --gpu`) |
 | `OPOD_LOAD_MODEL` | worker | the catalog id this worker loads itself once its engine answers, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE` overriding the catalog's repo and file. No call to its own API, so `OPOD_REJECT_BEARER=1` is usable |
+| `OPOD_FETCH_RESULT` | worker | a path `opod fetch` writes its result to once the weights are in the cache: one JSON line (`adminapi.FetchResult`) — the path, and whether the repository publishes a model-transparency signature (`model.sig`): `unsigned`, `unverified` or `unknown`. A manager points it at `/dev/termination-log` to read the result from the pod's status. The signature is looked for, **not verified** |
 | `OPOD_CATALOG_DIR` | both | a catalog directory merged over the catalog embedded in the binary. Every source that exists is merged by id and a later one wins: embedded → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) → `$OPOD_CATALOG_DIR` → `~/.opod/catalog` (most authoritative). Nothing else is searched — not `./catalog`, not a `catalog/` beside the binary. `catalog_dir` in `config.yaml` is a different switch: it reads that one directory **alone** |
 | `OPOD_CATALOG_PUBKEY` | both | a [minisign](https://jedisct1.github.io/minisign/) public key — the base64 line, or a file holding it. A catalog file with a `<file>.minisig` beside it must verify against this key; one that does not is **always refused**. The embedded catalog is never checked. Unset → signatures are ignored |
 | `OPOD_CATALOG_REQUIRE_SIGNED` | both | `1` → a directory catalog file with **no** signature is refused too (needs `OPOD_CATALOG_PUBKEY`) |

@@ -2,7 +2,7 @@ package leader
 
 // Policy as a watched file (§13 item 2, v3 — P12-2): in managed mode the
 // executor mounts the endpoint's policy snapshot beside the auth snapshot
-// (/etc/opod-auth/policy.json, same Secret — webhook keys are secrets) and
+// (/etc/opod-auth/policy.json, same Secret — the fallback key is a secret) and
 // the leader applies it at runtime. The snapshot carries the three things
 // a manager governs on the request path without being on it (ADR-001):
 //
@@ -11,9 +11,6 @@ package leader
 //     honest 503 "waking" becomes a served answer from the fallback;
 //   - logging.accessLog: whether the leader writes its per-request access
 //     log line (noise control per endpoint);
-//   - guardrails: webhook rules (phase pre|post|logging_only, URL, bearer,
-//     fail posture, timeout) that become the guardrail chain the gateway
-//     walks on every request;
 //   - auth.maxSnapshotAgeSec: how old the AUTH snapshot may get before the
 //     gateway refuses keyed traffic (ADR-085; authstale.go). 0 = fail-static;
 //   - admission.holdMs / maxHeld: how long a request that finds no worker
@@ -47,7 +44,6 @@ import (
 
 	"github.com/opod-io/opod-sdk/adminapi"
 
-	"github.com/opod-io/opod/internal/guardrails"
 	"github.com/opod-io/opod/internal/router"
 )
 
@@ -58,7 +54,6 @@ type (
 	PolicySnapshot = adminapi.PolicySnapshot
 	PolicyRouting  = adminapi.PolicyRouting
 	PolicyLogging  = adminapi.PolicyLogging
-	GuardrailRule  = adminapi.GuardrailRule
 	PolicyAuth     = adminapi.PolicyAuth
 )
 
@@ -66,7 +61,6 @@ type policyFileState struct {
 	mu       sync.Mutex
 	present  bool
 	revision string
-	rules    int
 
 	fallback  atomic.Pointer[PolicyRouting]
 	accessLog atomic.Value // bool; unset = config default
@@ -144,14 +138,12 @@ func (s *Server) StartPolicyWatcher(ctx context.Context) {
 	}()
 }
 
-// applyPolicySnapshot swaps the guardrail registry, the fallback target and
-// the access-log switch atomically (each is one pointer store); a request in
+// applyPolicySnapshot swaps the fallback target, the routing knobs, the
+// admission gate and the access-log switch atomically (each is one pointer store); a request in
 // flight finishes under the policy it started with. Idempotent.
 func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	s.policy.mu.Lock()
 	defer s.policy.mu.Unlock()
-	reg, skipped := buildGuardrailRegistry(doc.Guardrails)
-	s.openaiH.SetPolicy(s.openaiH.Policy().WithGuardrails(reg))
 	r := doc.Routing
 	r.FallbackURL = strings.TrimRight(strings.TrimSpace(r.FallbackURL), "/")
 	r.FallbackURL = strings.TrimSuffix(r.FallbackURL, "/v1")
@@ -175,11 +167,10 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	changed := !s.policy.present || s.policy.revision != doc.Revision || marksChanged
 	s.policy.present = true
 	s.policy.revision = doc.Revision
-	s.policy.rules = len(doc.Guardrails) - skipped
 	if changed {
-		s.log.Info("policy snapshot applied", "revision", doc.Revision, "guardrails", s.policy.rules, "skipped", skipped,
+		s.log.Info("policy snapshot applied", "revision", doc.Revision,
 			"fallback", r.FallbackURL != "", "accessLog", s.policy.accessLogEnabled(), "cacheIsolation", isolation)
-		s.logEvent("policy.updated", doc.Revision, map[string]any{"guardrails": s.policy.rules, "skipped": skipped,
+		s.logEvent("policy.updated", doc.Revision, map[string]any{
 			"fallback": r.FallbackURL != "", "accessLog": s.policy.accessLogEnabled()})
 	}
 }
@@ -207,42 +198,6 @@ func (s *Server) applyWakeMarks(ids []string) bool {
 	s.log.Info("request wake: sleeping workers not to resume in place", "nodes", marked)
 	s.logEvent("policy.wake_marks", strings.Join(marked, ","), map[string]any{"noResumeInPlace": marked})
 	return true
-}
-
-// buildGuardrailRegistry turns the rules into the three mode chains. Rules
-// without a URL or with an unknown phase are skipped (counted), never
-// guessed. Private targets are allowed: guardrail receivers run inside the
-// cluster by design.
-func buildGuardrailRegistry(rules []GuardrailRule) (*guardrails.Registry, int) {
-	var pre, post, logOnly []guardrails.Guardrail
-	skipped := 0
-	for _, r := range rules {
-		mode := guardrails.Mode(strings.ToLower(strings.TrimSpace(r.Phase)))
-		if r.URL == "" || (mode != guardrails.ModePre && mode != guardrails.ModePost && mode != guardrails.ModeLoggingOnly) {
-			skipped++
-			continue
-		}
-		id := r.ID
-		if id == "" {
-			id = "rule-" + string(mode)
-		}
-		w := guardrails.NewWebhook(guardrails.WebhookConfig{
-			ID: id, Mode: mode, URL: r.URL, AuthKey: r.AuthKey, Headers: r.Headers, FailOpen: r.FailOpen,
-			Timeout: time.Duration(r.TimeoutMs) * time.Millisecond,
-		})
-		switch mode {
-		case guardrails.ModePre:
-			pre = append(pre, w)
-		case guardrails.ModePost:
-			post = append(post, w)
-		default:
-			logOnly = append(logOnly, w)
-		}
-	}
-	if len(pre)+len(post)+len(logOnly) == 0 {
-		return nil, skipped
-	}
-	return &guardrails.Registry{Pre: guardrails.NewChain(pre...), Post: guardrails.NewChain(post...), LoggingOnly: guardrails.NewChain(logOnly...)}, skipped
 }
 
 // applyRevisionWeights hands policy.routing.revisions to the router (R15.17,

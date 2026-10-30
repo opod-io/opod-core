@@ -9,7 +9,7 @@
 - Per-GPU VRAM ledger and packing placer: several models share one card under explicit VRAM budgets (`colocation: shared`), refused with the measured number when they don't fit.
 - Autoscaling with scale to zero (`autoscale.floor: 0`); while it wakes, the leader answers 503 with Retry-After.
 - Verified rollouts (validate → apply → converge → probe → smoke chat); on failure the previous plan is restored; one-call rollback. Images pinned by digest.
-- API keys with RPM/TPM limits enforced by the leader even if the control plane is down; guardrail webhooks; fallback target; audit log; usage facts exported as CSV, Parquet, ClickHouse or S3; alert sinks (Slack, PagerDuty, Alertmanager, webhook); OIDC SSO; backup/restore.
+- API keys with RPM/TPM limits enforced by the leader even if the control plane is down; fallback target; audit log; usage facts exported as CSV, Parquet, ClickHouse or S3; alert sinks (Slack, PagerDuty, Alertmanager, webhook); OIDC SSO; backup/restore.
 - No external service pods: SQLite, an in-process event bus and /metrics are built in; Postgres, NATS, ClickHouse, OIDC, Vault and KEDA connect on day two with `helm upgrade --set`.
 - Hardware: serving proven on NVIDIA; AMD measured and placeable; Intel Arc and Tenstorrent inventoried; llama.cpp CPU workers for laptops and CI.
 

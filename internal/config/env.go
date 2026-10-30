@@ -22,15 +22,16 @@ type Env struct {
 	// leader
 	PlanFile         string `env:"OPOD_PLAN_FILE" side:"leader" doc:"the mounted plan the leader serves within (default /etc/opod/plan.json; absent = standalone)"`
 	AuthFile         string `env:"OPOD_AUTH_FILE" side:"leader" doc:"the mounted auth snapshot: keys + requireKeys (default /etc/opod-auth/auth.json; \"off\" = no watcher)"`
-	PolicyFile       string `env:"OPOD_POLICY_FILE" side:"leader" doc:"the mounted policy snapshot: routing, logging, guardrails (default /etc/opod-auth/policy.json; \"off\" = no watcher)"`
+	PolicyFile       string `env:"OPOD_POLICY_FILE" side:"leader" doc:"the mounted policy snapshot: routing, logging, auth bounds, admission, wake (default /etc/opod-auth/policy.json; \"off\" = no watcher)"`
 	CoordinatorNode  string `env:"OPOD_COORDINATOR_NODE" side:"leader" doc:"pin the llama.cpp RPC coordinator to a node id (\"local\" = the leader itself)"`
 	OTLPLogsEndpoint string `env:"OPOD_OTLP_LOGS_ENDPOINT" side:"leader" doc:"OTLP/HTTP collector for the leader's own log records (URL or host:port); stderr keeps working, the queue is bounded and never blocks. Empty = off"`
+	TraceSampleRatio string `env:"OPOD_TRACE_SAMPLE_RATIO" side:"leader" doc:"the share of the traces the leader starts that it records, from 0 to 1, when OPOD_OTLP_ENDPOINT is set; unset = 1 (every request). A request that arrives with a traceparent follows its caller's sampling decision whatever the ratio. Anything else is an error at start"`
 	// gateway (T11.1, ADR-063) — a copied FRONT of a leader: it serves /v1 and
 	// nothing of /admin/v1, mirrors the leader's worker registry, pushes its
-	// usage rows there and enforces from the spend snapshot it polls back.
+	// usage rows there and polls the door count back (the spend snapshot).
 	Role      string `env:"OPOD_ROLE" side:"leader" doc:"leader (default) | gateway | door. A gateway serves /v1 only: no join surface, no engine of its own, its worker list mirrored from the leader and its usage pushed there (T11.1). A door is one URL for a cell's endpoints: it forwards each request to the endpoint its model names (ADR-087)"`
 	LeaderURL string `env:"OPOD_LEADER_URL" side:"leader" doc:"the leader a GATEWAY mirrors and pushes to (http://host:8080); required when OPOD_ROLE=gateway"`
-	GatewayID string `env:"OPOD_GATEWAY_ID" side:"leader" doc:"this door's name in the leader's door count, which sets each key's 1/N rate share; unset = the hostname"`
+	GatewayID string `env:"OPOD_GATEWAY_ID" side:"leader" doc:"this door's name in the leader's door count; unset = the hostname"`
 	// cell door (ADR-087) — a name lookup in front of a cell's endpoints: it
 	// reads a request's model, finds the endpoint in the routes file and
 	// forwards the request there. No store, no engine, no credential.
@@ -69,6 +70,8 @@ type Env struct {
 	LoadModel string `env:"OPOD_LOAD_MODEL" side:"worker" doc:"the catalog id this worker loads once its engine answers; repo and file come from the catalog"`
 	LoadRepo  string `env:"OPOD_LOAD_REPO" side:"worker" doc:"override the catalog's repo for that load"`
 	LoadFile  string `env:"OPOD_LOAD_FILE" side:"worker" doc:"override the catalog's file (the GGUF within the repo) for that load"`
+	// T32.23: what `opod fetch` found, for the manager that ran it as a Job.
+	FetchResult string `env:"OPOD_FETCH_RESULT" side:"worker" doc:"a path opod fetch writes its result to once the weights are in the cache: one JSON line (adminapi.FetchResult: the path and the signature check). A manager points it at /dev/termination-log to read the result from the pod's status. Empty = no result file"`
 	// both
 	CatalogDir      string `env:"OPOD_CATALOG_DIR" side:"both" doc:"a catalog directory that overrides the bundled entries (beaten only by ~/.opod/catalog)"`
 	CatalogPubKey   string `env:"OPOD_CATALOG_PUBKEY" side:"both" doc:"a minisign public key (the base64 line, or a file holding one): a catalog file in a directory that has a <file>.minisig beside it must verify against it, and a signature that does not is always a refusal. The embedded catalog is never checked. Empty = signatures are ignored"`
