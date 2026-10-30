@@ -64,6 +64,16 @@ func TestPeersHoldingCountsOnlyARemotePeerOnAListenedPort(t *testing.T) {
 	}
 }
 
+// A gang's head dials its own rpc-server by the pod's address (192.0.2.10
+// here, 0A0200C0), not loopback: that is the pod talking to itself.
+func TestPeersHoldingLeavesOutThePodTalkingToItself(t *testing.T) {
+	self := procTCP + "   6: 0A0200C0:C350 0A0200C0:AABC 01 00000000:00000000 00:00000000 00000000     0        0 7 1 0 100 0 0 10 0\n" +
+		"   7: 0A0200C0:AABC 0A0200C0:C350 01 00000000:00000000 00:00000000 00000000     0        0 8 1 0 100 0 0 10 0\n"
+	if n := peersHolding([]byte(self), 8081); n != 0 {
+		t.Fatalf("the head's engine on its own rpc-server is not a peer: got %d", n)
+	}
+}
+
 func TestPeersHoldingReadsIPv6Tables(t *testing.T) {
 	const listen = "00000000000000000000000000000000:C350 00000000000000000000000000000000:0000 0A"
 	const loop6 = "00000000000000000000000001000000:C350 00000000000000000000000001000000:A000 01"  // ::1

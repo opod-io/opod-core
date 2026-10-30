@@ -16,7 +16,8 @@ the last section.
   no new request reaches it, lets the requests already running on it finish, and stops its engine when nothing is in
   flight or the bound passes, whichever is first. A gang member waits while a peer still holds a connection to it (the
   leader dials a gang's head directly, and the head holds its parts), so parking a whole gang does not cut a stream
-  either. `0` stops at once; unset = 10 s, which was the old fixed wait for requests on the worker's own API. A manager
+  either; a connection from the pod's own address (a head on its own rpc-server) is not a peer. `0` stops at once;
+  unset = 10 s, which was the old fixed wait for requests on the worker's own API. A manager
   gives the pod a longer grace period than the bound. The image entrypoint now sends the stop to `opod join` only, and
   stops an engine it launched itself (`OPOD_ENGINE_START`) after the drain instead of with it.
 - **`GET /admin/v1/nodes` says which worker's engine is down.** Each row carries `engine` — the worker's last

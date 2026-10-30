@@ -95,24 +95,31 @@ const (
 
 // peersHolding counts the established connections in one /proc/net/tcp{,6}
 // table whose local port is a port the table also LISTENS on, from a remote
-// address that is not loopback, leaving out skipPort. Loopback is this pod
-// talking to itself (the worker to its own engine); an outbound connection has
-// an ephemeral local port nobody listens on.
+// address that is not this pod, leaving out skipPort. This pod is loopback and
+// every address the table shows as a local one: a gang's head dials its OWN
+// rpc-server by the pod's address, not by loopback, and that connection lives
+// exactly as long as the head's engine — counted, the head waited out the whole
+// bound on every park (design-partner cell, 2026-10-28). An outbound
+// connection has an ephemeral local port nobody listens on.
 func peersHolding(table []byte, skipPort int) int {
 	type conn struct {
 		port   int
 		remote net.IP
 	}
 	listens := map[int]bool{}
+	self := map[string]bool{}
 	var est []conn
 	for _, line := range bytes.Split(table, []byte("\n"))[1:] {
 		f := strings.Fields(string(line))
 		if len(f) < 4 {
 			continue
 		}
-		_, port, ok := procAddr(f[1])
+		local, port, ok := procAddr(f[1])
 		if !ok {
 			continue
+		}
+		if !local.IsUnspecified() {
+			self[local.String()] = true
 		}
 		switch f[3] {
 		case tcpListen:
@@ -125,7 +132,7 @@ func peersHolding(table []byte, skipPort int) int {
 	}
 	n := 0
 	for _, c := range est {
-		if listens[c.port] && c.port != skipPort && !c.remote.IsLoopback() {
+		if listens[c.port] && c.port != skipPort && !c.remote.IsLoopback() && !self[c.remote.String()] {
 			n++
 		}
 	}
