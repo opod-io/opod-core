@@ -122,7 +122,7 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 	n, err := s.RegisterNode(r.Context(), req, callerFrom(r.Context()), extractBearer(r))
 	switch {
 	case errors.Is(err, ErrNodeBoundToOtherKey):
-		writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
+		writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is "+err.Error())
 		return
 	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -147,7 +147,7 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "unknown node — register first")
 		return
 	case errors.Is(err, ErrNodeBoundToOtherKey):
-		writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
+		writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is "+err.Error())
 		return
 	case err != nil:
 		writeJSONError(w, http.StatusInternalServerError, err.Error())

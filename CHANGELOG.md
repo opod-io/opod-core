@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **A re-created worker with a certificate rejoins its leader.** The auth snapshot that turns `nodeMtls: allow` on can
+  reach a new leader after its first workers have joined by token, which bound each node id to that token's key. A
+  worker pod re-created after that presented its certificate, the leader compared "no key" with the bound key, and
+  refused every register and heartbeat ("bound to a different key") until the pod gave up. One rule now decides who
+  may act as a node: a certificate acts as the node it names whatever bound it, and a node a certificate registered is
+  bound to that certificate, so no node token acts as it while certificates are checked — before this such a node had
+  no binding at all. With mTLS back to `off` the node's token takes it back.
 - **An Intel (SYCL) llama.cpp gang forms.** The SYCL backend's reorder optimisation attaches backend data to every
   Q4_0/Q8_0/Q3_K–Q6_K tensor, and ggml's RPC server refuses such a tensor, so the coordinator aborted loading with
   "Remote RPC server crashed or returned malformed response" and no Intel gang of a k-quant GGUF ever formed. The

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,5 +336,87 @@ func TestWithNoSnapshotPolicyTheJoinIsUnchanged(t *testing.T) {
 	defer ts.Close()
 	if code, body := registerAs(t, ts.Client(), ts.URL, "n_a", plain); code != http.StatusOK {
 		t.Errorf("a plain token join = %d: %s", code, body)
+	}
+}
+
+// A node a join TOKEN registered before the leader checked certificates — the
+// auth snapshot that turns `allow` on can arrive after the first workers join —
+// is taken over by the certificate that names it: a re-created worker pod
+// presenting its certificate and the same token rejoins (PLAN T24.33; in a
+// cluster drill it was refused "bound to a different key" for good).
+func TestACertificateTakesOverANodeItsTokenBoundBeforeCertificatesWereChecked(t *testing.T) {
+	ca := newTestCA(t)
+	srv, ts, client := mtlsLeader(t, auth.MTLSOff, ca)
+	plain, rec, _ := auth.Generate("node", "node", "")
+	if err := srv.store.APIKeys().Create(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	cert := ca.nodeCert(t, "n_a", 50)
+	if code, body := registerAs(t, client(cert), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Fatalf("the first join, certificates not checked yet = %d: %s", code, body)
+	}
+	if err := srv.applyAuthSnapshot(context.Background(), &AuthSnapshot{
+		Revision: "r2", RequireKeys: true, NodeMTLS: auth.MTLSAllow, NodeCertCA: ca.pem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := registerAs(t, client(cert), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Fatalf("the re-created worker, certificate and token = %d: %s", code, body)
+	}
+	if code, body := heartbeatAs(t, client(cert), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Fatalf("its heartbeat = %d: %s", code, body)
+	}
+}
+
+func heartbeatAs(t *testing.T, c *http.Client, url, nodeID, bearer string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url+"/admin/v1/nodes/heartbeat", bytes.NewReader([]byte(`{"id":"`+nodeID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	defer res.Body.Close()
+	out, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(out)
+}
+
+// A node a certificate registered is that certificate's: a node token — even
+// the endpoint's own, which every worker of it holds — cannot register or
+// heartbeat as it while the leader checks certificates. Before T24.33 such a
+// node had no binding at all, so any node token could take it.
+func TestATokenCannotActAsANodeACertificateRegistered(t *testing.T) {
+	ca := newTestCA(t)
+	srv, ts, client := mtlsLeader(t, auth.MTLSAllow, ca)
+	plain, rec, _ := auth.Generate("node", "node", "")
+	if err := srv.store.APIKeys().Create(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	cert := ca.nodeCert(t, "n_a", 60)
+	if code, body := registerAs(t, client(cert), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Fatalf("the certificate's join = %d: %s", code, body)
+	}
+	if code, body := registerAs(t, client(), ts.URL, "n_a", plain); code != http.StatusForbidden || !strings.Contains(body, "certificate") {
+		t.Errorf("a token-only register as the certificate's node = %d: %s", code, body)
+	}
+	if code, body := heartbeatAs(t, client(), ts.URL, "n_a", plain); code != http.StatusForbidden {
+		t.Errorf("a token-only heartbeat as the certificate's node = %d: %s", code, body)
+	}
+	if code, body := heartbeatAs(t, client(cert), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Errorf("the certificate's own heartbeat = %d: %s", code, body)
+	}
+	// With mTLS off nothing can present a certificate, so the mark protects
+	// nothing: the node's token takes it back rather than locking it out.
+	if err := srv.applyAuthSnapshot(context.Background(), &AuthSnapshot{Revision: "r2", RequireKeys: true, NodeMTLS: auth.MTLSOff}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := registerAs(t, client(), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Errorf("the token's register with mTLS off = %d: %s", code, body)
+	}
+	if code, body := heartbeatAs(t, client(), ts.URL, "n_a", plain); code != http.StatusOK {
+		t.Errorf("the token's heartbeat with mTLS off = %d: %s", code, body)
 	}
 }

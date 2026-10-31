@@ -8,6 +8,7 @@ package leader
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 
 var (
 	// ErrNodeBoundToOtherKey: a node-scope key presented an id another key owns.
-	ErrNodeBoundToOtherKey = errors.New("node is bound to a different key")
+	ErrNodeBoundToOtherKey = errors.New("bound to a different key")
 	// ErrUnknownNode: heartbeat / drain for an id the leader has never seen.
 	ErrUnknownNode = errors.New("unknown node — register first")
 	// ErrLeaderNotDrainable: the leader's own "local" row. The router serves
@@ -69,15 +70,63 @@ type HeartbeatRequest struct {
 }
 
 // Caller is who is calling: admin keys pass every binding; a node key owns
-// the ids it registered first.
+// the ids it registered first; a verified certificate is the node it names.
 type Caller struct {
 	Admin bool
 	KeyID string
+	// Cert: a verified worker certificate names the node of this request
+	// (R9.6). The handlers refuse a certificate naming another id before the
+	// service is called (checkNodeCertMatches), so here it means "this node".
+	Cert bool
+}
+
+// boundToCertificate is the binding of a node a certificate registered. Every
+// key id starts with "k_" (auth.Generate, the snapshot's k_cp_), so no key
+// matches it.
+const boundToCertificate = "certificate"
+
+// mayActAs is the one identity rule of the join path (PLAN T24.33):
+//   - an admin key acts as any node;
+//   - a certificate acts as the node it names, whatever bound it before — it
+//     is the stronger identity (ADR-073), and the auth snapshot that turns
+//     certificates on can arrive after a worker's token has bound its id;
+//   - a key acts as a node no one bound, or one its own key bound;
+//   - a key never acts as a node a certificate bound, while this leader checks
+//     certificates. With mTLS off nothing can present one, so the mark
+//     protects nothing and the node's token takes it back.
+func (s *Server) mayActAs(c Caller, bound string) bool {
+	switch {
+	case c.Admin, c.Cert, bound == "":
+		return true
+	case bound == boundToCertificate:
+		return s.nodeMTLS().Mode == auth.MTLSOff
+	}
+	return c.KeyID == bound
+}
+
+// bindingOf is what a registration binds the node to.
+func bindingOf(c Caller, existing *store.Node) string {
+	switch {
+	case c.Cert:
+		return boundToCertificate
+	case existing != nil && existing.BoundKeyID != "" && c.Admin:
+		return existing.BoundKeyID // an admin re-register never re-owns the node
+	}
+	return c.KeyID
+}
+
+// errBoundTo is the refusal for a caller mayActAs turned away.
+func errBoundTo(bound string) error {
+	if bound == boundToCertificate {
+		return fmt.Errorf("%w: it registered with a worker certificate, and only that certificate (or an admin) acts as it", ErrNodeBoundToOtherKey)
+	}
+	return ErrNodeBoundToOtherKey
 }
 
 // Register upserts the node row. First-use binding: the key that first
 // registers a node id owns it; a node-scope key presenting a different id
-// is refused, so one leaked node token cannot impersonate every node.
+// is refused, so one leaked node token cannot impersonate every node. A
+// certificate binds the node to itself (mayActAs).
 // bearer is the presented token, kept on the row so the leader can call the
 // worker back (trusted network; HMAC signs the calls).
 func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller Caller, bearer string) (store.Node, error) {
@@ -85,13 +134,10 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 	if err != nil {
 		return store.Node{}, err
 	}
-	boundKeyID := caller.KeyID
-	if existing != nil && existing.BoundKeyID != "" {
-		if !caller.Admin && caller.KeyID != existing.BoundKeyID {
-			return store.Node{}, ErrNodeBoundToOtherKey
-		}
-		boundKeyID = existing.BoundKeyID // an admin re-register never re-owns the node
+	if existing != nil && !s.mayActAs(caller, existing.BoundKeyID) {
+		return store.Node{}, errBoundTo(existing.BoundKeyID)
 	}
+	boundKeyID := bindingOf(caller, existing)
 	n := store.Node{
 		ID: req.ID, Hostname: req.Hostname, OS: req.OS, Arch: req.Arch, RAMGB: req.RAMGB, Address: req.Address,
 		WorkerToken: bearer, BoundKeyID: boundKeyID, HardwareJSON: req.HardwareJSON, LastHeartbeat: time.Now(), State: store.NodeStateReady,
@@ -238,8 +284,8 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	if n == nil {
 		return ErrUnknownNode
 	}
-	if n.BoundKeyID != "" && !caller.Admin && caller.KeyID != n.BoundKeyID {
-		return ErrNodeBoundToOtherKey
+	if !s.mayActAs(caller, n.BoundKeyID) {
+		return errBoundTo(n.BoundKeyID)
 	}
 	// A gang part whose process is down leaves its gang's rows "ready" until
 	// something checks — the router stops sending to it (engineGoneWhy), but the
@@ -518,7 +564,7 @@ func (s *Server) HoldsNode(id string) bool {
 }
 
 func callerFrom(ctx context.Context) Caller {
-	c := Caller{Admin: auth.ScopeFrom(ctx) == "admin"}
+	c := Caller{Admin: auth.ScopeFrom(ctx) == "admin", Cert: nodeCertIdentity(ctx).Present}
 	if k := auth.KeyFrom(ctx); k != nil {
 		c.KeyID = k.ID
 	}
