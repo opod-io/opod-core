@@ -10,8 +10,8 @@
 #
 #   images/build.sh [--push] [--multi] [--dry-run] [--tag T] [image ...]
 #       images: leader llamacpp-nvidia llamacpp-amd llamacpp-cpu llamacpp-intel vllm-nvidia
-#               vllm-amd vllm-intel vllm-tt sglang-nvidia sglang-amd   (default: everything but
-#               those five, whose bases are 7-25 GB and whose hardware proof is still owed)
+#               vllm-amd vllm-intel vllm-tt sglang-nvidia sglang-amd sglang-intel   (default: everything but
+#               those six, whose bases are 7-25 GB and whose hardware proof is still owed)
 #       ARCH=arm64 builds linux/arm64 instead (a local kind on Apple silicon; leader + llamacpp-cpu only —
 #       the GPU bases are amd64). Tag gets a "-arm64" suffix so it never shadows the amd64 image.
 #       --multi builds BOTH arches and publishes the two-arch index under the plain tag
@@ -64,6 +64,10 @@ VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3
 # so a Radeon card cannot run this image — llama.cpp or vLLM serve those. The
 # v0.5.2-rocm630 tag this used to name never existed on Docker Hub.
 SGLANG_AMD_BASE=${SGLANG_AMD_BASE:-lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58}
+# SGLang on Intel XPU: upstream's own -xpu image, built for Arc B-series and Arc Pro
+# B-series (Xe2). The digest is the amd64 manifest (the index also carries an
+# attestation entry).
+SGLANG_INTEL_BASE=${SGLANG_INTEL_BASE:-lmsysorg/sglang:v0.5.22-xpu@sha256:faa2df98ab10ce10250fb2a2062f62876417611397008faf026a6425432332de}
 # Tenstorrent's own tt-metal + vLLM release image. ~17 GB uncompressed, so the
 # build is a thin layer on a very fat base — bump the tag deliberately and check
 # it against the tt-kmd version on the fleet, which tt-metal is strict about.
@@ -107,8 +111,9 @@ spec() {
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.21-cu130@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 amd64" ;;
     sglang-amd)      echo "opod-worker-sglang-amd images/worker-sglang/Dockerfile $SGLANG_AMD_BASE amd64" ;;
+    sglang-intel)    echo "opod-worker-sglang-intel images/worker-sglang/Dockerfile $SGLANG_INTEL_BASE amd64" ;;
     vllm-tt)         echo "opod-worker-vllm-tt images/worker-tt/Dockerfile $VLLM_TT_BASE amd64" ;;
-    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|vllm-tt)" ;;
+    *) die "unknown image '$1' (leader|llamacpp-nvidia|llamacpp-amd|llamacpp-cpu|llamacpp-intel|vllm-nvidia|vllm-amd|vllm-intel|sglang-nvidia|sglang-amd|sglang-intel|vllm-tt)" ;;
   esac
 }
 

@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **An SGLang worker image for Intel: `opod-worker-sglang-intel`** on upstream's `lmsysorg/sglang:v0.5.22-xpu`
+  (`images/build.sh sglang-intel`). Upstream targets Arc B-series (Xe2); an Arc A770 served too with SGLang's
+  default attention backend, so the image declares both families. One card; no gang has run on the XPU backend.
 - **A worker says whether its leader accepts it: `GET /readyz` on the worker (feature `worker_readyz`).** 200 only
   when the leader accepted the worker's last register or heartbeat and its engine answers; 503 with the reason
   otherwise; `?join=only` for a gang part, whose engine the leader starts later. `/healthz` stays the engine alone.

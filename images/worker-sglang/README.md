@@ -15,7 +15,13 @@ images/build.sh --push sglang-nvidia
 # AMD (ROCm). The default base is digest-pinned in build.sh (SGLANG_AMD_BASE);
 # override it for another one — `BASE=` is NOT the variable for this image:
 SGLANG_AMD_BASE=lmsysorg/sglang:v0.5.19-rocm700-mi35x images/build.sh --push sglang-amd
+# Intel (XPU). Upstream's -xpu image, digest-pinned in build.sh (SGLANG_INTEL_BASE):
+images/build.sh --push sglang-intel
 ```
+
+**Intel: upstream targets Xe2 (Arc B-series, Arc Pro B-series)**, and an Arc A770 (Xe-HPG)
+served too (2026-10-31): with no flags SGLang picks `device xpu` and the `triton` attention
+backend, which runs on that card. The `intel_xpu` attention backend was not tried there.
 
 **AMD is Instinct only.** Upstream publishes `…-mi30x` (MI200/MI300) and `…-mi35x` (MI350)
 and no RDNA build at all, so a Radeon card serves through `opod-worker-llamacpp-amd` or

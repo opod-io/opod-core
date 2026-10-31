@@ -218,6 +218,25 @@ images:
       - 'Confirmed on a Radeon RX 7900 XTX 2026-09-19: the worker joins, SGLang starts and its scheduler dies with "HIP error: invalid device function" - no kernel in the image is compiled for RDNA.'
       - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
 
+  - name: opod-worker-sglang-intel
+    role: worker
+    engine: sglang
+    vendor: intel
+    arch: [amd64]
+    dockerfile: images/worker-sglang/Dockerfile
+    base: lmsysorg/sglang:v0.5.22-xpu
+    weights: [safetensors]
+    proven: false
+    hardware: Intel Arc B-series and Arc Pro B-series (Xe2), upstream's target; Arc A-series (Xe-HPG) serves with the default attention backend
+    families: [intel:xe-hpg, intel:xe2]
+    requires:
+      - i915 or xe driver on the node; /dev/dri passed to the container
+    summary: SGLang on Intel XPU (upstream's -xpu image). Safetensors models from a Hugging Face repo, one card.
+    notes:
+      - Upstream names Arc B-series and Arc Pro B-series as its targets and verified its model table on an Arc B580. No Xe2 card has served through this image yet.
+      - 'Arc A770 (Xe-HPG), 2026-10-31: the upstream v0.5.22-xpu image served Qwen2.5-0.5B (bf16) on one card with no flags - SGLang chose device xpu, attention backend triton and sampling backend intel_xpu, and answered correctly. The intel_xpu attention backend upstream''s examples name was not tried on that card.'
+      - Single-card serving only - no gang has been run on the XPU backend.
+
   - name: nvcr-trtllm-nvidia
     role: worker
     engine: trtllm

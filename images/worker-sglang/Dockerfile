@@ -1,5 +1,6 @@
 # opod worker — SGLang on the OFFICIAL lmsysorg image.
 #   nvidia: BASE=lmsysorg/sglang:v0.5.21-cu130    amd: BASE=lmsysorg/sglang:v0.5.19-rocm700-mi30x
+#   intel:  BASE=lmsysorg/sglang:v0.5.22-xpu
 #
 # The same shape as images/worker-vllm: the base brings the engine and its CUDA
 # stack, we add the opod binary, the catalog and the shared entrypoint. Nothing

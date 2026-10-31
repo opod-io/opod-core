@@ -193,6 +193,7 @@ jobs:
           # the planner refuses a gang on it, so the image promises nothing more.
           - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.21-cu130@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469", rpc: "" }
           - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58", rpc: "", sbom_in_build: true }
+          - { name: opod-worker-sglang-intel,    file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.22-xpu@sha256:faa2df98ab10ce10250fb2a2062f62876417611397008faf026a6425432332de", rpc: "", sbom_in_build: true }
     steps:
       - name: Free disk space (the vLLM, ROCm and tt-metal bases are 7-30GB)
         if: contains(matrix.name, 'vllm') || contains(matrix.name, 'amd') || contains(matrix.name, '-tt') || contains(matrix.name, 'sglang')
