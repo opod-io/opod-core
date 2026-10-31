@@ -17,7 +17,7 @@ Every model in Opod's catalog, with step-by-step install + use instructions for 
 
 ## 🎯 Picker table — what to install
 
-Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **47 models** (run `opod model search` for the live list, or `opod model search --sort=released` for newest-first).
+Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **48 models** (run `opod model search` for the live list, or `opod model search --sort=released` for newest-first).
 
 | Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
 | ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |
@@ -90,13 +90,13 @@ For per-model walkthroughs (with detailed install + client snippets), the curate
 
 ## How to choose
 
-Use the [picker table above](#-picker-table--what-to-install). It covers 41 of the 47 catalog entries with size, RAM, capability ratings, and license — the six left out are variants and test fixtures (`llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf`, `mimo-7b-ray`; `opod model info <id>` describes each) — pick the row that matches your hardware, then go by use case.
+Use the [picker table above](#-picker-table--what-to-install). It covers 41 of the 48 catalog entries with size, RAM, capability ratings, and license — the seven left out are the reranker `bge-reranker-v2-m3-gguf` (for `/v1/rerank`, not chat) and variants and test fixtures (`llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf`, `mimo-7b-ray`; `opod model info <id>` describes each) — pick the row that matches your hardware, then go by use case.
 
 The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-sdk/issues/new?template=catalog_request.yml) in the SDK repo, where the catalog lives, if you'd like a full walkthrough added.
 
 ### Installing models that aren't in the catalog
 
-`opod model add` gives you three paths beyond the curated 47 entries:
+`opod model add` gives you three paths beyond the curated 48 entries:
 
 **1. Scheme prefixes** — one-liner; no YAML, no hardware-floor check:
 

@@ -398,7 +398,7 @@ opod model search           # list everything
 opod model search coder     # filter
 ```
 
-A summary of 41 of the 47 catalog entries — `opod model search` (or `opod catalog ls`) is the live list. ⭐ marks the current top picks. The six not listed are variants and test fixtures rather than different models: `llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf` and `mimo-7b-ray` (the one entry that uses the vLLM + Ray gang backend, labelled TEST).
+A summary of 41 of the 48 catalog entries — `opod model search` (or `opod catalog ls`) is the live list. ⭐ marks the current top picks. The seven not listed are the reranker `bge-reranker-v2-m3-gguf` (for `/v1/rerank`, not chat) and six variants and test fixtures rather than different models: `llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf` and `mimo-7b-ray` (the one entry that uses the vLLM + Ray gang backend, labelled TEST).
 
 | Catalog id | What it's for | RAM | Engine name |
 |---|---|---|---|
