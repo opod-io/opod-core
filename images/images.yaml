@@ -82,7 +82,9 @@ images:
       - i915 or xe driver on the node; /dev/dri passed to the container
     summary: llama.cpp on SYCL. GGUF models, whole on one card or split across nodes as RPC parts.
     notes:
-      - Served whole-model on one Arc A770; the RPC split has not been run on Intel hardware, and the Arc Pro B60 has not served.
+      - Served whole-model on one Arc A770, and as the Intel part of mixed-vendor RPC gangs (with NVIDIA, and with NVIDIA and AMD).
+      - An all-Intel RPC gang needs GGML_SYCL_ENABLE_OPT=0 on the rpc-server (e763153); an image built before that fails to form one on Q4/Q8 GGUF weights.
+      - The Arc Pro B60 has not served.
 
   - name: opod-worker-llamacpp-cpu
     role: worker
