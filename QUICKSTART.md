@@ -8,14 +8,14 @@ The fastest path from zero to your first local chat completion. **3 minutes** on
 
 ## 🤔 First — how many machines?
 
-| Your situation | Use |
-|---|---|
-| **One person**, or a small team sharing one beefy box | **1 machine** — everything below works |
-| **More throughput** (lots of concurrent users) | 2+ machines — leader + workers |
-| **A model bigger than any single machine** (e.g. Llama 70B on Mac Minis) | 2+ machines + sharding (`opod shard create`) |
-| **Heterogeneous fleet** (e.g. Mac for coder model, NVIDIA for chat) | 2+ machines, models pinned per node |
+| Your situation | Use | Engine |
+|---|---|---|
+| **Try it** on one laptop or one box | **1 machine** — everything below | Ollama (simplest) or llama.cpp |
+| **One box with two or more NVIDIA cards** | 1 machine; the engine splits the model across the cards | vLLM or SGLang, tensor parallel |
+| **A model bigger than any one card** — two 24 GB PCs as one 48 GB model, or NVIDIA + AMD + Intel together | 2+ machines as one **gang** (`opod shard create`) — see [Pool your GPUs](#-pool-your-gpus-one-model-across-machines) | llama.cpp RPC (any vendor) · vLLM + Ray (NVIDIA) |
+| **More throughput** or **different models on different machines** | 2+ machines — leader + workers, each serving whole models | any |
 
-**One machine is enough for most teams.** Multi-machine is for scale-out, not a requirement. Both setups install the same way — only the *commands you run after installing* differ.
+Every setup installs the same way — only the *commands you run after installing* differ. This page starts on one machine with Ollama because it is the fastest first run. Ollama serves one model whole on one machine: it cannot be part of a gang, and Opod refuses tool calls on it. For pooling GPUs or for agents, switch engine after the first run.
 
 ### 🖼️ Single-machine setup (what you're building below)
 
@@ -33,7 +33,7 @@ The fastest path from zero to your first local chat completion. **3 minutes** on
    │           ┌──────────────────────────┐          │
    │           │      OPOD  :8080         │          │
    │           │   OpenAI-compatible API  │          │
-   │           │   auth · keys · limits   │          │
+   │           │   auth · API keys        │          │
    │           │   usage + event streams  │          │
    │           └────────────┬─────────────┘          │
    │                        │ (localhost HTTP)       │
@@ -144,7 +144,7 @@ opod connect                 # no arg → interactive picker
 opod connect --list          # see all 15
 ```
 
-The roster: `cursor`, `aider`, `continue`, `zed`, `cline`, `openclaw`, `opencode`, `open-webui`, `open-notebook`, `goose`, `plandex`, `openhands`, `codex-cli`, `openai-sdk`, `curl`. Core speaks the OpenAI shape only (ADR-022), so a tool that only speaks the Anthropic Messages shape — Claude Code is one — is not on it; it needs a protocol shim in front of the gateway, which core does not ship.
+The roster: `cursor`, `aider`, `continue`, `zed`, `cline`, `openclaw`, `opencode`, `open-webui`, `open-notebook`, `goose`, `plandex`, `openhands`, `codex-cli`, `openai-sdk`, `curl`. A tool that speaks the Anthropic Messages shape — Claude Code is one — is not on the roster, but it needs no snippet: point it at the same base URL. The leader serves `POST /v1/messages` on every chat model and translates it to the chat path (ADR-092 §1).
 
 ### B) The console
 
@@ -202,7 +202,7 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-Vision routes through the Ollama path today; the engine driver pulls the image bytes from data URLs or http(s) URLs. `/v1/chat/completions` is the only chat route — there is no `/v1/messages`.
+Images reach an Ollama or vLLM engine; the engine driver pulls the image bytes from data URLs or http(s) URLs. An engine not proven to take images (SGLang, llama.cpp, MLX-LM, TensorRT-LLM) is refused `400` naming `image_url`. Anthropic Messages clients send base64 image blocks to `/v1/messages`.
 
 ### F) Embeddings
 
@@ -278,7 +278,10 @@ More fixes in the [main README's troubleshooting table](README.md#troubleshootin
 
 ## 🌐 Add a second (or third…) machine
 
-Same install command everywhere. The first machine becomes the **leader**, every other machine becomes a **worker**.
+Same install command everywhere. The first machine becomes the **leader**, every other machine becomes a **worker**. A second machine does one of two jobs:
+
+- **Serve more, or serve different models** — each worker serves whole models. This section, with any engine (Ollama is shown).
+- **Pool its GPU with the others into one model** — a gang. Skip to [Pool your GPUs](#-pool-your-gpus-one-model-across-machines).
 
 ### 🖼️ Two-machine setup (what you're about to build)
 
@@ -383,7 +386,64 @@ Any request the gateway gets for `qwen-coder-7b` is now routed automatically to 
 
 > ⚠️  Only do this on a network you trust (your LAN, or a VPN you run) — see [Security model](#-security-model-read-before-exposing-it) below.
 
-**Need to split one big model across multiple machines?** That's *sharding* — `opod shard create <model> <N>`. See the [sharded models section in the README](README.md#sharded-models-split-one-brain-across-multiple-machines).
+---
+
+## 🧩 Pool your GPUs: one model across machines
+
+A model that fits on no single card runs as a **gang**: one model split into parts, one part per GPU, behind the leader's one URL. The cards may come from different vendors. Ollama cannot do this; llama.cpp can, on any vendor.
+
+```
+   LEADER (any machine, no GPU needed)
+   opod up · opod token create --node
+              │
+     ┌────────┴─────────┐   `opod join` on each
+     ▼                  ▼
+   PC 1                PC 2
+   NVIDIA 24 GB        AMD 24 GB
+   rpc-server          rpc-server        ◄── the leader starts these for you
+     └──── one 70B model at 4-bit (~43 GB), split by layers ────┘
+```
+
+### Step 1 — on every GPU machine: llama.cpp with RPC
+
+Install llama.cpp so that `rpc-server` and `llama-server` are on PATH. The Homebrew bottle has no RPC backend, so build it from source:
+
+```bash
+git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
+cmake -B build -DGGML_RPC=ON -DGGML_CUDA=ON      # AMD: -DGGML_HIP=ON · Intel: -DGGML_SYCL=ON · Mac: Metal is on by default
+cmake --build build --config Release -j
+sudo cp build/bin/rpc-server build/bin/llama-server /usr/local/bin/
+```
+
+Then join each machine to the leader as in [Step 2 above](#step-2--on-the-new-machine):
+
+```bash
+opod join "http://<leader-host>:8080?token=<token>"
+```
+
+### Step 2 — on the leader: split a model
+
+```bash
+opod node ls                                 # every GPU machine is ready
+opod shard create llama-3.2-3b-sharded 2     # small smoke test: the leader downloads it and fans it out
+opod shard ls                                # parts + the coordinator that serves the gang
+```
+
+What happens: the leader starts an `rpc-server` on each worker, starts `llama-server` (the coordinator) on the worker with the most GPU memory, and routes the model's requests to it. A big model works the same way: `opod model info llama-3.3-70b-sharded` names the GGUF file the leader must hold, and `opod shard create llama-3.3-70b-sharded` with no count picks the fewest parts that fit.
+
+### Step 3 — use it
+
+```bash
+curl http://<leader-host>:8080/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model":"llama-3.2-3b-sharded","messages":[{"role":"user","content":"hi"}]}'
+```
+
+**Two NVIDIA cards in one box** need no gang: vLLM splits the model across both cards itself. Start `vllm serve <repo> --tensor-parallel-size 2 --port 8000`, then join with `OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 opod join "…"`.
+
+**What a split costs:** every token crosses the network between the parts. A gang on plain ethernet is slower than one big card; it runs a model you could not run at all. Keep the machines on one fast LAN.
+
+Every flag, vLLM + Ray gangs across NVIDIA machines, several gangs of one model, and what is proven per engine: [README → Pool your GPUs](README.md#-pool-your-gpus-one-model-across-machines) and [Sharded models](README.md#sharded-models-split-one-brain-across-multiple-machines).
 
 ---
 

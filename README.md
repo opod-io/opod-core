@@ -11,10 +11,19 @@
 
 [**opod.io**](https://opod.io) · [Discussions](https://github.com/opod-io/opod-core/discussions) · [Go SDK](https://github.com/opod-io/opod-sdk) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
 
+> **Pool the GPUs you already own.** Two 24 GB cards in two PCs are one 48 GB model. An NVIDIA card and an AMD or Intel card can serve the same model. A box with two NVIDIA cards serves one model across both. Every machine sits behind one OpenAI-compatible URL and one API key.
 >
-> Engine-agnostic: bring **Ollama**, **vLLM**, **SGLang**, **MLX-LM**, **llama.cpp** or **TensorRT-LLM**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware and shard a giant model across several machines — llama.cpp RPC, vLLM + Ray, or SGLang's own launcher, whichever the catalog entry names. Core has no vendor egress: nothing leaves your network.
+> Engine-agnostic: **llama.cpp** (RPC parts, any vendor), **vLLM** (tensor parallel in a box, Ray across boxes), **SGLang**, **TensorRT-LLM**, **MLX-LM** or **Ollama**. Core has no vendor egress: nothing leaves your network.
 >
-> Point Cursor, Aider, Continue, Codex CLI, any OpenAI SDK — or an Anthropic Messages client such as Claude Code — at Opod. It just works.
+> Point Cursor, Aider, Continue, Codex CLI, any OpenAI SDK — or an Anthropic Messages client such as Claude Code — at Opod.
+
+**The Opod family**
+
+| Part | What it is | Where |
+|---|---|---|
+| **Opod core** (this repo) | The open runtime: `opod up` (leader) and `opod join` (worker). Apache-2.0, CLI only | here |
+| **Opod SDK** | Go types and client for the leader's `/admin/v1` API, the node protocol and the model catalog. Apache-2.0 | [github.com/opod-io/opod-sdk](https://github.com/opod-io/opod-sdk) |
+| **Opod Control Plane** (`opodcp`) | The commercial product on top of core: runs leaders and workers on Kubernetes (`helm install opod`), a per-GPU memory ledger and placer, rollouts, usage export, SSO, a web console | [opod.io](https://opod.io) |
 
 ## 🗺️ Where Opod sits
 
@@ -25,67 +34,35 @@
 > injection) are your gateway's job: the leader runs no guardrail webhook.
 
 ```
-           ┌──────────────────────────────────────────────────────────────┐
-           │                       YOUR USE CASES                         │
-           │             (the tools your team already uses)               │
-           └──────────────────────────────────────────────────────────────┘
-                  │           │          │             │            │
-                  ▼           ▼          ▼             ▼            ▼
-            ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-            │  Cursor  │ │  Codex   │ │  Aider   │ │  Custom  │ │   curl   │
-            │          │ │   CLI    │ │          │ │ Python   │ │  scripts │
-            │          │ │          │ │          │ │   SDK    │ │          │
-            └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
-                 │  OpenAI    │  OpenAI    │  OpenAI    │  OpenAI    │  HTTP
-                 └────────────┴────────────┴────────────┴────────────┘
-                                          │
-                                          │   ONE URL · ONE API KEY
-                                          ▼
-      ╔══════════════════════════════════════════════════════════════════════╗
-      ║                  ⬢ ⬢ ⬢   OPOD   ⬢ ⬢ ⬢                              ║
-      ║                  (this is what we built)                             ║
-      ║  ════════════════════════════════════════════════════════════════    ║
-      ║  Gateway     OpenAI-compatible /v1/chat/completions + /v1/embeddings ║
-      ║              + /v1/rerank · Anthropic /v1/messages · Vertex AI       ║
-      ║              keys as identity · usage + typed event streams          ║
-      ║              CLI-only core · the console is the control plane        ║
-      ║                                                                      ║
-      ║  Router      Same model on N nodes  → load-balance                   ║
-      ║              Different models per node → route by placement          ║
-      ║              Model bigger than any node → split it: llama.cpp RPC,   ║
-      ║                                    vLLM + Ray, or SGLang's launcher  ║
-      ║              Engine error or timeout  → retry catalog fallback chain ║
-      ╚═════════════════════════════╤════════════════════════════════════════╝
-                                    │
-                    ┌───────────────┴───────────────┐
-                    ▼                               ▼
-             ┌─────────────┐                 ┌─────────────┐
-             │  (any mix)  │                 │  (any mix)  │
-             │  • Ollama   │                 │  • Ollama   │
-             │  • vLLM     │                 │  • vLLM     │
-             │  • SGLang   │                 │  • SGLang   │
-             │  • MLX-LM   │                 │  • MLX-LM   │
-             │  • llama.cpp│                 │  • llama.cpp│
-             │  • TRT-LLM  │                 │  • TRT-LLM  │
-             └──────┬──────┘                 └──────┬──────┘
-                    ▼                               ▼
-      ┌──────────────────────────────────────────────────────────────────────┐
-      │                    UNDERLYING LLMs / WEIGHTS — YOUR HARDWARE         │
-      │   • Mac Studio · Mac Mini · Linux + NVIDIA / AMD GPUs                │
-      │   48 curated catalog models (Qwen 3.6, GLM, gpt-oss, Llama 4,        │
-      │   Gemma 4, DeepSeek V4, Kimi K2.6, Nemotron 3 Ultra, vision +        │
-      │   embedding + reranker models) + any HuggingFace or Ollama model.    │
-      │   Nothing leaves your network: core has no vendor egress (ADR-022).  │
-      └──────────────────────────────────────────────────────────────────────┘
+      Cursor · Claude Code · Aider · Codex CLI · OpenAI SDK · curl
+                                  │
+                                  ▼   ONE URL · ONE API KEY
+   ╔═════════════════════════════════════════════════════════════════════╗
+   ║  LEADER   `opod up`   (no GPU needed)                               ║
+   ║  OpenAI + Anthropic API · API keys · usage stream                   ║
+   ║  router: same model on N workers → load-balance                     ║
+   ║          model bigger than any card → split it into a gang          ║
+   ╚══════════════════╤═══════════════════════════════════╤══════════════╝
+                      │  `opod join` over your LAN / VPN  │
+   ┌──────────────────┴───────────────────┐   ┌───────────┴─────────────┐
+   │  ONE MODEL SPLIT ACROSS TWO PCs      │   │  ONE BOX, TWO CARDS     │
+   │  (a gang: llama.cpp RPC parts)       │   │  (vLLM tensor parallel) │
+   │ ┌───────────────┐ ┌────────────────┐ │   │ ┌─────────────────────┐ │
+   │ │ gaming PC     │ │ workstation    │ │   │ │ Linux server        │ │
+   │ │ NVIDIA 24 GB  │ │ AMD 24 GB      │ │   │ │ 2× NVIDIA 24 GB     │ │
+   │ └───────────────┘ └────────────────┘ │   │ └─────────────────────┘ │
+   │  a 70B model at 4-bit (~43 GB)       │   │  a 30B coder, fast      │
+   └──────────────────────────────────────┘   └─────────────────────────┘
+          (hardware here is an example — see "Which engine for which goal")
 ```
 
-**One-sentence version:** Opod is the layer that lets your tools talk to open-weight LLMs on your own hardware through **one URL and one API key**, with the team controls (per-user keys with scopes and expiry, a per-key usage stream) a bare inference engine doesn't give you. It is a CLI and an HTTP API; there is no UI in core.
+**One-sentence version:** Opod joins the GPUs on your machines into one inference service — a model can span cards, machines and vendors — and your tools reach it through **one URL and one API key**, with per-user keys and a usage stream. It is a CLI and an HTTP API; there is no UI in core.
 
 ---
 
-## 🚀 Try it in 60 seconds
+## 🚀 Try it in 60 seconds (one machine)
 
-Opod is engine-agnostic. The quickest path uses **Ollama** as the local engine — but vLLM, SGLang, MLX-LM, llama.cpp and TensorRT-LLM all work. See [Prerequisites — read first](#prerequisites--read-first) below for the alternatives.
+This first run proves the install on one machine. **Ollama** is the quickest engine for it. Ollama serves one model whole on one machine, so it cannot be part of a gang, and Opod refuses tool calls on it — for agents and for pooling GPUs, go on to [Pool your GPUs](#-pool-your-gpus-one-model-across-machines) after this. See [Prerequisites — read first](#prerequisites--read-first) for every engine.
 
 ### 🍎 macOS (Apple Silicon — M1/M2/M3/M4)
 
@@ -178,6 +155,55 @@ codex
 …and the tool talks to your local model instead of paying for the API. `opod connect <tool>` prints the exact lines for each one.
 
 **If something breaks**, run `opod doctor` — it tells you exactly what to fix. Common issues are in the [Troubleshooting installation](#troubleshooting-installation) section.
+
+---
+
+## 🧩 Pool your GPUs: one model across machines
+
+A model that fits on no single card runs as a **gang**: one model split into parts, one part per GPU, behind the leader's one URL. The machines may have different cards from different vendors.
+
+**1. On the leader** (any machine on the LAN; it needs no GPU):
+
+```bash
+opod up
+opod token create --node            # prints a join token
+```
+
+**2. On each GPU machine**, install llama.cpp with its RPC backend (`rpc-server` and `llama-server` on PATH — a source build with `-DGGML_RPC=ON`; the Homebrew bottle lacks it), then join:
+
+```bash
+opod join "http://<leader-host>:8080?token=<token>"   # keep the quotes: ? is a glob in zsh
+```
+
+**3. Back on the leader**, split a model across the workers:
+
+```bash
+opod node ls                                 # every GPU machine is ready
+opod shard create llama-3.2-3b-sharded 2     # small smoke test: the leader downloads it and fans it out
+opod shard create llama-3.3-70b-sharded      # no count: Opod picks the fewest parts that fit free memory
+opod shard ls                                # parts + the coordinator that serves the gang
+```
+
+The 70B entry reads a local GGUF on the leader; `opod model info llama-3.3-70b-sharded` names the file and its path. Requests for the model now go to the gang like any other model. Details, flags and several gangs of one model: [Sharded models](#sharded-models-split-one-brain-across-multiple-machines).
+
+**Two NVIDIA cards in one box** need no gang in Opod: vLLM splits the model across both cards itself. Start it, then join that machine:
+
+```bash
+vllm serve Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8 --tensor-parallel-size 2 --port 8000
+OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 opod join "http://<leader-host>:8080?token=<token>"
+```
+
+### Which engine for which goal
+
+| Goal | Engine | Status |
+|---|---|---|
+| Try Opod on one machine | Ollama, llama.cpp, MLX-LM (Mac) | ✅ Works. Ollama refuses tool calls through Opod |
+| One model across **two or more PCs**, any vendor mix | llama.cpp RPC gang (`opod shard create`) | ✅ Proven: mixed-vendor gangs (NVIDIA + Intel, NVIDIA + Intel + AMD) served; an uneven split over a 48 GB and an 8 GB card served (2026-09-29) |
+| **Two or more NVIDIA cards in one box** | vLLM or SGLang tensor parallel (the engine's own flag) | ✅ Works — the engine does the split; Opod routes to it |
+| One model across **two NVIDIA machines** | vLLM + Ray gang (`sharding.engine: vllm`, `--pp`) | ✅ Proven: pipeline parallel 2 over two 48 GB cards in two machines served (2026-09-14). An uneven layer split on it has not served yet |
+| One model across machines on SGLang | SGLang's own launcher | Built; see [`images/README.md`](images/README.md) for what is proven per vendor |
+
+**What a split across machines costs.** Every token's activations cross the network between parts. On plain ethernet a gang is slower than the same model on one big card; it lets you run a model you could not run at all. Keep the machines on one fast LAN.
 
 ---
 
@@ -343,12 +369,12 @@ Aider is now talking to your local Qwen-Coder. Same UX, your hardware.
                         │  HTTP on your LAN / VPN
         ┌───────────────┼──────────────────┐
         ▼               ▼                  ▼
-   ┌────────────┐ ┌────────────┐    ┌──────────────────┐
-   │ Worker A   │ │ Worker B   │    │ Workers C + D    │
-   │ Linux+GPU  │ │ Mac Mini   │    │ one model, split │
-   │ vLLM       │ │ MLX-LM     │    │ a gang: RPC /    │
-   └────────────┘ └────────────┘    │ Ray / SGLang     │
-                                    └──────────────────┘
+   ┌──────────────────────────────┐ ┌────────────┐ ┌────────────┐
+   │ Workers A + B — ONE model    │ │ Worker C   │ │ Worker D   │
+   │ split into a gang:           │ │ 2× NVIDIA  │ │ Mac        │
+   │ llama.cpp RPC (any vendor) · │ │ vLLM, TP 2 │ │ MLX-LM     │
+   │ vLLM + Ray · SGLang          │ │ whole model│ │ whole model│
+   └──────────────────────────────┘ └────────────┘ └────────────┘
      `opod join`: register once, heartbeat every 5 s (HMAC per node)
 ```
 
@@ -974,7 +1000,9 @@ it is cached), a path under the models directory, or a snapshot directory name (
 
 ### End-to-end multi-node walkthrough
 
-For a leader + one worker on the same LAN:
+This walkthrough gives each machine its **own whole model** — the router sends each request to the machine that holds its model. To make two machines serve **one** model together, use a gang instead: the [Pool your GPUs](#-pool-your-gpus-one-model-across-machines) steps above, and [Sharded models](#sharded-models-split-one-brain-across-multiple-machines) below.
+
+For a leader + one worker on the same LAN, with Ollama as the engine on both:
 
 ```bash
 # === on the leader machine ===
