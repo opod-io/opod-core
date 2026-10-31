@@ -588,13 +588,13 @@ Serves 25–50 users comfortably.
 
 ### Prerequisites — read first
 
-Opod is a **gateway** — it doesn't include an LLM engine. You need one of the six it drives:
-- **Ollama** (recommended for most users; works on Mac + Linux + NVIDIA + CPU)
-- vLLM (for NVIDIA / ROCm / XPU GPUs at scale — Linux only)
-- SGLang (NVIDIA, and AMD Instinct; RadixAttention prefix caching — Linux only)
-- llama.cpp `llama-server` (GGUF anywhere, including CPU; the engine Opod can also launch for you, and the one that shards by layers across machines)
-- MLX-LM (for fastest perf on Apple Silicon)
-- TensorRT-LLM `trtllm-serve` (NVIDIA only, one node; NVIDIA's own container image)
+Opod is a **gateway** — it doesn't include an LLM engine. You need one of the six it drives. Pick by what you want to do:
+- **llama.cpp** `llama-server` + `rpc-server` — **to pool GPUs**: one model split across machines and vendors (NVIDIA, AMD, Intel, CPU). GGUF anywhere; the engine Opod can also launch for you
+- **vLLM** — NVIDIA / ROCm / XPU at scale, Linux only: tensor parallel across the cards of one box, and a Ray gang across NVIDIA machines
+- **SGLang** — NVIDIA, and AMD Instinct; RadixAttention prefix caching; its own multi-node launcher. Linux only
+- **Ollama** — **the simplest first run** on one machine (Mac, Linux, NVIDIA, CPU). It serves each model whole on one machine, so it cannot be part of a gang, and Opod refuses tool calls on it; serve agent models through vLLM, SGLang or llama.cpp
+- **MLX-LM** — fastest on Apple Silicon, one machine
+- **TensorRT-LLM** `trtllm-serve` — NVIDIA only, one node; NVIDIA's own container image
 
 > ⚠️ **Apple Silicon heads-up:** the Homebrew `ollama` formula is currently missing the internal `llama-server` binary — model inference fails with `500: llama-server binary not found`. Use the **cask** (`brew install --cask ollama`) or the official installer instead. The Opod installer detects this and warns you.
 
@@ -1630,7 +1630,7 @@ Yes. That's a core design goal. There are no "pools": a worker serves whatever i
 Yes, after initial model download. Nodes talk to the leader directly over your LAN — there's no external coordination service to reach. For air-gapped installs, point `opod model add` at a local mirror and set `OPOD_SKIP_SOURCE_CHECK=1` to skip the upstream-registry probe.
 
 **How is this different from Ollama?**
-Ollama is a great single-node inference engine. Opod is the *orchestration layer* across many machines. Opod uses Ollama as one of its supported engine backends.
+Ollama is a great single-node inference engine: each model runs whole on one machine. Opod is the layer across machines. It routes and load-balances whole models — Ollama is one of its six engines for that — and it splits **one** model across several machines and vendors (llama.cpp RPC, vLLM + Ray, SGLang), which Ollama cannot. Opod also adds per-user keys, a usage stream and the Anthropic Messages API in front of every engine.
 
 **How is this different from vLLM?**
 vLLM is a single-node inference server. Opod orchestrates vLLM (and others) across your fleet.
@@ -1667,7 +1667,8 @@ Workers no (no MLX, no native vLLM). Leader/CLI yes via WSL2. Native Windows isn
 Opod is a **self-hosted LLM gateway** and **inference router**. If you found this repo searching for an alternative to a hosted service or a frontend for a local engine, the answer is yes:
 
 - **LiteLLM alternative** (Go binary instead of Python) — one OpenAI-compatible gateway in front of your own engines, plus multi-node routing (no vendor proxying).
-- **Ollama frontend / multi-machine Ollama** — Opod orchestrates several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with auth and audit.
+- **Pool consumer GPUs / multi-GPU home lab** — two 24 GB cards in two PCs serve one 48 GB model; NVIDIA, AMD and Intel cards in one gang; two cards in one box with vLLM tensor parallel.
+- **Ollama frontend / multi-machine Ollama** — Opod puts several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with keys and usage records. Each Ollama node serves whole models; to split one model across machines, those nodes run llama.cpp or vLLM instead.
 - **Private inference cluster / on-prem LLM gateway** — keep all inference on a trusted LAN or Tailscale; nothing leaves your network.
 - **Self-hosted Cursor / Aider / Continue backend** — drop-in OpenAI-compatible URL for IDE coding tools.
 - **AI gateway with per-user keys + usage records + audit** for teams of 10-50 spending $30k+/yr on Claude / GPT.
@@ -1682,7 +1683,7 @@ Related concepts: local LLM, on-prem AI, private GPT, GGUF, multi-tenant inferen
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are accepted under the
 [Developer Certificate of Origin](https://developercertificate.org/) (`git commit -s`); there is no CLA.
 
-You can use Opod commercially, modify it, fork it, embed it, redistribute it, and compete with it. The only requirements are (a) keep the license + notice, (b) state significant changes you made. No copyleft, no usage limit. The control plane (`opodcp`) is a separate proprietary product with a free tier of 4 GPUs in one cell.
+You can use Opod commercially, modify it, fork it, embed it, redistribute it, and compete with it. The only requirements are (a) keep the license + notice, (b) state significant changes you made. No copyleft, no usage limit. The control plane (`opodcp`) is a separate proprietary product with a free tier of 4 GPUs in total, summed across cells.
 
 ## Acknowledgments
 
@@ -1691,7 +1692,7 @@ Opod stands on the shoulders of:
 - **vLLM** — for fast NVIDIA inference
 - **SGLang** — for RadixAttention and a prefix cache that survives across requests
 - **MLX-LM** — for Apple Silicon inference
-- **llama.cpp** — for the universal fallback
+- **llama.cpp** — for GGUF everywhere, and the RPC backend that lets one model span cards of any vendor
 - **TensorRT-LLM** — for NVIDIA's own serving stack
 - **Ollama** — for proving the developer-experience bar
 - **LiteLLM** — for showing what one gateway in front of many models should feel like
