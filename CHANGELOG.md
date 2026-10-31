@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **A worker says whether its leader accepts it: `GET /readyz` on the worker (feature `worker_readyz`).** 200 only
+  when the leader accepted the worker's last register or heartbeat and its engine answers; 503 with the reason
+  otherwise; `?join=only` for a gang part, whose engine the leader starts later. `/healthz` stays the engine alone.
+  A worker whose leader refused it used to read healthy, so a manager counted it as capacity.
 - **A re-created worker with a certificate rejoins its leader.** The auth snapshot that turns `nodeMtls: allow` on can
   reach a new leader after its first workers have joined by token, which bound each node id to that token's key. A
   worker pod re-created after that presented its certificate, the leader compared "no key" with the bound key, and

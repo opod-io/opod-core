@@ -323,7 +323,13 @@ func contractFeatures() map[string]bool {
 		// peer still holds a connection to it — the leader dials a gang's head
 		// process directly, and the head holds its parts — so parking a gang
 		// does not cut a stream either. 0 = stop at once; unset = 10 s.
-		"worker_drain":          true,
+		"worker_drain": true,
+		// A worker's GET /readyz (port 8081) is 200 only when its leader
+		// accepted its last register or heartbeat and its engine answers;
+		// `?join=only` asks the join alone, for a gang part (T24.34). /healthz
+		// stays the engine alone. A manager points readiness here, so a worker
+		// its leader refuses is not counted as capacity.
+		"worker_readyz":         true,
 		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one

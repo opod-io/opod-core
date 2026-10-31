@@ -235,11 +235,12 @@ no control plane to tell it, falls back to what it can detect.
 
 ### Worker HTTP server (`internal/agent/server.go`)
 
-Each worker runs a thin HTTP server bound to the address it reported at registration time. `GET /healthz` is the only unauthenticated route; every other one is signed (below). The whole surface, as registered in `agent.Server.Start`:
+Each worker runs a thin HTTP server bound to the address it reported at registration time. `GET /healthz` and `GET /readyz` are the only unauthenticated routes; every other one is signed (below). The whole surface, as registered in `agent.Server.Start`:
 
 | Route | Behavior |
 |---|---|
 | `GET /healthz` | Calls `Engine.Health(ctx)`; returns 200 if the local engine is reachable. No auth. |
+| `GET /readyz` | Feature `worker_readyz`: 200 only when the leader accepted this worker's last register or heartbeat AND the engine is reachable; otherwise 503 saying which (the leader's status code, an unreachable leader, or the engine). `?join=only` asks the join alone, for a gang part whose engine the leader starts later. A worker its leader refuses serves nothing, so a manager points readiness here and keeps `/healthz` for a startup check — a leader restart must not restart its workers. No auth. |
 | `GET /v1/models` | Calls `Engine.List(ctx)` and emits the OpenAI `{"object":"list","data":[…]}` shape. |
 | `POST /v1/chat/completions` | Decodes the OpenAI request, calls `Engine.Chat(ctx, req)`, re-emits as SSE (stream=true) or aggregated JSON (stream=false). |
 | `POST /v1/embeddings` | The same for the embedding shape — the leader talks to a worker over the OpenAI wire, not only for chat. |

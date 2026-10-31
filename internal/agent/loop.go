@@ -55,6 +55,9 @@ type Agent struct {
 	// (Server.LaunchedSlots), reported when the engine cannot state its own
 	// (engines.SlotReporter). nil = this worker launched nothing.
 	LaunchedSlots func() int
+	// Join records the leader's answer to every register and heartbeat; the
+	// Server serves it on /readyz. nil = not recorded.
+	Join *JoinState
 
 	HTTP              *http.Client
 	HeartbeatInterval time.Duration
@@ -118,7 +121,9 @@ func (a *Agent) register(ctx context.Context) (int, error) {
 		"hardware_json": mustJSON(a.Capabilities),
 		"boot_id":       a.BootID,
 	})
-	return a.post(ctx, "/admin/v1/nodes/register", body)
+	code, err := a.post(ctx, "/admin/v1/nodes/register", body)
+	a.Join.note("register", code, err)
+	return code, err
 }
 
 // Heartbeat sends a lightweight ping to keep the leader informed we're alive,
@@ -207,7 +212,9 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 		}
 	}
 	body, _ := json.Marshal(hb)
-	return a.post(ctx, "/admin/v1/nodes/heartbeat", body)
+	code, err := a.post(ctx, "/admin/v1/nodes/heartbeat", body)
+	a.Join.note("heartbeat", code, err)
+	return code, err
 }
 
 // Goodbye is the worker's last heartbeat: it says the engine is STOPPED before

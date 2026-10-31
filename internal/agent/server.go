@@ -110,6 +110,9 @@ type Server struct {
 	// work already on this worker finish before Start returns and the engine
 	// goes (drain.go, T31.6). 0 = stop at once.
 	Drain time.Duration
+	// Join is the Agent's record of the leader's last answer, for /readyz.
+	// nil = this server runs without an agent, and /readyz says not joined.
+	Join *JoinState
 	// gang is set once the leader started a process here (/v1/process/start):
 	// this worker is a gang member, reached by peers on its processes' own
 	// ports, so its stop also waits for them (waitForPeers).
@@ -126,6 +129,7 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/readyz", s.readyz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
 	mux.HandleFunc("/v1/embeddings", s.auth(s.embeddings))              // the leader talks to a worker over the OpenAI wire — both shapes, not just chat
@@ -252,6 +256,30 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = fmt.Fprintf(w, "engine: %v", err)
 		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "ok")
+}
+
+// readyz is this worker's readiness (feature "worker_readyz", T24.34): its
+// leader accepted its last register or heartbeat AND its engine answers. The
+// leader routes only to a worker it accepted, so a worker it refuses is not
+// capacity, however healthy its engine. `?join=only` drops the engine half for
+// a gang part, whose engine its leader starts later (/v1/process/start).
+// /healthz stays the engine alone: a startup check that restarts the pod must
+// not fire because the leader is restarting.
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if ok, why := s.Join.Joined(); !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "not joined: "+why)
+		return
+	}
+	if r.URL.Query().Get("join") != "only" {
+		if err := s.Engine.Health(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(w, "engine: %v", err)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, "ok")
