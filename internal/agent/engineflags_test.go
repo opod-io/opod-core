@@ -62,11 +62,31 @@ func TestLlamaKVLayoutIsSaidEitherWay(t *testing.T) {
 // SGLang takes the KV cache's element type from a plan, as vLLM does (T23.10).
 func TestSGLangTakesTheKVElementType(t *testing.T) {
 	_, args := ParseEngineFlags(`{"kv_cache_dtype":"fp8_e5m2"}`).sglangShellOverrides()
-	if args != "'--kv-cache-dtype' 'fp8_e5m2'" {
+	if args != "'--kv-cache-dtype' 'fp8_e5m2' '--enable-cache-report'" {
 		t.Fatalf("sglang args: %q", args)
 	}
-	if _, args := ParseEngineFlags(`{"kv_cache_dtype":"fp8; rm -rf /"}`).sglangShellOverrides(); args != "" {
+	if _, args := ParseEngineFlags(`{"kv_cache_dtype":"fp8; rm -rf /"}`).sglangShellOverrides(); args != "'--enable-cache-report'" {
 		t.Fatalf("a value that is not a plain token is dropped: %q", args)
+	}
+}
+
+// T32.47: vLLM and SGLang put the cached prompt tokens in their answer only
+// with their own switch, so the line always carries it — once, even when the
+// plan's extra already names it.
+func TestTheEngineLineAsksForTheCachedTokenCount(t *testing.T) {
+	for _, c := range []struct {
+		name, flags, want string
+		line              func(EngineFlags) string
+	}{
+		{"vllm", `{}`, "'--enable-prompt-tokens-details'", func(f EngineFlags) string { _, a := f.vllmShellOverrides(); return a }},
+		{"vllm extra", `{"extra":"--enable-prompt-tokens-details"}`, "'--enable-prompt-tokens-details'", func(f EngineFlags) string { _, a := f.vllmShellOverrides(); return a }},
+		{"sglang", `{}`, "'--enable-cache-report'", func(f EngineFlags) string { _, a := f.sglangShellOverrides(); return a }},
+		{"sglang extra", `{"extra":"--enable-cache-report"}`, "'--enable-cache-report'", func(f EngineFlags) string { _, a := f.sglangShellOverrides(); return a }},
+	} {
+		got := c.line(ParseEngineFlags(c.flags))
+		if n := strings.Count(got, c.want); n != 1 {
+			t.Errorf("%s: %q carries %s %d times, want once", c.name, got, c.want, n)
+		}
 	}
 }
 

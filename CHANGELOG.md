@@ -21,6 +21,10 @@ the last section.
   `gen_ai.usage.cache_read.input_tokens` (prompt tokens the engine served from its prefix cache, as vLLM, SGLang and
   llama-server report them; 0 from an engine that reports none) and `opod.request.class` (the admission class that ranked
   it; absent when the policy has no classes). A front door's rows carry the same three.
+- **vLLM and SGLang report the prompt tokens their prefix cache served.** A worker starts vLLM with
+  `--enable-prompt-tokens-details` and SGLang with `--enable-cache-report`; without them both answer with no
+  `prompt_tokens_details`, so the cached count read 0 on every request. A plan's `extra` that already names the flag is
+  not doubled.
 - **The installer looks for any engine, not only Ollama, and its next steps print whole.** It finds `llama-server`,
   `vllm`, `trtllm-serve`, `mlx_lm.server` or `ollama` on PATH, and with none it names llama.cpp (Mac), vLLM (Linux with
   `nvidia-smi`) or a llama.cpp build (other Linux), linking docs/ENGINES.md. Its "Joining an existing cluster?" line

@@ -145,6 +145,13 @@ func (f EngineFlags) vllmShellOverrides() (overrides string, extraArgs string) {
 	if _, inExtra := f.extraInt("--max-num-seqs"); !inExtra {
 		args = append(args, "--max-num-seqs", strconv.Itoa(f.vllmMaxNumSeqs()))
 	}
+	// The usage record's cached tokens (T32.47): vLLM puts
+	// prompt_tokens_details.cached_tokens in its answer only with this flag
+	// (found on the design-partner cell, 2026-11-01: a repeated 676-token
+	// prompt read 0). It costs a field in the answer, nothing on the GPU.
+	if !f.extraHasPrefix("--enable-prompt-tokens-details") {
+		args = append(args, "--enable-prompt-tokens-details")
+	}
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
 	}
@@ -460,6 +467,11 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 	// no way to take it from a plan (PLAN T23.10).
 	if v, ok := f.get("kv_cache_dtype"); ok && isToken(v) {
 		args = append(args, "--kv-cache-dtype", v)
+	}
+	// SGLang's switch for prompt_tokens_details.cached_tokens, the usage
+	// record's cached tokens (T32.47); off by default upstream.
+	if !f.extraHasPrefix("--enable-cache-report") {
+		args = append(args, "--enable-cache-report")
 	}
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
