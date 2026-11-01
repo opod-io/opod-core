@@ -102,6 +102,23 @@ func StartHealthWatchdog(ctx context.Context, sup *agent.Supervisor, log *slog.L
 	}()
 }
 
+// autoSpawnReadyDefault bounds the readiness of an auto-spawned llama-server
+// when the caller sets no deadline (the watchdog's restart): a download plus a
+// load, the same window the shard coordinator gets.
+const autoSpawnReadyDefault = 15 * time.Minute
+
+// autoSpawnReadyTimeout is the readiness bound for an auto-spawned
+// llama-server: what is left of ctx's deadline, else autoSpawnReadyDefault.
+func autoSpawnReadyTimeout(ctx context.Context) time.Duration {
+	if dl, ok := ctx.Deadline(); ok {
+		if left := time.Until(dl); left > 0 {
+			return left
+		}
+		return time.Millisecond // already expired: fail at once, never fall back to the default
+	}
+	return autoSpawnReadyDefault
+}
+
 // engineHealthchecker is the minimal surface the watchdog needs from the
 // engines package. Defined here so the scheduler doesn't pull in the
 // full engines.Engine interface for what is essentially Health() + Name().
@@ -111,7 +128,8 @@ type engineHealthchecker interface {
 }
 
 // EnsureLlamaServer launches a llama-server for spec.Entry via sup and
-// waits for the port to accept TCP. Idempotent: if the supervisor already
+// waits until its /health answers 200 (the model is loaded), for as long as
+// ctx allows. Idempotent: if the supervisor already
 // has a process under the same id, returns its existing ProcessInfo.
 // The supervisor's StopAll (deferred in cmd_up) tears the process down on
 // opod shutdown.
@@ -150,11 +168,18 @@ func EnsureLlamaServer(ctx context.Context, sup *agent.Supervisor, log *slog.Log
 	args = append(args, spec.ExtraArgs...)
 
 	procSpec := agent.ProcessSpec{
-		ID:             procID,
-		Command:        "llama-server",
-		Args:           args,
-		HealthPort:     spec.Port,
-		HealthHost:     "127.0.0.1",
+		ID:         procID,
+		Command:    "llama-server",
+		Args:       args,
+		HealthPort: spec.Port,
+		HealthHost: "127.0.0.1",
+		// llama-server -hf downloads the GGUF before it binds, and binds before
+		// the model is loaded: a TCP probe passes too early, and the supervisor's
+		// 30 s default expired during the first download of a 2 GB model, so a
+		// first `opod up` never served (2026-10-31). Probe /health, and give the
+		// probe the caller's whole budget (the caller's deadline wins).
+		HealthPath:     "/health",
+		ReadyTimeout:   autoSpawnReadyTimeout(ctx),
 		Restart:        true,
 		MaxRestarts:    5,
 		RestartBackoff: time.Second,

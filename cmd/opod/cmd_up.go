@@ -155,7 +155,9 @@ func cmdUp(args []string) {
 	if !engineOK && isLlamaCppEngine(eng.Name()) && cfg.Router.DefaultModel != "" && cfg.Router.PullDefaultModel {
 		if entry := models.FindByID(cat, cfg.Router.DefaultModel); entry != nil {
 			port := parseEndpointPort(cfg.Engine.LlamaCppEndpoint)
-			spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			// A first run downloads the GGUF inside this (llama-server -hf),
+			// so it is sized like a cold `model move` target, not a restart.
+			spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			note(os.Stdout, "auto-spawning llama-server for %s on :%d ...", entry.ID, port)
 			spec := scheduler.LlamaCppLaunchSpec{Entry: entry, Port: port}
 			_, err := scheduler.EnsureLlamaServer(spawnCtx, sup, log, spec)
