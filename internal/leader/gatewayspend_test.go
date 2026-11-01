@@ -67,3 +67,20 @@ func TestPushedUsageIsDeduplicatedByTheGatewaysRowID(t *testing.T) {
 		t.Errorf("a row with no id is accepted (at-least-once is the caller's choice): %v", got)
 	}
 }
+
+// T32.47: a door's row keeps its cached tokens, class and operation into the
+// leader's queue, so a record served through a door says as much as one the
+// leader served itself.
+func TestADoorsRowKeepsItsCachedTokensClassAndOperation(t *testing.T) {
+	srv, _ := gwServer(t)
+	rec := httptest.NewRecorder()
+	srv.pushUsage(rec, httptest.NewRequest(http.MethodPost, "/admin/v1/usage/push", strings.NewReader(
+		`{"gateway":"gw-a","rows":[{"id":"r1","model":"m","prompt_tokens":900,"cached_tokens":640,"class":"batch","operation":"chat","outcome":"ok"}]}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("push: %d %s", rec.Code, rec.Body.String())
+	}
+	got := srv.usage.Records()
+	if len(got) != 1 || got[0].CachedTokens != 640 || got[0].Class != "batch" || got[0].Operation != "chat" || got[0].Gateway != "gw-a" {
+		t.Fatalf("records = %+v", got)
+	}
+}

@@ -16,6 +16,11 @@ the last section.
   /admin/v1/usage/stream` and the SQLite `usage` table are gone (dropped on the first open); a manager that pulled the
   stream reads the push instead, and probes `usage_push`. Models are evicted least-recently-used by the requests since
   the process started.
+- **A usage record says what the request did, what the cache saved and how it was ranked.** Each record carries
+  `gen_ai.operation.name` (`chat`, `embeddings` or `rerank`; how it was spoken stays `opod.protocol`),
+  `gen_ai.usage.cache_read.input_tokens` (prompt tokens the engine served from its prefix cache, as vLLM, SGLang and
+  llama-server report them; 0 from an engine that reports none) and `opod.request.class` (the admission class that ranked
+  it; absent when the policy has no classes). A front door's rows carry the same three.
 - **The installer looks for any engine, not only Ollama, and its next steps print whole.** It finds `llama-server`,
   `vllm`, `trtllm-serve`, `mlx_lm.server` or `ollama` on PATH, and with none it names llama.cpp (Mac), vLLM (Linux with
   `nvidia-smi`) or a llama.cpp build (other Linux), linking docs/ENGINES.md. Its "Joining an existing cluster?" line

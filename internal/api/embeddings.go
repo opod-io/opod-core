@@ -148,7 +148,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
 		}
-		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
+		h.recordUsage(r.Context(), OpEmbeddings, requested, nil, time.Since(start), "error")
 		return
 	}
 
@@ -179,7 +179,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	encoded, err := json.Marshal(out)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "encode_error", err.Error())
-		h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "error")
+		h.recordUsage(r.Context(), OpEmbeddings, requested, u, time.Since(start), "error")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -194,7 +194,7 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 			h.Policy().Cache.Set(r.Context(), key, encoded, 0) // use driver default TTL
 		}
 	}
-	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
+	h.recordUsage(r.Context(), OpEmbeddings, requested, u, time.Since(start), "ok")
 }
 
 // cacheBypass honors RFC-7234 Cache-Control directives for opt-out.

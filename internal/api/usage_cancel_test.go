@@ -131,7 +131,7 @@ func TestRecordUsageSurvivesADoneContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h.recordUsage(ctx, "openai", "m", &engines.Usage{PromptTokens: 3, CompletionTokens: 4}, time.Millisecond, "cancelled")
+	h.recordUsage(ctx, OpChat, "m", &engines.Usage{PromptTokens: 3, CompletionTokens: 4}, time.Millisecond, "cancelled")
 
 	if r := waitForUsage(t, sink); r.PromptTokens != 3 || r.CompletionTokens != 4 || r.RequestID == "" {
 		t.Fatalf("record = %+v, want the one recorded under a done context, with a request id", r)

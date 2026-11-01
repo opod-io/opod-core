@@ -269,6 +269,7 @@ func TestEveryFieldRoundTrips(t *testing.T) {
 	q := NewQueue(1_761_955_200, 0)
 	r := rec("qwen", 1)
 	r.UserID, r.Gateway = "u_1", "door-1"
+	r.CachedTokens, r.Class, r.Operation = 600, "batch", "chat"
 	q.Add(r)
 	z := Record{TS: time.Unix(5, 0), Model: "qwen", Outcome: "error"}
 	q.Add(z)
@@ -298,25 +299,29 @@ func TestEveryFieldRoundTrips(t *testing.T) {
 	}
 	for k, want := range map[string]string{adminapi.UsageAttrModel: "qwen", adminapi.UsageAttrRequestID: r.RequestID,
 		adminapi.UsageAttrAPIKeyID: r.APIKeyID, adminapi.UsageAttrUserID: "u_1", adminapi.UsageAttrProtocol: "chat",
-		adminapi.UsageAttrOutcome: "ok", adminapi.UsageAttrNodeID: r.NodeID, adminapi.UsageAttrGateway: "door-1"} {
+		adminapi.UsageAttrOutcome: "ok", adminapi.UsageAttrNodeID: r.NodeID, adminapi.UsageAttrGateway: "door-1",
+		adminapi.UsageAttrClass: "batch", adminapi.UsageAttrOperation: "chat"} {
 		if got, _ := attrStr(a, k); got != want {
 			t.Fatalf("%s = %q, want %q", k, got, want)
 		}
 	}
 	for k, want := range map[string]int64{adminapi.UsageAttrSeq: 1, adminapi.UsageAttrInputTokens: 812,
-		adminapi.UsageAttrOutputTokens: 213, adminapi.UsageAttrLatencyMS: 1840, adminapi.UsageAttrTTFTMS: 95} {
+		adminapi.UsageAttrOutputTokens: 213, adminapi.UsageAttrLatencyMS: 1840, adminapi.UsageAttrTTFTMS: 95,
+		adminapi.UsageAttrCachedTokens: 600} {
 		if got := attrInt(a, k); got != want {
 			t.Fatalf("%s = %d, want %d", k, got, want)
 		}
 	}
 	b := lrs[1]
-	for _, k := range []string{adminapi.UsageAttrTTFTMS, adminapi.UsageAttrInputTokens, adminapi.UsageAttrOutputTokens, adminapi.UsageAttrLatencyMS} {
+	for _, k := range []string{adminapi.UsageAttrTTFTMS, adminapi.UsageAttrInputTokens, adminapi.UsageAttrOutputTokens, adminapi.UsageAttrLatencyMS, adminapi.UsageAttrCachedTokens} {
 		if got := attrInt(b, k); got != 0 {
 			t.Fatalf("zero record: %s = %d, want 0 present", k, got)
 		}
 	}
-	if _, ok := attrStr(b, adminapi.UsageAttrAPIKeyID); ok {
-		t.Fatal("an empty key id was sent")
+	for _, k := range []string{adminapi.UsageAttrAPIKeyID, adminapi.UsageAttrClass, adminapi.UsageAttrOperation} {
+		if _, ok := attrStr(b, k); ok {
+			t.Fatalf("an empty %s was sent", k)
+		}
 	}
 }
 

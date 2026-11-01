@@ -22,20 +22,28 @@ import (
 // Metrics always fire (even when no API key is in context — e.g., dev mode
 // with require_keys=false). The record then carries empty key/user
 // identifiers.
-func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
+func (h *Handler) recordUsage(ctx context.Context, operation, model string,
 	u *engines.Usage, latency time.Duration, outcome string) {
-	h.recordUsageTTFT(ctx, protocol, model, u, latency, 0, outcome)
+	h.recordUsageTTFT(ctx, operation, model, u, latency, 0, outcome)
 }
+
+// The operations a usage record names (T32.47): what the request did. How it
+// was spoken — OpenAI, Anthropic Messages, Vertex — is the protocol.
+const (
+	OpChat       = "chat"
+	OpEmbeddings = "embeddings"
+	OpRerank     = "rerank"
+)
 
 // recordUsageTTFT is recordUsage with the time to the first usable byte, which
 // only the streaming path can know (R15.13). 0 = not streamed, and the control
 // plane must not read it as "instant".
-func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
+func (h *Handler) recordUsageTTFT(ctx context.Context, operation, model string,
 	u *engines.Usage, latency, ttft time.Duration, outcome string) {
 	pol := h.Policy()
-	// A Messages request is served by the chat handler; the row says what the
-	// caller spoke (anthropic.go).
-	protocol = protocolOf(ctx, protocol)
+	// A Messages or Vertex request is served by the OpenAI handlers; the
+	// record says what the caller spoke (anthropic.go, vertex).
+	protocol := protocolOf(ctx, "openai")
 
 	var keyID, userID string
 	if k := auth.KeyFrom(ctx); k != nil {
@@ -43,10 +51,9 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		userID = k.UserID
 	}
 
-	prompt, completion := 0, 0
+	prompt, completion, cached := 0, 0, 0
 	if u != nil {
-		prompt = u.PromptTokens
-		completion = u.CompletionTokens
+		prompt, completion, cached = u.PromptTokens, u.CompletionTokens, u.CachedTokens
 	}
 
 	// Metrics first — always, regardless of auth state. Bound the label
@@ -86,5 +93,8 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		Outcome:          outcome,
 		NodeID:           router.NodeFrom(ctx), // "" when answered locally / never dispatched
 		TTFTMS:           int(ttft.Milliseconds()),
+		CachedTokens:     cached,
+		Class:            router.ClassFrom(ctx),
+		Operation:        operation,
 	})
 }

@@ -97,15 +97,25 @@ func NodeFrom(ctx context.Context) string {
 }
 
 // NoteClass records the admission class that ranked the request, for the
-// attempt span. The leader's gate calls it only when the request is traced
-// (its span records), so an untraced request takes no lock for it. A no-op
-// when no trace is installed.
+// attempt span and the usage record (T32.47). A no-op when no trace is
+// installed.
 func NoteClass(ctx context.Context, class string) {
 	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
 		t.mu.Lock()
 		t.class = class
 		t.mu.Unlock()
 	}
+}
+
+// ClassFrom is the admission class NoteClass recorded ("" = none: the request
+// never reached the gate, or no trace was installed).
+func ClassFrom(ctx context.Context) string {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.class
+	}
+	return ""
 }
 
 // noteGangHead records the worker heading the gang a pick chose. A no-op

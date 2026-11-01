@@ -109,7 +109,7 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	res, err := re.Rerank(ctx, engines.RerankRequest{Model: requested, Query: req.Query, Documents: req.Documents})
 	if err != nil {
-		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
+		h.recordUsage(r.Context(), OpRerank, requested, nil, time.Since(start), "error")
 		if why, gone := h.capacityGone(ctx, requested, failedNode(ctx, err), err); gone { // no worker left by the pick (openai.go)
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "unavailable", why)
@@ -150,7 +150,7 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 	deliver(w)
-	h.recordUsage(r.Context(), "openai", requested, u, time.Since(start), "ok")
+	h.recordUsage(r.Context(), OpRerank, requested, u, time.Since(start), "ok")
 }
 
 // writeRerankError answers a failed rerank. An engine without a rerank route

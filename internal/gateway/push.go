@@ -40,6 +40,9 @@ type Row struct {
 	TTFTMS           int       `json:"ttft_ms,omitempty"`
 	Outcome          string    `json:"outcome"`
 	NodeID           string    `json:"node_id,omitempty"`
+	CachedTokens     int       `json:"cached_tokens,omitempty"` // T32.47
+	Class            string    `json:"class,omitempty"`
+	Operation        string    `json:"operation,omitempty"`
 }
 
 // RowFrom builds a push row from a usage record. id must be unique for this
@@ -48,7 +51,8 @@ type Row struct {
 func RowFrom(id string, u usage.Record) Row {
 	return Row{ID: id, TS: u.TS, APIKeyID: u.APIKeyID, UserID: u.UserID, Model: u.Model, Protocol: u.Protocol,
 		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,
-		LatencyMS: u.LatencyMS, TTFTMS: u.TTFTMS, Outcome: u.Outcome, NodeID: u.NodeID}
+		LatencyMS: u.LatencyMS, TTFTMS: u.TTFTMS, Outcome: u.Outcome, NodeID: u.NodeID,
+		CachedTokens: u.CachedTokens, Class: u.Class, Operation: u.Operation}
 }
 
 // Pusher queues rows and sends them to the leader in batches.

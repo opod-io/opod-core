@@ -1663,6 +1663,10 @@ Mechanisms a manager drives through this surface:
   `opod.usage.seq`): the process start and a sequence from 1 per boot. A restart loses what was queued — counted
   by the receiver as a gap in the sequence of the old boot. The lifecycle manager's LRU order reads the queue's
   last-used map (it read `MAX(ts)` over the table), so it starts empty at boot.
+  A record also names its operation (`gen_ai.operation.name`: chat · embeddings · rerank), the prompt tokens the
+  engine's prefix cache served (`gen_ai.usage.cache_read.input_tokens`, from `prompt_tokens_details.cached_tokens`;
+  0 = not reported) and the admission class that ranked it (`opod.request.class`, noted by the gate on the request's
+  route trace whenever the policy has classes; T32.47).
 - **Gateway spend** (`gateway_spend`, T11.1 slice 1, ADR-063): the leader is one BRAIN behind several front DOORS.
   `POST /admin/v1/usage/push` takes usage rows a copied front recorded — at-least-once, deduplicated by a row id the
   **gateway** mints, because only the gateway knows two pushes are the same request, and a retry after a response it

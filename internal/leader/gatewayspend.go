@@ -204,6 +204,9 @@ type pushUsageRequest struct {
 		TTFTMS           int       `json:"ttft_ms"`
 		Outcome          string    `json:"outcome"`
 		NodeID           string    `json:"node_id"`
+		CachedTokens     int       `json:"cached_tokens"`
+		Class            string    `json:"class"`
+		Operation        string    `json:"operation"`
 	} `json:"rows"`
 	// InFlight and RPM1m are the DOOR's own live load at the moment of the
 	// push. The leader publishes the sum (GET /gatewayz) because that total is
@@ -241,6 +244,7 @@ func (s *Server) pushUsage(w http.ResponseWriter, r *http.Request) {
 			TS: ts, RequestID: row.ID, APIKeyID: row.APIKeyID, UserID: row.UserID, Model: row.Model, Protocol: row.Protocol,
 			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
 			LatencyMS: row.LatencyMS, TTFTMS: row.TTFTMS, Outcome: row.Outcome, NodeID: row.NodeID, Gateway: req.Gateway,
+			CachedTokens: row.CachedTokens, Class: row.Class, Operation: row.Operation,
 		})
 		accepted++
 	}

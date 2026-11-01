@@ -352,7 +352,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := arrivalOf(r.Context())
 	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
-		h.recordUsage(r.Context(), "openai", requested, nil, time.Since(start), "error")
+		h.recordUsage(r.Context(), OpChat, requested, nil, time.Since(start), "error")
 		// A field the ENGINE cannot honour: the caller must see which one, and
 		// a 400 is the honest status — nothing upstream failed (T10.8).
 		var unsup *engines.UnsupportedRequestError
@@ -437,11 +437,11 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	for ev := range stream {
 		// Bail before writing if the client is gone — avoids broken-pipe noise.
 		if r.Context().Err() != nil {
-			h.recordUsage(r.Context(), "openai", modelOut, deliveredUsage(delivered), time.Since(start), "cancelled")
+			h.recordUsage(r.Context(), OpChat, modelOut, deliveredUsage(delivered), time.Since(start), "cancelled")
 			return
 		}
 		if ev.Err != nil {
-			h.recordUsage(r.Context(), "openai", modelOut, deliveredUsage(delivered), time.Since(start), "error")
+			h.recordUsage(r.Context(), OpChat, modelOut, deliveredUsage(delivered), time.Since(start), "error")
 			writeSSEError(w, flusher, h.Engine, servedBy(r.Context(), ev.Err))
 			return
 		}
@@ -470,7 +470,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 			if flusher != nil {
 				flusher.Flush()
 			}
-			h.recordUsageTTFT(r.Context(), "openai", modelOut, ev.Usage, time.Since(start), ttft, "ok")
+			h.recordUsageTTFT(r.Context(), OpChat, modelOut, ev.Usage, time.Since(start), ttft, "ok")
 			return
 		}
 		if engines.HasJSON(ev.ToolCalls) {
@@ -526,7 +526,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	// The producer closed the stream without a final event. That is what a
 	// client disconnect looks like from here (every producer stops sending once
 	// the request context is done), and it still owes a usage row.
-	h.recordUsage(r.Context(), "openai", modelOut, deliveredUsage(delivered), time.Since(start), unfinishedOutcome(r.Context()))
+	h.recordUsage(r.Context(), OpChat, modelOut, deliveredUsage(delivered), time.Since(start), unfinishedOutcome(r.Context()))
 }
 
 // deliveredUsage is the usage of a stream that ended without the engine's own
@@ -576,7 +576,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	done := false
 	for ev := range stream {
 		if ev.Err != nil {
-			h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "error")
+			h.recordUsage(r.Context(), OpChat, modelOut, nil, time.Since(start), "error")
 			writeJSONError(w, http.StatusBadGateway, "upstream_error", servedBy(r.Context(), ev.Err).Error())
 			return
 		}
@@ -606,7 +606,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	if !done && r.Context().Err() != nil {
 		// The caller left while the answer was being gathered: nobody is there
 		// to read a body, and the row must not claim the request succeeded.
-		h.recordUsage(r.Context(), "openai", modelOut, nil, time.Since(start), "cancelled")
+		h.recordUsage(r.Context(), OpChat, modelOut, nil, time.Since(start), "cancelled")
 		return
 	}
 	resp := chatResponse{
@@ -627,7 +627,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	}
 	writeJSON(w, http.StatusOK, resp)
 	deliver(w)
-	h.recordUsage(r.Context(), "openai", modelOut, u, time.Since(start), "ok")
+	h.recordUsage(r.Context(), OpChat, modelOut, u, time.Since(start), "ok")
 }
 
 // ResolveModel maps the OpenAI "model" field to the engine-native identifier.

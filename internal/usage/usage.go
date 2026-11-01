@@ -48,6 +48,13 @@ type Record struct {
 	Outcome string
 	NodeID  string // the worker that served it; "" = answered locally / not dispatched
 	Gateway string // the front door that served it; "" = the leader itself
+	// T32.47. CachedTokens: prompt tokens the engine served from its prefix
+	// cache (0 = none reported). Class: the admission class that ranked the
+	// request ("" = no classes in the policy). Operation: what it did — chat,
+	// embeddings or rerank.
+	CachedTokens int
+	Class        string
+	Operation    string
 }
 
 // itemOverhead is what one queued record costs beside its encoding: its slot
@@ -221,6 +228,9 @@ const (
 	fOutcome
 	fNodeID
 	fGateway
+	fCached
+	fClass
+	fOperation
 )
 
 func marshal(seq int64, r Record) []byte {
@@ -249,6 +259,9 @@ func marshal(seq int64, r Record) []byte {
 	str(fOutcome, r.Outcome)
 	str(fNodeID, r.NodeID)
 	str(fGateway, r.Gateway)
+	num(fCached, int64(r.CachedTokens))
+	str(fClass, r.Class)
+	str(fOperation, r.Operation)
 	return b
 }
 
@@ -281,6 +294,8 @@ func unmarshal(b []byte) (int64, Record, error) {
 				r.LatencyMS = int(v)
 			case fTTFT:
 				r.TTFTMS = int(v)
+			case fCached:
+				r.CachedTokens = int(v)
 			}
 		case protowire.BytesType:
 			v, l := protowire.ConsumeString(b)
@@ -305,6 +320,10 @@ func unmarshal(b []byte) (int64, Record, error) {
 				r.NodeID = v
 			case fGateway:
 				r.Gateway = v
+			case fClass:
+				r.Class = v
+			case fOperation:
+				r.Operation = v
 			}
 		default:
 			l := protowire.ConsumeFieldValue(n, typ, b)
@@ -328,6 +347,7 @@ func toLog(seq int64, r Record) *logspb.LogRecord {
 		strAttr(adminapi.UsageAttrOutcome, r.Outcome),
 		intAttr(adminapi.UsageAttrLatencyMS, int64(r.LatencyMS)),
 		intAttr(adminapi.UsageAttrTTFTMS, int64(r.TTFTMS)),
+		intAttr(adminapi.UsageAttrCachedTokens, int64(r.CachedTokens)),
 	}
 	// Empty strings are left off: on a receiver an absent attribute and an
 	// empty one read the same.
@@ -337,6 +357,8 @@ func toLog(seq int64, r Record) *logspb.LogRecord {
 		{adminapi.UsageAttrUserID, r.UserID},
 		{adminapi.UsageAttrNodeID, r.NodeID},
 		{adminapi.UsageAttrGateway, r.Gateway},
+		{adminapi.UsageAttrClass, r.Class},
+		{adminapi.UsageAttrOperation, r.Operation},
 	} {
 		if kv[1] != "" {
 			attrs = append(attrs, strAttr(kv[0], kv[1]))

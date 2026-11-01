@@ -68,7 +68,6 @@ import (
 
 	"github.com/opod-io/opod/internal/metrics"
 	"github.com/opod-io/opod/internal/router"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // PolicyAdmission and PolicyAdmissionClass are the shared wire types
@@ -373,9 +372,10 @@ func (s *Server) admissionBound(ctx context.Context, model string) string {
 func (s *Server) admit(ctx context.Context, model string, started time.Time) (release func(), reason string) {
 	cfg := s.admission.config()
 	class := cfg.classOf(admissionIdentFrom(ctx))
-	if trace.SpanFromContext(ctx).IsRecording() {
-		// The class that ranked the request goes on its attempt span (T32.6);
-		// only a traced request pays for it.
+	// The class that ranked the request goes on its attempt span (T32.6) and
+	// on its usage record (T32.47). Without classes in the policy every
+	// request is standard, and the record says nothing rather than that.
+	if cfg.classed {
 		router.NoteClass(ctx, classNames[class])
 	}
 	// Where the router sends this request, read from its trace (installed by
