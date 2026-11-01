@@ -140,8 +140,8 @@ func serveMessages(t *testing.T, h *Handler, body string) *httptest.ResponseReco
 }
 
 func TestAnthropicAnswerAggregated(t *testing.T) {
-	st := usageTestStore(t)
-	h := &Handler{Engine: &toolEngine{}, Store: st, Default: "m"}
+	st, sink := usageTestStore(t), newUsageSink()
+	h := &Handler{Engine: &toolEngine{}, Store: st, Usage: sink.add, Default: "m"}
 	rec := serveMessages(t, h, `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"Weather in Paris?"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -176,7 +176,7 @@ func TestAnthropicAnswerAggregated(t *testing.T) {
 	if msg.Usage.In != 12 || msg.Usage.Out != 5 {
 		t.Errorf("usage %+v", msg.Usage)
 	}
-	if u := waitForUsage(t, st); u.Protocol != ProtocolAnthropic {
+	if u := waitForUsage(t, sink); u.Protocol != ProtocolAnthropic {
 		t.Errorf("usage row protocol = %q, want anthropic", u.Protocol)
 	}
 }

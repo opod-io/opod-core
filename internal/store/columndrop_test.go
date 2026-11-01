@@ -50,3 +50,34 @@ func TestKeyPolicyColumnsAreDropped(t *testing.T) {
 		st.Close()
 	}
 }
+
+// A database written before feature usage_push still has the usage table.
+// Opening it drops the table and its indexes; a second open is a no-op.
+func TestTheUsageTableIsDropped(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TABLE usage (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, model TEXT NOT NULL);
+		CREATE INDEX idx_usage_ts ON usage(ts); INSERT INTO usage(ts, model) VALUES(1, 'm')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	for pass := 1; pass <= 2; pass++ {
+		opened, err := OpenSQLite(path)
+		if err != nil {
+			t.Fatalf("open %d: %v", pass, err)
+		}
+		st := opened.(*sqliteStore)
+		var n int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE tbl_name = 'usage'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("open %d: the usage table or an index of it is still there (%d)", pass, n)
+		}
+		st.Close()
+	}
+}

@@ -26,6 +26,11 @@ type Env struct {
 	CoordinatorNode  string `env:"OPOD_COORDINATOR_NODE" side:"leader" doc:"pin the llama.cpp RPC coordinator to a node id (\"local\" = the leader itself)"`
 	OTLPLogsEndpoint string `env:"OPOD_OTLP_LOGS_ENDPOINT" side:"leader" doc:"OTLP/HTTP collector for the leader's own log records (URL or host:port); stderr keeps working, the queue is bounded and never blocks. Empty = off"`
 	TraceSampleRatio string `env:"OPOD_TRACE_SAMPLE_RATIO" side:"leader" doc:"the share of the traces the leader starts that it records, from 0 to 1, when OPOD_OTLP_ENDPOINT is set; unset = 1 (every request). A request that arrives with a traceparent follows its caller's sampling decision whatever the ratio. Anything else is an error at start"`
+	// usage push (T32.34): one OTLP log record per request, held in a bounded
+	// queue until a receiver answers 2xx.
+	UsageOTLPEndpoint string `env:"OPOD_USAGE_OTLP_ENDPOINT" side:"leader" doc:"OTLP/HTTP logs URL the leader pushes one usage record per request to (e.g. http://collector:4318/v1/logs); a record leaves the leader's queue only on a 2xx. Empty = records are held in the bounded queue and nothing is sent"`
+	UsageOTLPHeaders  string `env:"OPOD_USAGE_OTLP_HEADERS" side:"leader" doc:"headers for that push, \"k=v,k=v\" (the OTEL_EXPORTER_OTLP_HEADERS form), e.g. Authorization=Bearer <token>"`
+	UsageQueueMB      string `env:"OPOD_USAGE_QUEUE_MB" side:"leader" doc:"the usage queue's size in MiB of encoded records (default 64); past it the oldest record is dropped and counted (opod_usage_dropped_total)"`
 	// gateway (T11.1, ADR-063) — a copied FRONT of a leader: it serves /v1 and
 	// nothing of /admin/v1, mirrors the leader's worker registry, pushes its
 	// usage rows there and polls the door count back (the spend snapshot).

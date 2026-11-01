@@ -23,7 +23,6 @@ type Store interface {
 	Placements() PlacementStore
 	DesiredPlacements() DesiredPlacementStore
 	Shards() ShardStore
-	Usage() UsageStore
 	EventLog() EventLogStore
 	Audit() AuditStore
 	// Cache is the persistent backend for the response cache. The
@@ -307,104 +306,6 @@ type ShardStore interface {
 	DeleteRows(ctx context.Context, rows []Shard) ([]Shard, error)
 }
 
-// Usage records a single completed inference request.
-//
-// CostUSD is the dollar cost computed from the catalog/vendor pricing
-// table at write time (`recordUsage`). 0 means no cost was tracked —
-// either the row predates the column, or the model has no pricing
-// configured (typical for operator-owned open-weight models). Storing
-// the snapshot lets historical totals stay correct even when pricing
-// changes later.
-type Usage struct {
-	ID               int64
-	TS               time.Time
-	APIKeyID         string
-	UserID           string
-	Model            string
-	Protocol         string
-	PromptTokens     int
-	CompletionTokens int
-	LatencyMS        int
-	Outcome          string
-	// CostUSD is DEPRECATED and always 0: rating and showback are out of the
-	// product (ADR-003 — the control plane exports usage facts and downstream
-	// apps price them). The column and the JSON field stay for one more
-	// additive SDK tag so a client that reads them does not break; the
-	// deprecation note belongs in that tag (opod-sdk adminapi UsageData).
-	CostUSD float64
-	NodeID  string // worker node that served the request ("" = local / not dispatched)
-	// TTFTMS is the time to the FIRST byte the client could use — the token a
-	// person waits for. 0 on a non-streamed answer, where the whole response
-	// arrives at once and LatencyMS is the only honest number.
-	TTFTMS int
-}
-
-type UsageStore interface {
-	Record(ctx context.Context, u Usage) error
-	// LastUsedByModel returns the most recent request timestamp per model
-	// id. Models with no usage rows are absent from the map — eviction
-	// treats them as least-recently-used. Used by the lifecycle manager's
-	// LRU victim ordering.
-	LastUsedByModel(ctx context.Context) (map[string]time.Time, error)
-	RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error)
-	// Trim keeps only the newest keep rows (bounded ring; the manager pulls by cursor).
-	Trim(ctx context.Context, keep int) (int64, error)
-	Recent(ctx context.Context, limit int) ([]Usage, error)
-	// After returns up to limit rows with id > afterID in id order — the
-	// cursor pull an external collector uses for at-least-once capture.
-	// The AUTOINCREMENT id is the cursor: monotonic, never reused.
-	After(ctx context.Context, afterID int64, limit int) ([]Usage, error)
-	// Breakdown aggregates the usage table by time bucket and the
-	// chosen grouping columns. Each non-empty group_by entry adds a
-	// SELECT column and a GROUP BY term. Returns the rows + the
-	// totals across all rows in the same bucket range.
-	Breakdown(ctx context.Context, opts BreakdownOpts) ([]BreakdownRow, BreakdownTotals, error)
-}
-
-// BreakdownOpts describes the time-bucketed query.
-type BreakdownOpts struct {
-	// Bucket selects the time-rollup granularity. Valid: "hour",
-	// "day", "month", "total". Defaults to "day" when empty.
-	Bucket string
-	// Since / Until bound the time range. Zero values mean "open
-	// ended" — Since defaults to 30 days ago, Until to now.
-	Since time.Time
-	Until time.Time
-	// GroupBy is an ordered subset of {"user","model","protocol","outcome"}.
-	// Empty groups by the time bucket only.
-	GroupBy []string
-	// Limit caps the number of returned rows. 0 = no limit.
-	Limit int
-}
-
-// BreakdownRow is one aggregated row.
-type BreakdownRow struct {
-	Bucket           string `json:"bucket"`
-	User             string `json:"user,omitempty"`
-	Model            string `json:"model,omitempty"`
-	Protocol         string `json:"protocol,omitempty"`
-	Outcome          string `json:"outcome,omitempty"`
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	Requests         int64  `json:"requests"`
-	// CostUSD is DEPRECATED and always 0: rating and showback are out of the
-	// product (ADR-003 — the control plane exports usage facts and downstream
-	// apps price them). The column and the JSON field stay for one more
-	// additive SDK tag so a client that reads them does not break; the
-	// deprecation note belongs in that tag (opod-sdk adminapi UsageData).
-	CostUSD float64 `json:"cost_usd"`
-}
-
-// BreakdownTotals sums everything in the bucket range — useful for the
-// dashboard "totals" footer and as a sanity check that group_by didn't
-// double-count.
-type BreakdownTotals struct {
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	Requests         int64   `json:"requests"`
-	CostUSD          float64 `json:"cost_usd"`
-}
-
 // AuditEntry records an action taken via the admin API or gateway.
 type AuditEntry struct {
 	ID       int64
@@ -456,7 +357,6 @@ func (s *sqliteStore) DesiredPlacements() DesiredPlacementStore {
 	return &sqliteDesiredPlacements{db: s.db}
 }
 func (s *sqliteStore) Shards() ShardStore { return &sqliteShards{db: s.db} }
-func (s *sqliteStore) Usage() UsageStore  { return &sqliteUsage{db: s.db} }
 func (s *sqliteStore) Audit() AuditStore  { return &sqliteAudit{db: s.db} }
 func (s *sqliteStore) Cache() CacheStore  { return &sqliteCache{db: s.db} }
 func (s *sqliteStore) Close() error       { return s.db.Close() }
@@ -533,25 +433,6 @@ CREATE TABLE IF NOT EXISTS shards (
 CREATE INDEX IF NOT EXISTS idx_shards_model ON shards(model_id);
 CREATE INDEX IF NOT EXISTS idx_shards_gang ON shards(model_id, gang_id);
 
-CREATE TABLE IF NOT EXISTS usage (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts                INTEGER NOT NULL,
-    api_key_id        TEXT NOT NULL,
-    user_id           TEXT NOT NULL,
-    model             TEXT NOT NULL,
-    protocol          TEXT NOT NULL,
-    prompt_tokens     INTEGER NOT NULL,
-    completion_tokens INTEGER NOT NULL,
-    latency_ms        INTEGER NOT NULL,
-    outcome           TEXT NOT NULL,
-    cost_usd          REAL NOT NULL DEFAULT 0,
-    node_id           TEXT NOT NULL DEFAULT '',
-    ttft_ms           INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
-CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
-CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts);
-CREATE INDEX IF NOT EXISTS idx_usage_model_ts ON usage(model, ts);
 
 
 CREATE TABLE IF NOT EXISTS cache (
@@ -585,7 +466,27 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 	if err := runColumnMigrations(ctx, db); err != nil {
 		return err
 	}
-	return runColumnDrops(ctx, db)
+	if err := runColumnDrops(ctx, db); err != nil {
+		return err
+	}
+	return runTableDrops(ctx, db)
+}
+
+// droppedTables are tables a release removed. The usage table left with
+// feature usage_push (T32.34): a finished request is a record in the leader's
+// bounded in-memory queue (internal/usage) until a receiver takes it, so a
+// table left behind would only hold rows nothing reads.
+var droppedTables = []string{"usage"}
+
+// runTableDrops removes the tables in droppedTables. DROP … IF EXISTS is
+// idempotent, and the table's indexes go with it.
+func runTableDrops(ctx context.Context, db *sql.DB) error {
+	for _, t := range droppedTables {
+		if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS `+t); err != nil {
+			return fmt.Errorf("drop table %s: %w", t, err)
+		}
+	}
+	return nil
 }
 
 // runColumnMigrations brings older databases up to the current column set.
@@ -602,9 +503,6 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		table, column, ddl string
 	}
 	migrations := []colMigration{
-		// v0.8 — per-call $ cost. 0 default — pre-migration rows have no
-		// cost recorded.
-		{table: "usage", column: "cost_usd", ddl: `ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`},
 		// v0.8 — per-key expiry. 0 = never expires (legacy default).
 		{table: "api_keys", column: "expires_at", ddl: `ALTER TABLE api_keys ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`},
 		// v0.9 — first-use node↔key binding. '' = unbound (legacy rows);
@@ -612,10 +510,6 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		{table: "nodes", column: "bound_key_id", ddl: `ALTER TABLE nodes ADD COLUMN bound_key_id TEXT NOT NULL DEFAULT ''`},
 		// R10.1 — the worker incarnation behind the row.
 		{table: "nodes", column: "boot_id", ddl: `ALTER TABLE nodes ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''`},
-		// v0.10 — the worker that served each request (per-worker attribution
-		// downstream). '' = answered locally / never dispatched (legacy rows).
-		{table: "usage", column: "ttft_ms", ddl: `ALTER TABLE usage ADD COLUMN ttft_ms INTEGER NOT NULL DEFAULT 0`},
-		{table: "usage", column: "node_id", ddl: `ALTER TABLE usage ADD COLUMN node_id TEXT NOT NULL DEFAULT ''`},
 		// Installed but not in memory, as a worker's engine reported it. 0 =
 		// resident, which is what every row written before the column meant.
 		// Since when a worker's heartbeats carry no engine report. 0 = they do.

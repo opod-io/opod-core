@@ -46,8 +46,8 @@ const (
 )
 
 // Manager makes admission/eviction decisions for one node's local engine.
-// Construct with New; all fields are then immutable except InflightFn,
-// which the control plane wires after the router exists.
+// Construct with New; all fields are then immutable except InflightFn and
+// LastUsed, which the leader wires after the router and its usage queue exist.
 type Manager struct {
 	Store   store.Store
 	Engine  engines.Engine
@@ -65,13 +65,25 @@ type Manager struct {
 	// nil skips the drain wait (e.g. `opod down`, where the server is
 	// already gone).
 	InflightFn func() map[string]int
-	Log        *slog.Logger
+	// LastUsed returns the newest request per model id — the LRU order of
+	// eviction. A model absent from it counts as the least recently used.
+	// The leader wires its usage queue's view (UsageLastUsed); nil = no
+	// model has been used, so the order falls to priority alone.
+	LastUsed func() map[string]time.Time
+	Log      *slog.Logger
 
 	// mu serializes Load/Unload/Restore. Admission is plan-then-apply
 	// against live engine residency — two concurrent loads would each
 	// observe the same free space and both proceed, overcommitting the
 	// node. Coarse lock is fine: these are operator-rate operations.
 	mu sync.Mutex
+}
+
+func (m *Manager) lastUsed() map[string]time.Time {
+	if m.LastUsed == nil {
+		return nil
+	}
+	return m.LastUsed()
 }
 
 // ErrNotInstalled wraps "model isn't in the models table" so HTTP
@@ -331,7 +343,7 @@ func (m *Manager) PlanLoad(ctx context.Context, id string) (Plan, error) {
 // asc — and the total bytes held by pinned models.
 func (m *Manager) rankVictims(ctx context.Context, resident []engines.ResidentModel, excludeNative string) ([]Victim, int64) {
 	n2c := m.nativeToCatalog(ctx)
-	lastUsed, _ := m.Store.Usage().LastUsedByModel(ctx)
+	lastUsed := m.lastUsed()
 	desired, _ := m.Store.DesiredPlacements().ListByNode(ctx, m.NodeID)
 	meta := map[string]store.DesiredPlacement{}
 	for _, d := range desired {
@@ -603,7 +615,7 @@ func (m *Manager) Status(ctx context.Context) (MemoryStatus, error) {
 	}
 	out.Supported = true
 	n2c := m.nativeToCatalog(ctx)
-	lastUsed, _ := m.Store.Usage().LastUsedByModel(ctx)
+	lastUsed := m.lastUsed()
 	meta := map[string]store.DesiredPlacement{}
 	for _, d := range out.Desired {
 		meta[d.ModelID] = d

@@ -320,3 +320,43 @@ func ObserveAdmissionShed(class, reason string) {
 
 // SetAdmissionHeld sets the number of requests of class held right now.
 func SetAdmissionHeld(class string, n int64) { admissionHeld.WithLabelValues(class).Set(float64(n)) }
+
+// The usage queue (T32.34): records the leader holds until a receiver
+// answers 2xx, and what it lost.
+var (
+	usageQueueBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "opod_usage_queue_bytes",
+		Help: "Bytes of encoded usage records the leader holds until a receiver takes them (OPOD_USAGE_QUEUE_MB is the cap).",
+	})
+	usageQueueRecords = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "opod_usage_queue_records",
+		Help: "Usage records the leader holds until a receiver takes them.",
+	})
+	usageDroppedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "opod_usage_dropped_total",
+		Help: "Usage records lost, by reason: full (the oldest, dropped to make room at the cap), refused (one record bigger than the whole queue), rejected (the receiver answered that it will never take them).",
+	}, []string{"reason"})
+	usageSentTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "opod_usage_sent_total",
+		Help: "Usage records a receiver acknowledged with a 2xx.",
+	})
+	usageExportErrorsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "opod_usage_export_errors_total",
+		Help: "Usage pushes that failed and will be retried (network error, 429, 5xx, 401/403); the records stay queued.",
+	})
+)
+
+// SetUsageQueue records the queue's size after a change.
+func SetUsageQueue(bytes, records int) {
+	usageQueueBytes.Set(float64(bytes))
+	usageQueueRecords.Set(float64(records))
+}
+
+// AddUsageDropped counts lost usage records (reason: full | refused | rejected).
+func AddUsageDropped(reason string, n int) { usageDroppedTotal.WithLabelValues(reason).Add(float64(n)) }
+
+// AddUsageSent counts acknowledged usage records.
+func AddUsageSent(n int) { usageSentTotal.Add(float64(n)) }
+
+// AddUsageExportError counts a failed push.
+func AddUsageExportError() { usageExportErrorsTotal.Inc() }

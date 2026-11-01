@@ -123,6 +123,13 @@ func printNetworkPosture(w io.Writer, cfg *config.Config) {
 		fmt.Fprintf(w, "    · Log export:    → %s  (your collector, beside stderr; set OFF by clearing OPOD_OTLP_LOGS_ENDPOINT)\n", cfg.Env.OTLPLogsEndpoint)
 	}
 
+	// Usage push — the same audit for the per-request records (T32.34).
+	if cfg.Env.UsageOTLPEndpoint == "" {
+		fmt.Fprintln(w, "    · Usage push:    OFF  (records held in memory, oldest dropped at the cap; set OPOD_USAGE_OTLP_ENDPOINT=… to send them)")
+	} else {
+		fmt.Fprintf(w, "    · Usage push:    → %s  (one OTLP log record per request, freed on a 2xx)\n", cfg.Env.UsageOTLPEndpoint)
+	}
+
 	fmt.Fprintln(w, "    · Telemetry:     none. Opod never reports installs, usage, errors, or any data to opod.io.")
 }
 

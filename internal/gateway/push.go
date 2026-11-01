@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/usage"
 )
 
 // QueueLimit bounds what one door holds while the leader is away. At ~200
@@ -42,10 +42,10 @@ type Row struct {
 	NodeID           string    `json:"node_id,omitempty"`
 }
 
-// RowFrom builds a push row from a recorded usage fact. id must be unique for
-// this request across retries — mint it once, when the request is recorded,
-// never per attempt.
-func RowFrom(id string, u store.Usage) Row {
+// RowFrom builds a push row from a usage record. id must be unique for this
+// request across retries — mint it once, when the request is recorded, never
+// per attempt.
+func RowFrom(id string, u usage.Record) Row {
 	return Row{ID: id, TS: u.TS, APIKeyID: u.APIKeyID, UserID: u.UserID, Model: u.Model, Protocol: u.Protocol,
 		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,
 		LatencyMS: u.LatencyMS, TTFTMS: u.TTFTMS, Outcome: u.Outcome, NodeID: u.NodeID}

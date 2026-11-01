@@ -1,9 +1,9 @@
 package api
 
 // A request the caller abandons is still a request the gateway served part of,
-// and the usage stream is the record of it. These tests hold the rule that the
-// usage row never rides the request's own context: by the time a cancellation
-// is noticed that context is done, and a write made with it is refused.
+// and its usage record says so. These tests hold the rule that a cancellation
+// is recorded as one: by the time it is noticed the request's context is done,
+// and nothing that records the request may depend on it.
 
 import (
 	"bufio"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
+	usagelog "github.com/opod-io/opod/internal/usage"
 )
 
 // cancelEngine streams the way every real producer does: it sends what it has,
@@ -62,28 +63,28 @@ func usageTestStore(t testing.TB) store.Store {
 	return st
 }
 
-// waitForUsage polls for the first usage row: the handler finishes after the
+// usageSink collects what a handler hands to its Usage func.
+type usageSink chan usagelog.Record
+
+func newUsageSink() usageSink             { return make(usageSink, 64) }
+func (s usageSink) add(r usagelog.Record) { s <- r }
+
+// waitForUsage waits for the first record: the handler finishes after the
 // client has already gone, so the test cannot join on it.
-func waitForUsage(t *testing.T, st store.Store) store.Usage {
+func waitForUsage(t *testing.T, s usageSink) usagelog.Record {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		rows, err := st.Usage().Recent(context.Background(), 10)
-		if err != nil {
-			t.Fatalf("Recent: %v", err)
-		}
-		if len(rows) > 0 {
-			return rows[0]
-		}
-		time.Sleep(20 * time.Millisecond)
+	select {
+	case r := <-s:
+		return r
+	case <-time.After(5 * time.Second):
+		t.Fatal("no usage record for a request the client cancelled mid-stream")
 	}
-	t.Fatal("no usage row was written for a request the client cancelled mid-stream")
-	return store.Usage{}
+	return usagelog.Record{}
 }
 
 func TestCancelledStreamStillRecordsUsage(t *testing.T) {
-	st := usageTestStore(t)
-	h := &Handler{Engine: &cancelEngine{deltas: []string{"Hel", "lo"}}, Store: st, Default: "m"}
+	sink := newUsageSink()
+	h := &Handler{Engine: &cancelEngine{deltas: []string{"Hel", "lo"}}, Store: usageTestStore(t), Usage: sink.add, Default: "m"}
 	srv := httptest.NewServer(http.HandlerFunc(h.ChatCompletions))
 	defer srv.Close()
 
@@ -114,7 +115,7 @@ func TestCancelledStreamStillRecordsUsage(t *testing.T) {
 	}
 	cancel()
 
-	row := waitForUsage(t, st)
+	row := waitForUsage(t, sink)
 	if row.Outcome != "cancelled" {
 		t.Fatalf("outcome = %q, want cancelled", row.Outcome)
 	}
@@ -123,29 +124,25 @@ func TestCancelledStreamStillRecordsUsage(t *testing.T) {
 	}
 }
 
-// The write itself: a context that is already done must not stop the row.
+// The record itself: a context that is already done must not stop it.
 func TestRecordUsageSurvivesADoneContext(t *testing.T) {
-	st := usageTestStore(t)
-	h := &Handler{Engine: &cancelEngine{}, Store: st}
+	sink := newUsageSink()
+	h := &Handler{Engine: &cancelEngine{}, Store: usageTestStore(t), Usage: sink.add}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	h.recordUsage(ctx, "openai", "m", &engines.Usage{PromptTokens: 3, CompletionTokens: 4}, time.Millisecond, "cancelled")
 
-	rows, err := st.Usage().Recent(context.Background(), 10)
-	if err != nil {
-		t.Fatalf("Recent: %v", err)
-	}
-	if len(rows) != 1 || rows[0].PromptTokens != 3 || rows[0].CompletionTokens != 4 {
-		t.Fatalf("rows = %+v, want the one row written under a done context", rows)
+	if r := waitForUsage(t, sink); r.PromptTokens != 3 || r.CompletionTokens != 4 || r.RequestID == "" {
+		t.Fatalf("record = %+v, want the one recorded under a done context, with a request id", r)
 	}
 }
 
 // A caller that leaves while a non-streamed answer is being gathered gets a
 // cancelled row, not an "ok" with no tokens.
 func TestCancelledAggregateIsNotRecordedAsOK(t *testing.T) {
-	st := usageTestStore(t)
-	h := &Handler{Engine: &cancelEngine{deltas: []string{"Hel"}}, Store: st, Default: "m"}
+	sink := newUsageSink()
+	h := &Handler{Engine: &cancelEngine{deltas: []string{"Hel"}}, Store: usageTestStore(t), Usage: sink.add, Default: "m"}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	body := `{"model":"m","messages":[{"role":"user","content":"hi"}]}`
@@ -163,7 +160,7 @@ func TestCancelledAggregateIsNotRecordedAsOK(t *testing.T) {
 		t.Fatal("the handler did not return after its caller left")
 	}
 
-	row := waitForUsage(t, st)
+	row := waitForUsage(t, sink)
 	if row.Outcome != "cancelled" {
 		t.Fatalf("outcome = %q, want cancelled", row.Outcome)
 	}

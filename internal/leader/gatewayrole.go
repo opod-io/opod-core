@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/gateway"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/usage"
 )
 
 // gatewayLoops are the three background loops a door runs.
@@ -143,20 +143,15 @@ func (s *Server) StartGatewayRole(ctx context.Context) error {
 	return nil
 }
 
-// recordUsageForGateway queues a usage row for the push instead of treating the
-// local store as the record. Called by the request path when this process is a
-// door; the local row stays for the door's own /loadz and is not the copy that
-// counts.
-func (s *Server) recordUsageForGateway(u store.Usage, rowID string) {
+// recordUsageForGateway queues a usage record for the push to the leader:
+// on a door the leader's queue is the record, not anything the door keeps.
+func (s *Server) recordUsageForGateway(u usage.Record) {
 	if s.front == nil {
 		return
 	}
 	// The id is namespaced by the door: two gateways can mint the same request
 	// id, and the leader dedups by this string alone.
-	s.front.push.Add(gateway.RowFrom(s.front.id+":"+rowID, u))
-	// The quota this door enforces is the leader's number plus what it has
-	// served since, so tell the enforcer immediately rather than waiting for
-	// the row to come back in a snapshot.
+	s.front.push.Add(gateway.RowFrom(s.front.id+":"+u.RequestID, u))
 }
 
 // gatewayz answers GET /gatewayz in whichever role this process is.

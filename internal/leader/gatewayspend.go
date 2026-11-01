@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/usage"
 )
 
 // gatewayLiveFor is how long a gateway counts as a door after its last push.
@@ -235,19 +235,13 @@ func (s *Server) pushUsage(w http.ResponseWriter, r *http.Request) {
 		if ts.IsZero() {
 			ts = now
 		}
-		u := store.Usage{
-			TS: ts, APIKeyID: row.APIKeyID, UserID: row.UserID, Model: row.Model, Protocol: row.Protocol,
+		// Into the same queue as the leader's own records: one exporter, one
+		// credential, and the door's id and request id ride along.
+		s.usage.Add(usage.Record{
+			TS: ts, RequestID: row.ID, APIKeyID: row.APIKeyID, UserID: row.UserID, Model: row.Model, Protocol: row.Protocol,
 			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
-			LatencyMS: row.LatencyMS, TTFTMS: row.TTFTMS, Outcome: row.Outcome, NodeID: row.NodeID,
-		}
-		if err := s.store.Usage().Record(r.Context(), u); err != nil {
-			// Partial success is reported, not hidden: the gateway retries the
-			// rest, and the rows already written are deduplicated on the retry.
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"accepted": accepted, "duplicate": duplicate, "error": err.Error(),
-			})
-			return
-		}
+			LatencyMS: row.LatencyMS, TTFTMS: row.TTFTMS, Outcome: row.Outcome, NodeID: row.NodeID, Gateway: req.Gateway,
+		})
 		accepted++
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": accepted, "duplicate": duplicate})

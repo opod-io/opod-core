@@ -29,9 +29,9 @@ func (e *answerEngine) Chat(context.Context, engines.ChatRequest) (<-chan engine
 // after the gate, every leader TTFT on the design-partner cell read ≤ 0.25 s
 // while callers waited ~4.4 s (2026-10-07, PLAN T18.1 re-run).
 func TestTTFTAndLatencyIncludeTheWaitBeforeTheHandler(t *testing.T) {
-	st := usageTestStore(t)
+	st, sink := usageTestStore(t), newUsageSink()
 	var seen time.Duration
-	h := &Handler{Engine: &answerEngine{}, Store: st, Default: "m",
+	h := &Handler{Engine: &answerEngine{}, Store: st, Usage: sink.add, Default: "m",
 		OnTTFT: func(_ context.Context, d time.Duration) { seen = d }}
 
 	const waited = 150 * time.Millisecond
@@ -44,7 +44,7 @@ func TestTTFTAndLatencyIncludeTheWaitBeforeTheHandler(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 
-	row := waitForUsage(t, st)
+	row := waitForUsage(t, sink)
 	if row.Outcome != "ok" {
 		t.Fatalf("outcome %q, want ok", row.Outcome)
 	}

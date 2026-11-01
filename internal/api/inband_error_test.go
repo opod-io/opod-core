@@ -38,15 +38,15 @@ func workerAnswer(t *testing.T, chunks ...string) string {
 
 func chatThrough(t *testing.T, workerURL string, stream bool) (*httptest.ResponseRecorder, string) {
 	t.Helper()
-	st := usageTestStore(t)
-	h := &Handler{Engine: engines.MustNew("llamacpp", workerURL, ""), Store: st, Default: "m"}
+	st, sink := usageTestStore(t), newUsageSink()
+	h := &Handler{Engine: engines.MustNew("llamacpp", workerURL, ""), Store: st, Usage: sink.add, Default: "m"}
 	body := `{"model":"m","stream":false,"messages":[{"role":"user","content":"hi"}]}`
 	if stream {
 		body = strings.Replace(body, `"stream":false`, `"stream":true`, 1)
 	}
 	rec := httptest.NewRecorder()
 	h.ChatCompletions(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
-	return rec, waitForUsage(t, st).Outcome
+	return rec, waitForUsage(t, sink).Outcome
 }
 
 const engineBroke = `data: {"error":{"message":"stream: unexpected EOF","type":"stream_broken"}}` + "\n\n"
@@ -122,12 +122,12 @@ func TestABrokenStreamIsMeteredAtWhatWasDelivered(t *testing.T) {
 		`data: {"choices":[{"delta":{"content":" two"}}]}`+"\n\n",
 		`data: {"choices":[{"delta":{"content":" three"}}]}`+"\n\n",
 		engineBroke)
-	st := usageTestStore(t)
-	h := &Handler{Engine: engines.MustNew("llamacpp", url, ""), Store: st, Default: "m"}
+	st, sink := usageTestStore(t), newUsageSink()
+	h := &Handler{Engine: engines.MustNew("llamacpp", url, ""), Store: st, Usage: sink.add, Default: "m"}
 	rec := httptest.NewRecorder()
 	h.ChatCompletions(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`)))
-	row := waitForUsage(t, st)
+	row := waitForUsage(t, sink)
 	if row.Outcome != "error" || row.CompletionTokens != 3 {
 		t.Fatalf("want outcome error with the 3 delivered tokens, got outcome %q completion_tokens %d", row.Outcome, row.CompletionTokens)
 	}

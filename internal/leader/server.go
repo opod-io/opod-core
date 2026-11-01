@@ -25,6 +25,7 @@ import (
 	"github.com/opod-io/opod/internal/router"
 	"github.com/opod-io/opod/internal/scheduler"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/usage"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -74,7 +75,11 @@ type Server struct {
 	// front is set when THIS process is a gateway (OPOD_ROLE=gateway): the
 	// mirror, the pusher and the spend poller it runs instead of owning a
 	// registry (T11.1). nil in a leader.
-	front   *gatewayLoops
+	front *gatewayLoops
+	// usage holds every finished request's record until a receiver takes it
+	// (usagepush.go, feature usage_push). On a gateway the records go to the
+	// leader instead and this queue stays empty.
+	usage   *usage.Queue
 	gangEng sync.Map // coordinator shard id → gangCoordEngine: the driver is kept because tokens_per_s is a rate it holds between samples
 	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
 	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
@@ -203,9 +208,12 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	}
 	// Every streamed answer's time to first token feeds /loadz (T16.3).
 	openaiH.OnTTFT = s.observeTTFT
-	// A door's usage rows belong to the leader's store, not its own (ADR-063).
+	// A door's records belong to the leader, not to the door (ADR-063).
+	s.usage = usage.NewQueue(bootUnix, usageQueueBytes(cfg.Env.UsageQueueMB, log))
 	if s.isGateway() {
-		openaiH.OnUsage = s.recordUsageForGateway
+		openaiH.Usage = s.recordUsageForGateway
+	} else {
+		openaiH.Usage = s.usage.Add
 	}
 	// The picker reads the workers' own engine samples (R9.4, load.go); the
 	// policy snapshot switches the weights on.
@@ -283,6 +291,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.StartAuthWatcher(ctx)
 	s.StartPolicyWatcher(ctx)
 	s.StartTrimmer(ctx)
+	s.startUsagePush(ctx)
 	if s.Version == "" {
 		s.Version = "dev"
 	}
@@ -582,7 +591,6 @@ func (s *Server) routes() http.Handler {
 			r.Delete("/tokens/{id}", s.revokeToken)
 
 			// Observability
-			r.Get("/usage/stream", s.usageStream)
 			r.Get("/events/stream", s.eventLogStream)
 
 			// Shards

@@ -59,7 +59,7 @@ The Control Plane drives core through the same open contract a script would ([op
                                   ▼   ONE URL · ONE API KEY
    ╔═════════════════════════════════════════════════════════════════════╗
    ║  LEADER   `opod up`   (no GPU needed)                               ║
-   ║  OpenAI + Anthropic API · API keys · usage stream                   ║
+   ║  OpenAI + Anthropic API · API keys · usage push                     ║
    ║  router: same model on N workers → load-balance                     ║
    ║          model bigger than any card → split it into a gang          ║
    ╚══════════════════╤═══════════════════════════════════╤══════════════╝
@@ -90,7 +90,7 @@ If you have **one machine** and Ollama does what you need, keep Ollama. Opod sta
 | Put an **NVIDIA, an AMD and an Intel card** under one model | ❌ | ✅ llama.cpp RPC gang |
 | Serve from **many machines behind one URL**, load-balanced | ❌ one server per machine | ✅ the leader routes to the least-loaded worker |
 | Use the **production engines** — vLLM, SGLang, TensorRT-LLM — for throughput | ❌ its own runtime only | ✅ six engines behind the same URL, mixed in one fleet |
-| Give each person **their own API key**, with expiry and a usage record | ❌ no keys | ✅ `opod token create`, per-key usage stream |
+| Give each person **their own API key**, with expiry and a usage record | ❌ no keys | ✅ `opod token create`, a usage record per request, per key |
 | Keep a full endpoint fair — interactive users before batch jobs | ❌ | ✅ admission by worker slots and request class |
 | Send a repeated prompt to the machine whose cache already holds it | ❌ one server, no routing | ✅ prefix-aware routing across workers |
 
@@ -401,9 +401,9 @@ Aider is now talking to your local model. Same UX, your hardware.
                        ▼  one endpoint, one key
    ┌──────────────────────────────────────────────────┐
    │  LEADER  (`opod up`)                             │
-   │  gateway   OpenAI-compatible · auth · usage rows │
+   │  gateway   OpenAI-compatible · auth · usage push │
    │  router    placement · load · fallback chain     │
-   │  admin     /admin/v1 · event + usage streams     │
+   │  admin     /admin/v1 · event stream              │
    │  store     SQLite (nodes, models, keys, usage)   │
    └────────────────────┬─────────────────────────────┘
                         │  HTTP on your LAN / VPN
@@ -476,7 +476,7 @@ opod token renew k_abc --ttl 30d                           # extend expiry
 
 - Prometheus metrics endpoint (`/metrics`) — per-model RPS, latency, tokens, errors — plus `vllm:num_requests_waiting`, `vllm:num_requests_running` and `vllm:kv_cache_usage_perc` beside the `opod_*` names, so a picker that reads vLLM's names can route to a leader unmodified
 - `GET /loadz` for an external autoscaler: in-flight, rpm, waking 503s, TTFT p50/p95, how many workers hold a card with a dead engine, plus the workers' own engine signals (KV-cache %, queue depth, tokens/s, prefix-cache hits) gathered from their heartbeats — a sharded endpoint's pressure comes from its gang coordinator. `OPOD_PROBE_LISTEN` puts the probes on a second, always-plain port so a scraper needs no certificate, and a request marked `X-Opod-Probe` is served like any other and counted in none of it. `GET /gatewayz` is the same idea for the front doors: how many there are and what the endpoint carries across them. See [docs/SCALING-SIGNALS.md](docs/SCALING-SIGNALS.md). How to lay out prompts so the prefix cache is reused: [docs/PROMPT-CACHE.md](docs/PROMPT-CACHE.md)
-- Per-call usage records (model, protocol, tokens, latency, outcome — `ok`, `error` and `cancelled` alike: a caller who hangs up mid-stream still leaves a row) on `/admin/v1/usage/stream` (cursor + replay) — the control plane pulls and exports them
+- Per-call usage records (model, protocol, tokens, latency, time to first token, worker, outcome — `ok`, `error` and `cancelled` alike: a caller who hangs up mid-stream still leaves a record), pushed as one OTLP log record per request to `OPOD_USAGE_OTLP_ENDPOINT` — your collector, or a control plane. The leader keeps no usage table: records wait in a queue bounded by `OPOD_USAGE_QUEUE_MB` (default 64 MiB, about 440 000 records) and leave it only on the receiver's 2xx, so an outage loses nothing until the queue is full; past that the oldest go first, counted on `opod_usage_dropped_total`. Each record carries `opod.leader.boot` + `opod.usage.seq`, a key a receiver deduplicates a resend by
 - Admin actions are recorded and streamed to the control plane on `/admin/v1/events/stream`
 - OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Opod emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All six engine drivers (ollama, vllm, sglang, mlx, llamacpp, trtllm) export the same span shape. W3C `traceparent` propagation is always on so Opod participates correctly between two services that both export, and every engine call carries the trace on (through the worker, into vLLM, SGLang, llama.cpp, TensorRT-LLM or ollama), so an engine that exports its own spans joins the caller's trace; the leader's own load, unload, wake, tokenize and fallback calls carry it too. Attempt spans name the gang, its head worker and the request class; driver spans carry the engine's cached-token count when it reports one. `OPOD_TRACE_SAMPLE_RATIO` (0–1, default 1) samples the traces the leader starts; a sampled caller is always kept. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 - OTLP logs. Set `OPOD_OTLP_LOGS_ENDPOINT` and the leader's own `slog` records also go to your collector (and through it to Loki, Splunk, Datadog, Elastic…), beside stderr, never instead of it. `log_level` applies to both; a slow or absent collector drops the oldest queued records and never delays a request.
@@ -500,8 +500,8 @@ of these will be declined for the same reason, so the table is here to save you 
 
 | | Why not |
 |---|---|
-| **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes and expiry, the usage stream and the audit log are the accountability story on a trusted network. |
-| **Cost, billing, or dollar figures** | the usage stream records tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
+| **A web dashboard, SSO, RBAC, teams** | core is CLI-only. Per-key scopes and expiry, the usage records and the audit log are the accountability story on a trusted network. |
+| **Cost, billing, or dollar figures** | the usage records count tokens, never money. What a token costs depends on hardware, power and contracts this binary cannot see. |
 | **Vendor egress: Bedrock, Vertex, hosted-model key pools** | serving *your* weights on *your* machines is the whole point. Routing to someone else's API is a different product. (Running *as* a Vertex AI container, `OPOD_VERTEX=1`, is the other direction: Vertex calls your leader.) |
 | **Audio surfaces** (transcription and speech) | removed in the 2026-09 contraction (ADR-022). `/v1/rerank` came back on 2026-10-06 (ADR-084) because a retrieval stack asks for it, and Anthropic Messages on 2026-10-19 (ADR-092 §1), translated to the chat path so every engine serves it. |
 | **Content policies, output filtering, prompt checks** | none of it is in core; the policies belong in the gateway in front of the leader, where the request originates. |
@@ -913,6 +913,9 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_POLICY_FILE` | leader | the mounted policy snapshot — routing weights, access log, the auth snapshot's optional age bound (`auth.maxSnapshotAgeSec`), the admission gate — a request waits for a free worker slot, ranked by class (`admission.holdMs`, `admission.maxHeld`, and per request class `admission.classes[]{name, holdMs, maxHeld, maxShare}`) (default `/etc/opod-auth/policy.json`; `off` = no watcher) |
 | `OPOD_COORDINATOR_NODE` | leader | pin the llama.cpp RPC coordinator to a node id (`local` = the leader itself). Default: the worker with the most **GPU** memory, falling back to host RAM for a worker with no card |
 | `OPOD_OTLP_LOGS_ENDPOINT` | leader | the leader's own log records over OTLP/HTTP, beside stderr (URL or bare `host:port`). Bounded queue, never blocks. Empty = off |
+| `OPOD_USAGE_OTLP_ENDPOINT` | leader | OTLP/HTTP logs URL the leader pushes one usage record per request to (e.g. `http://collector:4318/v1/logs`); a record leaves the queue only on a 2xx. Empty = records are held in the bounded queue and nothing is sent |
+| `OPOD_USAGE_OTLP_HEADERS` | leader | headers for that push, `k=v,k=v` (the `OTEL_EXPORTER_OTLP_HEADERS` form), e.g. `Authorization=Bearer <token>` |
+| `OPOD_USAGE_QUEUE_MB` | leader | the usage queue's size in MiB (default 64): each record's encoding plus its slot. Past it the oldest record is dropped and counted (`opod_usage_dropped_total`) |
 | `OPOD_TRACE_SAMPLE_RATIO` | leader | the share of the traces the leader starts that it records, `0`–`1`, when `OPOD_OTLP_ENDPOINT` is set; unset = `1` (every request). A request that arrives with a `traceparent` follows its caller's sampling decision whatever the ratio. Anything else fails the start |
 | `OPOD_ROLE` | leader | `leader` (default), `gateway` — a front door that serves `/v1` only for one endpoint (`opod up --role gateway`) — or `door`, one URL for many endpoints chosen by `model` (`opod up --role door`) |
 | `OPOD_LEADER_URL` | leader | the leader a **gateway** mirrors and pushes to (`http://host:8080`); required with `OPOD_ROLE=gateway` (`--leader`) |
@@ -1423,7 +1426,7 @@ The legacy `/v1/completions` route and the Responses API are not served.
 | `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |
 | `PATCH` | `/admin/v1/tokens/{id}` | Edit a key's expiry (`expires_at` / `ttl_seconds`) |
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
-| `POST` | `/admin/v1/usage/push` | A front door's usage rows (feature `gateway_spend`), deduplicated by a row id the door mints. Also the door's heartbeat, carrying its own load |
+| `POST` | `/admin/v1/usage/push` | A front door's usage rows (feature `gateway_spend`), deduplicated by a row id the door mints, then queued with the leader's own records for the usage push. Also the door's heartbeat, carrying its own load |
 | `GET` | `/admin/v1/spend` | The snapshot each door polls: `{ts, doors, gateways, lag_bound_ms}` — how many doors the leader believes are serving, their names, and the published lag bound. Per-key ceilings and shares left with the per-key policy (2026-09-28) |
 | `GET` | `/admin/v1/gateways` | The doors the leader has heard from — including one that stopped pushing |
 | `GET` | `/admin/v1/shards` | List shards across all models, per gang |
@@ -1431,7 +1434,6 @@ The legacy `/v1/completions` route and the Responses API are not served.
 | `POST` | `/admin/v1/shards/create` | Orchestrate a sharded model. `409` when the workers for the shape cannot be found (never the leader's own row, a draining or a silent node) — refused with the numbers, the gang being replaced left serving |
 | `DELETE` | `/admin/v1/shards/{model_id}` | Tear down every gang of a sharded model |
 | `DELETE` | `/admin/v1/shards/{model_id}/{gang_id}` | Tear down one gang (feature `shard_groups`); the model keeps its placement while any gang is left |
-| `GET` | `/admin/v1/usage/stream` | Per-call usage records, by cursor with replay — the raw facts; summaries are a consumer's job |
 | `GET` | `/admin/v1/events/stream` | Lifecycle + admin-action events, by cursor with replay |
 | `GET` | `/admin/v1/events` | Server-Sent Events. Push-on-change for `models` / `nodes` / `shards` topics. Sends a 25 s `keepalive` comment so proxies don't idle. Auth via Bearer or `?key=` query param. |
 | `GET` | `/admin/v1/cache/stats` | Response-cache driver + counters |
@@ -1715,7 +1717,7 @@ Opod is a **self-hosted LLM gateway** and **inference router**. If you found thi
 - **GPU autoscaling signals** — `/loadz` gives KEDA, an HPA or your own loop the numbers that matter for inference: in flight, queue depth, KV pressure, time to first token, dead engines. vLLM sleep mode frees the GPU and wakes on the next request. Scale to zero and VRAM-aware placement of new replicas are the [Opod Control Plane](#-enterprise-opod-control-plane)'s.
 - **Multi-LoRA serving** — LoRA adapters on vLLM workers, added and dropped at runtime, served as `<model>:<adapter>`.
 - **Claude Code with local models / Anthropic API compatible** — `/v1/messages` on every chat model, translated to the engine's chat path; also a Vertex AI custom container.
-- **vLLM / SGLang / llama.cpp / TensorRT-LLM cluster manager** — one gateway, one key system and one usage stream over every engine; see [docs/ENGINES.md](docs/ENGINES.md).
+- **vLLM / SGLang / llama.cpp / TensorRT-LLM cluster manager** — one gateway, one key system and one usage record per request over every engine; see [docs/ENGINES.md](docs/ENGINES.md).
 
 Related concepts: local LLM, on-prem AI, private GPT, air-gapped LLM, GGUF, safetensors, tensor parallelism, pipeline parallelism, model parallelism, GPU pooling, GPU sharing, VRAM budget, multi-tenant inference, model placement, fallback chain, OpenTelemetry tracing, Prometheus metrics.
 

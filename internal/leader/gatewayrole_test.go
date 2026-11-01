@@ -18,6 +18,7 @@ import (
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/gateway"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/internal/usage"
 )
 
 // T11.1 slice 2, end to end in one process: a LEADER with a worker joined to
@@ -155,12 +156,12 @@ func TestAGatewayIsASecondFrontForOneBrain(t *testing.T) {
 		}
 	}
 
-	// 4) Usage recorded at the door reaches the LEADER's store, exactly once
+	// 4) Usage recorded at the door reaches the LEADER's queue, exactly once
 	//    even though the row is pushed twice.
-	row := store.Usage{TS: time.Now(), APIKeyID: custRec.ID, UserID: "u1",
+	row := usage.Record{TS: time.Now(), RequestID: "req_deadbeef", APIKeyID: custRec.ID, UserID: "u1",
 		Model: "qwen2.5-0.5b-gguf", Protocol: "openai", PromptTokens: 100,
 		CompletionTokens: 20, LatencyMS: 42, Outcome: "ok", NodeID: "w1"}
-	door.recordUsageForGateway(row, "req_deadbeef")
+	door.recordUsageForGateway(row)
 	if err := door.front.push.Flush(ctx, 100); err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -170,18 +171,17 @@ func TestAGatewayIsASecondFrontForOneBrain(t *testing.T) {
 	if err := door.front.push.Flush(ctx, 100); err != nil {
 		t.Fatalf("second push: %v", err)
 	}
-	recent, err := leaderStore.Usage().Recent(ctx, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
 	used := 0
-	for _, u := range recent {
+	for _, u := range leader.usage.Records() {
 		if u.APIKeyID == custRec.ID {
 			used += u.PromptTokens + u.CompletionTokens
+			if u.Gateway != "door-1" || u.RequestID != "door-1:req_deadbeef" {
+				t.Errorf("a door's record names the door and its id: %+v", u)
+			}
 		}
 	}
 	if used != 120 {
-		t.Errorf("the leader's store is the record, and the retry is deduplicated: tokens=%d want 120", used)
+		t.Errorf("the leader's queue is the record, and the retry is deduplicated: tokens=%d want 120", used)
 	}
 
 	// 5) The leader now sees a door, and says so.

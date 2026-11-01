@@ -25,6 +25,7 @@ import (
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/models"
 	"github.com/opod-io/opod/internal/store"
+	usagelog "github.com/opod-io/opod/internal/usage" // api has a wire type named usage
 )
 
 // Handler holds dependencies for the OpenAI-compatible routes.
@@ -42,11 +43,11 @@ type Handler struct {
 	// awake — a plan whose floor is zero: a request for one gets the waking
 	// 503 + Retry-After, which is how it wakes, so it stays listed. nil = none.
 	WakesByDesign func() []string
-	// OnUsage sees every usage row after it is recorded locally, with the id
-	// that makes it unique across processes. A gateway replica uses it to
-	// queue the row for the push to the leader, which is the single writer
-	// (ADR-063); nil on a leader, where the local row IS the record.
-	OnUsage func(rec store.Usage, rowID string)
+	// Usage takes every finished request's record: the leader's queue
+	// (internal/usage, feature usage_push), or on a gateway replica the push
+	// to the leader, which is the single place a record is kept (ADR-063).
+	// nil = recorded nowhere; the request metrics still fire.
+	Usage func(rec usagelog.Record)
 	// OnTTFT sees the time to the first token of every streamed answer that
 	// finished well, with the request's context. The leader keeps a rolling
 	// window of them for /loadz (T16.3); nil = nobody is counting.

@@ -54,8 +54,8 @@ type rerankAnswer struct {
 // The answer is the same whatever the engine did: most relevant first,
 // truncated to top_n, the text attached from the request (ADR-084).
 func TestRerankOrdersTruncatesAndAttachesText(t *testing.T) {
-	st := usageTestStore(t)
-	h := &Handler{Engine: &rerankEngine{scores: []float64{0.2, 0.9, 0.5}}, Store: st}
+	st, sink := usageTestStore(t), newUsageSink()
+	h := &Handler{Engine: &rerankEngine{scores: []float64{0.2, 0.9, 0.5}}, Store: st, Usage: sink.add}
 	rec := postRerank(t, h, `{"model":"rr","query":"q","documents":["a","b","c"],"top_n":2}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
@@ -71,7 +71,7 @@ func TestRerankOrdersTruncatesAndAttachesText(t *testing.T) {
 		t.Fatalf("text or usage missing: %s", rec.Body.String())
 	}
 	// Recorded like embeddings: one usage row with the engine's tokens.
-	if u := waitForUsage(t, st); u.Model != "rr" || u.Outcome != "ok" || u.PromptTokens != 9 {
+	if u := waitForUsage(t, sink); u.Model != "rr" || u.Outcome != "ok" || u.PromptTokens != 9 {
 		t.Fatalf("usage row: %+v", u)
 	}
 

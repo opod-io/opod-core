@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **Usage is pushed, and the leader keeps no usage table (feature `usage_push`, replaces `usage_stream`).** Each finished
+  request becomes one OTLP log record sent to `OPOD_USAGE_OTLP_ENDPOINT` (headers in `OPOD_USAGE_OTLP_HEADERS`); a
+  record leaves the leader's memory only on the receiver's 2xx. While the receiver is away records wait in a queue
+  bounded by `OPOD_USAGE_QUEUE_MB` (default 64 MiB, about 440 000 records), and past it the oldest are dropped and
+  counted (`opod_usage_dropped_total`, `opod_usage_queue_bytes`, `opod_usage_queue_records`, `opod_usage_sent_total`,
+  `opod_usage_export_errors_total`). A front door's records join the same queue. **Breaking:** `GET
+  /admin/v1/usage/stream` and the SQLite `usage` table are gone (dropped on the first open); a manager that pulled the
+  stream reads the push instead, and probes `usage_push`. Models are evicted least-recently-used by the requests since
+  the process started.
 - **The installer looks for any engine, not only Ollama, and its next steps print whole.** It finds `llama-server`,
   `vllm`, `trtllm-serve`, `mlx_lm.server` or `ollama` on PATH, and with none it names llama.cpp (Mac), vLLM (Linux with
   `nvidia-smi`) or a llama.cpp build (other Linux), linking docs/ENGINES.md. Its "Joining an existing cluster?" line

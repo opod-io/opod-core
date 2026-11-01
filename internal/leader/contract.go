@@ -56,7 +56,6 @@ var LeaderContract = []ContractRoute{
 	{Method: http.MethodDelete, Path: "/admin/v1/adapters/{name}"},
 	{Method: http.MethodPost, Path: "/admin/v1/healthcheck"},
 	{Method: http.MethodGet, Path: "/admin/v1/events/stream"},
-	{Method: http.MethodGet, Path: "/admin/v1/usage/stream"},
 	{Method: http.MethodGet, Path: "/admin/v1/shards"},
 	{Method: http.MethodPost, Path: "/admin/v1/shards/create"},
 	{Method: http.MethodDelete, Path: "/admin/v1/shards/{model_id}"},
@@ -83,8 +82,15 @@ var EnvContract = config.Vars()
 // is shipped in this binary.
 func contractFeatures() map[string]bool {
 	return map[string]bool{
-		"events_stream":     true, // /admin/v1/events/stream with cursor + replay
-		"usage_stream":      true, // /admin/v1/usage/stream with cursor + replay
+		"events_stream": true, // /admin/v1/events/stream with cursor + replay
+		// usage_push (T32.34) replaced usage_stream, the one key ever taken
+		// out: the leader keeps no usage table to pull from. One OTLP log
+		// record per request goes to OPOD_USAGE_OTLP_ENDPOINT from a queue
+		// bounded by bytes (OPOD_USAGE_QUEUE_MB), freed only on a 2xx; the
+		// dedupe key is (opod.leader.boot, opod.usage.seq). A manager that
+		// finds usage_stream and not usage_push is talking to an older leader
+		// and pulls /admin/v1/usage/stream as before.
+		"usage_push":        true,
 		"loadz":             true, // in-flight / rpm / plan revision for autoscaling
 		"shards":            true, // llama.cpp-RPC gangs, live status per part
 		"plan_file":         true, // /etc/opod/plan.json watched (managed mode)
@@ -208,7 +214,8 @@ func contractFeatures() map[string]bool {
 		// autoscaler must not render a trigger on either of them.
 		"gang_load": true,
 		// Gateway replicas, leader side (T11.1, ADR-063): POST
-		// /admin/v1/usage/push takes usage rows a copied front recorded,
+		// /admin/v1/usage/push takes usage rows a copied front recorded into
+		// the leader's usage queue,
 		// deduplicated by a row id the GATEWAY mints; GET /admin/v1/spend
 		// serves the live door count and the lag bound (the per-key ceilings it
 		// once carried left with ADR-077). Without it a manager must keep every
@@ -330,7 +337,7 @@ func contractFeatures() map[string]bool {
 		// stays the engine alone. A manager points readiness here, so a worker
 		// its leader refuses is not counted as capacity.
 		"worker_readyz":         true,
-		"ttft":                  true, // usage rows carry ttft_ms for streamed answers (R15.13)
+		"ttft":                  true, // usage records carry ttft_ms for streamed answers (R15.13)
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one
 		"otlp_logs":             true, // OPOD_OTLP_LOGS_ENDPOINT: the leader's own log records over OTLP/HTTP, teed beside stderr; bounded queue, never blocks

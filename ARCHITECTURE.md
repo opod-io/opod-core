@@ -537,8 +537,8 @@ intra-node, not cross-machine sharding.)
    All state above lives in SQLite via the `store` package.
    Eventing between leader and agents is direct HTTP (heartbeats POST to
    the leader's admin API). `internal/events` is an in-process pub/sub that
-   backs /admin/v1/events, events/stream and usage/stream; nothing else
-   leaves the leader process.
+   backs /admin/v1/events and events/stream. Usage leaves the process as
+   OTLP log records (internal/usage, "Usage push" below); nothing else does.
 ```
 
 ### Subsystem responsibilities
@@ -1551,11 +1551,11 @@ list is:
 - **gateway** — `GET /v1/models`, `POST /v1/chat/completions`
 - **worker protocol** — `POST /admin/v1/nodes/register`, `POST /admin/v1/nodes/heartbeat`
 - **manager** — `GET /admin/v1/version`, `/capabilities`, `/nodes`, `/models`, `/shards`,
-  `/events/stream`, `/usage/stream`; `POST /admin/v1/nodes/{id}/sleep|resume|drain|undrain`,
+  `/events/stream`; `POST /admin/v1/nodes/{id}/sleep|resume|drain|undrain`,
   `/models/{id}/load`, `/models/{id}/move`, `/adapters`, `/healthcheck`, `/shards/create`;
   `DELETE /admin/v1/adapters/{name}`, `/shards/{model_id}`, `/shards/{model_id}/{gang_id}`
 
-The list is additive-only — a route on it is never removed, renamed or given another method, and its
+The list is additive-only — a route on it is never removed, renamed or given another method (one exception, by decision: `GET /admin/v1/usage/stream` left with feature `usage_stream` when the usage table did, T32.34; `TestLeaderContract` holds the retired key absent), and its
 response shape only gains fields. `GET /admin/v1/capabilities` serves it together with the **74 feature
 keys** a manager may probe for instead of sniffing behaviour, and `TestLeaderContract` walks the real router
 so a change that drops one of these routes fails `go test`. Everything else under `/admin/v1` — and
@@ -1564,7 +1564,7 @@ so a change that drops one of these routes fails `go test`. Everything else unde
 Rather than restate the key list here and let it rot, read it: `curl -s -H "Authorization: Bearer $KEY"
 localhost:8080/admin/v1/capabilities | jq .features`. Each key is commented at its declaration with what it
 promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `policy_file`,
-`events_stream`, `usage_stream`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`, `plain_listen`,
+`events_stream`, `usage_push`, `loadz`, `load_signals`, `gang_load`, `probe_port`, `probe_header`, `plain_listen`,
 `engine_liveness`, `worker_goodbye`, `worker_sleep`, `request_wake`, `kv_block_events`, `node_drain`, `placement_drain`, `model_move`,
 `shards`, `shard_head`, `shard_groups`, `shard_sglang`, `shard_expert`, `plan_heal_gangs`, `shard_create_error_codes`, `shard_heal_failed_event`, `gateway_spend`, `mtls`,
 `tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.
@@ -1651,6 +1651,18 @@ Mechanisms a manager drives through this surface:
   unless that file already chooses a backend. Release 1.2.1 also reads an OpenAI `json_schema` `response_format` as if
   the `{name, schema}` wrapper were the schema, which constrains nothing, so the driver sends the engine's own
   `{"type": "json", "schema": …}` instead (`internal/engines/trtllm`).
+- **Usage push** (`usage_push`, T32.34): the leader keeps no usage table. A finished request — the leader's own, or
+  one a front door pushed — is encoded once, compactly (values and field numbers, about 92 B; with its queue slot
+  about 132 B), into a queue capped by bytes (`OPOD_USAGE_QUEUE_MB`, default 64 MiB ≈ 440 000 records; measured heap
+  70 MiB at the cap). An exporter (`internal/usage`, our own small OTLP/HTTP client, not the SDK's batch processor,
+  which frees a record before the receiver has it) turns the oldest ≤ 1 MiB into one `ExportLogsServiceRequest`
+  (event `opod.usage`, names in `opod-sdk/adminapi/usagelog.go`) and frees it only on a 2xx. A 400 or a partial
+  success's rejected records are permanent per OTLP: freed and counted `rejected`. A 5xx, 429, 401, 403 or a network
+  error frees nothing and backs off from 1 s to 30 s under the server's context. Past the cap the oldest record goes
+  (`opod_usage_dropped_total{reason="full"}`). The key a receiver dedupes on is (`opod.leader.boot`,
+  `opod.usage.seq`): the process start and a sequence from 1 per boot. A restart loses what was queued — counted
+  by the receiver as a gap in the sequence of the old boot. The lifecycle manager's LRU order reads the queue's
+  last-used map (it read `MAX(ts)` over the table), so it starts empty at boot.
 - **Gateway spend** (`gateway_spend`, T11.1 slice 1, ADR-063): the leader is one BRAIN behind several front DOORS.
   `POST /admin/v1/usage/push` takes usage rows a copied front recorded — at-least-once, deduplicated by a row id the
   **gateway** mints, because only the gateway knows two pushes are the same request, and a retry after a response it

@@ -43,7 +43,8 @@ func TestEmbeddings_RoutesByCatalogIDAndAttributesTheWorker(t *testing.T) {
 	}
 	defer st.Close()
 	stub := &embedStub{}
-	h := &Handler{Engine: stub, Store: st,
+	sink := newUsageSink()
+	h := &Handler{Engine: stub, Store: st, Usage: sink.add,
 		// A catalog entry whose engine-native name differs from its id, so a
 		// handler that resolved too early would hand the engine "org/fixture-embed".
 		Catalog: []catalog.Entry{{ID: "fixture-embed", Source: catalog.Source{Repo: "org/fixture-embed"}}}}
@@ -61,11 +62,7 @@ func TestEmbeddings_RoutesByCatalogIDAndAttributesTheWorker(t *testing.T) {
 	if stub.gotModel != "fixture-embed" {
 		t.Fatalf("engine got %q, want the catalog id (the router resolves the native name at dispatch)", stub.gotModel)
 	}
-	rows, err := st.Usage().Recent(context.Background(), 1)
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("usage rows: %v %v", rows, err)
-	}
-	if rows[0].NodeID != "w_1" || rows[0].Model != "fixture-embed" || rows[0].Outcome != "ok" {
-		t.Fatalf("usage row %+v: want NodeID w_1, model fixture-embed, outcome ok", rows[0])
+	if r := waitForUsage(t, sink); r.NodeID != "w_1" || r.Model != "fixture-embed" || r.Outcome != "ok" {
+		t.Fatalf("usage record %+v: want NodeID w_1, model fixture-embed, outcome ok", r)
 	}
 }

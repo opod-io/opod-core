@@ -93,18 +93,14 @@ func TestDispatchMeasuresFromArrivalBeforeTheGate(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		rows, err := srv.store.Usage().Recent(context.Background(), 10)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(rows) > 0 {
+		if rows := srv.usage.Records(); len(rows) > 0 {
 			if rows[0].LatencyMS < int(held.Milliseconds()) {
 				t.Fatalf("usage latency_ms = %d, want ≥ %d: the wait for a slot is part of what the caller saw", rows[0].LatencyMS, held.Milliseconds())
 			}
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("no usage row for the request")
+			t.Fatal("no usage record for the request")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

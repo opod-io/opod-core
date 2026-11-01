@@ -1,7 +1,6 @@
 package leader
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -31,8 +30,7 @@ func gwServer(t *testing.T) (*Server, store.Store) {
 // dedup key is the id the GATEWAY minted, because only the gateway knows that
 // two pushes are the same request.
 func TestPushedUsageIsDeduplicatedByTheGatewaysRowID(t *testing.T) {
-	srv, st := gwServer(t)
-	ctx := context.Background()
+	srv, _ := gwServer(t)
 	push := func(body string) map[string]any {
 		t.Helper()
 		rec := httptest.NewRecorder()
@@ -56,12 +54,8 @@ func TestPushedUsageIsDeduplicatedByTheGatewaysRowID(t *testing.T) {
 		t.Fatalf("a retry must be recognised, not billed again: %v", got)
 	}
 	// 40 tokens, once: a retry must not have doubled the record.
-	recent, err := st.Usage().Recent(ctx, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
 	sum := 0
-	for _, u := range recent {
+	for _, u := range srv.usage.Records() {
 		sum += u.PromptTokens + u.CompletionTokens
 	}
 	if sum != 40 {

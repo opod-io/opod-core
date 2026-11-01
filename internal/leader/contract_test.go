@@ -78,6 +78,11 @@ func TestLeaderContract(t *testing.T) {
 			t.Errorf("feature %q advertised false — remove the key instead", k)
 		}
 	}
+	for k, why := range contractFeaturesRetired {
+		if caps.Features[k] {
+			t.Errorf("feature %q is retired (%s) and still advertised", k, why)
+		}
+	}
 	for _, k := range contractFeatureFloor {
 		if !caps.Features[k] {
 			t.Errorf("feature %q left the contract — feature keys are additive-only: a manager probes for it", k)
@@ -103,11 +108,19 @@ func TestLeaderContract(t *testing.T) {
 	}
 }
 
-// contractFeatureFloor is every feature key the contract has published. A key
-// may be added (here too); one that disappears fails the build, because a
-// manager that probes for it would silently stop using the mechanism.
+// contractFeaturesRetired are keys the contract published and then took out on
+// purpose, with the reason. Leaving the floor is a decision, never a slip: a
+// manager that probes for one of these must find it ABSENT and use what
+// replaced it.
+var contractFeaturesRetired = map[string]string{
+	"usage_stream": "T32.34: the leader keeps no usage table; usage_push sends each record over OTLP",
+}
+
+// contractFeatureFloor is every feature key the contract has published and not
+// retired. A key may be added (here too); one that disappears fails the build,
+// because a manager that probes for it would silently stop using the mechanism.
 var contractFeatureFloor = []string{
-	"events_stream", "usage_stream", "loadz", "shards", "plan_file", "auth_file", "router_only_ready",
+	"events_stream", "usage_push", "loadz", "shards", "plan_file", "auth_file", "router_only_ready",
 	"routing_weights", "model_revision", "adapters_runtime", "vram_budget", "stream_boot", "load_signals",
 	"lora", "boot_id", "tls_listener", "pd_roles", "routing_load_aware", "worker_sleep", "policy_file",
 	"shard_head", "ttft", "engines", "fetch_snapshot", "otlp_logs", "cache_prune", "gang_devices_per_rank",

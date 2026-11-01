@@ -118,17 +118,13 @@ func newTestManager(t *testing.T) (*Manager, *fakeEngine, store.Store) {
 	install("incoming-2g", "incoming-2g:latest", 2*gib)
 	install("incoming-60g", "incoming-60g:latest", 60*gib)
 
-	use := func(model string, ts int64) {
-		if err := st.Usage().Record(ctx, store.Usage{
-			TS: time.Unix(ts, 0), APIKeyID: "k", UserID: "u", Model: model,
-			Protocol: "openai", Outcome: "ok",
-		}); err != nil {
-			t.Fatalf("usage %s: %v", model, err)
-		}
+	// The leader's usage queue is the source of last-used times; the order
+	// is what the manager reads (Manager.LastUsed).
+	lastUsed := map[string]time.Time{
+		"big-old":   time.Unix(100, 0),
+		"small-hot": time.Unix(200, 0),
+		"big-new":   time.Unix(300, 0),
 	}
-	use("big-old", 100)
-	use("small-hot", 200)
-	use("big-new", 300)
 
 	eng := &fakeEngine{resident: []engines.ResidentModel{
 		{Name: "big-old:latest", SizeBytes: 16 * gib},
@@ -137,6 +133,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeEngine, store.Store) {
 	}}
 	var cat []models.Entry
 	m := New(st, eng, cat, 32, slog.Default())
+	m.LastUsed = func() map[string]time.Time { return lastUsed }
 	return m, eng, st
 }
 

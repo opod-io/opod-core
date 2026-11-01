@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/opod-io/opod/internal/router"
@@ -10,27 +9,19 @@ import (
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/store"
+	usagelog "github.com/opod-io/opod/internal/usage" // api has a wire type named usage
 )
 
-// usageWriteTimeout bounds the usage insert once it is detached from the
-// request: long enough for a busy SQLite writer, short enough that a wedged
-// store cannot pile up handler goroutines.
-const usageWriteTimeout = 5 * time.Second
-
-// recordUsage writes a usage row for a finished request and updates metrics.
-// Best-effort — failures are not surfaced to the caller (the request already
-// ended from the user's perspective).
+// recordUsage hands the record of a finished request to h.Usage and updates
+// metrics. It never fails the caller: the request already ended from the
+// user's perspective, and the queue behind h.Usage never blocks.
 //
-// The row never rides the request's own context: on the cancellation path
-// (client gone mid-stream) that context is already done and the driver would
-// refuse the insert, so exactly the requests that were cut short would go
-// unrecorded. The write keeps the context's values and gets its own deadline.
+// A request cut short (the client gone mid-stream) is recorded like any
+// other: nothing here reads the request's context deadline.
 //
 // Metrics always fire (even when no API key is in context — e.g., dev mode
-// with require_keys=false). The DB row is written with empty key/user
-// identifiers in that case; the per-key index simply has more empty-string
-// rows but everything stays observable.
+// with require_keys=false). The record then carries empty key/user
+// identifiers.
 func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 	u *engines.Usage, latency time.Duration, outcome string) {
 	h.recordUsageTTFT(ctx, protocol, model, u, latency, 0, outcome)
@@ -41,7 +32,7 @@ func (h *Handler) recordUsage(ctx context.Context, protocol, model string,
 // plane must not read it as "instant".
 func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 	u *engines.Usage, latency, ttft time.Duration, outcome string) {
-	st, pol := h.Store, h.Policy()
+	pol := h.Policy()
 	// A Messages request is served by the chat handler; the row says what the
 	// caller spoke (anthropic.go).
 	protocol = protocolOf(ctx, protocol)
@@ -73,8 +64,18 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		h.OnTTFT(ctx, ttft)
 	}
 
-	rec := store.Usage{
+	if h.Usage == nil {
+		return
+	}
+	id := RequestIDFrom(ctx)
+	if id == "" {
+		// A request that never passed the header middleware still needs an id
+		// that is its own: a door's leader deduplicates on it (ADR-063).
+		id = newRequestID()
+	}
+	h.Usage(usagelog.Record{
 		TS:               time.Now(),
+		RequestID:        id,
 		APIKeyID:         keyID,
 		UserID:           userID,
 		Model:            model,
@@ -83,28 +84,7 @@ func (h *Handler) recordUsageTTFT(ctx context.Context, protocol, model string,
 		CompletionTokens: completion,
 		LatencyMS:        int(latency.Milliseconds()),
 		Outcome:          outcome,
-		CostUSD:          0,                    // dollar cost left core with budgets (ADR-022); rating happens downstream
 		NodeID:           router.NodeFrom(ctx), // "" when answered locally / never dispatched
 		TTFTMS:           int(ttft.Milliseconds()),
-	}
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageWriteTimeout)
-	defer cancel()
-	if err := st.Usage().Record(writeCtx, rec); err != nil {
-		// A store outage must not affect user-visible behaviour, but a lost
-		// usage row is never silent.
-		slog.Warn("usage: row not recorded", "model", model, "outcome", outcome, "err", err)
-	}
-
-	// A gateway replica's local row is its own view, not the record: hand the
-	// row to the door's pusher so the leader — the single writer — gets it
-	// (ADR-063). The request id is already unique per request and is what the
-	// leader dedups on, so a resend after a failed push cannot double-count.
-	if h.OnUsage != nil {
-		id := RequestIDFrom(ctx)
-		if id == "" {
-			id = newRequestID()
-		}
-		h.OnUsage(rec, id)
-	}
-
+	})
 }

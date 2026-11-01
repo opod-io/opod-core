@@ -1,9 +1,9 @@
 package api
 
 // An answer that is not streamed is the client's the moment it is complete.
-// The usage row is the gateway's bookkeeping and is written after it: these
-// tests hold the write on a gate and require the whole body to have reached
-// the client while the gate is still shut (PLAN T32.1).
+// The usage record is the gateway's bookkeeping and is handed over after it:
+// these tests hold the hand-over on a gate and require the whole body to have
+// reached the client while the gate is still shut (PLAN T32.1).
 
 import (
 	"context"
@@ -16,26 +16,8 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	usagelog "github.com/opod-io/opod/internal/usage"
 )
-
-// gatedStore holds every usage write until its gate opens.
-type gatedStore struct {
-	store.Store
-	gate chan struct{}
-}
-
-func (s gatedStore) Usage() store.UsageStore { return gatedUsage{s.Store.Usage(), s.gate} }
-
-type gatedUsage struct {
-	store.UsageStore
-	gate chan struct{}
-}
-
-func (u gatedUsage) Record(ctx context.Context, rec store.Usage) error {
-	<-u.gate
-	return u.UsageStore.Record(ctx, rec)
-}
 
 // everythingEngine answers chat, embeddings and rerank in one go.
 type everythingEngine struct{ finishingEngine }
@@ -76,10 +58,10 @@ func TestANonStreamedAnswerIsDeliveredBeforeItsUsageRow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := usageTestStore(t)
+			sink := newUsageSink()
 			gate := make(chan struct{})
 			h := &Handler{Engine: &everythingEngine{finishingEngine{cancelEngine{deltas: []string{"Hel", "lo"}}}},
-				Store: gatedStore{st, gate}, Default: "m"}
+				Store: usageTestStore(t), Usage: func(r usagelog.Record) { <-gate; sink.add(r) }, Default: "m"}
 			srv := httptest.NewServer(tc.route(h))
 			defer srv.Close()
 			defer func() {
@@ -118,7 +100,7 @@ func TestANonStreamedAnswerIsDeliveredBeforeItsUsageRow(t *testing.T) {
 				t.Fatal("the client had no answer while its usage row was still being written")
 			}
 			close(gate)
-			if row := waitForUsage(t, st); row.Outcome != "ok" {
+			if row := waitForUsage(t, sink); row.Outcome != "ok" {
 				t.Fatalf("usage row outcome = %q, want ok", row.Outcome)
 			}
 		})

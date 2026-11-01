@@ -21,6 +21,7 @@ import (
 // never attached (e.g. older embedded uses).
 func (s *Server) AttachLifecycle(m *lifecycle.Manager) {
 	m.InflightFn = s.router.InflightByModel
+	m.LastUsed = s.UsageLastUsed // LRU order from the usage queue (usagepush.go)
 	s.lifecycle = m
 }
 
