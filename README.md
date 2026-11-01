@@ -15,6 +15,8 @@
 
 > **Pool the GPUs you already own.** Two 24 GB cards in two PCs are one 48 GB model. An NVIDIA card and an AMD or Intel card can serve the same model. A box with two NVIDIA cards serves one model across both. Every machine sits behind one OpenAI-compatible URL and one API key.
 >
+> A **heterogeneous GPU cluster** for LLM inference: **NVIDIA, AMD, Intel Arc, Tenstorrent**, Apple Silicon and CPU workers, with **model sharding** (tensor and pipeline parallelism), **KV-cache-aware routing** and the load signals a **GPU autoscaler** needs.
+>
 > Engine-agnostic: **llama.cpp** (RPC parts, any vendor), **vLLM** (tensor parallel in a box, Ray across boxes), **SGLang**, **TensorRT-LLM**, **MLX-LM** or **Ollama**. Core has no vendor egress: nothing leaves your network.
 >
 > Point Cursor, Aider, Continue, Codex CLI, any OpenAI SDK — or an Anthropic Messages client such as Claude Code — at Opod.
@@ -1707,9 +1709,15 @@ Opod is a **self-hosted LLM gateway** and **inference router**. If you found thi
 - **Private inference cluster / on-prem LLM gateway** — keep all inference on a trusted LAN or Tailscale; nothing leaves your network.
 - **Self-hosted Cursor / Aider / Continue backend** — drop-in OpenAI-compatible URL for IDE coding tools.
 - **AI gateway with per-user keys + usage records + audit** for teams of 10-50 spending $30k+/yr on Claude / GPT.
-- **Sharded inference orchestrator** — split a model larger than any single machine across multiple workers via `llama.cpp` RPC, vLLM + Ray, or SGLang's distributed launcher.
+- **Sharded inference orchestrator / distributed LLM inference** — split a model larger than any single machine across multiple workers via `llama.cpp` RPC (layer split), vLLM + Ray (tensor and pipeline parallelism), or SGLang's distributed launcher; several gangs of one model behind one URL.
+- **Heterogeneous GPU cluster / multi-vendor GPU inference** — NVIDIA (CUDA), AMD (ROCm), Intel Arc (SYCL), Tenstorrent, Apple Silicon (MLX) and CPU workers behind one endpoint; one llama.cpp gang can mix vendors. What has served per engine × vendor: [`images/README.md`](images/README.md).
+- **KV-cache-aware routing / prefix caching** — the leader routes by each worker's KV-cache use and by the prompt prefixes its engine already caches, isolates caches per team or key, bounds admission by the KV pool, and hands KV from prefill to decode workers (prefill/decode disaggregation on vLLM).
+- **GPU autoscaling signals** — `/loadz` gives KEDA, an HPA or your own loop the numbers that matter for inference: in flight, queue depth, KV pressure, time to first token, dead engines. vLLM sleep mode frees the GPU and wakes on the next request. Scale to zero and VRAM-aware placement of new replicas are the [Opod Control Plane](#-enterprise-opod-control-plane)'s.
+- **Multi-LoRA serving** — LoRA adapters on vLLM workers, added and dropped at runtime, served as `<model>:<adapter>`.
+- **Claude Code with local models / Anthropic API compatible** — `/v1/messages` on every chat model, translated to the engine's chat path; also a Vertex AI custom container.
+- **vLLM / SGLang / llama.cpp / TensorRT-LLM cluster manager** — one gateway, one key system and one usage stream over every engine; see [docs/ENGINES.md](docs/ENGINES.md).
 
-Related concepts: local LLM, on-prem AI, private GPT, GGUF, multi-tenant inference, model placement, fallback chain.
+Related concepts: local LLM, on-prem AI, private GPT, air-gapped LLM, GGUF, safetensors, tensor parallelism, pipeline parallelism, model parallelism, GPU pooling, GPU sharing, VRAM budget, multi-tenant inference, model placement, fallback chain, OpenTelemetry tracing, Prometheus metrics.
 
 ---
 
