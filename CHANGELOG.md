@@ -5,7 +5,10 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## Unreleased
+## v0.3.0 — 2026-10-31
+
+Everything since v0.2.1 (2026-10-15). Breaking: the pre-request guardrail webhook left the leader (ADR-113) —
+checking prompts is the gateway's job in front of it.
 
 - **A first `opod up` with llama.cpp serves instead of timing out.** `opod up` with `OPOD_ENGINE=llamacpp` launches
   `llama-server -hf <repo>`, which downloads the GGUF before it listens. The launch set no readiness bound, so the
