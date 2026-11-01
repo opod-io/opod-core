@@ -9,7 +9,7 @@
 #   --version <vX.Y.Z>      install a specific version (default: latest release)
 #   --install-dir <path>    install to a specific directory (default: try
 #                           ~/.local/bin, ~/bin, /usr/local/bin in that order)
-#   --no-engine             skip the Ollama detection / warning
+#   --no-engine             skip the inference-engine detection / warning
 #   --dry-run               show what would happen without writing anything
 #
 # Env overrides (alternative to flags):
@@ -51,11 +51,11 @@ Flags:
   --help                Show this message
   --version <vX.Y.Z>    Install a specific version (default: latest release)
   --install-dir <path>  Install to a specific dir
-  --no-engine           Skip the Ollama check
+  --no-engine           Skip the inference-engine check
   --dry-run             Show what would happen, no writes
 
 Examples:
-  # standard install + check Ollama:
+  # standard install + check for an inference engine:
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/installer/install.sh | sh
 
   # install + join an existing cluster:
@@ -161,34 +161,47 @@ check_engine() {
         return
     fi
 
-    if ! command -v ollama >/dev/null 2>&1; then
-        warn "ollama is not installed — opod needs an inference engine to serve models"
+    # Opod drives an engine; it ships none. Any of these on PATH is enough.
+    found=""
+    for bin in llama-server vllm trtllm-serve mlx_lm.server ollama; do
+        if command -v "$bin" >/dev/null 2>&1; then
+            found="$found $bin"
+        fi
+    done
+    if [ -z "$found" ]; then
+        warn "no inference engine found — opod drives one (llama.cpp, vLLM, SGLang, TensorRT-LLM, MLX-LM, Ollama)"
         case "$OS" in
             darwin)
-                warn "  recommended: brew install --cask ollama"
-                warn "  alternative: curl -fsSL https://ollama.com/install.sh | sh"
+                warn "  recommended: brew install llama.cpp"
                 ;;
             linux)
-                warn "  install:     curl -fsSL https://ollama.com/install.sh | sh"
+                if command -v nvidia-smi >/dev/null 2>&1; then
+                    warn "  recommended (NVIDIA): pip install vllm"
+                else
+                    warn "  recommended: llama.cpp built for your card (AMD, Intel or CPU)"
+                fi
                 ;;
         esac
+        warn "  every engine: https://github.com/${REPO}/blob/main/docs/ENGINES.md"
         warn "  or pass --no-engine to skip this check"
         return
     fi
-    ok "ollama: $(command -v ollama)"
+    ok "engine(s) on PATH:$found"
 
-    # Detect the macOS Homebrew formula bug where llama-server is missing.
-    if [ "$OS" = "darwin" ] && command -v brew >/dev/null 2>&1; then
-        cellar="$(brew --cellar ollama 2>/dev/null || true)"
-        if [ -n "$cellar" ] && [ -d "$cellar" ]; then
-            if ! find "$cellar" -name "llama-server" -print -quit 2>/dev/null | grep -q .; then
-                warn "the Homebrew 'ollama' formula on Apple Silicon is missing the"
-                warn "internal 'llama-server' binary — model inference will fail with"
-                warn "  500: error starting llama-server: llama-server binary not found"
-                warn "  fix:  brew uninstall ollama && brew install --cask ollama"
+    # Detect the macOS Homebrew formula bug where Ollama's llama-server is missing.
+    case "$found" in *ollama*)
+        if [ "$OS" = "darwin" ] && command -v brew >/dev/null 2>&1; then
+            cellar="$(brew --cellar ollama 2>/dev/null || true)"
+            if [ -n "$cellar" ] && [ -d "$cellar" ]; then
+                if ! find "$cellar" -name "llama-server" -print -quit 2>/dev/null | grep -q .; then
+                    warn "the Homebrew 'ollama' formula on Apple Silicon is missing the"
+                    warn "internal 'llama-server' binary — model inference will fail with"
+                    warn "  500: error starting llama-server: llama-server binary not found"
+                    warn "  fix:  brew uninstall ollama && brew install --cask ollama"
+                fi
             fi
         fi
-    fi
+    ;; esac
 }
 
 # ---- version resolution ----
@@ -357,15 +370,14 @@ print_next_steps() {
     printf '%b' "
   ${C_BOLD}Next steps${C_RESET}
 
-    1. Make sure Ollama is running:
-         ollama serve &
-    2. (optional) preflight diagnostics:
+    1. (optional) preflight diagnostics — names what to install:
          opod doctor
-    3. Start Opod:
-         opod up
-    4. Sign into the web UI:
-         open http://localhost:8080
-       (use the admin key shown by 'opod up')
+    2. Serve a model on this machine (llama.cpp shown):
+         OPOD_ENGINE=llamacpp OPOD_DEFAULT_MODEL=llama-3.2-3b-gguf OPOD_PULL_DEFAULT_MODEL=1 opod up
+       vLLM, SGLang, TensorRT-LLM, MLX-LM, Ollama:
+         https://github.com/${REPO}/blob/main/docs/ENGINES.md
+    3. Call it with the admin key 'opod up' prints:
+         opod connect --list
 
   ${C_BOLD}Upgrading later${C_RESET}
 
@@ -377,7 +389,7 @@ print_next_steps() {
     Have the leader's admin run:
          opod token create --node
     then on this machine:
-         opod join "http://<leader-host>:8080?token=<TOKEN>"
+         opod join \"http://<leader-host>:8080?token=<TOKEN>\"
 
   Docs: https://github.com/${REPO}
 "

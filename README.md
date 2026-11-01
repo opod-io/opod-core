@@ -675,8 +675,8 @@ OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://127.0.0.1:8080?t
 
 1. Detects your OS + architecture (must be macOS/arm64, Linux/x86_64, or Linux/arm64)
 2. Checks for required shell tools (curl, tar)
-3. Checks whether Ollama is installed and warns with the install command if not
-4. Detects the broken-Homebrew-ollama case on macOS and tells you how to fix it
+3. Looks for an inference engine on PATH (`llama-server`, `vllm`, `trtllm-serve`, `mlx_lm.server`, `ollama`) and, when none is there, names the one to install for your machine
+4. When Ollama is the engine, detects the broken Homebrew `ollama` formula on macOS and tells you how to fix it
 5. Fetches the **latest release** binary from GitHub Releases
 6. Verifies SHA-256 against `checksums.txt`
 7. Installs to `~/.local/bin/opod` (or `/usr/local/bin/opod` with sudo)
@@ -689,7 +689,7 @@ OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://127.0.0.1:8080?t
 --help                  show usage
 --version <vX.Y.Z>      install a specific version
 --install-dir <path>    install to a specific dir
---no-engine             skip the Ollama check
+--no-engine             skip the inference-engine check
 --dry-run               show what would happen, no writes
 ```
 
@@ -704,7 +704,7 @@ curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/in
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh \
   | OPOD_INSTALL_DIR=/opt/opod/bin sh
 
-# skip the Ollama check (CI, custom engine setups)
+# skip the inference-engine check (CI, custom engine setups)
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh \
   | OPOD_SKIP_ENGINE=1 sh
 ```

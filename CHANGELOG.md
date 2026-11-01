@@ -5,6 +5,15 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## Unreleased
+
+- **The installer looks for any engine, not only Ollama, and its next steps print whole.** It finds `llama-server`,
+  `vllm`, `trtllm-serve`, `mlx_lm.server` or `ollama` on PATH, and with none it names llama.cpp (Mac), vLLM (Linux with
+  `nvidia-smi`) or a llama.cpp build (other Linux), linking docs/ENGINES.md. Its "Joining an existing cluster?" line
+  nested double quotes inside a double-quoted string, so the shell read `<leader-host>` as a redirect and printed
+  `sh: leader-host: No such file or directory`. The next steps no longer say "Make sure Ollama is running" or point at a
+  web UI core does not have.
+
 ## v0.3.0 — 2026-10-31
 
 Everything since v0.2.1 (2026-10-15). Breaking: the pre-request guardrail webhook left the leader (ADR-113) —
