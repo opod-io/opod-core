@@ -4,8 +4,8 @@ title: "Opod: a self-hosted LLM gateway for multi-machine inference clusters"
 abstract: |
   Opod is a CLI-only Go binary that turns a fleet of Macs and Linux boxes
   into a private inference cluster behind a single OpenAI-compatible
-  endpoint. It ships a per-user API key system with scopes, rpm/tpm and
-  daily-token quotas, expiry and an audit log; multi-node routing that
+  endpoint. It ships API keys with scopes and expiry (per-user limits and
+  budgets belong to a gateway in front) and an audit log; multi-node routing that
   picks a worker per request by load; sharding of one model across
   machines on three backends (llama.cpp RPC, vLLM + Ray, and SGLang's own
   distributed launcher); and Prometheus metrics with OpenTelemetry traces.

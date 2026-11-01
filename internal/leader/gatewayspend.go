@@ -3,8 +3,8 @@ package leader
 // Gateway replicas, leader side (T11.1 slice 1, ADR-063).
 //
 // One endpoint, one leader, several doors. A gateway is a copied FRONT: it
-// accepts the request, checks the key, rate-limits, picks a worker, streams and
-// records usage. The leader stays the single BRAIN — the worker registry, the
+// accepts the request, checks the key, picks a worker, streams and records
+// usage. The leader stays the single BRAIN — the worker registry, the
 // join tokens, the plan revision, and the store every usage row lands in.
 //
 // Two asynchronous halves, both fail-static, so a gateway keeps serving when
@@ -13,15 +13,10 @@ package leader
 //   - usage is PUSHED here (POST /admin/v1/usage/push). At-least-once, and
 //     deduplicated by a row id the GATEWAY mints, because a retry after a
 //     half-written response must not bill twice.
-//   - spend is POLLED back (GET /admin/v1/spend). A per-key daily quota may
-//     therefore lag, and ADR-063 fixes that bound at 10 s AND publishes it
-//     here rather than leaving a customer to discover it.
-//
-// The rate limit is the part that is easy to get wrong: a flat share hands a
-// keep-alive client — pinned to one door — 1/N of the rate it was sold. So the
-// snapshot carries each key's limit AND the share this door may use, computed
-// from the doors the leader has actually heard from, and the gateways rebalance
-// off it every 10 s.
+//   - the spend snapshot is POLLED back (GET /admin/v1/spend): the doors the
+//     leader has heard from and the lag bound ADR-063 fixes at 10 s. It once
+//     carried each key's quota and rate share as well; per-key limits left
+//     core (ADR-077, ADR-112) and are the owner's gateway's job.
 
 import (
 	"encoding/json"
@@ -34,14 +29,13 @@ import (
 )
 
 // gatewayLiveFor is how long a gateway counts as a door after its last push.
-// It is deliberately longer than the 10 s rebalance: a door that missed one
-// push must not make every other door widen its share and overshoot the rate
-// the key was sold.
+// It is deliberately longer than the 10 s poll: a door that missed one push
+// must not drop out of the door count.
 const gatewayLiveFor = 45 * time.Second
 
-// spendLagBoundMS is the bound ADR-063 fixes and publishes: how far a per-key
-// quota may lag across doors. It is in the snapshot so a client reads it from
-// the product rather than from our documentation.
+// spendLagBoundMS is the bound ADR-063 fixes and publishes: how old a door's
+// copy of the spend snapshot may be. It is in the snapshot so a client reads it
+// from the product rather than from our documentation.
 const spendLagBoundMS = 10_000
 
 // dedupWindow is how many recent gateway row ids the leader remembers. The
@@ -76,8 +70,8 @@ func newGatewayFront() *gatewayFront {
 
 // beat records that this door is alive and what it is carrying. It is called
 // once per push, INCLUDING a push with no rows: a door serving nothing is still
-// a door, and one that dropped out of the live set would make every other door
-// widen its share of a key's rate.
+// a door, and one that dropped out of the live set would vanish from the door
+// count and from the summed door load.
 func (g *gatewayFront) beat(gw string, inFlight, rpm1m int64, now time.Time) {
 	if gw == "" {
 		return
@@ -135,8 +129,7 @@ func (g *gatewayFront) note(gw, rowID string, now time.Time) (fresh bool) {
 }
 
 // doors is the gateways heard from within gatewayLiveFor, and is never less
-// than 1: the leader's own front door serves when no gateway exists, and a
-// share of 1/0 has no meaning.
+// than 1: the leader's own front door serves when no gateway exists.
 func (g *gatewayFront) doors(now time.Time) (n int, names []string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -153,7 +146,7 @@ func (g *gatewayFront) doors(now time.Time) (n int, names []string) {
 
 // seenDoors is every door the leader has EVER heard from with the age of its
 // last push, live or not. doors() deliberately hides a door that went quiet
-// (a share of 1/N must not count a dead door); this is where it is still
+// (the live count must not count a dead door); this is where it is still
 // visible, because "a door stopped pushing" is a fact an operator needs and
 // no other surface carries it.
 func (g *gatewayFront) seenDoors(now time.Time) []gatewayDoor {

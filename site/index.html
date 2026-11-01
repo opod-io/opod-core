@@ -268,7 +268,7 @@
         <p>One Go binary. <code>opod up</code> starts a leader; <code>opod join</code> adds a worker that drives an inference engine on its GPU.</p>
         <ul>
           <li>OpenAI-compatible gateway: <code>/v1/chat/completions</code>, <code>/v1/embeddings</code>, <code>/v1/models</code>, streaming</li>
-          <li>API keys with per-key RPM/TPM limits, model allowlists and expiry; join tokens with per-node HMAC</li>
+          <li>API keys with a scope and an expiry (limits, budgets and quotas belong to the gateway in front, such as LiteLLM); join tokens with per-node HMAC</li>
           <li>Engines: vLLM, llama.cpp (including RPC sharding across machines), Ollama and MLX-LM</li>
           <li>Load-balances one model across workers; routes by placement</li>
           <li>A frozen <code>/admin/v1</code> contract and a typed event stream, so anything can manage it</li>
@@ -478,9 +478,9 @@ OPOD_DEFAULT_MODEL=llama-3.2-1b ./opod up
     <div class="grid g3" style="margin-top:28px">
       <div class="card">
         <div class="card-head"><h3>A private OpenAI endpoint for your team</h3><span class="chip ready">ready</span></div>
-        <p>Point Codex CLI, Aider, Continue, Open WebUI or the OpenAI SDK at your own GPUs. Give each person a key with RPM/TPM limits. The leader enforces keys even if the control plane is down.</p>
+        <p>Point Codex CLI, Aider, Continue, Open WebUI or the OpenAI SDK at your own GPUs. Give each app its own key with an expiry, and put a gateway such as LiteLLM in front for per-person limits and budgets. The leader checks keys even if the control plane is down.</p>
         <div class="block code"><pre>curl -X POST $OPOD/api/v1/endpoints/&lt;id&gt;/keys \
-  -d '{"name":"alice","rpmLimit":120}'</pre></div>
+  -d '{"name":"alice"}'</pre></div>
       </div>
 
       <div class="card">

@@ -98,10 +98,9 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// editToken updates editable fields on an existing token. Today only
-// the allowlist (`allowed_models`) is editable; revoke/delete is handled
-// by DELETE. The body is a partial-update — pass `allowed_models: null`
-// to remove the restriction, `[]` to deny all, or a list to replace.
+// editToken updates editable fields on an existing token. Only the expiry
+// is editable (`expires_at`: an RFC3339 time or null for never, or
+// `ttl_seconds`: <= 0 for never); revoke/delete is handled by DELETE.
 func (s *Server) editToken(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	id := chi.URLParam(r, "id")

@@ -12,7 +12,7 @@ import (
 
 // Fail-static: a door keeps enforcing the last thing the brain said, and says
 // how stale it is rather than pretending it is current.
-func TestAnUnreachableLeaderLeavesTheLastSnapshotEnforced(t *testing.T) {
+func TestAnUnreachableLeaderLeavesTheLastSnapshotStanding(t *testing.T) {
 	ctx := context.Background()
 	var down atomic.Bool
 	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -20,6 +20,7 @@ func TestAnUnreachableLeaderLeavesTheLastSnapshotEnforced(t *testing.T) {
 			http.Error(w, "nope", http.StatusServiceUnavailable)
 			return
 		}
+		// "keys" is what an older leader still sends; a door ignores it.
 		fmt.Fprint(w, `{"ts":1,"doors":3,"lag_bound_ms":10000,
 		  "keys":[{"api_key_id":"k1","tokens_today":10,"quota_daily_tokens":100,"rpm_limit":90,"rpm_share":30}]}`)
 	}))
