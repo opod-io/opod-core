@@ -9,7 +9,9 @@
 [![Contributor Covenant](https://img.shields.io/badge/code%20of%20conduct-Contributor%20Covenant%202.1-5e4b8b)](CODE_OF_CONDUCT.md)
 [![Discussions](https://img.shields.io/github/discussions/opod-io/opod-core?label=discussions)](https://github.com/opod-io/opod-core/discussions)
 
-[**opod.io**](https://opod.io) · [Discussions](https://github.com/opod-io/opod-core/discussions) · [Go SDK](https://github.com/opod-io/opod-sdk) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
+[**opod.io**](https://opod.io) · [**Enterprise: Opod Control Plane**](#-enterprise-opod-control-plane) · [Engines](docs/ENGINES.md) · [Discussions](https://github.com/opod-io/opod-core/discussions) · [Go SDK](https://github.com/opod-io/opod-sdk) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · Apache-2.0
+
+**Maintainer:** [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) — [hadi.work.ca@gmail.com](mailto:hadi.work.ca@gmail.com) · [hadi@opod.io](mailto:hadi@opod.io)
 
 > **Pool the GPUs you already own.** Two 24 GB cards in two PCs are one 48 GB model. An NVIDIA card and an AMD or Intel card can serve the same model. A box with two NVIDIA cards serves one model across both. Every machine sits behind one OpenAI-compatible URL and one API key.
 >
@@ -22,8 +24,24 @@
 | Part | What it is | Where |
 |---|---|---|
 | **Opod core** (this repo) | The open runtime: `opod up` (leader) and `opod join` (worker). Apache-2.0, CLI only | here |
-| **Opod SDK** | Go types and client for the leader's `/admin/v1` API, the node protocol and the model catalog. Apache-2.0 | [github.com/opod-io/opod-sdk](https://github.com/opod-io/opod-sdk) |
-| **Opod Control Plane** (`opodcp`) | The commercial product on top of core: runs leaders and workers on Kubernetes (`helm install opod`), a per-GPU memory ledger and placer, rollouts, usage export, SSO, a web console | [opod.io](https://opod.io) |
+| **Opod SDK** | The Go contract for anything that manages a leader: the `/admin/v1` and `/loadz` types, the node protocol, the environment variables, the model catalog. Types only, no client. Apache-2.0 | [github.com/opod-io/opod-sdk](https://github.com/opod-io/opod-sdk) |
+| **Opod Control Plane** (`opodcp`) | **The enterprise product on top of core** — see [below](#-enterprise-opod-control-plane) | [opod.io](https://opod.io) · [hadi@opod.io](mailto:hadi@opod.io) |
+
+### 🏢 Enterprise: Opod Control Plane
+
+Core is complete on its own: everything on this page is open source with no usage limit. When a **company** runs GPUs for many teams, the work moves from "serve a model" to "run a fleet". That is the **Opod Control Plane**:
+
+| You need… | The Control Plane gives you |
+|---|---|
+| One install on the cluster you already run | `helm install opod` on any Kubernetes (EKS, GKE, AKS, on-prem). On bare metal, `opodcp infra up` installs k3s for you |
+| To know which card holds what | A **per-GPU memory ledger**: every card measured, every model's KV cache sized, models packed onto cards instead of one per card |
+| Changes without outages | **Verified rollouts** of a new model, engine or image, judged before the old one is removed |
+| Capacity that follows load | An autoscaler per endpoint, down to zero and back |
+| Who used what | Usage facts per key, team and model, exported to your warehouse (Postgres, ClickHouse, BigQuery, …) |
+| Your identity system | SSO with any OIDC provider, roles, audit |
+| A screen for operators | A web console for endpoints, GPUs, rollouts, keys and usage |
+
+The Control Plane drives core through the same open contract a script would ([opod-sdk](https://github.com/opod-io/opod-sdk)), so the leaders keep serving when it is down. **Free for up to 4 GPUs.** Licences and support: **[opod.io](https://opod.io)** · **[hadi@opod.io](mailto:hadi@opod.io)**.
 
 ## 🗺️ Where Opod sits
 
@@ -51,7 +69,7 @@
    │ │ gaming PC     │ │ workstation    │ │   │ │ Linux server        │ │
    │ │ NVIDIA 24 GB  │ │ AMD 24 GB      │ │   │ │ 2× NVIDIA 24 GB     │ │
    │ └───────────────┘ └────────────────┘ │   │ └─────────────────────┘ │
-   │  a 70B model at 4-bit (~43 GB)       │   │  a 30B coder, fast      │
+   │  a 70B model at 4-bit (~43 GB)       │   │  one model on both      │
    └──────────────────────────────────────┘   └─────────────────────────┘
           (hardware here is an example — see "Which engine for which goal")
 ```
@@ -60,68 +78,85 @@
 
 ---
 
+## 🤔 Why Opod, if Ollama already works?
+
+If you have **one machine** and Ollama does what you need, keep Ollama. Opod starts to pay the day you have a **second GPU**, a **second machine** or a **second user**:
+
+| You want to… | Ollama alone | Opod |
+|---|---|---|
+| Run a model **bigger than one machine** — two 24 GB PCs as one 48 GB model | ❌ one machine per model | ✅ a gang: llama.cpp RPC (any vendor), vLLM + Ray (NVIDIA) |
+| Put an **NVIDIA, an AMD and an Intel card** under one model | ❌ | ✅ llama.cpp RPC gang |
+| Serve from **many machines behind one URL**, load-balanced | ❌ one server per machine | ✅ the leader routes to the least-loaded worker |
+| Use the **production engines** — vLLM, SGLang, TensorRT-LLM — for throughput | ❌ its own runtime only | ✅ six engines behind the same URL, mixed in one fleet |
+| Give each person **their own API key**, with expiry and a usage record | ❌ no keys | ✅ `opod token create`, per-key usage stream |
+| Keep a full endpoint fair — interactive users before batch jobs | ❌ | ✅ admission by worker slots and request class |
+| Send a repeated prompt to the machine whose cache already holds it | ❌ one server, no routing | ✅ prefix-aware routing across workers |
+
+Ollama stays one of the six engines Opod drives. Opod does not replace an engine; it is the layer across engines and machines.
+
+---
+
 ## 🚀 Try it in 60 seconds (one machine)
 
-This first run proves the install on one machine. **Ollama** is the quickest engine for it. Ollama serves one model whole on one machine, so it cannot be part of a gang, and Opod refuses tool calls on it — for agents and for pooling GPUs, go on to [Pool your GPUs](#-pool-your-gpus-one-model-across-machines) after this. See [Prerequisites — read first](#prerequisites--read-first) for every engine.
+Pick the block for your machine. Both start **one** leader that also serves the model, so you can call it right away. Every other engine — SGLang, TensorRT-LLM, MLX-LM, Ollama, and the ready-made container images — is in **[docs/ENGINES.md](docs/ENGINES.md)**.
 
-### 🍎 macOS (Apple Silicon — M1/M2/M3/M4)
+### 🍎 Mac (Apple Silicon) — llama.cpp
 
 ```bash
 # 1. install Opod
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"   # if the installer says so
 
-# 2. install an engine (pick one) — Ollama is the simplest default
-brew install --cask ollama && open -a Ollama
-# alternatives: pip install mlx-lm  ·  or run llama.cpp's llama-server  ·  or run vLLM in Docker
+# 2. install the engine
+brew install llama.cpp
 
-# 3. start Opod with a tiny model (~1 GB, fast download)
-OPOD_DEFAULT_MODEL=llama-3.2-1b OPOD_PULL_DEFAULT_MODEL=1 opod up   # PULL=1: this machine serves the model too
+# 3. start Opod; it launches llama-server and downloads a 2 GB model on the first run (a few minutes)
+OPOD_ENGINE=llamacpp OPOD_DEFAULT_MODEL=llama-3.2-3b-gguf OPOD_PULL_DEFAULT_MODEL=1 opod up
 ```
 
-### 🐧 Linux (x86_64 or arm64) — including Raspberry Pi, NAS, edge boxes
+### 🐧 Linux + NVIDIA GPU — vLLM
 
-**Option A — `.deb` / `.rpm` package** (recommended for Debian / Ubuntu / Raspbian / QNAP / Asustor / Fedora / RHEL):
-
-```bash
-# Debian / Ubuntu / Raspbian (arm64 example — also amd64)
-curl -LO https://github.com/opod-io/opod-core/releases/latest/download/opod_VERSION_linux_arm64.deb
-sudo dpkg -i opod_VERSION_linux_arm64.deb
-# Binary at /usr/bin/opod; the catalog is embedded in it (no files to install).
-# Docs land in /usr/share/doc/opod/, the two-node smoke script in
-# /usr/share/opod/scripts/. Recommends llama.cpp for sharding — apt-install it
-# if you want it.
-
-# Fedora / RHEL / CentOS
-sudo rpm -i https://github.com/opod-io/opod-core/releases/latest/download/opod_VERSION_linux_amd64.rpm
-```
-
-(Replace `VERSION` with the latest from [Releases](https://github.com/opod-io/opod-core/releases). The package version stays current via your distro's normal upgrade path — `opod update` also works as an in-place binary swap for non-package installs.)
-
-**Option B — install.sh** (works everywhere; drops the binary in `~/.local/bin/`; the catalog is embedded):
+The leader and a worker run on the same box, in two terminals. The worker starts `vllm serve` itself and uses every GPU it finds (tensor parallel).
 
 ```bash
-# 1. install Opod
+# 1. install Opod and the engine
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+pip install vllm                       # needs an NVIDIA driver; see docs/ENGINES.md for the container instead
 
-# 2. install an engine (pick one) — Ollama is the simplest default
-curl -fsSL https://ollama.com/install.sh | sh && sudo systemctl enable --now ollama
-# alternatives: vLLM in Docker for NVIDIA  ·  llama.cpp's llama-server  ·  MLX-LM (Apple Silicon only)
+# 2. terminal 1 — the leader (router only; its "engine not reachable" warning is expected: the worker serves)
+opod up
 
-# 3. start Opod with a tiny model (~1 GB, fast download)
-OPOD_DEFAULT_MODEL=llama-3.2-1b OPOD_PULL_DEFAULT_MODEL=1 opod up   # PULL=1: this machine serves the model too
+# 3. terminal 2 — a worker that serves a model on this box's GPUs (a 24 GB card or more for this one)
+opod token create --node               # prints a join token
+OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://127.0.0.1:8080?token=<token>"
 ```
 
-> 💡 Not sure which engine to install? Run `opod doctor` after step 1 — it inspects your hardware and tells you the single command to run.
+### 🐧 Linux with AMD, Intel or no GPU — llama.cpp
 
-### What you should see (both platforms)
+Build llama.cpp for your card (the same build also joins gangs later), then run step 3 of the Mac block:
 
-Opod prints something like:
+```bash
+git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
+cmake -B build -DGGML_RPC=ON -DGGML_HIP=ON      # AMD · Intel: -DGGML_SYCL=ON · NVIDIA: -DGGML_CUDA=ON · CPU only: no flag
+cmake --build build --config Release -j && sudo cp build/bin/llama-server build/bin/rpc-server /usr/local/bin/
+```
+
+Packages: `.deb` and `.rpm` builds of Opod are on [Releases](https://github.com/opod-io/opod-core/releases) (`sudo dpkg -i opod_<version>_linux_amd64.deb`); `opod update` swaps the binary in place for an install.sh install.
+
+> 💡 Not sure which engine fits? Run `opod doctor` after step 1 — it inspects your hardware and says what to install.
+
+### What you should see
+
+The Mac block prints this (measured on an M3, 2026-10-31; the first run took about 3 minutes, most of it the download):
 
 ```
-✔ default model: llama-3.2-1b
-✔ engine: ollama at http://127.0.0.1:11434
+▶ detected darwin/arm64 · 24 GB RAM · 8 cores
+✔ default model: llama-3.2-3b-gguf
+▶ auto-spawning llama-server for llama-3.2-3b-gguf on :8089 ...
+✔ llama-server ready (auto-spawned)
+✔ engine: llamacpp at http://127.0.0.1:8089
+✔ model ready: llama-3.2-3b-gguf
 
   Opod is ready.
 
@@ -134,17 +169,17 @@ Opod prints something like:
 
 **Every command supports `--help`** — `opod <cmd> --help` prints usage, flags, and examples.
 
-**Copy that admin key.** In another terminal:
+**Copy that admin key** (also saved in `~/.opod/admin.key`). In another terminal:
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-orc-<your-key>" \
-  -d '{"model":"auto","messages":[{"role":"user","content":"hi in 5 words"}]}'
+  -H "Authorization: Bearer sk-orc-<your-key>" -H "Content-Type: application/json" \
+  -d '{"model":"llama-3.2-3b-gguf","messages":[{"role":"user","content":"say hi in 5 words"}]}'
 ```
 
-You should see a JSON response with a 5-word reply. 🎉
+You should see a JSON response with a 5-word reply. 🎉 On the vLLM box, use `"model":"llama-3.1-8b"`. Tool calls (`tools` in the body) and the Anthropic route (`POST /v1/messages` with `x-api-key`) work on the same URL.
 
-**Or wire up an OpenAI-shape tool** (Codex CLI, Aider, Cursor, the OpenAI SDK): in any terminal, set:
+**Or wire up a tool** (Codex CLI, Aider, Cursor, the OpenAI SDK): in any terminal, set:
 
 ```bash
 export OPENAI_BASE_URL=http://localhost:8080/v1
@@ -186,18 +221,17 @@ opod shard ls                                # parts + the coordinator that serv
 
 The 70B entry reads a local GGUF on the leader; `opod model info llama-3.3-70b-sharded` names the file and its path. Requests for the model now go to the gang like any other model. Details, flags and several gangs of one model: [Sharded models](#sharded-models-split-one-brain-across-multiple-machines).
 
-**Two NVIDIA cards in one box** need no gang in Opod: vLLM splits the model across both cards itself. Start it, then join that machine:
+**Two NVIDIA cards in one box** need no gang in Opod: vLLM splits the model across both cards itself. Join that machine with vLLM as its engine; the worker starts `vllm serve` with `--tensor-parallel-size` set to the largest power of 2 that fits its GPU count (pin it with `OPOD_ENGINE_FLAGS='{"tp":"2"}'`):
 
 ```bash
-vllm serve Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8 --tensor-parallel-size 2 --port 8000
-OPOD_ENGINE=vllm OPOD_VLLM_ENDPOINT=http://127.0.0.1:8000 opod join "http://<leader-host>:8080?token=<token>"
+OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://<leader-host>:8080?token=<token>"
 ```
 
 ### Which engine for which goal
 
 | Goal | Engine | Status |
 |---|---|---|
-| Try Opod on one machine | Ollama, llama.cpp, MLX-LM (Mac) | ✅ Works. Ollama refuses tool calls through Opod |
+| Try Opod on one machine | llama.cpp (Mac, any GPU, CPU), vLLM (NVIDIA), MLX-LM (Mac), Ollama | ✅ Works. Ollama refuses tool calls through Opod. Install steps per engine: [docs/ENGINES.md](docs/ENGINES.md) |
 | One model across **two or more PCs**, any vendor mix | llama.cpp RPC gang (`opod shard create`) | ✅ Proven: mixed-vendor gangs (NVIDIA + Intel, NVIDIA + Intel + AMD) served; an uneven split over a 48 GB and an 8 GB card served (2026-09-29) |
 | **Two or more NVIDIA cards in one box** | vLLM or SGLang tensor parallel (the engine's own flag) | ✅ Works — the engine does the split; Opod routes to it |
 | One model across **two NVIDIA machines** | vLLM + Ray gang (`sharding.engine: vllm`, `--pp`) | ✅ Proven: pipeline parallel 2 over two 48 GB cards in two machines served (2026-09-14). An uneven layer split on it has not served yet |
@@ -275,17 +309,20 @@ There are excellent open-weight models now — Qwen3-Coder, Llama 3.3, DeepSeek-
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
-OPOD_PULL_DEFAULT_MODEL=1 opod up   # without it the leader is router-only and pulls no model of its own
+brew install llama.cpp              # the engine; other engines: docs/ENGINES.md
+OPOD_ENGINE=llamacpp OPOD_DEFAULT_MODEL=llama-3.2-3b-gguf OPOD_PULL_DEFAULT_MODEL=1 opod up
+# without OPOD_PULL_DEFAULT_MODEL=1 the leader is router-only and serves no model of its own
 ```
 
 You'll see:
 
 ```
 ▶ detected darwin/arm64 · 24 GB RAM · 8 cores
-✔ auto-selected model: qwen-coder-7b (Qwen 2.5 Coder 7B Instruct)
-✔ engine: ollama at http://127.0.0.1:11434
-▶ pulling qwen-coder-7b · downloading [████████████████████] 4.7/4.7 GB · 85 MB/s · ETA 0:00
-✔ model ready: qwen-coder-7b
+✔ default model: llama-3.2-3b-gguf
+▶ auto-spawning llama-server for llama-3.2-3b-gguf on :8089 ...
+✔ llama-server ready (auto-spawned)
+✔ engine: llamacpp at http://127.0.0.1:8089
+✔ model ready: llama-3.2-3b-gguf
 
   Opod is ready.
 
@@ -304,8 +341,9 @@ The key is also saved to `~/.opod/admin.key` on the leader.
 # on the leader: mint a join token
 opod token create --node
 
-# on the new machine: install and join in one line
-curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh -s -- join "http://<leader-host>:8080?token=<token>"
+# on the new machine: install, then join with the engine and the model it serves
+curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
+OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://<leader-host>:8080?token=<token>"   # NVIDIA + pip install vllm
 ```
 
 The worker registers with the leader over plain HTTP — the leader's port must be reachable from it (same LAN or your own VPN) — reports its hardware and engine, and heartbeats every 5 s. A worker serves whatever its engine has loaded; `opod model add <id> --node <node-id>` on the leader pulls and warms a model on a specific worker.
@@ -327,10 +365,10 @@ curl http://localhost:8080/v1/chat/completions \
 ```bash
 export OPENAI_BASE_URL=http://localhost:8080/v1
 export OPENAI_API_KEY=sk-orc-<your-key>
-aider --model openai/qwen3-coder-30b
+aider --model openai/llama-3.2-3b-gguf     # the model the leader serves; any id from `opod model ls`
 ```
 
-Aider is now talking to your local Qwen-Coder. Same UX, your hardware.
+Aider is now talking to your local model. Same UX, your hardware.
 
 ---
 
@@ -596,14 +634,13 @@ Opod is a **gateway** — it doesn't include an LLM engine. You need one of the 
 - **MLX-LM** — fastest on Apple Silicon, one machine
 - **TensorRT-LLM** `trtllm-serve` — NVIDIA only, one node; NVIDIA's own container image
 
-> ⚠️ **Apple Silicon heads-up:** the Homebrew `ollama` formula is currently missing the internal `llama-server` binary — model inference fails with `500: llama-server binary not found`. Use the **cask** (`brew install --cask ollama`) or the official installer instead. The Opod installer detects this and warns you.
+Install steps, run commands and proof per engine: **[docs/ENGINES.md](docs/ENGINES.md)**.
 
 ### macOS (Apple Silicon)
 
 ```bash
-# 1. install Ollama (use cask, NOT plain `brew install ollama`)
-brew install --cask ollama
-open -a Ollama                      # starts the daemon
+# 1. install an engine — llama.cpp here; any other: docs/ENGINES.md
+brew install llama.cpp
 
 # 2. install Opod
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
@@ -611,16 +648,15 @@ curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/in
 # 3. add the install dir to PATH if the installer says so, e.g.:
 export PATH="$HOME/.local/bin:$PATH"
 
-# 4. start Opod
-opod up
+# 4. start Opod and serve a model on this machine
+OPOD_ENGINE=llamacpp OPOD_DEFAULT_MODEL=llama-3.2-3b-gguf OPOD_PULL_DEFAULT_MODEL=1 opod up
 ```
 
 ### Linux (x86_64 or arm64)
 
 ```bash
-# 1. install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-sudo systemctl enable --now ollama   # or just: ollama serve &
+# 1. install an engine — vLLM on NVIDIA here; llama.cpp for AMD, Intel or CPU: docs/ENGINES.md
+pip install vllm
 
 # 2. install Opod
 curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/install.sh | sh
@@ -629,8 +665,10 @@ curl -fsSL https://raw.githubusercontent.com/opod-io/opod-core/main/installer/in
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 
-# 4. start Opod
+# 4. start the leader, then a worker on this box (in a second terminal)
 opod up
+opod token create --node
+OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://127.0.0.1:8080?token=<token>"
 ```
 
 ### What the installer does
@@ -1002,31 +1040,28 @@ it is cached), a path under the models directory, or a snapshot directory name (
 
 This walkthrough gives each machine its **own whole model** — the router sends each request to the machine that holds its model. To make two machines serve **one** model together, use a gang instead: the [Pool your GPUs](#-pool-your-gpus-one-model-across-machines) steps above, and [Sharded models](#sharded-models-split-one-brain-across-multiple-machines) below.
 
-For a leader + one worker on the same LAN, with Ollama as the engine on both:
+For a leader that serves a small model itself (llama.cpp on a Mac) and one NVIDIA worker (vLLM) on the same LAN:
 
 ```bash
-# === on the leader machine ===
-brew install --cask ollama          # working Ollama (not the broken formula)
-ollama serve &
-opod up                            # bootstraps admin key, starts gateway on :8080
-opod model add llama-3.2-3b        # pulls on the leader's Ollama
-opod token create --node           # prints the worker join token
+# === on the leader machine (a Mac) ===
+brew install llama.cpp
+OPOD_ENGINE=llamacpp OPOD_DEFAULT_MODEL=llama-3.2-3b-gguf OPOD_PULL_DEFAULT_MODEL=1 opod up
+opod token create --node           # in another terminal: prints the worker join token
 
-# === on the worker machine ===
-brew install --cask ollama
-ollama serve &
-opod join "http://<leader-host>:8080?token=<token>" # registers + starts worker HTTP server
-opod model add qwen-coder-7b        # pulls on the worker's Ollama (reported back via heartbeat)
+# === on the worker machine (Linux + NVIDIA) ===
+pip install vllm
+OPOD_ENGINE=vllm OPOD_LOAD_MODEL=llama-3.1-8b opod join "http://<leader-host>:8080?token=<token>"
+# the worker starts `vllm serve` and reports llama-3.1-8b on its heartbeat
 
 # === back on the leader ===
 opod node ls                        # both nodes visible
-# requests for "llama-3.2-3b" stay local
-# requests for "qwen-coder-7b" get proxied to the worker automatically
+# requests for "llama-3.2-3b-gguf" stay on the leader
+# requests for "llama-3.1-8b" go to the worker automatically
 
 # === from your laptop ===
 curl http://<leader-host>:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-orc-..." \
-  -d '{"model":"qwen-coder-7b","messages":[{"role":"user","content":"hi"}]}'
+  -H "Authorization: Bearer sk-orc-..." -H "Content-Type: application/json" \
+  -d '{"model":"llama-3.1-8b","messages":[{"role":"user","content":"hi"}]}'
 # served by the worker, transparently
 ```
 

@@ -7,6 +7,16 @@ the last section.
 
 ## Unreleased
 
+- **A first `opod up` with llama.cpp serves instead of timing out.** `opod up` with `OPOD_ENGINE=llamacpp` launches
+  `llama-server -hf <repo>`, which downloads the GGUF before it listens. The launch set no readiness bound, so the
+  supervisor's 30 s default expired during the first download of a 2 GB model and the leader came up with no engine
+  (measured on an Apple M3, 2026-10-31). The probe now asks `/health` and has the caller's whole budget — 30 minutes
+  on a first `opod up`, like a cold `model move` target, and 15 minutes for the watchdog's restart. The same first
+  run then served in about 3 minutes, tool calls and `/v1/messages` included.
+- **Docs lead with llama.cpp and vLLM, and every engine has install steps** (`docs/ENGINES.md`): what each engine is
+  for, how a worker launches it, what has served per engine × vendor, the container images, the engine flags.
+- Requires `opod-sdk v0.5.1`.
+
 - **An SGLang worker image for Intel: `opod-worker-sglang-intel`** on upstream's `lmsysorg/sglang:v0.5.22-xpu`
   (`images/build.sh sglang-intel`). Upstream targets Arc B-series (Xe2); an Arc A770 served too with SGLang's
   default attention backend, so the image declares both families. One card; no gang has run on the XPU backend.
