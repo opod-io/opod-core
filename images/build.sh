@@ -52,6 +52,9 @@ SOURCE_URL=${SOURCE_URL:-https://github.com/opod-io/opod-core}
 #   VLLM_AMD_BASE=rocm/vllm:rocm7.14.1_cdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0 \
 #   images/build.sh --push --tag <t> vllm-amd
 # and points chart engineImages.vllmAmd at it. ~25 GB base pull either way.
+# The Dockerfile's kvconnector stage compiles UCX and RIXL on a ROCm base
+# (T16.13). On this Mac lane that compile runs under amd64 emulation for hours:
+# build vllm-amd through the CI lane (images.yml dispatch), not here.
 VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab}
 # Intel's own vLLM build for XPU (Arc / Flex / Max). Upstream vllm/vllm-openai is
 # CUDA-only, so Intel is a different publisher rather than a different tag. ~7 GB.
