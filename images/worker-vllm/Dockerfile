@@ -17,6 +17,17 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /opod ./cmd/opod
 
+# Stage `kvconnector` = the KV connector runtime a prefill/decode pair needs,
+# built only where the base lacks it: on a ROCm base it compiles UCX and RIXL
+# (AMD's NIXL port, what vLLM imports on ROCm) into one wheel; on every other
+# base it is a no-op and leaves an empty directory (see the script). The pins
+# are the ones vLLM's docker/Dockerfile.rocm uses at the RDNA base's vLLM commit.
+FROM ${BASE} AS kvconnector
+ARG UCX_COMMIT=bfb51733aadc1e05ccb411edac56a42a7f00cfe6
+ARG RIXL_COMMIT=39be1de82479132aff4ba20cfdab39a9d0e325df
+COPY images/worker-vllm/build-kv-connector.sh /tmp/build-kv-connector.sh
+RUN bash /tmp/build-kv-connector.sh /kv-wheels
+
 FROM ${BASE}
 RUN (apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash && rm -rf /var/lib/apt/lists/*) || true
 # Ray is what vLLM runs a MULTI-NODE gang over (--distributed-executor-backend
@@ -31,6 +42,19 @@ RUN python3 -c "import ray" 2>/dev/null || pip install --no-cache-dir "ray[defau
 # pinned staging and changes nothing on a release that has it (see the file).
 COPY images/worker-vllm/stage-pageable-h2d.py /tmp/stage-pageable-h2d.py
 RUN python3 /tmp/stage-pageable-h2d.py && rm /tmp/stage-pageable-h2d.py
+# The connector wheel, when the kvconnector stage built one. `import torch`
+# first: it loads the base's HIP runtime, which the wheel leaves out. vLLM's
+# own ROCm images set HSA_ENABLE_IPC_MODE_LEGACY for UCX's rocm_ipc transport
+# (ROCm/rocm-libraries#6266); it is recorded for the entrypoint (base_env) so
+# only an image that carries the connector starts with it.
+RUN --mount=type=bind,from=kvconnector,source=/kv-wheels,target=/tmp/kv-wheels \
+    if ls /tmp/kv-wheels/*.whl >/dev/null 2>&1; then \
+      python3 -m pip install --no-cache-dir --no-deps /tmp/kv-wheels/*.whl \
+      && python3 -c "import torch, rixl._api; print('rixl', rixl._api.nixl_agent)" \
+      && mkdir -p /usr/local/share/opod \
+      && printf 'export HSA_ENABLE_IPC_MODE_LEGACY=1\n' > /usr/local/share/opod/rocm-kv.sh \
+      && echo /usr/local/share/opod/rocm-kv.sh > /usr/local/share/opod/base-env; \
+    fi
 COPY --from=opod /opod /usr/local/bin/opod
 COPY images/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Intel's XPU base sets up oneAPI in its own ENTRYPOINT (`source setvars.sh
