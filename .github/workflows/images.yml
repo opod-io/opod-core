@@ -181,9 +181,12 @@ jobs:
           # sbom_in_build: the 25-30 GB ROCm images. syft's registry scan re-pulls and
           # unpacks the image and filled the runner's layer cache every time
           # ("unable to populate layer cache", 2026-09-20, /mnt included), so for
-          # these two BuildKit generates the SBOM DURING the build from the layers it
+          # these BuildKit generates the SBOM DURING the build from the layers it
           # already has and attaches it to the pushed image; the attest step reads it
           # back from the registry instead of scanning (S3, decided 2026-09-28).
+          # SGLang's CUDA 13 base is as large: its registry scan ended the runner
+          # mid-scan twice on 2026-11-02 (the image itself had pushed), so it
+          # takes the same path.
           - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab", rpc: "", sbom_in_build: true }
           - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3f5abccbfbe38474a27635666f988b4c3c181d856e51beecc", rpc: "" }
           - { name: opod-worker-vllm-tt,         file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e@sha256:e48d532e8ea57141896af4cd2f098b406b081476a6cbb48d110c7f124873ea8f", rpc: "" }
@@ -191,7 +194,7 @@ jobs:
           # launchSGLang, the sglang:cache_hit_rate the driver reads), so its images
           # ship with the rest. One node per endpoint until a multi-node path exists:
           # the planner refuses a gang on it, so the image promises nothing more.
-          - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.21-cu130@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469", rpc: "" }
+          - { name: opod-worker-sglang-nvidia,   file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.21-cu130@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469", rpc: "", sbom_in_build: true }
           - { name: opod-worker-sglang-amd,      file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.19-rocm700-mi30x@sha256:590a815c128d7d5c83ef771ad768c9f8be82f64f7d0dbd98dc7b9f085b268a58", rpc: "", sbom_in_build: true }
           - { name: opod-worker-sglang-intel,    file: images/worker-sglang/Dockerfile,   base: "lmsysorg/sglang:v0.5.22-xpu@sha256:faa2df98ab10ce10250fb2a2062f62876417611397008faf026a6425432332de", rpc: "", sbom_in_build: true }
     steps:
