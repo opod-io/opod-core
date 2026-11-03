@@ -43,6 +43,12 @@ checking prompts is the gateway's job in front of it.
 - **A front door keeps its workers while a restarted leader rebuilds its registry (feature `registry_rebuilding`).** A
   managed leader keeps the worker registry in memory, so after each restart it lists no workers until they heartbeat
   again. A door read that list as final, dropped every worker and answered 503 until its next sync (16 of 60 requests in
+  one test). After a boot with an empty registry, `GET /admin/v1/nodes` now carries `X-Opod-Registry: rebuilding` until
+  three worker heartbeats (15 s) after the first worker registers again (at most 2 minutes after boot); a door that reads it adds and updates workers, placements and gang parts, and removes
+  none. A leader without the feature never sends the header, and a door then behaves as before.
+- **A front door keeps its workers while a restarted leader rebuilds its registry (feature `registry_rebuilding`).** A
+  managed leader keeps the worker registry in memory, so after each restart it lists no workers until they heartbeat
+  again. A door read that list as final, dropped every worker and answered 503 until its next sync (16 of 60 requests in
   one test). For 15 s (three worker heartbeats) after a boot with an empty registry, `GET /admin/v1/nodes` now carries
   `X-Opod-Registry: rebuilding`; a door that reads it adds and updates workers, placements and gang parts, and removes
   none. A leader without the feature never sends the header, and a door then behaves as before.

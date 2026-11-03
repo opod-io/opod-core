@@ -172,6 +172,7 @@ func (s *Server) RegisterNode(ctx context.Context, req RegisterRequest, caller C
 			s.reconcileNodes.Store(n.ID, whyRegisteredAgain)
 		}
 	}
+	s.rebuild.joined(time.Now())
 	s.record("node.registered", n.ID, map[string]any{"hostname": n.Hostname, "address": n.Address, "again": existing != nil, "boot_id": n.BootID})
 	s.capacityChanged()
 	return n, nil

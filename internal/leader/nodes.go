@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,29 +19,74 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
-// registryRebuildWindow is how long after such a boot the list may still miss
-// live workers: three heartbeats, so a worker whose first one was lost to the
-// restart is back too.
+// registryRebuildWindow is how long after the FIRST worker comes back the
+// list may still miss others: three heartbeats, so a worker whose first one
+// was lost to the restart is back too.
 const registryRebuildWindow = 3 * agent.DefaultHeartbeatInterval
 
-// registryRebuildUntil says until when a leader starting now on st is
-// rebuilding its registry. A managed leader keeps the registry in memory, so
-// every restart — each rollout, each failover — starts with no workers, and
-// they come back only as they heartbeat. A front door that read that list as
-// the whole truth dropped every worker and answered 503 until its next sync
-// (16 of 60 requests on the design-partner cell, 2026-11-01, PLAN T32.48). A
-// leader that boots with workers already in its store is not rebuilding.
-func registryRebuildUntil(st store.Store, now time.Time) time.Time {
+// registryRebuildCap ends rebuilding for a leader that no worker reaches at
+// all, so a real removal is not held back for ever.
+const registryRebuildCap = 2 * time.Minute
+
+// registryRebuild says whether a leader is still rebuilding its worker
+// registry. A managed leader keeps the registry in memory, so every restart —
+// each rollout, each failover — starts with no workers, and they come back
+// only as they heartbeat. A front door that read that list as the whole truth
+// dropped every worker and answered 503 until its next sync (16 of 60
+// requests on the design-partner cell, 2026-11-01, PLAN T32.48).
+//
+// The clock starts at the first worker that registers, not at boot: the
+// workers reach a new leader only once Kubernetes routes its Service to it,
+// which on the cell was 20 s after the process started — longer than three
+// heartbeats, so a window counted from boot had ended before any worker was
+// back. A leader that boots with workers already in its store is not
+// rebuilding.
+type registryRebuild struct {
+	mu        sync.Mutex
+	since     time.Time // the boot that found the registry empty; zero = not rebuilding
+	firstJoin time.Time
+}
+
+func newRegistryRebuild(st store.Store, now time.Time) *registryRebuild {
 	nodes, err := st.Nodes().List(context.Background())
-	if err != nil {
-		return now.Add(registryRebuildWindow) // unknown: say rebuilding, which removes nothing
-	}
-	for _, n := range nodes {
-		if n.ID != "local" {
-			return time.Time{}
+	if err == nil {
+		for _, n := range nodes {
+			if n.ID != "local" {
+				return &registryRebuild{}
+			}
 		}
 	}
-	return now.Add(registryRebuildWindow)
+	// Empty, or unreadable: say rebuilding, which makes a door remove nothing.
+	return &registryRebuild{since: now}
+}
+
+// joined records a worker's registration.
+func (r *registryRebuild) joined(now time.Time) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.since.IsZero() && r.firstJoin.IsZero() {
+		r.firstJoin = now
+	}
+}
+
+// active reports whether the registry may still miss live workers at now.
+func (r *registryRebuild) active(now time.Time) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case r.since.IsZero(), now.Sub(r.since) >= registryRebuildCap:
+		return false
+	case r.firstJoin.IsZero():
+		return true
+	default:
+		return now.Sub(r.firstJoin) < registryRebuildWindow
+	}
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +97,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	// A list that may still miss live workers says so, and a door then adds
 	// what it reads but removes nothing (internal/gateway/mirror.go).
-	if time.Now().Before(s.rebuildingUntil) {
+	if s.rebuild.active(time.Now()) {
 		w.Header().Set(gateway.RegistryHeader, gateway.RegistryRebuilding)
 	}
 	// Decorate each row: state is the LIVE state (a node whose heartbeats
