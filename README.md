@@ -865,7 +865,7 @@ There is no `observability.guardrails:` and no `observability.callbacks:` key: t
 (prompt checks are a gateway's job) and the callback sinks left with ADR-022. Beyond this file, a manager steers a leader or a worker through the
 **process-environment contract** — `internal/config/env.go`, exported as a table for a manager as
 `leader.EnvContract` (`internal/leader/contract.go`) and reproduced below. A test (`TestEnvSurfaceOutsideConfigIsTheAllowlist`) fails
-when library code reads a variable that is not on it, so the list is the whole surface.
+when library code reads a variable that is not on it, so the list is the whole surface, and `TestReadmeEnvTableIsTheContract` fails when the table below and the code disagree.
 
 ### Environment variables
 
@@ -942,7 +942,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_VRAM_BUDGET_GB` | worker | the slice of the card this worker may use (shared placement); also `opod join --vram-budget` |
 | `OPOD_CARD_MIB` | worker | the card's memory in MiB, as the manager measured it. The engine launch turns `OPOD_VRAM_BUDGET_GB` into the engine's own memory knob against it (feature `card_mib`). Unset → `nvidia-smi` is asked, and a host without it (AMD, Intel) starts the engine with no budget applied |
 | `OPOD_GPU_INDEX` | worker | the device index the worker was pinned to (informational; also `opod join --gpu`) |
-| `OPOD_LOAD_MODEL` | worker | the catalog id this worker loads itself once its engine answers, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE` overriding the catalog's repo and file. No call to its own API, so `OPOD_REJECT_BEARER=1` is usable |
+| `OPOD_LOAD_MODEL` / `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE` | worker | the catalog id this worker loads itself once its engine answers, with `OPOD_LOAD_REPO` / `OPOD_LOAD_FILE` overriding the catalog's repo and file. No call to its own API, so `OPOD_REJECT_BEARER=1` is usable |
 | `OPOD_FETCH_RESULT` | worker | a path `opod fetch` writes its result to once the weights are in the cache: one JSON line (`adminapi.FetchResult`) — the path, and whether the repository publishes a model-transparency signature (`model.sig`): `unsigned`, `unverified` or `unknown`. A manager points it at `/dev/termination-log` to read the result from the pod's status. The signature is looked for, **not verified** |
 | `OPOD_CATALOG_DIR` | both | a catalog directory merged over the catalog embedded in the binary. Every source that exists is merged by id and a later one wins: embedded → `/usr/local/share/opod/catalog` → `/usr/share/opod/catalog` (.deb/.rpm) → `$OPOD_CATALOG_DIR` → `~/.opod/catalog` (most authoritative). Nothing else is searched — not `./catalog`, not a `catalog/` beside the binary. `catalog_dir` in `config.yaml` is a different switch: it reads that one directory **alone** |
 | `OPOD_CATALOG_PUBKEY` | both | a [minisign](https://jedisct1.github.io/minisign/) public key — the base64 line, or a file holding it. A catalog file with a `<file>.minisig` beside it must verify against this key; one that does not is **always refused**. The embedded catalog is never checked. Unset → signatures are ignored |

@@ -11,6 +11,10 @@ import (
 	"github.com/opod-io/opod/internal/router"
 )
 
+// dispatchOpenAIChat serves POST /v1/chat/completions: it reads the body's
+// "model", maps "auto" to the leader's default model, and hands the request
+// to routeOneOpenAI. Core proxies to no vendor (ADR-022): every request is
+// served by this endpoint's own workers, gangs or engine.
 func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	// The request's arrival, before the body read and the admission gate: the
 	// time to first token and the usage row's latency are measured from here,
@@ -31,10 +35,10 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	s.routeOneOpenAI(w, r, model, body)
 }
 
-// routeOneOpenAI serves a single concrete model on the OpenAI path: a vendor
-// model goes to its egress proxy, a local model to the local handler. Called
-// both directly (specific model requested) and per-candidate by the auto
-// chain walker (with w wrapped in a failoverWriter).
+// routeOneOpenAI serves one concrete model on the OpenAI path: the plan's
+// one-model check, the admission gate, then the OpenAI handler. Called for
+// /v1/chat/completions and by the Anthropic Messages and Vertex routes, which
+// translate their body into a chat request first.
 func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model string, body []byte) {
 	// One model identity per leader (D5): when a plan file is mounted, this
 	// endpoint serves exactly that model — refuse anything else up front.

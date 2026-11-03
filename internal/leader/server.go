@@ -775,10 +775,6 @@ func bodyCapFor(path string, chat int64) int64 {
 	return otherMaxBodyBytes
 }
 
-// dispatchOpenAIChat inspects the request body's "model" field. If it names
-// a vendor model (claude-*, gpt-*) AND fallback is configured, the request is
-// proxied to the vendor; otherwise it goes to the local engine.
-
 // Addr is the address the server is bound to ("" before Start).
 func (s *Server) Addr() string {
 	s.listenMu.Lock()

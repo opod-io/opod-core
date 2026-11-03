@@ -5,10 +5,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/opod-io/opod-sdk/catalog"
+	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/models"
 )
 
@@ -292,4 +295,160 @@ func dedupe(s []string) []string {
 		}
 	}
 	return out
+}
+
+// ---- the README's facts (T10.23) --------------------------------------------
+//
+// The tests above check that the commands a doc names exist. These check the
+// numbers and lists a doc states about the binary — the catalog's size, the
+// engines it drives and the process-environment contract — against the code
+// that defines them, because on 2026-10-31 all three had drifted at once.
+
+// readDoc reads one doc file from the repo root.
+func readDoc(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(findRepoRoot(t), name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(data)
+}
+
+// catalogCountPhrases are the ways the docs state the catalog's size. Every
+// match must equal the embedded catalog; each doc must state it at least once,
+// so a rewording that escapes every pattern fails here instead of going
+// unchecked.
+var catalogCountPhrases = []*regexp.Regexp{
+	regexp.MustCompile(`\b(\d+) open-weight models\b`),
+	regexp.MustCompile(`\b(\d+) catalog entries\b`),
+	regexp.MustCompile(`\bthe (\d+) entries embedded\b`),
+	regexp.MustCompile(`\bcurated (\d+) entries\b`),
+	regexp.MustCompile(`Catalog has \*\*(\d+) models\*\*`),
+}
+
+func TestDocsStateTheCatalogSize(t *testing.T) {
+	entries, err := models.BundledCatalog()
+	if err != nil {
+		t.Fatalf("BundledCatalog: %v", err)
+	}
+	want := strconv.Itoa(len(entries))
+	for _, doc := range []string{"README.md", "MODELS.md", "QUICKSTART.md"} {
+		text, found := readDoc(t, doc), 0
+		for _, re := range catalogCountPhrases {
+			for _, m := range re.FindAllStringSubmatch(text, -1) {
+				found++
+				if m[1] != want {
+					t.Errorf("%s says %q; the embedded catalog has %s entries", doc, m[0], want)
+				}
+			}
+		}
+		if found == 0 {
+			t.Errorf("%s states the catalog size in none of the checked phrasings; add one or extend catalogCountPhrases", doc)
+		}
+	}
+}
+
+// engineDocNames maps the name a doc gives an engine to its registry name.
+var engineDocNames = map[string]string{
+	"llama.cpp": "llamacpp", "vLLM": "vllm", "SGLang": "sglang",
+	"Ollama": "ollama", "MLX-LM": "mlx", "TensorRT-LLM": "trtllm",
+}
+
+var numberWords = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}
+
+func TestReadmeListsTheRegisteredEngines(t *testing.T) {
+	registered := engines.Names()
+	readme := readDoc(t, "README.md")
+
+	// 1. The Prerequisites list: one bullet per engine, `- **Name** …`.
+	sec := readme[strings.Index(readme, "### Prerequisites"):]
+	if end := strings.Index(sec, "Install steps, run commands"); end > 0 {
+		sec = sec[:end]
+	}
+	var listed []string
+	for _, m := range regexp.MustCompile(`(?m)^- \*\*([^*]+)\*\*`).FindAllStringSubmatch(sec, -1) {
+		name, ok := engineDocNames[m[1]]
+		if !ok {
+			t.Errorf("README Prerequisites lists %q, which is no registered engine (registered: %v)", m[1], registered)
+			continue
+		}
+		listed = append(listed, name)
+	}
+	sort.Strings(listed)
+	if strings.Join(listed, ",") != strings.Join(registered, ",") {
+		t.Errorf("README Prerequisites lists engines %v; the registry has %v", listed, registered)
+	}
+
+	// 2. The driver list in the tracing bullet: "(ollama, vllm, …)".
+	m := regexp.MustCompile(`engine drivers \(([^)]*)\)`).FindStringSubmatch(readme)
+	if m == nil {
+		t.Fatal("README no longer names the engine drivers as `engine drivers (a, b, …)`; update this test with it")
+	}
+	drivers := strings.Split(strings.ReplaceAll(m[1], " ", ""), ",")
+	sort.Strings(drivers)
+	if strings.Join(drivers, ",") != strings.Join(registered, ",") {
+		t.Errorf("README's engine drivers are %v; the registry has %v", drivers, registered)
+	}
+
+	// 3. Every "N engines" / "the N it drives" says the registry's count.
+	if len(registered) >= len(numberWords) {
+		t.Fatalf("%d engines: extend numberWords", len(registered))
+	}
+	want := numberWords[len(registered)]
+	words := strings.Join(numberWords[2:], "|")
+	countRe := regexp.MustCompile(`\b(` + words + `) (?:engines\b|engine drivers\b|it drives\b)`)
+	hits := countRe.FindAllStringSubmatch(readme, -1)
+	if len(hits) == 0 {
+		t.Error("README states the engine count in none of the checked phrasings (`six engines`, `the six it drives`)")
+	}
+	for _, h := range hits {
+		if h[1] != want {
+			t.Errorf("README says %q; the registry has %d engines (%s)", h[0], len(registered), want)
+		}
+	}
+}
+
+// TestReadmeEnvTableIsTheContract: the README's process-environment table
+// lists exactly config.Vars(), each with its side.
+func TestReadmeEnvTableIsTheContract(t *testing.T) {
+	readme := readDoc(t, "README.md")
+	start := strings.Index(readme, "**The process-environment contract**")
+	if start < 0 {
+		t.Fatal("README has no **The process-environment contract** table")
+	}
+	sec := readme[start:]
+	if tbl := strings.Index(sec, "| Var |"); tbl > 0 {
+		sec = sec[tbl:]
+	}
+	if end := strings.Index(sec, "\n\n"); end > 0 {
+		sec = sec[:end] // the table ends at the first blank line
+	}
+	nameRe := regexp.MustCompile("`([A-Z][A-Z0-9_]+)`")
+	documented := map[string]string{}
+	for _, line := range strings.Split(sec, "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) < 4 || strings.TrimSpace(cells[1]) == "Var" || strings.HasPrefix(strings.TrimSpace(cells[1]), "---") {
+			continue
+		}
+		side := strings.TrimSpace(cells[2])
+		for _, m := range nameRe.FindAllStringSubmatch(cells[1], -1) {
+			documented[m[1]] = side
+		}
+	}
+	if len(documented) == 0 {
+		t.Fatal("parsed no rows from the README's process-environment table")
+	}
+	for _, v := range config.Vars() {
+		side, ok := documented[v.Name]
+		switch {
+		case !ok:
+			t.Errorf("README's process-environment table is missing %s (side %s, internal/config/env.go)", v.Name, v.Side)
+		case side != v.Side:
+			t.Errorf("README says %s is read by %q; internal/config/env.go says %q", v.Name, side, v.Side)
+		}
+		delete(documented, v.Name)
+	}
+	for name := range documented {
+		t.Errorf("README's process-environment table lists %s, which is not in internal/config/env.go", name)
+	}
 }
