@@ -171,7 +171,7 @@ const kvTierFSSeed = `export PYTHONHASHSEED="${PYTHONHASHSEED:-0}";`
 
 // vllmKVTierFS is the --kv-transfer-config value of a disk tier (kv_tier_fs),
 // or ok=false when the key is unset or cannot apply. vLLM's
-// TieringOffloadingSpec (read on the pinned 0.27.1) is the CPU tier plus
+// TieringOffloadingSpec (read on 0.27.1 and the pinned 0.33.0) is the CPU tier plus
 // secondary tiers; --kv-offloading-size still names the CPU tier's size, and
 // vLLM merges it into this config (config/vllm.py
 // _post_init_kv_transfer_config updates kv_connector_extra_config), so this is

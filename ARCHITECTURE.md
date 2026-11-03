@@ -822,7 +822,7 @@ Recent latency is used, but not as a per-node score: it feeds the p95 check that
   gateway` door holds the same token, so a caller is salted alike whichever front took the request.
 - The router puts the salt on the request (`ChatRequest.CacheSalt`) and seeds the prefix-affinity chain with it, so a
   pin never draws one team's request to a worker that holds the prefix only under another team's salt. A driver
-  sends it as `cache_salt` only when its engine keys its cache by one — vLLM (v0.27.1), SGLang (v0.5.21) and
+  sends it as `cache_salt` only when its engine keys its cache by one — vLLM (v0.27.1 and v0.33.0), SGLang (v0.5.21) and
   TensorRT-LLM (1.2.1), read on the pinned images (`Descriptor.CacheSalt`). The leader's hop to a worker carries it
   only when the worker registered such an engine; the worker's own driver decides again.
 - `cache_salt` is a reserved chat key: a caller's value never reaches an engine. A request with no key carries no
@@ -1632,7 +1632,7 @@ Mechanisms a manager drives through this surface:
   flag to set, instead of relaying a 200 whose tool call is plain text; `tool_choice: "none"` is relayed. A gang's
   engines are started by the leader, so its head relays as before.
 - **Disk KV tier** (`kv_tier_fs`, T26.9, `internal/agent/engineflags.go`, `internal/fetch/kvtier.go`): the engine
-  flag `kv_tier_fs=<absolute dir>` puts vLLM's `fs` secondary tier (`TieringOffloadingSpec`, read on the pinned 0.27.1)
+  flag `kv_tier_fs=<absolute dir>` puts vLLM's `fs` secondary tier (`TieringOffloadingSpec`, read on 0.27.1 and the pinned 0.33.0)
   below the host tier the plan's `extra` already carries (`--kv-offloading-size N`). The worker adds one
   `--kv-transfer-config` JSON — `OffloadingConnector`, the host tier as the CPU primary (`cpu_bytes_to_use`), and
   `secondary_tiers: [{type: fs, root_dir}]` — because a list of objects cannot ride `extra`, which keeps plain tokens

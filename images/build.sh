@@ -45,23 +45,20 @@ cd "$(dirname "$0")/.."
 
 REG=${REG:-ghcr.io/opod-io}
 SOURCE_URL=${SOURCE_URL:-https://github.com/opod-io/opod-core}
-# ROCm vLLM ships a build per GPU family, not one image: RDNA (Radeon / Radeon
-# Pro, gfx11xx) and CDNA (Instinct MI2xx/MI3xx, gfx9xx) have different kernels
-# and neither runs the other's. The default is RDNA because that is the AMD
-# hardware we have; a CDNA fleet builds the same target with
-#   VLLM_AMD_BASE=rocm/vllm:rocm7.14.1_cdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0 \
-#   images/build.sh --push --tag <t> vllm-amd
-# and points chart engineImages.vllmAmd at it. ~25 GB base pull either way.
-# The Dockerfile's kvconnector stage compiles UCX and RIXL on a ROCm base
-# (T16.13). On this Mac lane that compile runs under amd64 emulation for hours:
-# build vllm-amd through the CI lane (images.yml dispatch), not here.
-VLLM_AMD_BASE=${VLLM_AMD_BASE:-rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab}
-# Intel's own vLLM build for XPU (Arc / Flex / Max). Upstream vllm/vllm-openai is
-# CUDA-only, so Intel is a different publisher rather than a different tag. ~7 GB.
-# Single-card serving only until an Intel node proves more: vLLM's XPU backend has
-# no Ray gang path we have run, so a plan that asks for one is refused upstream of
-# this image, not by it.
-VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3f5abccbfbe38474a27635666f988b4c3c181d856e51beecc}
+# vLLM publishes its own image per silicon: vllm/vllm-openai (CUDA),
+# vllm/vllm-openai-rocm and vllm/vllm-openai-xpu, at one release. AMD's rocm/vllm
+# and the ROCm/vllm fork are retired in their favour (vLLM's docs mark
+# rocm/vllm deprecated). The ROCm image is ONE build for Instinct and Radeon:
+# gfx90a, gfx942, gfx950, gfx1100/1101, gfx1150/1151, gfx1200/1201 (its
+# PYTORCH_ROCM_ARCH) — no RDNA2. It carries nixl_rocm, which vLLM's NIXL
+# connector imports on ROCm. ~25 GB base pull.
+VLLM_AMD_BASE=${VLLM_AMD_BASE:-vllm/vllm-openai-rocm:v0.33.0@sha256:4fcd39b758b660c4e9c345c021e2ea8f0ccdb31e3c32507d676cc3005ae83fba}
+# vLLM's XPU image (Arc B-series / Arc Pro B60, Data Center GPU Max). Single-card
+# serving only until an Intel node proves more: vLLM's XPU backend has no Ray
+# gang path we have run, so a plan that asks for one is refused upstream of this
+# image, not by it. The digest is the amd64 manifest (the index also carries an
+# attestation entry).
+VLLM_INTEL_BASE=${VLLM_INTEL_BASE:-vllm/vllm-openai-xpu:v0.33.0@sha256:010bdc441c72ee222f459d3b688bb41317525f1bd7223afe6218490b0c526832}
 # SGLang on AMD is published per Instinct generation and for Instinct ONLY: the
 # tags are …-mi30x (MI200/MI300) and …-mi35x (MI350), with no RDNA build at all,
 # so a Radeon card cannot run this image — llama.cpp or vLLM serve those. The
@@ -109,7 +106,7 @@ spec() {
     llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile.rpc-rocm ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785 amd64" ;;
     llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full@sha256:a04c81bf304f8b8f6141bb8bdc384d3c3a151624ba0901fa0c8a69baf2b8ac95 amd64,arm64" ;;
     llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452 amd64" ;;
-    vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 amd64" ;;
+    vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;
     sglang-nvidia)   echo "opod-worker-sglang-nvidia images/worker-sglang/Dockerfile lmsysorg/sglang:v0.5.21-cu130@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 amd64" ;;

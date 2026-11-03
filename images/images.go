@@ -57,10 +57,9 @@ type Image struct {
 	// Families are the GPU architecture generations this image's compiled code
 	// was built for, as tokens ("amd:rdna3", "nvidia:turing,nvidia:ampere,...").
 	// They are the machine-readable half of Hardware, and they exist because
-	// (engine, vendor) cannot say it: upstream's ROCm vLLM ships an RDNA build
-	// and a CDNA build and neither runs the other's kernels, SGLang's ROCm build
-	// targets Instinct only, and vLLM's XPU build is Xe2/Xe3 while an Arc
-	// A-series card is Xe-HPG. An orchestrator reads the same tokens off the
+	// (engine, vendor) cannot say it: vLLM's ROCm build covers Instinct, RDNA3
+	// and RDNA4 but not RDNA2, SGLang's ROCm build targets Instinct only, and
+	// vLLM's XPU build is Xe2/Xe3 while an Arc A-series card is Xe-HPG. An orchestrator reads the same tokens off the
 	// image's `io.opod.gpu.families` LABEL, so this file and the Dockerfile must
 	// agree — a drift test checks it.
 	//

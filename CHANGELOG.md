@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **The vLLM workers run on vLLM's own images, at v0.33.0.** `opod-worker-vllm-nvidia` is built on
+  `vllm/vllm-openai:v0.33.0` (was v0.27.1), `opod-worker-vllm-amd` on `vllm/vllm-openai-rocm:v0.33.0` (was AMD's
+  `rocm/vllm` 0.23 RDNA build, which vLLM's docs mark deprecated) and `opod-worker-vllm-intel` on
+  `vllm/vllm-openai-xpu:v0.33.0` (was `intel/vllm` 0.21). The AMD image is now one build for Instinct (gfx90a, gfx942,
+  gfx950) and Radeon RX 7000 / RX 9000 (gfx1100, gfx1101, gfx1150, gfx1151, gfx1200, gfx1201) and is labelled
+  `amd:cdna,amd:rdna3,amd:rdna4`; **it no longer covers RDNA2 (RX 6000)**, and the node's amdgpu driver must run ROCm
+  10.0 userspace. Removed with the old bases: the build-time backport of vLLM's pinned host-to-device staging
+  (the base has it) and the UCX + RIXL compile (the ROCm base ships `nixl_rocm`, which vLLM 0.33 imports). Served on
+  one RTX 3060 Ti and one RX 7900 XTX; the Intel image has not served on its new base.
 - **Usage is pushed, and the leader keeps no usage table (feature `usage_push`, replaces `usage_stream`).** Each finished
   request becomes one OTLP log record sent to `OPOD_USAGE_OTLP_ENDPOINT` (headers in `OPOD_USAGE_OTLP_HEADERS`); a
   record leaves the leader's memory only on the receiver's 2xx. While the receiver is away records wait in a queue

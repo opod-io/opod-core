@@ -167,17 +167,17 @@ jobs:
           - { name: opod-leader,                 file: images/leader/Dockerfile,          base: "", rpc: "", platforms: "linux/amd64,linux/arm64" }
           - { name: opod-worker-llamacpp-nvidia, file: images/worker-llamacpp/Dockerfile.rpc-cuda, base: ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:204042f697dced0e99af35993e00c70b12386197d1bdd313f02b25f25f3118c8, rpc: cuda }  # base N=1 llama-server + prebuilt /opt/llama-rpc for N>=2
           - { name: opod-worker-llamacpp-amd,    file: images/worker-llamacpp/Dockerfile.rpc-rocm, base: ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785, rpc: rocm }  # prebuilt pair: Radeon + Instinct
-          - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, rpc: "" }
+          - { name: opod-worker-vllm-nvidia,     file: images/worker-vllm/Dockerfile,     base: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e, rpc: "" }
           # The chart references these two as well; a release that does not publish
           # them leaves values.yaml pointing at images that do not exist.
           - { name: opod-worker-llamacpp-cpu,    file: images/worker-llamacpp/Dockerfile.rpc-cpu, base: "ghcr.io/ggml-org/llama.cpp:full@sha256:a04c81bf304f8b8f6141bb8bdc384d3c3a151624ba0901fa0c8a69baf2b8ac95", rpc: cpu, platforms: "linux/amd64,linux/arm64" }  # the pair, or a CPU worker cannot be a gang part
           - { name: opod-worker-llamacpp-intel,  file: images/worker-llamacpp/Dockerfile.rpc-sycl, base: "ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452", rpc: sycl }  # base N=1 llama-server + prebuilt SYCL /opt/llama-rpc
           # The other engines the chart can reference. Each is a thin layer on a
           # vendor's own build, so the cost here is the base pull, not a compile.
-          # vLLM is published per silicon by different people: upstream is CUDA-only,
-          # AMD ships rocm/vllm per GPU family (RDNA here; a CDNA fleet overrides the
-          # base), Intel ships intel/vllm for XPU, and Tenstorrent ships tt-metal's own
-          # server — whose tag must match the model spec's commits (images/worker-tt).
+          # vLLM publishes its own image per silicon at one release (vllm-openai,
+          # -rocm for Instinct and Radeon in one build, -xpu), and Tenstorrent ships
+          # tt-metal's own server — whose tag must match the model spec's commits
+          # (images/worker-tt).
           # sbom_in_build: the 25-30 GB ROCm images. syft's registry scan re-pulls and
           # unpacks the image and filled the runner's layer cache every time
           # ("unable to populate layer cache", 2026-09-20, /mnt included), so for
@@ -187,8 +187,8 @@ jobs:
           # SGLang's CUDA 13 base is as large: its registry scan ended the runner
           # mid-scan twice on 2026-11-02 (the image itself had pushed), so it
           # takes the same path.
-          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "rocm/vllm:rocm7.14.1_rdna_ubuntu24.04_py3.14_pytorch_2.11_vllm_0.23.0@sha256:19ad8dc5fb3012f2d5810995f73e8bf069302056d2b4aa6fdf2d2ae5fa9a68ab", rpc: "", sbom_in_build: true }
-          - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "intel/vllm:0.21.0-xpu@sha256:a76ac6b89350e0b3f5abccbfbe38474a27635666f988b4c3c181d856e51beecc", rpc: "" }
+          - { name: opod-worker-vllm-amd,        file: images/worker-vllm/Dockerfile,     base: "vllm/vllm-openai-rocm:v0.33.0@sha256:4fcd39b758b660c4e9c345c021e2ea8f0ccdb31e3c32507d676cc3005ae83fba", rpc: "", sbom_in_build: true }
+          - { name: opod-worker-vllm-intel,      file: images/worker-vllm/Dockerfile,     base: "vllm/vllm-openai-xpu:v0.33.0@sha256:010bdc441c72ee222f459d3b688bb41317525f1bd7223afe6218490b0c526832", rpc: "" }
           - { name: opod-worker-vllm-tt,         file: images/worker-tt/Dockerfile,       base: "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.10.0-55fd115-aa4ae1e@sha256:e48d532e8ea57141896af4cd2f098b406b081476a6cbb48d110c7f124873ea8f", rpc: "" }
           # SGLang is an engine core drives like any other (internal/engines/sglang,
           # launchSGLang, the sglang:cache_hit_rate the driver reads), so its images

@@ -36,7 +36,7 @@ func init() {
 		New:         func(endpoint, apiKey string) engines.Engine { return New(endpoint, apiKey) },
 		NativeName:  openaicompat.NativeName,
 		SingleModel: true,
-		CacheSalt:   true, // ChatCompletionRequest.cache_salt, mixed into the block hashes (v0.27.1)
+		CacheSalt:   true, // ChatCompletionRequest.cache_salt, mixed into the block hashes (v0.27.1, v0.33.0)
 		StartHint:   "start vLLM (see https://docs.vllm.ai/) and ensure OPOD_VLLM_ENDPOINT matches",
 	})
 }

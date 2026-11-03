@@ -3,7 +3,7 @@ package models
 import "testing"
 
 // knownToolParsers are the parser names each engine registers, read from the
-// releases our worker images pin (vLLM v0.27.1 vllm/tool_parsers, SGLang
+// releases our worker images pin (vLLM v0.33.0 vllm/tool_parsers, SGLang
 // v0.5.21 function_call_parser.py, TensorRT-LLM 1.2.1 trtllm-serve
 // --tool_parser) — the subset the catalog uses. An engine
 // refuses an unknown name at start, so a typo here is a worker that never

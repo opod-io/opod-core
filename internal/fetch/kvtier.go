@@ -23,8 +23,8 @@ package fetch
 // A block removed while the engine reads it is safe: the open handle keeps the
 // inode alive until it closes. A block removed between the engine's lookup and
 // its read fails that one block's promotion into the CPU tier, which the next
-// lookup reads as a miss (tiering/manager.py complete_write, read on the
-// pinned vLLM 0.27.1).
+// lookup reads as a miss (tiering/manager.py complete_store, read on vLLM
+// 0.27.1 and 0.33.0).
 
 import (
 	"context"

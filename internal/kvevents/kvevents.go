@@ -5,7 +5,7 @@
 // that CONNECTS to the worker's SUB socket on localhost
 // (`--kv-events-config`), msgpack-encoded: a batch `[ts, [event…], rank?]`
 // whose events are maps keyed by field name with the tag under "type"
-// (vLLM 0.27) or, in msgspec's array form, tagged arrays — `["BlockStored",
+// (vLLM 0.27, unchanged in 0.33) or, in msgspec's array form, tagged arrays — `["BlockStored",
 // block_hashes, parent_block_hash, token_ids, block_size, …]`. Both are read
 // (eventFields). Frames are `(topic, seq, payload)`
 // with seq an 8-byte big-endian counter.
