@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **A revoked worker certificate is refused even when the worker connected before the leader had a node CA.** Such a
+  worker's TLS handshake was asked for no certificate, and its 5 s heartbeat kept that connection alive, so every call
+  stayed a token call and a later revocation changed nothing. The leader now records, per TLS connection, the node-mTLS
+  CA and mode it was handshaked under; a register or heartbeat on a connection from an older one is answered with
+  `Connection: close`, so the worker re-dials and presents its certificate. Under `nodeMtls: require` that one call is
+  refused as having no certificate. Cost: one reconnect per worker per CA or mode change.
 - **The vLLM workers run on vLLM's own images, at v0.33.0.** `opod-worker-vllm-nvidia` is built on
   `vllm/vllm-openai:v0.33.0` (was v0.27.1), `opod-worker-vllm-amd` on `vllm/vllm-openai-rocm:v0.33.0` (was AMD's
   `rocm/vllm` 0.23 RDNA build, which vLLM's docs mark deprecated) and `opod-worker-vllm-intel` on

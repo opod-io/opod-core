@@ -17,10 +17,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/opod-io/opod/internal/agent"
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
@@ -419,4 +422,112 @@ func TestATokenCannotActAsANodeACertificateRegistered(t *testing.T) {
 	if code, body := heartbeatAs(t, client(), ts.URL, "n_a", plain); code != http.StatusOK {
 		t.Errorf("the token's heartbeat with mTLS off = %d: %s", code, body)
 	}
+}
+
+// T24.36: a worker whose connection was handshaked BEFORE the leader had a node
+// CA presented no certificate (none was asked for), and the heartbeat kept that
+// connection alive, so every later call stayed a token call and a revocation of
+// its certificate never reached it. The leader now remembers which mTLS policy
+// each TLS connection was handshaked under and closes a join connection from an
+// older one, so the worker re-dials and its next handshake is verified.
+//
+// This runs the real listener (Start), not httptest: the handshake config and
+// the connection context are the thing under test, and a worker's own client
+// (h2, keep-alive) is the one that has to re-dial.
+func TestAJoinConnectionFromBeforeTheCAIsReHandshakedSoARevocationReachesIt(t *testing.T) {
+	// allow serves the stale connection's call on its token, then closes it;
+	// require refuses it for want of a certificate, and closes it too.
+	for mode, firstCode := range map[string]int{auth.MTLSAllow: http.StatusOK, auth.MTLSRequire: http.StatusUnauthorized} {
+		t.Run(mode, func(t *testing.T) { joinConnectionPredatesCA(t, mode, firstCode) })
+	}
+}
+
+func joinConnectionPredatesCA(t *testing.T, mode string, firstCode int) {
+	dir := t.TempDir()
+	crt, key := selfSigned(t, dir)
+	ca := newTestCA(t)
+	nodeCrt, nodeKey := writeKeyPair(t, dir, "node", ca.nodeCert(t, "n_a", 77))
+
+	cfg := config.Default()
+	cfg.Listen = "127.0.0.1:0"
+	cfg.TLSCert, cfg.TLSKey = crt, key
+	cfg.DataDir = dir
+	cfg.Auth.RequireKeys = true
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	srv := NewServer(cfg, st, &stubLeaderEngine{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	plain, rec, _ := auth.Generate("node", "node", "")
+	if err := st.APIKeys().Create(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	// No CA yet: the leader asks no worker for a certificate.
+	if err := srv.applyAuthSnapshot(context.Background(), &AuthSnapshot{Revision: "r1", RequireKeys: true}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = srv.Start(ctx) }()
+	for deadline := time.Now().Add(5 * time.Second); srv.Addr() == "" && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if srv.Addr() == "" {
+		t.Fatal("the server never bound")
+	}
+	url := "https://" + srv.Addr()
+
+	// The worker's own client: it holds a certificate and a token, and keeps
+	// its connection alive between heartbeats.
+	worker, err := agent.NewLeaderClientWithIdentity(crt, nodeCrt, nodeKey, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, body := registerAs(t, worker, url, "n_a", plain); code != http.StatusOK {
+		t.Fatalf("register before the CA = %d: %s", code, body)
+	}
+
+	// The CA arrives. The connection above asked for no certificate, so it
+	// still carries none.
+	if err := srv.applyAuthSnapshot(context.Background(), &AuthSnapshot{
+		Revision: "r2", RequireKeys: true, NodeMTLS: mode, NodeCertCA: ca.pem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := heartbeatAs(t, worker, url, "n_a", plain); code != firstCode {
+		t.Fatalf("the first heartbeat after the CA, on the old connection = %d: %s (want %d)", code, body, firstCode)
+	}
+	// The worker re-dialed: this heartbeat presented its certificate.
+	if code, body := heartbeatAs(t, worker, url, "n_a", plain); code != http.StatusOK {
+		t.Fatalf("the heartbeat on the re-dialed connection = %d: %s", code, body)
+	}
+
+	// The certificate is revoked. The next heartbeat must be refused: it has to
+	// come over a connection that presented the certificate.
+	if err := srv.applyAuthSnapshot(context.Background(), &AuthSnapshot{
+		Revision: "r3", RequireKeys: true, NodeMTLS: mode, NodeCertCA: ca.pem, RevokedCerts: []string{"4d"}, // serial 77
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := heartbeatAs(t, worker, url, "n_a", plain); code != http.StatusForbidden || !strings.Contains(body, "revoked") {
+		t.Fatalf("a heartbeat after the revocation = %d: %s (want 403 revoked)", code, body)
+	}
+}
+
+// writeKeyPair writes a tls.Certificate as PEM files and returns their paths.
+func writeKeyPair(t *testing.T, dir, name string, c tls.Certificate) (crt, key string) {
+	t.Helper()
+	kb, err := x509.MarshalECPrivateKey(c.PrivateKey.(*ecdsa.PrivateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	crt, key = filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key")
+	if err := os.WriteFile(crt, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Certificate[0]}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return crt, key
 }

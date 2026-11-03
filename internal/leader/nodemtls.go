@@ -30,7 +30,9 @@ package leader
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/opod-io/opod/internal/auth"
 )
@@ -67,6 +69,16 @@ func (s *Server) nodeCertGate(next http.Handler) http.Handler {
 		if pol.Mode == auth.MTLSOff {
 			next.ServeHTTP(w, r)
 			return
+		}
+		if joinPaths[r.URL.Path] && handshakedUnderOlderPolicy(r.Context(), pol.gen) {
+			// The connection was handshaked before this CA or mode (T24.36):
+			// it presented the certificate the old policy asked for, or none,
+			// and keep-alive would keep it that way for as long as the worker
+			// heartbeats. Close it after this answer so the worker re-dials and
+			// its next handshake is verified against the policy in force. The
+			// request itself is judged as usual: allow serves it on its token,
+			// require refuses it below for want of a certificate.
+			w.Header().Set("Connection", "close")
 		}
 		id, err := auth.VerifiedNodeIdentity(r, pol.Revoked)
 		switch {
@@ -121,4 +133,38 @@ type errCertNodeMismatch struct{ cert, claimed string }
 
 func (e errCertNodeMismatch) Error() string {
 	return "client certificate names node " + e.cert + ", the request claims " + e.claimed
+}
+
+// handshakeMTLSGen is the node-mTLS policy gen a TLS connection was handshaked
+// under, plus one; zero means the connection recorded none (plain HTTP, or a
+// listener this leader did not build), and such a connection is never closed
+// for it — a re-dial could not bring it a certificate.
+type handshakeMTLSGen struct{ v atomic.Uint64 }
+
+type handshakeMTLSGenKey struct{}
+
+// withHandshakeMTLSGen is the leader listener's ConnContext: every connection
+// gets a slot its TLS handshake fills in. net/http hands this context to the
+// handshake (ClientHelloInfo.Context) and derives every request's context from
+// it, which is how the join gate learns what the handshake was asked.
+func withHandshakeMTLSGen(ctx context.Context, _ net.Conn) context.Context {
+	return context.WithValue(ctx, handshakeMTLSGenKey{}, new(handshakeMTLSGen))
+}
+
+// recordHandshakeMTLSGen notes the policy gen a handshake was served under.
+func recordHandshakeMTLSGen(ctx context.Context, gen uint64) {
+	if h, ok := ctx.Value(handshakeMTLSGenKey{}).(*handshakeMTLSGen); ok {
+		h.v.Store(gen + 1)
+	}
+}
+
+// handshakedUnderOlderPolicy reports whether the request's connection was
+// handshaked under a policy gen other than cur.
+func handshakedUnderOlderPolicy(ctx context.Context, cur uint64) bool {
+	h, ok := ctx.Value(handshakeMTLSGenKey{}).(*handshakeMTLSGen)
+	if !ok {
+		return false
+	}
+	v := h.v.Load()
+	return v != 0 && v-1 != cur
 }

@@ -76,6 +76,13 @@ type nodeMTLSPolicy struct {
 	CAPEM   string
 	Revoked map[string]bool
 	pool    *x509.CertPool // parsed once, on load — not per handshake
+	// gen moves whenever Mode or CAPEM does, and only then (T24.36). A TLS
+	// connection records the gen it was handshaked under, and the join path
+	// closes one from an older gen: its handshake asked for a certificate
+	// against another CA, or for none at all, and a revocation can only reach
+	// a worker whose connection presented one. A revoked-list change keeps the
+	// gen, because the list is checked on every request anyway.
+	gen uint64
 }
 
 // nodeMTLS is the policy in force, never nil.
@@ -328,9 +335,14 @@ func (s *Server) applyNodeMTLS(doc *AuthSnapshot) bool {
 		mode = auth.MTLSOff
 	}
 	next := &nodeMTLSPolicy{Mode: mode, CAPEM: pem, Revoked: auth.RevokedSet(doc.RevokedCerts), pool: pool}
-	prev := s.authf.mtls.Load()
+	prev := s.nodeMTLS() // the off default before the first snapshot, gen 0
+	next.gen = prev.gen
+	if prev.Mode != next.Mode || prev.CAPEM != next.CAPEM {
+		next.gen++
+	}
+	first := s.authf.mtls.Load() == nil
 	s.authf.mtls.Store(next)
-	if prev == nil {
+	if first {
 		return mode != auth.MTLSOff || len(next.Revoked) > 0
 	}
 	return prev.Mode != next.Mode || prev.CAPEM != next.CAPEM || len(prev.Revoked) != len(next.Revoked)

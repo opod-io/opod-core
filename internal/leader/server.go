@@ -363,8 +363,9 @@ func (s *Server) Start(ctx context.Context) error {
 		// returns a clone of this config, and a clone without it would answer
 		// every gRPC client (T19.5) with HTTP/1.1.
 		base := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{crt}, NextProtos: []string{"h2", "http/1.1"}}
-		base.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			pol := s.nodeMTLS()
+			recordHandshakeMTLSGen(hello.Context(), pol.gen)
 			if pol.ClientCAs() == nil {
 				return nil, nil // no CA in the snapshot: no client certificate is asked for
 			}
@@ -375,6 +376,7 @@ func (s *Server) Start(ctx context.Context) error {
 			return c, nil
 		}
 		s.http.TLSConfig = base
+		s.http.ConnContext = withHandshakeMTLSGen
 	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "scheme", scheme)
 	stopPlain, err := s.servePlain(handler)
