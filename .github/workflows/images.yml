@@ -223,6 +223,15 @@ jobs:
           f=$(go run ./cmd/opod version --features)
           [ -n "$f" ] || { echo "::error::the leader advertised no features"; exit 1; }
           echo "label=io.opod.leader.features=$f" >> "$GITHUB_OUTPUT"
+      # The GPU families a worker's compiled code was built for, as images.yaml
+      # declares them — read by the same function images/build.sh stamps them
+      # with. Without it a control plane cannot refuse a card the image has no
+      # kernels for at plan time (E-IMAGE-FAMILY), and it reads every CI image as
+      # "says nothing". Empty for an image that declares none.
+      - id: families
+        run: |
+          f=$(images/build.sh families "${{ matrix.name }}")
+          if [ -n "$f" ]; then echo "label=io.opod.gpu.families=$f" >> "$GITHUB_OUTPUT"; fi
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -247,6 +256,7 @@ jobs:
           labels: |
             ${{ steps.meta.outputs.labels }}
             ${{ steps.features.outputs.label }}
+            ${{ steps.families.outputs.label }}
           build-args: |
             ${{ matrix.base != '' && format('BASE={0}', matrix.base) || '' }}
             VERSION=${{ github.sha }}

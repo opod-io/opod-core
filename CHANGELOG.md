@@ -16,6 +16,10 @@ the last section.
   10.0 userspace. Removed with the old bases: the build-time backport of vLLM's pinned host-to-device staging
   (the base has it) and the UCX + RIXL compile (the ROCm base ships `nixl_rocm`, which vLLM 0.33 imports). Served on
   one RTX 3060 Ti and one RX 7900 XTX; the Intel image has not served on its new base.
+- **CI-built worker images carry their `io.opod.gpu.families` label.** Only the local lane (`images/build.sh`)
+  stamped it, so every image the CI lane published — the ones a release and the control-plane chart pin — had none,
+  and a control plane could not refuse a card the image has no kernels for at plan time. The workflow now reads the
+  families through `images/build.sh families <image>`, from the same `images/images.yaml` declaration.
 - **The entrypoint no longer reads `OPOD_BASE_ENV_FILE`.** It sourced a base image's environment script (Intel's
   oneAPI `setvars.sh`) for the old `intel/vllm` base; no image records one now. `images/build.sh refresh-bases` works
   again: it read a `${VAR:-ref}` default as `-ref`, and without `crane` it took the whole manifest list for a digest.

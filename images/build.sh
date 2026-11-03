@@ -37,6 +37,9 @@
 #       its registry and rewrites the digest in all three, so moving a base is one deliberate, reviewable
 #       commit and never a side effect of a build. --dry-run prints what would move. Read-only against the
 #       registries; needs `crane` or `docker buildx` (no daemon).
+#   images/build.sh families <image-name>
+#       prints the io.opod.gpu.families label value images/images.yaml declares for that image (empty when
+#       it declares none). The CI lane stamps the label from this, so both lanes read one declaration.
 #
 # One-time login (token stays in the Docker credential store, never in the repo):
 #   gh auth refresh -s write:packages && gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
@@ -157,8 +160,8 @@ while [ $# -gt 0 ]; do
     --multi) multi=1 ;;
     --dry-run) dry=1 ;;
     --tag) tag=$2; shift ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
-    rpc-bootstrap|rpc-build|prune|refresh-bases) mode=$1 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    rpc-bootstrap|rpc-build|prune|refresh-bases|families) mode=$1 ;;
     -*) die "unknown flag $1" ;;
     *) images+=("$1") ;;
   esac; shift
@@ -203,6 +206,10 @@ refresh_bases() {
   log "$moved base(s) re-pinned — review the diff, rebuild, and commit the pins on their own"
 }
 if [ "${mode:-}" = refresh-bases ]; then refresh_bases; exit 0; fi
+if [ "${mode:-}" = families ]; then
+  [ ${#named[@]} -eq 1 ] || die "usage: images/build.sh families <image-name>"
+  families "${named[0]}"; exit 0
+fi
 
 [ $dry = 1 ] || docker info >/dev/null 2>&1 || die "Docker daemon not running (open -a Docker)"
 

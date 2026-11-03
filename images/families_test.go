@@ -2,6 +2,7 @@ package images
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -71,5 +72,53 @@ func TestBuildScriptStampsTheFamilyLabel(t *testing.T) {
 	// would be a fifth place to forget.
 	if strings.Contains(src, "nvidia:ampere") {
 		t.Error("build.sh repeats a family list — read it from images.yaml instead")
+	}
+}
+
+// The CI lane builds the images a release and the chart pin, so it must stamp
+// the same label, read by the same function. Until 2026-11-02 it stamped none:
+// every CI image read as "says nothing" and E-IMAGE-FAMILY never fired on a
+// chart default (T24.41).
+func TestTheCIWorkflowStampsTheFamilyLabel(t *testing.T) {
+	b, err := os.ReadFile("../.github/workflows/images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, want := range []string{
+		`images/build.sh families "${{ matrix.name }}"`,
+		"io.opod.gpu.families=",
+		"${{ steps.families.outputs.label }}",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("images.yml must stamp the families build.sh reads from the manifest (%q missing)", want)
+		}
+	}
+	if strings.Contains(src, "nvidia:ampere") {
+		t.Error("images.yml repeats a family list — read it through images/build.sh families instead")
+	}
+}
+
+// The mode CI calls prints what images.yaml declares, comma-joined, and
+// nothing for an image that declares none.
+func TestTheFamiliesModePrintsTheDeclaration(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	m, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, img := range m.Images {
+		cmd := exec.Command(bash, "images/build.sh", "families", img.Name)
+		cmd.Dir = ".."
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("build.sh families %s: %v", img.Name, err)
+		}
+		if got, want := strings.TrimSpace(string(out)), strings.Join(img.Families, ","); got != want {
+			t.Errorf("build.sh families %s = %q, images.yaml declares %q", img.Name, got, want)
+		}
 	}
 }
