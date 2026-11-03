@@ -11,16 +11,48 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/internal/agent"
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/internal/gateway"
 	"github.com/opod-io/opod/internal/store"
 )
+
+// registryRebuildWindow is how long after such a boot the list may still miss
+// live workers: three heartbeats, so a worker whose first one was lost to the
+// restart is back too.
+const registryRebuildWindow = 3 * agent.DefaultHeartbeatInterval
+
+// registryRebuildUntil says until when a leader starting now on st is
+// rebuilding its registry. A managed leader keeps the registry in memory, so
+// every restart — each rollout, each failover — starts with no workers, and
+// they come back only as they heartbeat. A front door that read that list as
+// the whole truth dropped every worker and answered 503 until its next sync
+// (16 of 60 requests on the design-partner cell, 2026-11-01, PLAN T32.48). A
+// leader that boots with workers already in its store is not rebuilding.
+func registryRebuildUntil(st store.Store, now time.Time) time.Time {
+	nodes, err := st.Nodes().List(context.Background())
+	if err != nil {
+		return now.Add(registryRebuildWindow) // unknown: say rebuilding, which removes nothing
+	}
+	for _, n := range nodes {
+		if n.ID != "local" {
+			return time.Time{}
+		}
+	}
+	return now.Add(registryRebuildWindow)
+}
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	nodes, err := s.store.Nodes().List(r.Context())
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// A list that may still miss live workers says so, and a door then adds
+	// what it reads but removes nothing (internal/gateway/mirror.go).
+	if time.Now().Before(s.rebuildingUntil) {
+		w.Header().Set(gateway.RegistryHeader, gateway.RegistryRebuilding)
 	}
 	// Decorate each row: state is the LIVE state (a node whose heartbeats
 	// stopped reads "lost", one whose engine stopped answering it reads

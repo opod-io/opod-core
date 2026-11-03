@@ -265,6 +265,11 @@ func (a *Agent) Goodbye(ctx context.Context) {
 // a shutdown must not wait on a leader that is itself restarting.
 const goodbyeTimeout = 3 * time.Second
 
+// DefaultHeartbeatInterval is how often a worker heartbeats its leader. A
+// restarted leader whose registry lives in memory knows every live worker
+// again within a few of these (internal/leader/nodes.go).
+const DefaultHeartbeatInterval = 5 * time.Second
+
 // Loop blocks running register + periodic heartbeat until ctx is done.
 //
 // Status-code handling:
@@ -280,7 +285,7 @@ func (a *Agent) Loop(ctx context.Context) error {
 		a.HTTP = &http.Client{Timeout: 10 * time.Second}
 	}
 	if a.HeartbeatInterval == 0 {
-		a.HeartbeatInterval = 5 * time.Second
+		a.HeartbeatInterval = DefaultHeartbeatInterval
 	}
 	if a.BootID == "" {
 		a.BootID = NewBootID()

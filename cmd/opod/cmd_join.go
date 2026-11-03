@@ -249,7 +249,7 @@ func cmdJoin(args []string) {
 		Engine:            eng,
 		Aliases:           aliases,
 		HTTP:              leaderClient,
-		HeartbeatInterval: 5 * time.Second,
+		HeartbeatInterval: agent.DefaultHeartbeatInterval,
 		Log:               log,
 	}
 

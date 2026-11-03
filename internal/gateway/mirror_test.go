@@ -301,3 +301,93 @@ func TestAWorkerTheLeaderNoLongerListsLeavesTheDoor(t *testing.T) {
 		t.Error("the door still counts n_b as known")
 	}
 }
+
+// A restarted managed leader knows no workers until they heartbeat again, and
+// says so (X-Opod-Registry: rebuilding). A door must keep routing on what it
+// knew: a list from a rebuilding leader adds and updates, and removes neither
+// a worker nor a model a worker holds. Reading it as the whole truth dropped
+// every worker after each leader restart (T32.48: 16 of 60 requests 503).
+func TestARebuildingLeadersListRemovesNothing(t *testing.T) {
+	ctx := context.Background()
+	var body atomic.Value
+	var rebuilding atomic.Bool
+	two := `[{"ID":"n_a","Hostname":"a","Address":"10.0.0.1:8081","state":"ready","heartbeat_age_seconds":1,"placements":[{"NodeID":"n_a","ModelID":"m","Status":"ready"}]},
+	         {"ID":"n_b","Hostname":"b","Address":"10.0.0.2:8081","state":"ready","heartbeat_age_seconds":1,"placements":[{"NodeID":"n_b","ModelID":"m","Status":"ready"}]}]`
+	shards := `[{"ID":"s1","ModelID":"g","GangID":"g1","NodeID":"n_a","Role":"coordinator","Address":"10.0.0.1:9000","Status":"ready"}]`
+	body.Store(two)
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rebuilding.Load() {
+			w.Header().Set(RegistryHeader, RegistryRebuilding)
+		}
+		if r.URL.Path == "/admin/v1/shards" {
+			if rebuilding.Load() {
+				fmt.Fprint(w, `[]`)
+				return
+			}
+			fmt.Fprint(w, shards)
+			return
+		}
+		fmt.Fprint(w, body.Load().(string))
+	}))
+	defer leader.Close()
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := NewMirror(leader.URL, "tok", st)
+	var forgot []string
+	m.OnForget = func(id string) { forgot = append(forgot, id) }
+	count := func() (nodes, placements, shardRows int) {
+		ns, _ := st.Nodes().List(ctx)
+		for _, n := range ns {
+			ps, _ := st.Placements().GetByNode(ctx, n.ID)
+			placements += len(ps)
+		}
+		sh, _ := st.Shards().List(ctx)
+		return len(ns), placements, len(sh)
+	}
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, p, s := count(); n != 2 || p != 2 || s != 1 {
+		t.Fatalf("the fixture did not mirror 2 workers, 2 placements and 1 gang part (%d, %d, %d); the test would prove nothing", n, p, s)
+	}
+
+	// The leader restarts: rebuilding, it lists nobody, then n_a without its model yet.
+	rebuilding.Store(true)
+	body.Store(`[]`)
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, p, s := count(); n != 2 || p != 2 || s != 1 || len(forgot) != 0 {
+		t.Fatalf("an empty list from a rebuilding leader removed something: %d workers, %d placements, %d gang parts, forgot %v", n, p, s, forgot)
+	}
+	body.Store(`[{"ID":"n_a","Hostname":"a","Address":"10.0.0.9:8081","state":"ready","heartbeat_age_seconds":0}]`)
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := st.Placements().GetByNode(ctx, "n_a"); len(ps) != 1 || ps[0].ModelID != "m" {
+		t.Fatalf("a re-registered worker listed before its first heartbeat lost the model it holds: %+v", ps)
+	}
+	if nodes, _ := st.Nodes().List(ctx); func() string {
+		for _, n := range nodes {
+			if n.ID == "n_a" {
+				return n.Address
+			}
+		}
+		return ""
+	}() != "10.0.0.9:8081" {
+		t.Fatal("a rebuilding list must still UPDATE what it names (n_a's new address)")
+	}
+
+	// Rebuilt: the list is whole again and n_b is really gone.
+	rebuilding.Store(false)
+	body.Store(`[{"ID":"n_a","Hostname":"a","Address":"10.0.0.9:8081","state":"ready","heartbeat_age_seconds":1,"placements":[{"NodeID":"n_a","ModelID":"m","Status":"ready"}]}]`)
+	if err := m.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, _ := count(); n != 1 || len(forgot) != 1 || forgot[0] != "n_b" {
+		t.Fatalf("once rebuilt, a worker the leader no longer lists must leave: %d workers, forgot %v", n, forgot)
+	}
+}

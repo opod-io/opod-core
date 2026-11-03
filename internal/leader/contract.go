@@ -104,9 +104,14 @@ func contractFeatures() map[string]bool {
 		"load_signals":      true,
 		"lora":              true,
 		"boot_id":           true,
-		"engine_liveness":   true, // heartbeats carry what the worker's ENGINE PROCESS is doing (serving | starting | crash-looping | stopped); /loadz says how many workers are holding a card with a dead engine
-		"plan_heal_gangs":   true, // the leader forms a gang its plan declares when that gang has no parts at all and free workers have registered — so a gang whose parts were restored by something outside the leader comes back without an admin call (§13 item 3)
-		"probe_header":      true, // a request carrying X-Opod-Probe is served like any other but counted like none: not in in_flight, rpm_1m, unavailable_1m or the idle clock, so a prover cannot move the number an autoscaler reads
+		// GET /admin/v1/nodes carries X-Opod-Registry: rebuilding for three
+		// heartbeats after a leader booted with an empty registry (a managed
+		// leader's is in memory): the list may still miss live workers, so a
+		// door adds from it and removes nothing (T32.48).
+		"registry_rebuilding": true,
+		"engine_liveness":     true, // heartbeats carry what the worker's ENGINE PROCESS is doing (serving | starting | crash-looping | stopped); /loadz says how many workers are holding a card with a dead engine
+		"plan_heal_gangs":     true, // the leader forms a gang its plan declares when that gang has no parts at all and free workers have registered — so a gang whose parts were restored by something outside the leader comes back without an admin call (§13 item 3)
+		"probe_header":        true, // a request carrying X-Opod-Probe is served like any other but counted like none: not in in_flight, rpm_1m, unavailable_1m or the idle clock, so a prover cannot move the number an autoscaler reads
 		// The worker loads the model it was started for itself (T10.7):
 		// OPOD_LOAD_MODEL / _REPO / _FILE are read by `opod join`, which waits
 		// for its engine and loads in-process. Without this key the container

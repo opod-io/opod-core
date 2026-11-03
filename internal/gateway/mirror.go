@@ -26,6 +26,14 @@ import (
 	"github.com/opod-io/opod/internal/store"
 )
 
+// RegistryHeader is set on the leader's GET /admin/v1/nodes to
+// RegistryRebuilding while a leader that booted with an empty registry has not
+// yet heard every worker (feature registry_rebuilding; internal/leader/nodes.go).
+const (
+	RegistryHeader     = "X-Opod-Registry"
+	RegistryRebuilding = "rebuilding"
+)
+
 // RegistryTTL is how long a mirrored worker list is trusted for routing. Past
 // it the list is STALE: still used, because serving beats refusing, but no
 // worker learned from it is added.
@@ -123,7 +131,7 @@ func (m *Mirror) Fresh() (fresh bool, age time.Duration, lastErr string) {
 // adds one is a door sending requests somewhere the brain has stopped
 // accounting for.
 func (m *Mirror) Sync(ctx context.Context) error {
-	rows, err := m.fetch(ctx)
+	rows, rebuilding, err := m.fetch(ctx)
 	if err != nil {
 		m.mu.Lock()
 		m.lastErr = err.Error()
@@ -138,6 +146,14 @@ func (m *Mirror) Sync(ctx context.Context) error {
 	// all cannot serve, and "stale" is about a list that went cold, not about
 	// not having one yet.
 	adopt := fresh || first
+	// A leader that is still REBUILDING its registry (it booted with none, and
+	// its workers come back one heartbeat at a time) lists live workers late:
+	// a worker it does not name yet, or names without the models it holds, is
+	// not gone. So that list adds and removes nothing — the door keeps routing
+	// on what it knew, which is the fail-static rule (ADR-063) applied to a
+	// brain that answers but does not yet know. Reading it as the whole truth
+	// dropped every worker for one sync interval after each leader restart
+	// (T32.48).
 
 	for _, n := range rows {
 		m.mu.Lock()
@@ -157,7 +173,13 @@ func (m *Mirror) Sync(ctx context.Context) error {
 		// ReplaceForNode, not Upsert: a model the leader no longer lists on this
 		// worker must LEAVE the door's view, or the door goes on routing to a
 		// worker that unloaded it and every one of those requests fails.
-		if err := m.st.Placements().ReplaceForNode(ctx, n.ID, n.Placements); err != nil {
+		placements := n.Placements
+		if rebuilding {
+			if placements, err = m.withKnownPlacements(ctx, n.ID, placements); err != nil {
+				return err
+			}
+		}
+		if err := m.st.Placements().ReplaceForNode(ctx, n.ID, placements); err != nil {
 			return fmt.Errorf("mirror placements of %s: %w", n.ID, err)
 		}
 		if m.OnSlots != nil {
@@ -171,7 +193,7 @@ func (m *Mirror) Sync(ctx context.Context) error {
 	// lists is gone (removed, or forgotten after it stopped heartbeating,
 	// T25.10): it leaves this door too, its rows and (OnForget) its memory. A
 	// stale list removes nothing, as it adds nothing.
-	if fresh {
+	if fresh && !rebuilding {
 		if err := m.dropUnlisted(ctx, rows); err != nil {
 			m.mu.Lock()
 			m.lastErr = err.Error()
@@ -182,7 +204,7 @@ func (m *Mirror) Sync(ctx context.Context) error {
 	// Gangs: a SHARDED endpoint has no placement rows at all — its capacity is
 	// a coordinator plus its parts — so a door with no shard rows cannot route
 	// to a gang however fresh its node list is.
-	if adopt {
+	if adopt && !(rebuilding && !first) {
 		if err := m.syncShards(ctx); err != nil {
 			m.mu.Lock()
 			m.lastErr = err.Error()
@@ -194,6 +216,27 @@ func (m *Mirror) Sync(ctx context.Context) error {
 	m.lastOK, m.lastErr = m.now(), ""
 	m.mu.Unlock()
 	return nil
+}
+
+// withKnownPlacements is listed plus every placement this door already holds
+// for node id that listed does not name, for a list from a rebuilding leader:
+// what it has not heard yet is not unloaded.
+func (m *Mirror) withKnownPlacements(ctx context.Context, id string, listed []store.Placement) ([]store.Placement, error) {
+	held, err := m.st.Placements().GetByNode(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("mirror placements of %s: local read: %w", id, err)
+	}
+	seen := make(map[string]bool, len(listed))
+	for _, p := range listed {
+		seen[p.ModelID] = true
+	}
+	out := append([]store.Placement(nil), listed...)
+	for _, p := range held {
+		if !seen[p.ModelID] {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // dropUnlisted removes every worker this door holds that the leader's list
@@ -264,25 +307,28 @@ func (m *Mirror) syncShards(ctx context.Context) error {
 	return nil
 }
 
-func (m *Mirror) fetch(ctx context.Context) ([]leaderNode, error) {
+// fetch reads the leader's registry, and whether the leader says it is still
+// rebuilding it (header X-Opod-Registry: rebuilding, feature
+// registry_rebuilding; a leader without the feature never says so).
+func (m *Mirror) fetch(ctx context.Context) ([]leaderNode, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.leaderURL+"/admin/v1/nodes", nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.token)
 	resp, err := m.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("leader %s answered %s", m.leaderURL, resp.Status)
+		return nil, false, fmt.Errorf("leader %s answered %s", m.leaderURL, resp.Status)
 	}
 	var out []leaderNode
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+		return nil, false, fmt.Errorf("leader %s nodes: %w", m.leaderURL, err)
 	}
-	return out, nil
+	return out, resp.Header.Get(RegistryHeader) == RegistryRebuilding, nil
 }
 
 // fetchShards reads the leader's gang parts.

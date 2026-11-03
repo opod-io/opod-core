@@ -34,6 +34,11 @@ import (
 
 // Server is the leader-side HTTP server.
 type Server struct {
+	// rebuildingUntil is when this leader's worker registry is whole again
+	// after a boot that found it empty (see registryRebuildUntil). Zero: it
+	// was never rebuilding.
+	rebuildingUntil time.Time
+
 	cfg    *config.Config
 	store  store.Store
 	engine engines.Engine
@@ -242,6 +247,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// the router picked asks the gate again, rather than reporting the
 	// leader's own absent engine (PLAN T8.21).
 	openaiH.Unavailable = s.unavailable
+	s.rebuildingUntil = registryRebuildUntil(st, time.Now())
 	return s
 }
 

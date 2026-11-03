@@ -40,6 +40,12 @@ checking prompts is the gateway's job in front of it.
 - **A first `opod up` with llama.cpp serves instead of timing out.** `opod up` with `OPOD_ENGINE=llamacpp` launches
   `llama-server -hf <repo>`, which downloads the GGUF before it listens. The launch set no readiness bound, so the
   supervisor's 30 s default expired during the first download of a 2 GB model and the leader came up with no engine
+- **A front door keeps its workers while a restarted leader rebuilds its registry (feature `registry_rebuilding`).** A
+  managed leader keeps the worker registry in memory, so after each restart it lists no workers until they heartbeat
+  again. A door read that list as final, dropped every worker and answered 503 until its next sync (16 of 60 requests in
+  one test). For 15 s (three worker heartbeats) after a boot with an empty registry, `GET /admin/v1/nodes` now carries
+  `X-Opod-Registry: rebuilding`; a door that reads it adds and updates workers, placements and gang parts, and removes
+  none. A leader without the feature never sends the header, and a door then behaves as before.
   (measured on an Apple M3, 2026-10-31). The probe now asks `/health` and has the caller's whole budget — 30 minutes
   on a first `opod up`, like a cold `model move` target, and 15 minutes for the watchdog's restart. The same first
   run then served in about 3 minutes, tool calls and `/v1/messages` included.
