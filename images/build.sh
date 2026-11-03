@@ -172,11 +172,15 @@ run() { if [ $dry = 1 ]; then printf '  %q' "$@"; echo; else "$@"; fi; }
 # multi-arch base this is the INDEX digest, so one pin serves every platform.
 resolve_digest() {
   if command -v crane >/dev/null 2>&1; then crane digest "$1"
-  else docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}'; fi
+  # The `Digest:` line, not `--format`: some buildx versions ignore the format
+  # and print the whole manifest list.
+  else docker buildx imagetools inspect "$1" | awk '/^Digest:/ && !d { d = $2 } END { print d }'; fi
 }
 refresh_bases() {
   local files=(images/*/Dockerfile* images/build.sh .github/workflows/images.yml)
-  local pin_re='[A-Za-z0-9./_-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}'
+  # A reference starts with a letter or digit: in `${VAR:-ref}` the `-` is the
+  # shell's, and a pattern that let it start one read the pin as `-ref`.
+  local pin_re='[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}'
   local pinned ref old new moved=0 edits=()
   while read -r pinned; do
     ref=${pinned%@*} old=${pinned#*@}

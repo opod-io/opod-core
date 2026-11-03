@@ -16,6 +16,9 @@ the last section.
   10.0 userspace. Removed with the old bases: the build-time backport of vLLM's pinned host-to-device staging
   (the base has it) and the UCX + RIXL compile (the ROCm base ships `nixl_rocm`, which vLLM 0.33 imports). Served on
   one RTX 3060 Ti and one RX 7900 XTX; the Intel image has not served on its new base.
+- **The entrypoint no longer reads `OPOD_BASE_ENV_FILE`.** It sourced a base image's environment script (Intel's
+  oneAPI `setvars.sh`) for the old `intel/vllm` base; no image records one now. `images/build.sh refresh-bases` works
+  again: it read a `${VAR:-ref}` default as `-ref`, and without `crane` it took the whole manifest list for a digest.
 - **Usage is pushed, and the leader keeps no usage table (feature `usage_push`, replaces `usage_stream`).** Each finished
   request becomes one OTLP log record sent to `OPOD_USAGE_OTLP_ENDPOINT` (headers in `OPOD_USAGE_OTLP_HEADERS`); a
   record leaves the leader's memory only on the receiver's 2xx. While the receiver is away records wait in a queue
