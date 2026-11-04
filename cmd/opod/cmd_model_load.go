@@ -93,15 +93,20 @@ func modelLoad(id string, args []string) {
 			if i+1 >= len(args) {
 				die("--priority requires a value (usage: opod model load <id> [--swap] [--pin] [--priority N])")
 			}
-			if n, err := strconv.Atoi(args[i+1]); err == nil {
-				priority = n
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				die("--priority %q is not a whole number", args[i+1]) // it used to read as 0 (T10.21)
 			}
+			priority = n
 			i++
 		default:
 			if strings.HasPrefix(args[i], "--priority=") {
-				if n, err := strconv.Atoi(strings.TrimPrefix(args[i], "--priority=")); err == nil {
-					priority = n
+				v := strings.TrimPrefix(args[i], "--priority=")
+				n, err := strconv.Atoi(v)
+				if err != nil {
+					die("--priority %q is not a whole number", v)
 				}
+				priority = n
 				continue
 			}
 			die("unknown flag: %s (usage: opod model load <id> [--swap] [--pin] [--priority N])", args[i])

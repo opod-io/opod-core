@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -209,7 +213,7 @@ func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
 //  1. explicit override (--base-url flag)
 //  2. OPOD_BASE_URL env var
 //  3. cfg.ExternalURL (if the operator set one in config)
-//  4. http://localhost + cfg.Listen
+//  4. this host's leader (localLeaderURL)
 func resolveBaseURL(cfg *config.Config, override string) string {
 	if override != "" {
 		return strings.TrimRight(override, "/")
@@ -220,11 +224,51 @@ func resolveBaseURL(cfg *config.Config, override string) string {
 	if cfg.ExternalURL != "" {
 		return strings.TrimRight(cfg.ExternalURL, "/")
 	}
+	return localLeaderURL(cfg)
+}
+
+// localLeaderURL is the base URL this host's leader answers on, from its
+// config (T10.21: four callers built "http://localhost"+listen, which broke
+// for a listen address with a host and for a leader serving TLS). An empty or
+// unspecified host ("", 0.0.0.0, ::) is localhost; the scheme is https when
+// the leader serves TLS (tls_cert and tls_key both set).
+func localLeaderURL(cfg *config.Config) string {
 	listen := cfg.Listen
 	if listen == "" {
 		listen = ":8080"
 	}
-	return "http://localhost" + listen
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		host, port = "", strings.TrimPrefix(listen, ":")
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	scheme := "http"
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
+// localLeaderClient is an HTTP client for this host's leader. When the
+// leader serves TLS it trusts the leader's own certificate file — never
+// "skip verification" — so a call to a TLS leader verifies.
+func localLeaderClient(cfg *config.Config, timeout time.Duration) *http.Client {
+	c := &http.Client{Timeout: timeout}
+	if cfg.TLSCert == "" || cfg.TLSKey == "" {
+		return c
+	}
+	pem, err := os.ReadFile(cfg.TLSCert)
+	if err != nil {
+		return c // the call then fails on the certificate, which names the problem
+	}
+	pool := x509.NewCertPool()
+	if pool.AppendCertsFromPEM(pem) {
+		c.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+	}
+	return c
 }
 
 // weightsOpTimeout is the client budget for admin calls that move model
@@ -233,6 +277,27 @@ func resolveBaseURL(cfg *config.Config, override string) string {
 // the CLI hang up mid-create — which cancels the server's request context and
 // strands a half-shard (rpc rows with no coordinator).
 const weightsOpTimeout = 45 * time.Minute
+
+// errNoAdminKey is adminCallT's answer when this host holds no admin key: the
+// call reached nobody, which says nothing about whether a leader runs.
+var errNoAdminKey = errors.New("(no admin key)")
+
+// leaderAnswers reports whether this host's leader answers /healthz, a call
+// that needs no key.
+func leaderAnswers(cfg *config.Config) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, localLeaderURL(cfg)+"/healthz", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := localLeaderClient(cfg, 3*time.Second).Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return true
+}
 
 // adminCall makes an authenticated HTTP request to the local leader's admin
 // API. Returns the response body bytes. If the leader isn't running this
@@ -246,13 +311,9 @@ func adminCall(ctx context.Context, cfg *config.Config, method, path string, bod
 func adminCallT(ctx context.Context, cfg *config.Config, method, path string, body []byte, timeout time.Duration) ([]byte, error) {
 	key := readLocalAdminKey(cfg)
 	if key == "" {
-		return nil, fmt.Errorf("no admin key on disk at %s — is `opod up` running on this host?", localAdminKeyPath(cfg))
+		return nil, fmt.Errorf("no admin key on disk at %s — is `opod up` running on this host? %w", localAdminKeyPath(cfg), errNoAdminKey)
 	}
-	listen := cfg.Listen
-	if listen == "" {
-		listen = ":8080"
-	}
-	url := "http://localhost" + listen + path
+	url := localLeaderURL(cfg) + path
 	var reader *bytes.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -269,7 +330,7 @@ func adminCallT(ctx context.Context, cfg *config.Config, method, path string, bo
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: timeout}
+	client := localLeaderClient(cfg, timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("admin call: %w (is opod up running?)", err)

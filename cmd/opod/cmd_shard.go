@@ -117,16 +117,25 @@ func shardLs() {
 // Used for --tp/--pp, which mean something only to the vLLM sharding backend —
 // llama.cpp's RPC split is layer-wise and has no tensor dimension.
 func extractIntFlag(args []string, name string) (rest []string, val int) {
+	num := func(v string) int {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			// Read as 0 it meant "no split" and the command went on (T10.21).
+			die("--%s %q is not a whole number", name, v)
+		}
+		return n
+	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--"+name || a == "-"+name:
-			if i+1 < len(args) {
-				val, _ = strconv.Atoi(args[i+1])
-				i++
+			if i+1 >= len(args) {
+				die("--%s needs a number", name)
 			}
+			val = num(args[i+1])
+			i++
 		case strings.HasPrefix(a, "--"+name+"="):
-			val, _ = strconv.Atoi(strings.TrimPrefix(a, "--"+name+"="))
+			val = num(strings.TrimPrefix(a, "--"+name+"="))
 		default:
 			rest = append(rest, a)
 		}

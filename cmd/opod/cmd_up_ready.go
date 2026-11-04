@@ -22,15 +22,7 @@ import (
 )
 
 func printReady(cfg *config.Config, adminKey string) {
-	listen := cfg.Listen
-	if listen == "" {
-		listen = ":8080"
-	}
-	// ":8080" → http://localhost:8080; "127.0.0.1:8080" → http://127.0.0.1:8080
-	base := "http://" + listen
-	if strings.HasPrefix(listen, ":") {
-		base = "http://localhost" + listen
-	}
+	base := localLeaderURL(cfg)
 	if cfg.ExternalURL != "" {
 		base = cfg.ExternalURL
 	}

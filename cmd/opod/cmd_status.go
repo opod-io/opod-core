@@ -22,11 +22,7 @@ func cmdStatus(args []string) {
 	}
 	_, asJSON := extractJSONFlag(args)
 	cfg := loadConfigOrExit()
-	addr := cfg.Listen
-	if addr == "" {
-		addr = ":8080"
-	}
-	url := "http://localhost" + addr + "/healthz"
+	url := localLeaderURL(cfg) + "/healthz"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -60,7 +56,7 @@ func cmdStatus(args []string) {
 	}{}
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := localLeaderClient(cfg, 3*time.Second).Do(req)
 	if err != nil {
 		out.ControlPlane.Error = err.Error()
 		if asJSON {

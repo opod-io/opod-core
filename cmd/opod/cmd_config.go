@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 
 	"github.com/opod-io/opod/internal/config"
@@ -62,7 +61,7 @@ func cmdConfig(args []string) {
 // directory whose config.yaml was never opened. Replicate the loader's
 // resolution instead of deriving the path from the loaded config.
 func loadedConfigPath() string {
-	return filepath.Join(config.Default().DataDir, "config.yaml")
+	return config.DefaultPath()
 }
 
 func configShow(args []string) {

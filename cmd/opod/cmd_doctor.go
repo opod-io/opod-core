@@ -107,15 +107,19 @@ func cmdDoctor(args []string) {
 		warn(os.Stdout, "  → sign the file (`minisign -S -m <file>`), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
 	} else {
 		warn(os.Stdout, "catalog: %v", err)
-		warn(os.Stdout, "  → reinstall to drop the bundled catalog at ~/.opod/catalog,")
-		warn(os.Stdout, "    or set OPOD_CATALOG_DIR to a directory of *.yaml entries")
+		// The catalog is embedded in the binary (from the SDK); what can be
+		// wrong is a file a user added beside it (T10.21: the hint named a
+		// bundled directory that no longer exists).
+		warn(os.Stdout, "  → the built-in catalog is in this binary: check the files you added in OPOD_CATALOG_DIR (default ~/.opod/catalog), or unset it")
 	}
 
 	fmt.Println()
 }
 
 func portAvailable(addr string) bool {
-	if !strings.HasPrefix(addr, ":") {
+	// A bare port ("8080") gets its colon; a host:port is used as it is
+	// (T10.21: "127.0.0.1:8080" became ":127.0.0.1:8080" and read as in use).
+	if !strings.Contains(addr, ":") {
 		addr = ":" + addr
 	}
 	ln, err := net.Listen("tcp", addr)

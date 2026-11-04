@@ -41,61 +41,7 @@ func cmdToken(args []string) {
 	}
 	switch args[0] {
 	case "create":
-		name := "default"
-		scope := "user"
-		var expiresAt time.Time
-		for i := 1; i < len(args); i++ {
-			a := args[i]
-			switch a {
-			case "--admin":
-				scope = "admin"
-			case "--node":
-				scope = "node"
-				if name == "default" {
-					name = "node-join"
-				}
-			case "--ttl":
-				if i+1 >= len(args) {
-					die("--ttl requires a duration (e.g. 30m, 2h, 7d)")
-				}
-				d, err := parseFlexibleDuration(args[i+1])
-				if err != nil {
-					die("invalid --ttl: %v", err)
-				}
-				expiresAt = time.Now().Add(d)
-				i++
-			case "--expires-at":
-				if i+1 >= len(args) {
-					die("--expires-at requires YYYY-MM-DD or RFC3339")
-				}
-				t, err := parseFlexibleDate(args[i+1])
-				if err != nil {
-					die("invalid --expires-at: %v", err)
-				}
-				expiresAt = t
-				i++
-			default:
-				if strings.HasPrefix(a, "--ttl=") {
-					d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--ttl="))
-					if err != nil {
-						die("invalid --ttl: %v", err)
-					}
-					expiresAt = time.Now().Add(d)
-					continue
-				}
-				if strings.HasPrefix(a, "--expires-at=") {
-					t, err := parseFlexibleDate(strings.TrimPrefix(a, "--expires-at="))
-					if err != nil {
-						die("invalid --expires-at: %v", err)
-					}
-					expiresAt = t
-					continue
-				}
-				if name == "default" {
-					name = a
-				}
-			}
-		}
+		name, scope, expiresAt := parseTokenCreate(args[1:])
 		tokenCreate(name, scope, expiresAt)
 	case "expire":
 		if len(args) < 2 {
@@ -181,4 +127,66 @@ func tokenRevoke(id string) {
 		die("revoke: %v", err)
 	}
 	ok(os.Stdout, "revoked %s", id)
+}
+
+// parseTokenCreate reads `opod token create`'s arguments: the name, the scope
+// and the expiry.
+func parseTokenCreate(args []string) (name, scope string, expiresAt time.Time) {
+	name, scope = "default", "user"
+	named := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--admin":
+			scope = "admin"
+		case "--node":
+			scope = "node"
+		case "--ttl":
+			if i+1 >= len(args) {
+				die("--ttl requires a duration (e.g. 30m, 2h, 7d)")
+			}
+			d, err := parseFlexibleDuration(args[i+1])
+			if err != nil {
+				die("invalid --ttl: %v", err)
+			}
+			expiresAt = time.Now().Add(d)
+			i++
+		case "--expires-at":
+			if i+1 >= len(args) {
+				die("--expires-at requires YYYY-MM-DD or RFC3339")
+			}
+			t, err := parseFlexibleDate(args[i+1])
+			if err != nil {
+				die("invalid --expires-at: %v", err)
+			}
+			expiresAt = t
+			i++
+		default:
+			if strings.HasPrefix(a, "--ttl=") {
+				d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--ttl="))
+				if err != nil {
+					die("invalid --ttl: %v", err)
+				}
+				expiresAt = time.Now().Add(d)
+				continue
+			}
+			if strings.HasPrefix(a, "--expires-at=") {
+				t, err := parseFlexibleDate(strings.TrimPrefix(a, "--expires-at="))
+				if err != nil {
+					die("invalid --expires-at: %v", err)
+				}
+				expiresAt = t
+				continue
+			}
+			if !named {
+				name, named = a, true
+			}
+		}
+	}
+	// A node key with no name is "node-join"; a name given before or after
+	// --node is kept (T10.21: `--node NAME` dropped NAME).
+	if scope == "node" && !named {
+		name = "node-join"
+	}
+	return name, scope, expiresAt
 }

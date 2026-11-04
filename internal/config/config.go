@@ -299,8 +299,15 @@ func Default() *Config {
 	}
 }
 
+// DefaultPath is the file Load("") reads: config.yaml in the DEFAULT data
+// dir, resolved before any yaml or env override — so a data_dir set inside
+// the file, or OPOD_DATA_DIR, never moves the file that was read. `opod
+// config path` and the config view's edit hint print this one path (T10.21:
+// the hint named <data_dir>/config.yaml after the overrides).
+func DefaultPath() string { return filepath.Join(Default().DataDir, "config.yaml") }
+
 // Load reads config from path (if it exists), then overlays environment variables.
-// If path is empty, ~/.opod/config.yaml is tried.
+// If path is empty, DefaultPath is tried.
 func Load(path string) (*Config, error) {
 	cfg := Default()
 	// Pristine copy of the defaults so we can tell "still the eagerly
@@ -308,7 +315,7 @@ func Load(path string) (*Config, error) {
 	defaults := Default()
 
 	if path == "" {
-		path = filepath.Join(cfg.DataDir, "config.yaml")
+		path = DefaultPath()
 	}
 
 	if data, err := os.ReadFile(path); err == nil {

@@ -25,7 +25,7 @@ import (
 func cmdUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.yaml (default: ~/.opod/config.yaml)")
-	autoPull := fs.Bool("auto-pull", true, "pull the default model on first run when pull_default_model is on (off by default; OPOD_PULL_DEFAULT_MODEL=1)")
+	autoPull := fs.Bool("auto-pull", true, "allow the first run to pull the default model; it pulls only when pull_default_model is on, which is off by default (OPOD_PULL_DEFAULT_MODEL=1)")
 	noWizard := fs.Bool("no-wizard", false, "skip the interactive first-run prompt; combine with --auto-pull=false for a fully quiet boot")
 	unloadOnExit := fs.Bool("unload-on-exit", os.Getenv("OPOD_UNLOAD_ON_EXIT") == "1",
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (OPOD_UNLOAD_ON_EXIT=1 sets the default)")

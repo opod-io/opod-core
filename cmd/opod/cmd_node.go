@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -172,6 +173,11 @@ func throughLeader(cfg *config.Config, method, path string) (took bool, err erro
 	resp, adminErr := adminCall(context.Background(), cfg, method, path, nil)
 	if adminErr == nil {
 		return true, nil
+	}
+	// No admin key here reached nobody — but a leader may still run, and
+	// writing its store under it is the one thing not to do (T10.21).
+	if errors.Is(adminErr, errNoAdminKey) && leaderAnswers(cfg) {
+		return true, fmt.Errorf("a leader answers at %s but this host has no admin key (%s), so the change cannot go through it; run this on the host where `opod up` wrote the key", localLeaderURL(cfg), localAdminKeyPath(cfg))
 	}
 	if len(resp) > 0 {
 		return true, fmt.Errorf("%v: %s", adminErr, strings.TrimSpace(string(resp)))

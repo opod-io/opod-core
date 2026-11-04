@@ -54,7 +54,7 @@ func ViewOf(c *Config) View {
 		// OpenAI-compatible hosted gateways. Status is the presence of the API
 		// key (the URL has a sensible default per vendor and is rarely overridden).
 		Egress:   map[string]any{},
-		EditHint: "Edit " + c.DataDir + "/config.yaml or set OPOD_* env vars, then restart opod.",
+		EditHint: "Edit " + DefaultPath() + " or set OPOD_* env vars, then restart opod.",
 	}
 }
 

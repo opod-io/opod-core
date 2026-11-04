@@ -200,7 +200,7 @@ Commands:
   fetch --snapshot <repo>[@rev]
                            The same for a safetensors model: the file set vLLM / SGLang loads, under <dir>/<repo>@<rev>/
   batch run                Send an OpenAI batch file (JSONL) to an OpenAI URL at bounded concurrency; resumable, never sends a line twice
-  cache ls|prune           List the node's weight cache, or remove what no plan references (never a file it did not fetch; --apply to delete)
+  cache ls|prune|kv-prune  List the node's weight cache, remove what no plan references (never a file it did not fetch; --apply to delete), or bound a disk KV tier directory (kv-prune)
   image ls                 The container images opod publishes: engine, vendor, platforms, gang, proven (--json)
   image show <image>       One image: what the node must provide, its limits, how to pin it
   image recommend <model>  Which image serves a catalog model, per accelerator vendor (--vendor, --json)

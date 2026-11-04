@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **CLI parsing and help fixes.** `opod token create --node NAME` keeps `NAME` (it became `node-join`). `--tp`, `--pp`
+  and `--priority` refuse a value that is not a number (it read as `0`). The admin calls, `status` and the ready banner
+  reach the leader at its own `listen` host and over `https` when it serves TLS (they built `http://localhost<listen>`).
+  `doctor` reads a free `host:port` as free. A `node drain/undrain/remove` on a host with no `admin.key` no longer writes
+  the store while a leader answers. `--help` names `cache kv-prune`; `--auto-pull`'s help states its real default; the
+  doctor's catalog hint and the config view's edit hint name the right places.
 - **The auth snapshot updates a key it already holds, and refuses an expiry it cannot read.** A known `k_cp_` id kept
   the hash, scope and expiry it was first written with, so a rotation or a moved expiry under the same id did nothing.
   It now follows the file and counts as `updated`. An `expiresAt` that is not RFC 3339 used to mean "never expires";
