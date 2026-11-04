@@ -27,6 +27,7 @@ func (f *fakeKeyStore) GetByID(context.Context, string) (*store.APIKey, error)  
 func (f *fakeKeyStore) List(context.Context) ([]store.APIKey, error)             { return nil, nil }
 func (f *fakeKeyStore) Revoke(context.Context, string) error                     { return nil }
 func (f *fakeKeyStore) UpdateExpiresAt(context.Context, string, time.Time) error { return nil }
+func (f *fakeKeyStore) Update(context.Context, store.APIKey) error               { return nil }
 
 func TestMiddleware_ExpiredKeyReturns401KeyExpired(t *testing.T) {
 	expired := &store.APIKey{

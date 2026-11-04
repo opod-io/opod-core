@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/config"
@@ -112,5 +113,51 @@ func TestAuthSnapshotSync(t *testing.T) {
 		if c := code(plainA); c != http.StatusOK {
 			t.Fatalf("call %d on key a: %d — the leader must enforce no per-key limit (ADR-112)", i+1, c)
 		}
+	}
+}
+
+// PLAN T10.19: a key the leader already holds follows the snapshot under its
+// id — a rotated hash and a moved expiry take effect — and an expiry nobody
+// can read is refused, never read as "never expires".
+func TestAuthSnapshotUpdatesAKnownKeyAndRefusesABadExpiry(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := NewServer(cfg, st, &stubLeaderEngine{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	oldPlain, newPlain := "sk-orc-placeholder-old", "sk-orc-placeholder-new"
+	apply := func(rev string, keys ...SnapshotKey) {
+		t.Helper()
+		if err := srv.applyAuthSnapshot(ctx, &AuthSnapshot{Revision: rev, RequireKeys: true, Keys: keys}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply("r1", SnapshotKey{ID: "a", Name: "team-a", Hash: auth.Hash(oldPlain), ExpiresAt: "2030-01-01T00:00:00Z"})
+
+	// Rotate the hash and move the expiry under the same id.
+	apply("r2", SnapshotKey{ID: "a", Name: "team-a", Hash: auth.Hash(newPlain), ExpiresAt: "2031-06-01T00:00:00Z"})
+	if k, _ := st.APIKeys().GetByHash(ctx, auth.Hash(oldPlain)); k != nil {
+		t.Fatal("the old hash still authenticates after the rotation")
+	}
+	k, _ := st.APIKeys().GetByHash(ctx, auth.Hash(newPlain))
+	if k == nil || k.ID != snapshotKeyID("a") || !k.ExpiresAt.Equal(time.Date(2031, 6, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("the rotated key: %+v", k)
+	}
+
+	// A bad expiry: a new key is not created, a known key keeps its row.
+	apply("r3",
+		SnapshotKey{ID: "a", Name: "team-a", Hash: auth.Hash(newPlain), ExpiresAt: "next tuesday"},
+		SnapshotKey{ID: "b", Name: "team-b", Hash: auth.Hash("sk-orc-placeholder-b"), ExpiresAt: "31/12/2030"})
+	if k, _ := st.APIKeys().GetByHash(ctx, auth.Hash("sk-orc-placeholder-b")); k != nil {
+		t.Fatalf("a key with an unreadable expiry was created: %+v", k)
+	}
+	k, _ = st.APIKeys().GetByHash(ctx, auth.Hash(newPlain))
+	if k == nil || k.Revoked || !k.ExpiresAt.Equal(time.Date(2031, 6, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("a known key with an unreadable new expiry must keep its row: %+v", k)
 	}
 }

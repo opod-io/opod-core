@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **The auth snapshot updates a key it already holds, and refuses an expiry it cannot read.** A known `k_cp_` id kept
+  the hash, scope and expiry it was first written with, so a rotation or a moved expiry under the same id did nothing.
+  It now follows the file and counts as `updated`. An `expiresAt` that is not RFC 3339 used to mean "never expires";
+  the entry is now refused, logged and counted (`refused` in `auth.updated`).
 - **`opod up` prints the admin key only on the start that creates it.** Every later start printed it again from
   `admin.key`, so a leader under systemd or Kubernetes wrote its admin key into its log on every restart. A later start
   now prints where the key is saved.

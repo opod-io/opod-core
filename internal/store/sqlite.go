@@ -84,6 +84,9 @@ type APIKeyStore interface {
 	// expiry ("never expires"); a past time effectively expires the
 	// key immediately.
 	UpdateExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
+	// Update rewrites a key's hash, name, scope and expiry under its id —
+	// how a manager's auth snapshot rotates a key it keeps the id of.
+	Update(ctx context.Context, k APIKey) error
 }
 
 type Model struct {

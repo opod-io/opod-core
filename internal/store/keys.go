@@ -106,6 +106,19 @@ func (s *sqliteAPIKeys) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *sqliteAPIKeys) Update(ctx context.Context, k APIKey) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET hash = ?, name = ?, scope = ?, expires_at = ? WHERE id = ?`,
+		k.Hash, k.Name, k.Scope, unixOrZero(k.ExpiresAt), k.ID)
+	if err != nil {
+		return fmt.Errorf("update api_key %s: %w", k.ID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("api_key %s not found", k.ID)
+	}
+	return nil
+}
+
 func (s *sqliteAPIKeys) UpdateExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE api_keys SET expires_at = ? WHERE id = ?`,

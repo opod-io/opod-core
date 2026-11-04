@@ -179,7 +179,7 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	}
 	want := map[string]bool{}
 	ranks := map[string]keyRank{}
-	created, updated, revoked := 0, 0, 0
+	created, updated, revoked, refused := 0, 0, 0, 0
 	for _, sk := range doc.Keys {
 		if sk.ID == "" || sk.Hash == "" {
 			continue
@@ -198,7 +198,16 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 		}
 		var exp time.Time
 		if sk.ExpiresAt != "" {
-			exp, _ = time.Parse(time.RFC3339, sk.ExpiresAt)
+			t, perr := time.Parse(time.RFC3339, sk.ExpiresAt)
+			if perr != nil {
+				// An expiry nobody can read is refused, never read as "never
+				// expires" (PLAN T10.19): a new key is not created, and a key
+				// this leader holds keeps the row it has.
+				s.log.Warn("auth snapshot: key refused — expiresAt is not RFC 3339", "id", id, "expiresAt", sk.ExpiresAt, "err", perr)
+				refused++
+				continue
+			}
+			exp = t
 		}
 		cur, ok := byID[id]
 		if !ok {
@@ -214,7 +223,16 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 			// A revoked row cannot come back; the manager mints a new id instead.
 			continue
 		}
-
+		// A key the leader already holds follows the snapshot (PLAN T10.19): a
+		// rotated hash, a new scope or name, a moved expiry — all under one id.
+		if cur.Hash != sk.Hash || cur.Name != sk.Name || cur.Scope != scope || !cur.ExpiresAt.Equal(exp) {
+			cur.Hash, cur.Name, cur.Scope, cur.ExpiresAt = sk.Hash, sk.Name, scope, exp
+			if err := keys.Update(ctx, cur); err != nil {
+				s.log.Warn("auth snapshot: update key", "id", id, "err", err)
+				continue
+			}
+			updated++
+		}
 	}
 	for _, k := range existing {
 		if strings.HasPrefix(k.ID, SnapshotKeyPrefix) && !k.Revoked && !want[k.ID] && !tomb[k.ID] {
@@ -238,12 +256,12 @@ func (s *Server) applyAuthSnapshot(ctx context.Context, doc *AuthSnapshot) error
 	s.authf.revoked = len(tomb)
 	s.authf.requireKeys.Store(doc.RequireKeys)
 	s.authf.issuedAt.Store(s.parseIssuedAt(doc.IssuedAt))
-	if changed || created+updated+revoked > 0 {
+	if changed || created+updated+revoked+refused > 0 {
 		s.log.Info("auth snapshot applied", "revision", doc.Revision, "requireKeys", doc.RequireKeys, "keys", len(doc.Keys),
-			"created", created, "updated", updated, "revoked", revoked, "revokedKeys", len(tomb),
+			"created", created, "updated", updated, "revoked", revoked, "refused", refused, "revokedKeys", len(tomb),
 			"nodeMtls", s.nodeMTLS().Mode, "revokedCerts", len(s.nodeMTLS().Revoked))
 		s.logEvent("auth.updated", doc.Revision, map[string]any{"requireKeys": doc.RequireKeys, "keys": len(doc.Keys),
-			"created": created, "updated": updated, "revoked": revoked, "revokedKeys": len(tomb)})
+			"created": created, "updated": updated, "revoked": revoked, "refused": refused, "revokedKeys": len(tomb)})
 	}
 	return nil
 }
