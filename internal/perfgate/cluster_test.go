@@ -111,17 +111,15 @@ func startCluster(t *testing.T, bin, engineURL string) cluster {
 	t.Helper()
 	leaderAddr, workerAddr := freeAddr(t), freeAddr(t)
 	leaderDir, workerDir := t.TempDir(), t.TempDir()
-	quiet := []string{"OPOD_NO_UPDATE_CHECK=1"}
-
 	// The leader is router-only. Its own engine points at a closed port so it
 	// can never answer locally — arm B must cross the worker hop, as it does in
 	// a cluster.
-	leader := start(t, "leader", bin, append(quiet,
-		"OPOD_DATA_DIR="+leaderDir,
-		"OPOD_LISTEN="+leaderAddr,
+	leader := start(t, "leader", bin, []string{
+		"OPOD_DATA_DIR=" + leaderDir,
+		"OPOD_LISTEN=" + leaderAddr,
 		"OPOD_REQUIRE_KEYS=false",
 		"OPOD_OLLAMA_ENDPOINT=http://127.0.0.1:1",
-	), "up", "--no-wizard", "--auto-pull=false")
+	}, "up", "--no-wizard", "--auto-pull=false")
 	leaderURL := "http://" + leaderAddr
 	waitFor(t, leader, 30*time.Second, "leader /healthz", func() bool {
 		resp, err := http.Get(leaderURL + "/healthz")
@@ -133,7 +131,7 @@ func startCluster(t *testing.T, bin, engineURL string) cluster {
 	})
 
 	mint := exec.Command(bin, "token", "create", "perfgate", "--node")
-	mint.Env = append(os.Environ(), append(quiet, "OPOD_DATA_DIR="+leaderDir)...)
+	mint.Env = append(os.Environ(), "OPOD_DATA_DIR="+leaderDir)
 	out, err := mint.CombinedOutput()
 	if err != nil {
 		t.Fatalf("opod token create --node: %v\n%s", err, out)
@@ -143,12 +141,12 @@ func startCluster(t *testing.T, bin, engineURL string) cluster {
 		t.Fatalf("no token in `opod token create` output:\n%s", out)
 	}
 
-	worker := start(t, "worker", bin, append(quiet,
-		"OPOD_DATA_DIR="+workerDir,
+	worker := start(t, "worker", bin, []string{
+		"OPOD_DATA_DIR=" + workerDir,
 		"OPOD_ENGINE=vllm",
-		"OPOD_VLLM_ENDPOINT="+engineURL,
-		"OPOD_ADVERTISE_ADDR="+workerAddr,
-	), "join", leaderURL+"?token="+token)
+		"OPOD_VLLM_ENDPOINT=" + engineURL,
+		"OPOD_ADVERTISE_ADDR=" + workerAddr,
+	}, "join", leaderURL+"?token="+token)
 
 	// Placed means a streamed request through the leader comes back with
 	// tokens: the worker registered, heartbeat its model and the router dials it.

@@ -87,30 +87,7 @@ var (
 		Name: "opod_router_sticky_hits_total",
 		Help: "Per-(user_id, model) session stickiness outcomes (hit|miss|expired). 'hit' = the previously-pinned worker served this request; 'miss' = no fresh pin existed; 'expired' = pin existed but the TTL had passed.",
 	}, []string{"outcome"})
-
-	callbackSentTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "opod_callback_sent_total",
-		Help: "Observability callback delivery attempts per sink and outcome (ok | failed | dropped | exhausted | cancelled).",
-	}, []string{"sink", "outcome"})
-
-	callbackQueueDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "opod_callback_queue_depth",
-		Help: "Per-sink callback queue depth (events buffered but not yet sent).",
-	}, []string{"sink"})
 )
-
-// ObserveCallback records a delivery attempt for a sink.
-//
-// outcome ∈ {"ok", "failed", "dropped", "exhausted", "cancelled"}.
-func ObserveCallback(sink, outcome string) {
-	callbackSentTotal.WithLabelValues(sink, outcome).Inc()
-}
-
-// SetCallbackQueueDepth updates the per-sink queue gauge after a send
-// or enqueue.
-func SetCallbackQueueDepth(sink string, n int) {
-	callbackQueueDepth.WithLabelValues(sink).Set(float64(n))
-}
 
 var (
 	cacheHitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{

@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **Leftovers removed or wired.** The `opod_callback_*` metrics, which nothing has emitted since callbacks left core,
+  are gone. The config view names the response cache's fields in snake case and drops its empty `egress` object. A
+  default model is recorded under the engine that serves it, not always `ollama:`. The SGLang NVIDIA and AMD images
+  carry `gang: sglang` (SGLang's own launcher), so `opod image recommend` offers them for a model SGLang must split.
 - **CLI parsing and help fixes.** `opod token create --node NAME` keeps `NAME` (it became `node-join`). `--tp`, `--pp`
   and `--priority` refuse a value that is not a number (it read as `0`). The admin calls, `status` and the ready banner
   reach the leader at its own `listen` host and over `https` when it serves TLS (they built `http://localhost<listen>`).

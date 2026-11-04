@@ -30,6 +30,10 @@ const (
 
 	GangRPC = "rpc" // llama.cpp RPC parts
 	GangRay = "ray" // vLLM multi-node
+	// GangSGLang is SGLang's own distributed launcher (--dist-init-addr,
+	// --nnodes, --node-rank): rank 0 serves the group (T10.22: the field had
+	// no value for it, so `image recommend` skipped SGLang for a sharded model).
+	GangSGLang = "sglang"
 )
 
 // Manifest is images.yaml.
@@ -143,8 +147,8 @@ func (i Image) validate() error {
 			return fmt.Errorf("%s: weights %q (want %s or %s)", i.Name, w, WeightsGGUF, WeightsSafetensors)
 		}
 	}
-	if i.Gang != "" && i.Gang != GangRPC && i.Gang != GangRay {
-		return fmt.Errorf("%s: gang %q (want %s or %s)", i.Name, i.Gang, GangRPC, GangRay)
+	if i.Gang != "" && i.Gang != GangRPC && i.Gang != GangRay && i.Gang != GangSGLang {
+		return fmt.Errorf("%s: gang %q (want %s, %s or %s)", i.Name, i.Gang, GangRPC, GangRay, GangSGLang)
 	}
 	return nil
 }

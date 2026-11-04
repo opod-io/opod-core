@@ -88,10 +88,8 @@ func MiddlewareFn(keys store.APIKeyStore, requireKeys func() bool) func(http.Han
 				// A caller who presents a valid key is still that key's caller
 				// when keys are not required: its usage rows carry the key, which
 				// is what per-key showback reads. Without this every request to
-				// an endpoint with optional keys was unattributed — on the
-				// design-partner cell no request row carried a key from
-				// 2026-10-19 on (PLAN T9.31). A key that does not resolve is
-				// ignored, as before: nothing is refused here.
+				// an endpoint with optional keys would be unattributed. A key
+				// that does not resolve is ignored: nothing is refused here.
 				if key := validKey(r, keys); key != nil {
 					ctx = context.WithValue(ctx, ctxKeyAPIKey, key)
 				}

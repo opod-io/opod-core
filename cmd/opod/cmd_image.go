@@ -187,9 +187,10 @@ func imageShow(m images.Manifest, args []string, asJSON bool) {
 	field("weights", strings.Join(img.Weights, ", "))
 	if img.Role == images.RoleWorker {
 		field("gang", map[string]string{
-			"":             "one node only",
-			images.GangRPC: "rpc — a part of a llama.cpp RPC split across nodes (label io.opod.llamacpp.rpc=true)",
-			images.GangRay: "ray — vLLM multi-node",
+			"":                "one node only",
+			images.GangRPC:    "rpc — a part of a llama.cpp RPC split across nodes (label io.opod.llamacpp.rpc=true)",
+			images.GangRay:    "ray — vLLM multi-node",
+			images.GangSGLang: "sglang — SGLang's own multi-node launcher; rank 0 serves the group",
 		}[img.Gang])
 	}
 	field("proven", map[bool]string{true: "yes — has served on this hardware", false: "no — built and published, not yet run on this hardware"}[img.Proven])

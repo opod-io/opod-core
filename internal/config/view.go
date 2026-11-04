@@ -14,7 +14,6 @@ type View struct {
 	Storage       map[string]string `json:"storage"`
 	Auth          map[string]any    `json:"auth"`
 	Observability map[string]any    `json:"observability"`
-	Egress        map[string]any    `json:"egress"`
 	EditHint      string            `json:"edit_hint"`
 }
 
@@ -51,9 +50,6 @@ func ViewOf(c *Config) View {
 			"otlp_status":    otlpStatus(c.Observability.OTLPEndpoint),
 			"response_cache": c.Observability.ResponseCache,
 		},
-		// OpenAI-compatible hosted gateways. Status is the presence of the API
-		// key (the URL has a sensible default per vendor and is rarely overridden).
-		Egress:   map[string]any{},
 		EditHint: "Edit " + DefaultPath() + " or set OPOD_* env vars, then restart opod.",
 	}
 }

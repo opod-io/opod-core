@@ -189,6 +189,7 @@ images:
     dockerfile: images/worker-sglang/Dockerfile
     base: lmsysorg/sglang:v0.5.21-cu130
     weights: [safetensors]
+    gang: sglang
     proven: true
     hardware: NVIDIA GPUs (CUDA)
     families: [nvidia:turing, nvidia:ampere, nvidia:ada, nvidia:hopper, nvidia:blackwell]
@@ -196,7 +197,7 @@ images:
       - NVIDIA driver 580 or newer (the base is CUDA 13) and the NVIDIA container runtime on the node
     summary: SGLang on CUDA. Safetensors models from a Hugging Face repo; multi-node gangs via SGLang's own launcher.
     notes:
-      - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
+      - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group (gang sglang).
       - Served on an NVIDIA card 2026-09-19; the row had said proven false until 2026-09-21.
       - 'SGLang v0.5.21 cannot run a pipeline (pp > 1) of a Llama-family model with tied word embeddings (LlamaForCausalLM and the classes that reuse it - Mistral, Phi3, InternLM3, IQuestCoder): the last stage has no output layer and crashes in _compute_lm_head. Core reads the model config.json and refuses that gang by name (sglang_pp_tied_llama) before forming it; use tensor parallelism, one stage, or vLLM. Qwen2 with tied embeddings serves on pp=2.'
       - 'KV connector (read 2026-10-23): carries nixl (a NIXL agent starts and lists the UCX backend) and mooncake. A prefill/decode pair has not been run through it.'
@@ -209,6 +210,7 @@ images:
     dockerfile: images/worker-sglang/Dockerfile
     base: lmsysorg/sglang:v0.5.19-rocm700-mi30x
     weights: [safetensors]
+    gang: sglang
     proven: false
     hardware: AMD Instinct MI200 / MI300 only
     families: [amd:cdna]
@@ -218,7 +220,7 @@ images:
     notes:
       - Instinct only - upstream has no RDNA build, so a Radeon card serves through llama.cpp or vLLM instead. MI350 needs the -mi35x base (rebuild with SGLANG_AMD_BASE=).
       - 'Confirmed on a Radeon RX 7900 XTX 2026-09-19: the worker joins, SGLang starts and its scheduler dies with "HIP error: invalid device function" - no kernel in the image is compiled for RDNA.'
-      - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group. The gang field below has no value for this scheme - it accepts only rpc and ray - so it reads blank here, which is a gap in this manifest and not in the runtime.
+      - Multi-node gangs work via SGLang's own distributed launcher (--dist-init-addr/--nnodes/--node-rank); rank 0 serves the group (gang sglang).
 
   - name: opod-worker-sglang-intel
     role: worker

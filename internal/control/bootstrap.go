@@ -130,7 +130,9 @@ func EnsureDefaultModel(ctx context.Context, cfg *config.Config, cat []models.En
 	record := func() {
 		_ = st.Models().Upsert(ctx, store.Model{
 			ID: entry.ID, CatalogID: entry.ID,
-			Source: "ollama:" + engineModelName, Status: "ready",
+			// <engine>:<the engine's name for it>, as every other row records it
+			// (T10.22: "ollama:" was written whatever the engine was).
+			Source: eng.Name() + ":" + engineModelName, Status: "ready",
 			SizeBytes: entry.SizeBytes, InstalledAt: time.Now(),
 		})
 	}

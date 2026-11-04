@@ -152,6 +152,16 @@ func TestRecommend(t *testing.T) {
 			skipped: []string{"one node only", "one node only", "one node only"},
 		},
 		{
+			// T10.22: SGLang gangs through its own launcher; with no gang value
+			// in the manifest a sharded SGLang entry was offered no image at all.
+			name: "a model split by SGLang gets the SGLang images that can gang",
+			entry: catalog.Entry{ID: "m", Source: hf, RecommendedEngines: []string{"sglang"},
+				Sharding: catalog.Sharding{Required: true, Engine: "sglang"}},
+			picks:   []string{"opod-worker-sglang-nvidia", "opod-worker-sglang-amd"},
+			all:     2,
+			skipped: []string{"one node only"},
+		},
+		{
 			name: "a model split by llama.cpp is not offered to another engine",
 			entry: catalog.Entry{ID: "m", Source: catalog.Source{Type: "file", Path: "/models/m.gguf"}, RecommendedEngines: []string{"llamacpp", "vllm"},
 				Sharding: catalog.Sharding{Required: true, Engine: "llamacpp"}},

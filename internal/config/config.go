@@ -244,12 +244,6 @@ type ObservabilityConfig struct {
 	// zero overhead). Set via OPOD_OTLP_ENDPOINT env or this YAML key.
 	OTLPEndpoint string `yaml:"otlp_endpoint"`
 
-	// Callbacks ship usage / audit / fallback events to external
-	// observability sinks (webhooks, Langfuse, etc.). Each entry runs
-	// in its own goroutine with a bounded queue — a slow receiver
-	// can't stall the gateway. Drops on overflow are counted via
-	// opod_callback_sent_total{outcome="dropped"}.
-
 	// ResponseCache stores deterministic responses (embeddings today;
 	// chat completions to follow). Disabled when Enabled=false.
 	ResponseCache ResponseCacheConfig `yaml:"response_cache"`
@@ -257,10 +251,10 @@ type ObservabilityConfig struct {
 
 // ResponseCacheConfig configures the response cache.
 type ResponseCacheConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	Driver            string `yaml:"driver"`              // memory | sqlite
-	MaxEntries        int    `yaml:"max_entries"`         // memory only; 0 = 1000
-	DefaultTTLSeconds int    `yaml:"default_ttl_seconds"` // 0 = 24h
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	Driver            string `yaml:"driver" json:"driver"`                           // memory | sqlite
+	MaxEntries        int    `yaml:"max_entries" json:"max_entries"`                 // memory only; 0 = 1000
+	DefaultTTLSeconds int    `yaml:"default_ttl_seconds" json:"default_ttl_seconds"` // 0 = 24h
 }
 
 // Default returns a Config populated with safe defaults for a single-node setup.
