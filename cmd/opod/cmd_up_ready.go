@@ -64,25 +64,7 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println(`      -H 'Content-Type: application/json' \`)
 		fmt.Printf("      -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'\n", cfg.Router.DefaultModel)
 	} else {
-		// Returning user: a key already lives in the DB. Re-display it from
-		// ~/.opod/admin.key if we still have it on disk so the operator
-		// doesn't have to dig — that file is where `opod connect` reads
-		// from too. If it's missing (older install, deleted, multi-host),
-		// point at `opod token create` rather than silently dropping the
-		// dashboard/curl hints.
-		saved := readLocalAdminKey(cfg)
-		fmt.Println()
-		if saved != "" {
-			fmt.Printf("  Admin API key (from %s):\n", localAdminKeyPath(cfg))
-			fmt.Printf("    %s\n", saved)
-			fmt.Println("    →  Mint another admin key:  opod token create ops --admin")
-			fmt.Println()
-		} else {
-			fmt.Printf("  Admin API key:  not saved on this host (%s missing).\n", localAdminKeyPath(cfg))
-			fmt.Println("    →  Mint a new one:  opod token create ops --admin")
-			fmt.Println("    →  Old keys can't be recovered (DB stores hashes only).")
-			fmt.Println()
-		}
+		printReturningAdminKey(os.Stdout, localAdminKeyPath(cfg), readLocalAdminKey(cfg) != "")
 		fmt.Println("  Wire up a tool:")
 		fmt.Println("    opod connect cursor        # or: aider, continue, zed, …")
 		fmt.Println("    opod connect --list        # see all supported clients")
@@ -215,4 +197,22 @@ func isInteractiveStdin() bool {
 // engine health probe fails.
 func engineStartHint(engineName string) string {
 	return engines.StartHint(engineName)
+}
+
+// printReturningAdminKey is the banner's admin-key lines for a leader whose
+// key already exists. It says WHERE the key is, never the key: under systemd
+// or Kubernetes stdout is a log, and printing the key on every start put it
+// in every log line it ever reached (PLAN T10.17). The key is printed once,
+// by the start that created it.
+func printReturningAdminKey(w io.Writer, path string, saved bool) {
+	fmt.Fprintln(w)
+	if saved {
+		fmt.Fprintf(w, "  Admin API key:  saved in %s (read it with: cat %s)\n", path, path)
+		fmt.Fprintln(w, "    →  Mint another admin key:  opod token create ops --admin")
+	} else {
+		fmt.Fprintf(w, "  Admin API key:  not saved on this host (%s missing).\n", path)
+		fmt.Fprintln(w, "    →  Mint a new one:  opod token create ops --admin")
+		fmt.Fprintln(w, "    →  Old keys can't be recovered (DB stores hashes only).")
+	}
+	fmt.Fprintln(w)
 }

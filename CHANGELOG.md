@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **`opod up` prints the admin key only on the start that creates it.** Every later start printed it again from
+  `admin.key`, so a leader under systemd or Kubernetes wrote its admin key into its log on every restart. A later start
+  now prints where the key is saved.
 - **`opod update` and `install.sh` never install a binary they could not verify.** With no `checksums.txt` for the
   release, both used to warn and install anyway; `install.sh` did the same with no `sha256sum` or `shasum` on the
   machine. Each now stops with what to do, and the installed binary stays as it was.

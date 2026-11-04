@@ -55,3 +55,20 @@ func TestNodeShowRedactsTheWorkerToken(t *testing.T) {
 		t.Fatalf("node show:\n%s", out)
 	}
 }
+
+// A second `opod up` on the same data dir prints no key material (T10.17):
+// the banner names the file the key is in, and never its contents.
+func TestReturningStartPrintsNoAdminKey(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/admin.key"
+	key := "sk-orc-placeholder-admin-0123456789"
+	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	printReturningAdminKey(&b, path, true)
+	out := b.String()
+	if strings.Contains(out, key) || strings.Contains(out, "sk-orc") || !strings.Contains(out, path) {
+		t.Fatalf("returning banner:\n%s", out)
+	}
+}
