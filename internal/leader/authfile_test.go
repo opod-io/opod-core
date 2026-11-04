@@ -1,12 +1,14 @@
 package leader
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,5 +161,35 @@ func TestAuthSnapshotUpdatesAKnownKeyAndRefusesABadExpiry(t *testing.T) {
 	k, _ = st.APIKeys().GetByHash(ctx, auth.Hash(newPlain))
 	if k == nil || k.Revoked || !k.ExpiresAt.Equal(time.Date(2031, 6, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("a known key with an unreadable new expiry must keep its row: %+v", k)
+	}
+}
+
+// PLAN T10.19's update must not churn: a manager re-issues the same snapshot
+// on a period, and a key with no expiry and one with an expiry, read back
+// from the store, must compare equal — no update, no log line, no event.
+func TestReapplyingTheSameSnapshotUpdatesNothing(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var logs bytes.Buffer
+	srv := NewServer(cfg, st, &stubLeaderEngine{}, nil, slog.New(slog.NewTextHandler(&logs, nil)), nil)
+	snap := &AuthSnapshot{Revision: "r1", RequireKeys: true, Keys: []SnapshotKey{
+		{ID: "a", Name: "no-expiry", Hash: auth.Hash("sk-orc-placeholder-a")},
+		{ID: "b", Name: "expires", Hash: auth.Hash("sk-orc-placeholder-b"), ExpiresAt: "2030-01-01T00:00:00Z"},
+	}}
+	if err := srv.applyAuthSnapshot(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	logs.Reset()
+	if err := srv.applyAuthSnapshot(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "auth snapshot applied") {
+		t.Fatalf("the same snapshot read twice logged a change:\n%s", logs.String())
 	}
 }

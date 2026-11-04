@@ -1,5 +1,10 @@
 package config
 
+import (
+	"net/url"
+	"regexp"
+)
+
 // View is the effective config as it may be shown: every secret redacted.
 // The leader serves it at GET /admin/v1/config, and `opod config show` prints
 // the same view when no leader answers — one view, so the CLI cannot print a
@@ -39,7 +44,7 @@ func ViewOf(c *Config) View {
 		},
 		Storage: map[string]string{
 			"type":       c.Storage.Type,
-			"dsn":        c.Storage.DSN,
+			"dsn":        RedactDSN(c.Storage.DSN),
 			"models_dir": c.Storage.ModelsDir,
 		},
 		Auth: map[string]any{
@@ -65,6 +70,22 @@ func otlpStatus(endpoint string) string {
 	}
 	return "configured → " + endpoint
 }
+
+// RedactDSN is a database DSN with its password replaced: a URL's userinfo
+// password (postgres://user:pass@host/db) or a key=value `password=` field.
+// A DSN with no password (a SQLite path) is returned as it is.
+func RedactDSN(dsn string) string {
+	if u, err := url.Parse(dsn); err == nil && u.User != nil {
+		if _, ok := u.User.Password(); ok {
+			u.User = url.UserPassword(u.User.Username(), "redacted")
+			return u.String()
+		}
+		return dsn
+	}
+	return dsnPassword.ReplaceAllString(dsn, "${1}redacted")
+}
+
+var dsnPassword = regexp.MustCompile(`(?i)(\bpassword\s*=\s*)('[^']*'|\S+)`)
 
 // Redact shows that a secret is set without showing it: "" stays "", a
 // short one is "set (redacted)", a longer one keeps its first 6 and last 4.

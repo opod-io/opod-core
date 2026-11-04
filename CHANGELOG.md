@@ -29,7 +29,8 @@ the last section.
   machine. Each now stops with what to do, and the installed binary stays as it was.
 - **`opod config show` no longer prints the admin and join tokens when no leader answers.** Its fallback said
   "secrets redacted" and then printed the whole config, both tokens in clear. It now prints the same redacted view the
-  leader serves at `/admin/v1/config` (moved to `internal/config`, `config.ViewOf`). **`opod node show`** prints the
+  leader serves at `/admin/v1/config` (moved to `internal/config`, `config.ViewOf`), and that view now replaces a
+  database DSN's password (`postgres://user:redacted@…`, `password=redacted`), which both used to print in clear. **`opod node show`** prints the
   worker token redacted (`sk-orc…` and its last four), not whole.
 - **A vLLM worker with a CPU tier reports its prefix-cache blocks again.** vLLM's offloading connector publishes its own
   `BlockStored` and `BlockRemoved` events for the host tier, with no token ids and no block size. One of them failed
