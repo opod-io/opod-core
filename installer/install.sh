@@ -280,7 +280,9 @@ download_binary() {
         exit 1
     fi
 
-    # Verify checksum (best-effort — older releases might not ship checksums.txt)
+    # Verify the checksum. A binary nobody can verify is never installed:
+    # no checksums.txt, no line for this artifact, no sha256 tool or a
+    # different digest all stop here (the Go updater refuses the same way).
     if curl -fsSL "$SUM_URL" -o "$tmp_dir/checksums.txt" 2>/dev/null; then
         # Prefer sha256sum (Linux coreutils), fall back to shasum (macOS).
         if command -v sha256sum >/dev/null 2>&1; then
@@ -291,8 +293,9 @@ download_binary() {
             sha_cmd=""
         fi
         if [ -z "$sha_cmd" ]; then
-            warn "neither sha256sum nor shasum is installed — CHECKSUM VERIFICATION SKIPPED"
-            warn "  the downloaded binary was NOT verified against checksums.txt"
+            err "neither sha256sum nor shasum is installed, so the download cannot be verified"
+            err "  install coreutils (sha256sum) or perl's shasum, then run this again"
+            exit 1
         else
             expected="$(grep "opod-${PLATFORM}.tar.gz" "$tmp_dir/checksums.txt" | awk '{print $1}')"
             if [ -z "$expected" ]; then
@@ -313,7 +316,9 @@ download_binary() {
             fi
         fi
     else
-        warn "checksums.txt not available for ${VERSION} — skipping verification"
+        err "checksums.txt could not be fetched for ${VERSION}: refusing to install a binary nobody can verify"
+        err "  ${SUM_URL}"
+        exit 1
     fi
 
     if ! tar -xzf "$tmp_dir/opod.tar.gz" -C "$tmp_dir"; then

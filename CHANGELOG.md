@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **`opod update` and `install.sh` never install a binary they could not verify.** With no `checksums.txt` for the
+  release, both used to warn and install anyway; `install.sh` did the same with no `sha256sum` or `shasum` on the
+  machine. Each now stops with what to do, and the installed binary stays as it was.
 - **`opod config show` no longer prints the admin and join tokens when no leader answers.** Its fallback said
   "secrets redacted" and then printed the whole config, both tokens in clear. It now prints the same redacted view the
   leader serves at `/admin/v1/config` (moved to `internal/config`, `config.ViewOf`). **`opod node show`** prints the

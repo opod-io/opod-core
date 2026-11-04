@@ -60,11 +60,19 @@ func LatestVersion() (string, error) {
 }
 
 // Install downloads the release artifact for version+platform, verifies its
-// sha256 against checksums.txt when the release ships one (missing file =
-// warn and proceed; present but unlisted artifact = refuse), extracts the
-// binary and renames it over target. report receives progress lines the CLI
-// prints. Errors that need sudo say exactly which command finishes the job.
+// sha256 against the release's checksums.txt, extracts the binary and renames
+// it over target. A binary that cannot be verified is never installed: a
+// missing or unreadable checksums.txt, an artifact it does not list, or a
+// digest that differs all refuse, and target is left untouched (it used to
+// warn and install anyway when the file was missing). report receives
+// progress lines the CLI prints. Errors that need sudo say exactly which
+// command finishes the job.
 func Install(version, platform, target string, report func(format string, a ...any)) error {
+	return installFrom(fmt.Sprintf("https://github.com/%s/releases/download/%s", Repo, version), version, platform, target, report)
+}
+
+// installFrom is Install against the release at base (tests serve a fake one).
+func installFrom(base, version, platform, target string, report func(format string, a ...any)) error {
 	if report == nil {
 		report = func(string, ...any) {}
 	}
@@ -75,7 +83,6 @@ func Install(version, platform, target string, report func(format string, a ...a
 	defer os.RemoveAll(tmpdir)
 
 	asset := fmt.Sprintf("opod-%s.tar.gz", platform)
-	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", Repo, version)
 
 	report("downloading %s/%s", version, asset)
 	tarPath := filepath.Join(tmpdir, asset)
@@ -84,22 +91,21 @@ func Install(version, platform, target string, report func(format string, a ...a
 	}
 
 	sumPath := filepath.Join(tmpdir, "checksums.txt")
-	if err := download(base+"/checksums.txt", sumPath); err == nil {
-		expected, found := LookupChecksum(sumPath, asset)
-		if !found {
-			return fmt.Errorf("checksums.txt for %s does not list %s — refusing to install unverified binary", version, asset)
-		}
-		actual, err := sha256File(tarPath)
-		if err != nil {
-			return fmt.Errorf("sha256: %w", err)
-		}
-		if expected != actual {
-			return fmt.Errorf("checksum MISMATCH (expected %s, got %s) — aborting", expected, actual)
-		}
-		report("checksum verified (sha256)")
-	} else {
-		report("checksums.txt not available for %s — skipping verification", version)
+	if err := download(base+"/checksums.txt", sumPath); err != nil {
+		return fmt.Errorf("checksums.txt for %s could not be read (%w) — refusing to install a binary nobody can verify; install that version by hand from %s/releases/tag/%s after checking its sha256", version, err, RepoURL, version)
 	}
+	expected, found := LookupChecksum(sumPath, asset)
+	if !found {
+		return fmt.Errorf("checksums.txt for %s does not list %s — refusing to install unverified binary", version, asset)
+	}
+	actual, err := sha256File(tarPath)
+	if err != nil {
+		return fmt.Errorf("sha256: %w", err)
+	}
+	if expected != actual {
+		return fmt.Errorf("checksum MISMATCH (expected %s, got %s) — aborting", expected, actual)
+	}
+	report("checksum verified (sha256)")
 
 	if err := ExtractTarGz(tarPath, tmpdir); err != nil {
 		return fmt.Errorf("extract: %w", err)
