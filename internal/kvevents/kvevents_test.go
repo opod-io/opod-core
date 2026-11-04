@@ -197,3 +197,32 @@ func TestTranslatorReadsTheMapLayout(t *testing.T) {
 		t.Fatalf("removal %+v, want [%s]", got, want[1])
 	}
 }
+
+// A batch that mixes the card's events with a CPU tier's (vLLM's offloading
+// connector, measured on the design-partner cell 2026-11-04): the tier's
+// BlockStored names blocks by the engine's hash with no token ids and no
+// block size. It must not fail the batch — that dropped every GPU block of a
+// worker with a CPU tier (PLAN T24.56) — and must not touch the index: a
+// tier's eviction is not the card's.
+func TestTranslatorSkipsATierBelowTheCard(t *testing.T) {
+	tr := NewTranslator()
+	gpu := toks(100, 32)
+	cpuStored := map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(11)}, "parent_block_hash": nil,
+		"token_ids": []any{}, "block_size": int8(0), "group_idx": int8(0), "lora_id": nil, "lora_name": nil, "medium": "CPU"}
+	b, err := msgpack.Marshal([]any{1790000000.5, []any{
+		map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(11), uint64(12)}, "parent_block_hash": nil,
+			"token_ids": gpu, "block_size": int8(16), "medium": "GPU"},
+		cpuStored,
+		map[string]any{"type": "BlockRemoved", "block_hashes": []any{uint64(12)}, "medium": "CPU"},
+	}, int8(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Frame(0, b); err != nil {
+		t.Fatalf("a mixed-tier batch failed: %v", err)
+	}
+	got := tr.Drain()
+	if got == nil || got.Cleared || len(got.Stored) != 2 || len(got.Removed) != 0 {
+		t.Fatalf("drain %+v: want the card's 2 blocks stored and none removed", got)
+	}
+}

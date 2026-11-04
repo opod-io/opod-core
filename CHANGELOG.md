@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **A vLLM worker with a CPU tier reports its prefix-cache blocks again.** vLLM's offloading connector publishes its own
+  `BlockStored` and `BlockRemoved` events for the host tier, with no token ids and no block size. One of them failed
+  the whole event batch, so the worker reported no blocks, the leader's `prefix_index` read 0 and `prefixBlockWeight`
+  scored nothing. An event for any tier other than the GPU is now skipped: the index stays what each worker holds on
+  its card. The decode error now names the value it rejected, not only its type.
 - **A revoked worker certificate is refused even when the worker connected before the leader had a node CA.** Such a
   worker's TLS handshake was asked for no certificate, and its 5 s heartbeat kept that connection alive, so every call
   stayed a token call and a later revocation changed nothing. The leader now records, per TLS connection, the node-mTLS

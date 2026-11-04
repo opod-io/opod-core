@@ -119,6 +119,9 @@ func (t *Translator) Frame(engineSeq int64, payload []byte) error {
 type fields struct {
 	tag                          string
 	hashes, parent, tokens, size any
+	// medium is the cache tier the event concerns ("GPU", "CPU", …), read
+	// from the map layout only; "" (an engine that does not say) is the GPU.
+	medium string
 }
 
 // eventFields reads an event in either layout an engine has used: a MAP keyed
@@ -133,7 +136,8 @@ func eventFields(ev any) (fields, error) {
 		if !ok {
 			return fields{}, fmt.Errorf("kv event: a map with no type (%T)", x["type"])
 		}
-		return fields{tag: tag, hashes: x["block_hashes"], parent: x["parent_block_hash"], tokens: x["token_ids"], size: x["block_size"]}, nil
+		medium, _ := x["medium"].(string)
+		return fields{tag: tag, hashes: x["block_hashes"], parent: x["parent_block_hash"], tokens: x["token_ids"], size: x["block_size"], medium: medium}, nil
 	case []any:
 		if len(x) == 0 {
 			return fields{}, fmt.Errorf("kv event: an empty array")
@@ -161,6 +165,15 @@ func (t *Translator) event(ev any) error {
 		return err
 	}
 	t.events++
+	// The index is what each worker holds ON ITS CARD. A host or disk tier
+	// below it (vLLM's CPU offloading) publishes its own BlockStored and
+	// BlockRemoved — by the engine's hash, with no token ids and no block
+	// size — and those say nothing about the card. They are skipped, never
+	// an error: one of them used to fail its whole batch, so a worker with a
+	// CPU tier reported no blocks at all (PLAN T24.56).
+	if f.medium != "" && !strings.EqualFold(f.medium, "gpu") {
+		return nil
+	}
 	switch f.tag {
 	case "BlockStored":
 		hashes, err := hashList(f.hashes)
@@ -178,7 +191,7 @@ func (t *Translator) event(ev any) error {
 		size64, ok := asInt(f.size)
 		size := int(size64)
 		if !ok || size <= 0 {
-			return fmt.Errorf("BlockStored: block_size is %T", f.size)
+			return fmt.Errorf("BlockStored: block_size is %v (%T), not a positive whole number", f.size, f.size)
 		}
 		t.blockSize = size
 		ours := ""
