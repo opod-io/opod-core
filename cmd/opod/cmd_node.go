@@ -132,12 +132,7 @@ func nodeShow(id string) {
 			loaded = append(loaded, p.ModelID)
 		}
 	}
-	out := struct {
-		*store.Node
-		LoadedModels []string `json:"loadedModels"`
-	}{n, loaded}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Println(string(b))
+	fmt.Println(nodeShowJSON(*n, loaded))
 }
 
 // nodeDrain takes a worker out of rotation; nodeUndrain puts it back.
@@ -243,4 +238,21 @@ func removeNode(cfg *config.Config, id string) (via string, err error) {
 		return "", fmt.Errorf("delete node: %w", err)
 	}
 	return viaStore, nil
+}
+
+// nodeShowJSON is `opod node show`'s output: the node row with its worker
+// token redacted (config.Redact, as /admin/v1/config does) — a terminal is
+// no place for the credential the leader calls the worker back with — and
+// the models resident on it.
+func nodeShowJSON(n store.Node, loaded []string) string {
+	n.WorkerToken = config.Redact(n.WorkerToken)
+	out := struct {
+		store.Node
+		LoadedModels []string `json:"loadedModels"`
+	}{n, loaded}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		die("node show: %v", err)
+	}
+	return string(b)
 }

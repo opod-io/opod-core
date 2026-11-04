@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/opod-io/opod/internal/config"
 )
@@ -128,13 +127,22 @@ func printConfigPretty(prefix string, v any, depth int) {
 	}
 }
 
-func printConfigLocal(cfg any, asJSON bool) {
-	b, _ := json.MarshalIndent(cfg, "", "  ")
+// printConfigLocal prints the view the leader would serve (config.ViewOf), so
+// the fallback redacts exactly what /admin/v1/config redacts — it used to
+// marshal the whole config, admin and join tokens included.
+func printConfigLocal(cfg *config.Config, asJSON bool) {
+	v := config.ViewOf(cfg)
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		die("config show: %v", err)
+	}
 	if asJSON {
 		fmt.Println(string(b))
 		return
 	}
-	// minimal pretty for local fallback
-	out := strings.ReplaceAll(string(b), "\"", "")
-	fmt.Println(out)
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		die("config show: %v", err)
+	}
+	printConfigPretty("", m, 0)
 }
