@@ -272,3 +272,33 @@ func TestTranslatorReportsTheCPUTierWhenItDescribesItself(t *testing.T) {
 		t.Fatalf("the last remove reports the block gone from the CPU tier: %+v", d)
 	}
 }
+
+// A leader that lost what was sent (a restart, a failed post) gets a full
+// statement on the next drain: Cleared, then every block held now — on the
+// card and in the CPU tier — never the ones already evicted.
+func TestResyncStatesEverythingHeld(t *testing.T) {
+	tr := NewTranslator()
+	tokens := toks(300, 48)
+	b, _ := msgpack.Marshal([]any{1790000010.0, []any{
+		map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(31), uint64(32), uint64(33)}, "parent_block_hash": nil,
+			"token_ids": tokens, "block_size": int8(16), "medium": "GPU"},
+		map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(31), uint64(32)}, "parent_block_hash": nil,
+			"token_ids": tokens[:32], "block_size": int8(16), "medium": "CPU"},
+		map[string]any{"type": "BlockRemoved", "block_hashes": []any{uint64(33)}, "medium": "GPU"},
+	}, int8(0)})
+	if err := tr.Frame(0, b); err != nil {
+		t.Fatal(err)
+	}
+	first := tr.Drain()
+	if tr.Drain() != nil {
+		t.Fatal("nothing changed since the drain")
+	}
+	tr.Resync()
+	got := tr.Drain()
+	if got == nil || !got.Cleared || len(got.Stored) != 2 || len(got.CPUStored) != 2 || len(got.Removed) != 0 {
+		t.Fatalf("resync: %+v, want Cleared with the 2 card blocks still held and the 2 CPU blocks", got)
+	}
+	if got.Stored[0] != first.Stored[0] || got.Stored[1] != first.Stored[1] {
+		t.Fatalf("the resync names the same blocks, oldest first: %v vs %v", got.Stored, first.Stored)
+	}
+}

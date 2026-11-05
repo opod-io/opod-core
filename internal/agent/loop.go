@@ -214,6 +214,15 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 	body, _ := json.Marshal(hb)
 	code, err := a.post(ctx, "/admin/v1/nodes/heartbeat", body)
 	a.Join.note("heartbeat", code, err)
+	if err != nil && a.Blocks != nil {
+		// The batch drained above did not land, or landed on a leader that
+		// does not know this worker (a 404 after a leader restart): either way
+		// the leader's set for us is gone or has a hole. The next heartbeat
+		// carries everything held, not only what changed — a hot block the
+		// engine never stores again (the system prompt every request starts
+		// with) would otherwise stay missing and no chain would ever match it.
+		a.Blocks.Resync()
+	}
 	return code, err
 }
 

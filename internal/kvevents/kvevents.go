@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -410,6 +411,34 @@ func (t *Translator) Drain() *nodeapi.KVBlocks {
 		CPUStored: t.cpuStored, CPURemoved: t.cpuRemoved}
 	t.stored, t.removed, t.cpuStored, t.cpuRemoved, t.cleared = nil, nil, nil, nil, false
 	return out
+}
+
+// Resync makes the next Drain a full statement: Cleared, then every block
+// held on the card and in the CPU tier now (the newest maxPending of each).
+// For a leader that lost or never had what was sent before.
+func (t *Translator) Resync() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.stored, t.removed, t.cpuStored, t.cpuRemoved = nil, nil, nil, nil
+	t.cleared = true
+	seen := map[string]bool{}
+	for i := len(t.order) - 1; i >= 0 && len(t.stored) < maxPending; i-- {
+		if ours, ok := t.known[t.order[i]]; ok && !seen[ours] {
+			seen[ours] = true
+			t.stored = append(t.stored, ours)
+		}
+	}
+	seen = map[string]bool{}
+	for i := len(t.cpuOrder) - 1; i >= 0 && len(t.cpuStored) < maxPending; i-- {
+		if ours, ok := t.cpuKnown[t.cpuOrder[i]]; ok && !seen[ours] {
+			seen[ours] = true
+			t.cpuStored = append(t.cpuStored, ours)
+		}
+	}
+	// Oldest first, as a live stream would have sent them, so the leader's
+	// own bound evicts the same end.
+	slices.Reverse(t.stored)
+	slices.Reverse(t.cpuStored)
 }
 
 // Events is how many engine events were read (a gauge for the worker's log).
