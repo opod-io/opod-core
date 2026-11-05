@@ -999,7 +999,7 @@ func (s *Server) vllmCmdline(model, servedName, host string, port int) (string, 
 		"%s "+
 			"exec vllm serve '%s' %s --served-model-name '%s' '%s' --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization \"$U\" --tensor-parallel-size \"$TP\" %s %s",
-		flagOverrides, source, revArgs, servedName, model, host, port, flagArgs, strings.TrimSpace(s.sleepModeArgs()+" "+s.kvEventsArgs()))
+		flagOverrides, source, revArgs, servedName, model, host, port, flagArgs, strings.TrimSpace(s.sleepModeArgs()+" "+s.vllmKVEventsArgs(flagArgs)))
 	return cmdline, nil
 }
 

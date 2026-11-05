@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **A block in a worker's CPU tier can count for routing** (`routing.prefixBlockTier: cpu-lower`, feature
+  `kv_cpu_tier_hits`). A vLLM worker with KV events and a CPU tier now asks vLLM to describe its CPU-tier blocks, reports
+  them on its heartbeat, and the leader indexes them; under `cpu-lower` a leading block held there beyond the card's is
+  credited at 0.8 of a card block (a CPU-tier hit measured 0.94–0.96 of a card hit's saving). Default `gpu`: as before.
+- **The policy sets the sticky TTL live** (`routing.stickyTtlSeconds`, feature `sticky_ttl_policy`). A manager could not
+  reach `OPOD_STICKY_SESSION_TTL_SECONDS` on a running leader. Pins placed after the policy lands expire by it, pins
+  already placed keep their expiry, and 0 gives back the start value. The TTL is now read atomically, since a policy
+  writes it while requests read it.
 - **`OPOD_BIND_ADDR`: a worker behind NAT can listen on its own address.** The worker listened on, and its gang
   processes (llama.cpp `rpc-server`, the `llama-server` coordinator) bound, the address it advertises — which behind NAT
   or a port forward is not the host's, so the bind failed. `OPOD_BIND_ADDR=host[:port]` names what the host owns; the

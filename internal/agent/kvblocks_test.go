@@ -92,3 +92,26 @@ func TestSGLangServesItsMetrics(t *testing.T) {
 		t.Fatalf("sglang starts without --enable-metrics: %v %q", err, line)
 	}
 }
+
+// PLAN T24.56: a vLLM worker with a CPU tier and KV events is told to
+// describe its CPU-tier blocks; without either, or with the plan's own
+// transfer config, nothing is added.
+func TestVLLMSelfDescribingCPUTier(t *testing.T) {
+	on := &Server{KVEvents: true, Blocks: kvevents.NewTranslator()}
+	tier := "--kv-offloading-size 4 --kv-offloading-backend native"
+	if got := on.vllmKVEventsArgs(tier); !strings.Contains(got, "--kv-transfer-config '"+vllmSelfDescribing+"'") || !strings.Contains(got, "--kv-events-config") {
+		t.Fatalf("a CPU tier with events: %q", got)
+	}
+	for name, tc := range map[string]struct {
+		s     *Server
+		flags string
+	}{
+		"no CPU tier":           {on, "--max-model-len 4096"},
+		"events off":            {&Server{}, tier},
+		"the plan's own config": {on, tier + ` --kv-transfer-config '{"kv_connector":"X","kv_role":"kv_both"}'`},
+	} {
+		if got := tc.s.vllmKVEventsArgs(tc.flags); strings.Contains(got, vllmSelfDescribing) {
+			t.Errorf("%s: %q must not add the self-describing config", name, got)
+		}
+	}
+}

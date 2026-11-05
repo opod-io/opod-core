@@ -29,6 +29,24 @@ func (s *Server) kvEventsArgs() string {
 	return "--kv-events-config '" + kvevents.EngineConfig("") + "'"
 }
 
+// vllmSelfDescribing is the transfer config that makes vLLM's CPU offloading
+// describe each block it stores like the card does — token ids, parent hash,
+// block size — so the worker can name it with our hash and the leader can
+// count it (feature kv_cpu_tier_hits, PLAN T24.56). vLLM merges it with the
+// offloading its own --kv-offloading-size sets up (config/vllm.py, 0.33).
+const vllmSelfDescribing = `{"kv_role":"kv_both","kv_connector_extra_config":{"self_describing_kv_events":true}}`
+
+// vllmKVEventsArgs is kvEventsArgs for vLLM: the publisher, plus the
+// self-describing transfer config when the plan gives the engine a CPU tier
+// (--kv-offloading-size) and states no transfer config of its own.
+func (s *Server) vllmKVEventsArgs(flagArgs string) string {
+	args := s.kvEventsArgs()
+	if args == "" || !strings.Contains(flagArgs, "--kv-offloading-size") || strings.Contains(flagArgs, "--kv-transfer-config") {
+		return args
+	}
+	return args + " --kv-transfer-config '" + vllmSelfDescribing + "'"
+}
+
 // sglangKVPageSize is the page SGLang is started with when it publishes KV
 // events and the plan names none: SGLang's default page is one token, so each
 // event would name one block per token and the leader's per-worker index would

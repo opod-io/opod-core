@@ -55,6 +55,10 @@ type workerBlocks struct {
 	held      map[string]*list.Element
 	order     *list.List // oldest first
 	at        time.Time
+	// The worker's host-memory tier (KVBlocks.CPUStored, feature
+	// kv_cpu_tier_hits), bounded like the card's set.
+	cpuHeld  map[string]*list.Element
+	cpuOrder *list.List
 
 	// The ghost list (T26.14): blocks the engine evicted, by eviction number,
 	// so a block the engine stores again is a block it computed again — one a
@@ -72,7 +76,7 @@ type ghostEntry struct {
 }
 
 func newWorkerBlocks() *workerBlocks {
-	return &workerBlocks{held: map[string]*list.Element{}, order: list.New(),
+	return &workerBlocks{held: map[string]*list.Element{}, order: list.New(), cpuHeld: map[string]*list.Element{}, cpuOrder: list.New(),
 		ghost: map[string]int64{}, ghostOrder: list.New(), returns: make([]int64, len(tierGhostBuckets))}
 }
 
@@ -166,6 +170,24 @@ func (p *prefixIndex) apply(nodeID string, kb *nodeapi.KVBlocks) {
 			delete(w.held, old.Value.(string))
 		}
 	}
+	for _, h := range kb.CPURemoved {
+		if e, ok := w.cpuHeld[h]; ok {
+			w.cpuOrder.Remove(e)
+			delete(w.cpuHeld, h)
+		}
+	}
+	for _, h := range kb.CPUStored {
+		if e, ok := w.cpuHeld[h]; ok {
+			w.cpuOrder.MoveToBack(e)
+			continue
+		}
+		w.cpuHeld[h] = w.cpuOrder.PushBack(h)
+		if w.cpuOrder.Len() > prefixIndexPerWorker {
+			old := w.cpuOrder.Front()
+			w.cpuOrder.Remove(old)
+			delete(w.cpuHeld, old.Value.(string))
+		}
+	}
 }
 
 // forget drops everything held for a worker (removed, reincarnated, lost).
@@ -193,6 +215,28 @@ func (p *prefixIndex) leading(nodeID string, hashes []string) int {
 	return n
 }
 
+// leadingAny is how many hashes of the chain, from its start, nodeID holds on
+// its card or in its host-memory tier — one copy away (routing.prefixBlockTier
+// cpu-lower).
+func (p *prefixIndex) leadingAny(nodeID string, hashes []string) int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	w := p.workers[nodeID]
+	if w == nil {
+		return 0
+	}
+	n := 0
+	for _, h := range hashes {
+		_, card := w.held[h]
+		_, cpu := w.cpuHeld[h]
+		if !card && !cpu {
+			break
+		}
+		n++
+	}
+	return n
+}
+
 // state is what /loadz says about the index; nil when nothing reports.
 func (p *prefixIndex) state() *adminapi.PrefixIndex {
 	p.mu.RLock()
@@ -204,6 +248,7 @@ func (p *prefixIndex) state() *adminapi.PrefixIndex {
 	for _, w := range p.workers {
 		out.WorkersReporting++
 		out.Blocks += len(w.held)
+		out.CPUBlocks += len(w.cpuHeld)
 	}
 	return out
 }

@@ -54,10 +54,18 @@ const KVTierPeer = "peer"
 // peer hit at equal load, above 0 so a peer hit outranks a cold worker.
 const peerBlockShare = 0.5
 
+// cpuBlockShare is what a block in the worker's own host-memory tier is worth
+// against one on its card, under routing.prefixBlockTier cpu-lower. Measured
+// on vLLM (PLAN T24.56, a 1.5B model, ≈ 2 470-token prompts): a CPU-tier hit
+// saved 0.94–0.96 of what a card hit saves over a miss; 0.8 keeps a margin
+// until a larger model is measured.
+const cpuBlockShare = 0.8
+
 // Hit kinds (blockHit.kind).
 const (
 	hitLocal = "local"
 	hitPeer  = "peer"
+	hitCPU   = "cpu"
 )
 
 // BlockResolver answers the chain of block hashes for a request's prompt, or
@@ -76,6 +84,22 @@ func (r *Router) SetPrefixBlocks(weight float64, resolve BlockResolver, held Blo
 	}
 	r.blockWeight, r.blockResolve, r.blockHeld = weight, resolve, held
 	r.mu.Unlock()
+}
+
+// SetPrefixBlockCPU credits the leading blocks a worker holds in its
+// host-memory tier beyond its card's at cpuBlockShare (routing.prefixBlockTier
+// cpu-lower). nil = the card alone, the default.
+func (r *Router) SetPrefixBlockCPU(held BlockHolder) {
+	r.mu.Lock()
+	r.blockHeldCPU = held
+	r.mu.Unlock()
+}
+
+// PrefixBlockCPU reports whether the CPU tier is credited (cpu-lower).
+func (r *Router) PrefixBlockCPU() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.blockHeldCPU != nil
 }
 
 // PrefixBlockWeight reports the applied weight (for /admin/v1 and tests).
@@ -121,6 +145,7 @@ func (r *Router) blockCredit(ctx context.Context, nodeID string) (credit float64
 type blockHit struct {
 	credit float64
 	blocks int // the candidate's own leading blocks
+	cpu    int // further leading blocks its own host-memory tier holds (cpu-lower)
 	peer   int // further leading blocks a sibling's peer tier holds for it
 	kind   string
 }
@@ -145,7 +170,11 @@ func (r *Router) blockCredits(ctx context.Context, ids []string, peer func(id st
 	bestID := ""
 	for _, id := range ids {
 		n := r.blockHeld(id, hashes)
-		out[id] = blockHit{blocks: n}
+		h := blockHit{blocks: n}
+		if r.blockHeldCPU != nil {
+			h.cpu = max(0, r.blockHeldCPU(id, hashes)-n)
+		}
+		out[id] = h
 		if !peer(id) {
 			continue
 		}
@@ -164,10 +193,12 @@ func (r *Router) blockCredits(ctx context.Context, ids []string, peer func(id st
 			}
 			h.peer = max(0, sib-h.blocks)
 		}
-		h.credit = r.blockWeight * (float64(h.blocks) + peerBlockShare*float64(h.peer))
+		h.credit = r.blockWeight * (float64(h.blocks) + cpuBlockShare*float64(h.cpu) + peerBlockShare*float64(h.peer))
 		switch {
 		case h.blocks > 0:
 			h.kind = hitLocal
+		case h.cpu > 0:
+			h.kind = hitCPU
 		case h.peer > 0:
 			h.kind = hitPeer
 		}

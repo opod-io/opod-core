@@ -10,7 +10,7 @@ import (
 )
 
 func (r *Router) stickyPick(ctx context.Context, model string) string {
-	if r.stickyTTL <= 0 || model == "" || model == "auto" {
+	if r.StickyTTL() <= 0 || model == "" || model == "auto" {
 		return ""
 	}
 	userID := userIDFor(ctx)
@@ -44,7 +44,8 @@ func (r *Router) stickyPick(ctx context.Context, model string) string {
 // picked-but-failed node isn't pinned). The next request for the same tuple
 // within stickyTTL will land on the same node (assuming it's still healthy).
 func (r *Router) rememberSticky(ctx context.Context, model, nodeID string) {
-	if r.stickyTTL <= 0 || model == "" || model == "auto" || nodeID == "" {
+	ttl := r.StickyTTL()
+	if ttl <= 0 || model == "" || model == "auto" || nodeID == "" {
 		return
 	}
 	userID := userIDFor(ctx)
@@ -53,7 +54,7 @@ func (r *Router) rememberSticky(ctx context.Context, model, nodeID string) {
 	}
 	key := userID + "|" + model
 	r.mu.Lock()
-	r.stickiness[key] = stickyEntry{NodeID: nodeID, ExpiresAt: time.Now().Add(r.stickyTTL)}
+	r.stickiness[key] = stickyEntry{NodeID: nodeID, ExpiresAt: time.Now().Add(ttl)}
 	r.stickyInserts++
 	// Opportunistic sweep: stickyPick only deletes the entry it looked
 	// up, so pins for users who never return would accumulate forever.

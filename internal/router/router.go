@@ -146,8 +146,10 @@ type Router struct {
 	// expires after stickyTTL of inactivity. Bypassed for requests
 	// with no user_id (`auth.KeyFrom(ctx) == nil` — typically dev
 	// mode without keys) and for the synthetic `auto` model id (the
-	// effective resolved model may change between turns).
-	stickyTTL time.Duration
+	// effective resolved model may change between turns). Atomic
+	// nanoseconds: a policy snapshot sets it live (feature
+	// sticky_ttl_policy) while requests read it.
+	stickyTTL atomic.Int64
 
 	// Hedging: when > 1 the router can fire a single request to
 	// hedgeReplicas least-loaded workers concurrently and return
@@ -181,9 +183,13 @@ type Router struct {
 	kvSaturationPct int
 	prefixAffinity  bool
 	// Block scoring (prefixblocks.go, feature "kv_block_events").
-	blockWeight   float64
-	blockResolve  BlockResolver
-	blockHeld     BlockHolder
+	blockWeight  float64
+	blockResolve BlockResolver
+	blockHeld    BlockHolder
+	// blockHeldCPU, when set (policy routing.prefixBlockTier cpu-lower,
+	// feature kv_cpu_tier_hits), answers the leading blocks a worker holds on
+	// its card OR in its host-memory tier; nil = the card alone.
+	blockHeldCPU  BlockHolder
 	prefixPins    map[string]stickyEntry // prefix hash|model → pinned node + expiry
 	prefixInserts int
 	// sampling: each decode worker's model defaults, for the handoff's
@@ -262,9 +268,12 @@ func (r *Router) SetHedgeReplicas(n int) {
 // a session ends.
 func (r *Router) SetStickyTTL(d time.Duration) {
 	if d >= 0 {
-		r.stickyTTL = d
+		r.stickyTTL.Store(int64(d))
 	}
 }
+
+// StickyTTL is the pin lifetime the router applies now.
+func (r *Router) StickyTTL() time.Duration { return time.Duration(r.stickyTTL.Load()) }
 
 // SetPlacementCooldown configures the per-node circuit-breaker. After
 // `allowedFails` consecutive engine errors from the same worker, pick()

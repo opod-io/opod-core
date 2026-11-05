@@ -146,6 +146,10 @@ var contractFeatureFloor = []string{
 	"door",
 	// ADR-089: a sibling's prefix is a peer hit for a worker with a peer KV tier
 	"kv_peer_hits",
+	// PLAN T24.55: the policy sets the sticky pin lifetime live
+	"sticky_ttl_policy",
+	// PLAN T24.56: CPU-tier blocks in the index, credited under cpu-lower
+	"kv_cpu_tier_hits",
 	// ADR-090: expert-parallel gangs on vLLM's own launcher
 	"shard_expert",
 	// a worker states the accelerators it was given (hardware_json.GivenDevices)

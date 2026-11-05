@@ -151,6 +151,12 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	if s.router != nil {
 		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
+		s.router.SetStickyTTL(s.stickyTTLFor(r.StickyTTLSeconds))
+		if strings.EqualFold(strings.TrimSpace(r.PrefixBlockTier), adminapi.PrefixBlockTierCPULower) {
+			s.router.SetPrefixBlockCPU(s.prefix.leadingAny)
+		} else {
+			s.router.SetPrefixBlockCPU(nil) // "" or gpu: the card alone
+		}
 	}
 	isolation, known := s.setCacheIsolation(r.CacheIsolation)
 	if !known {
@@ -169,7 +175,8 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	s.policy.revision = doc.Revision
 	if changed {
 		s.log.Info("policy snapshot applied", "revision", doc.Revision,
-			"fallback", r.FallbackURL != "", "accessLog", s.policy.accessLogEnabled(), "cacheIsolation", isolation)
+			"fallback", r.FallbackURL != "", "accessLog", s.policy.accessLogEnabled(), "cacheIsolation", isolation,
+			"stickyTtl", s.stickyTTLFor(r.StickyTTLSeconds))
 		s.logEvent("policy.updated", doc.Revision, map[string]any{
 			"fallback": r.FallbackURL != "", "accessLog": s.policy.accessLogEnabled()})
 	}
@@ -213,4 +220,19 @@ func (s *Server) applyRevisionWeights(ws []adminapi.RevisionWeight) {
 		out = append(out, router.RevisionWeight{Revision: w.Revision, Weight: w.Weight})
 	}
 	s.router.SetRevisionWeights(out)
+}
+
+// stickyTTLFor is the pin lifetime a policy's routing.stickyTtlSeconds asks
+// for (feature sticky_ttl_policy): a positive value wins; 0 (or a negative
+// one) is this leader's start value — OPOD_STICKY_SESSION_TTL_SECONDS or
+// router.sticky_session_ttl_seconds — so a policy that says nothing, or
+// stops saying it, changes nothing for a leader configured by hand.
+func (s *Server) stickyTTLFor(policySeconds int) time.Duration {
+	if policySeconds > 0 {
+		return time.Duration(policySeconds) * time.Second
+	}
+	if s.cfg != nil && s.cfg.Router.StickySessionTTLSeconds > 0 {
+		return time.Duration(s.cfg.Router.StickySessionTTLSeconds) * time.Second
+	}
+	return 0
 }

@@ -807,7 +807,7 @@ Recent latency is used, but not as a per-node score: it feeds the p95 check that
 ### Sticky sessions
 
 - The pin is keyed by **`(user_id, model)`** — the authenticated key's user id from the request context (`internal/router/sticky.go`). There is no `X-Session-Id` header and no `SessionID` derivation; an unauthenticated request (dev mode, `require_keys: false`) is never pinned.
-- Bound to the worker that last served that tuple for `router.sticky_session_ttl_seconds` (`OPOD_STICKY_SESSION_TTL_SECONDS`). **0 — the default — disables it**; the legacy `router.sticky_sessions` boolean is parsed and superseded.
+- Bound to the worker that last served that tuple for `router.sticky_session_ttl_seconds` (`OPOD_STICKY_SESSION_TTL_SECONDS`). **0 — the default — disables it**; the legacy `router.sticky_sessions` boolean is parsed and superseded. A policy snapshot's `routing.stickyTtlSeconds` overrides it live, with no restart (feature `sticky_ttl_policy`): pins placed afterwards expire by it, pins already placed keep their stamped expiry, and 0 gives back the start value. Prefix-affinity pins expire by the same TTL (10 minutes when none is set).
 - Soft binding: the pin only reorders the candidates the load scorer already accepted, so a saturated or drained worker loses it and the cache miss is absorbed. `model=auto` is never pinned.
 
 ### Cache isolation
@@ -1687,6 +1687,13 @@ Mechanisms a manager drives through this surface:
   **Peer hits** (`kv_peer_hits`): a worker started with `OPOD_KV_TIER=peer` is credited, beyond its own leading
   blocks, for the further ones the best other `peer` candidate holds, at half a block's weight
   (`router.peerBlockShare`) — local > peer > none, so load can outweigh affinity when a sibling can lend the prefix.
+  **CPU-tier hits** (`kv_cpu_tier_hits`, PLAN T24.56): a vLLM worker with KV events and a CPU tier
+  (`--kv-offloading-size`) is started with `self_describing_kv_events`, so its CPU-tier `BlockStored` events carry
+  tokens like the card's; `kvevents` names them with our hash, reference-counted (vLLM re-announces a block two
+  chunks share), and reports them as `kv_blocks.cpu_stored` / `cpu_removed`. The leader keeps them beside the card's
+  set (`/loadz` `prefix_index.cpu_blocks`). Under the policy's `routing.prefixBlockTier: cpu-lower` a leading block
+  held there beyond the card's is credited at 0.8 of a card block (`router.cpuBlockShare`; measured 0.94–0.96 on a
+  1.5B model); the default `gpu` counts the card alone.
 - **Request wake** (`request_wake`, `internal/leader/wakeonrequest.go`): a request for a model whose only
   holders sleep resumes one of them from the request path, single-flight per worker, holds the caller for up to
   3 s and serves; past that budget the caller gets `503` + `Retry-After` and the resume finishes for the next.

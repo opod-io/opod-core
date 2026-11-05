@@ -64,17 +64,28 @@ type Translator struct {
 	seq       int64 // batches handed to the heartbeat
 	lastEng   int64 // the engine's last frame sequence, -1 before the first
 	events    int64
+	// The host-memory tier below the card (vLLM's CPU offloading, feature
+	// kv_cpu_tier_hits): engine hash → our hash for the blocks it holds, and
+	// how many times each of OUR hashes was announced — vLLM re-announces a
+	// block shared by two offloaded chunks once per chunk, and removes it as
+	// often, so only the first store and the last remove are news.
+	cpuKnown   map[string]string
+	cpuOrder   []string
+	cpuRefs    map[string]int
+	cpuStored  []string
+	cpuRemoved []string
 }
 
 // NewTranslator returns an empty translator.
 func NewTranslator() *Translator {
-	return &Translator{known: map[string]string{}, lastEng: -1}
+	return &Translator{known: map[string]string{}, cpuKnown: map[string]string{}, cpuRefs: map[string]int{}, lastEng: -1}
 }
 
 // reset forgets everything and owes the leader a Cleared. Caller holds mu.
 func (t *Translator) reset() {
 	t.known, t.order = map[string]string{}, nil
-	t.stored, t.removed, t.cleared = nil, nil, true
+	t.cpuKnown, t.cpuOrder, t.cpuRefs = map[string]string{}, nil, map[string]int{}
+	t.stored, t.removed, t.cpuStored, t.cpuRemoved, t.cleared = nil, nil, nil, nil, true
 }
 
 // Frame applies one published frame: the engine's sequence and its payload.
@@ -109,7 +120,7 @@ func (t *Translator) Frame(engineSeq int64, payload []byte) error {
 			return err
 		}
 	}
-	if len(t.stored)+len(t.removed) > maxPending {
+	if len(t.stored)+len(t.removed)+len(t.cpuStored)+len(t.cpuRemoved) > maxPending {
 		t.reset()
 	}
 	return nil
@@ -165,54 +176,30 @@ func (t *Translator) event(ev any) error {
 		return err
 	}
 	t.events++
-	// The index is what each worker holds ON ITS CARD. A host or disk tier
-	// below it (vLLM's CPU offloading) publishes its own BlockStored and
-	// BlockRemoved — by the engine's hash, with no token ids and no block
-	// size — and those say nothing about the card. They are skipped, never
-	// an error: one of them used to fail its whole batch, so a worker with a
-	// CPU tier reported no blocks at all (PLAN T24.56).
-	if f.medium != "" && !strings.EqualFold(f.medium, "gpu") {
+	// A tier below the card is its own set. vLLM's CPU offloading describes
+	// its blocks like the card's only with kv_connector_extra_config
+	// self_describing_kv_events; without it an event names the engine's hash
+	// alone and chainOf finds no tokens, so nothing is stored. A medium this
+	// package does not know (vLLM's "STORAGE") is skipped, never an error:
+	// one of them used to fail its whole batch (PLAN T24.56).
+	switch {
+	case strings.EqualFold(f.medium, "cpu"):
+		return t.cpuEvent(f)
+	case f.medium != "" && !strings.EqualFold(f.medium, "gpu"):
 		return nil
 	}
 	switch f.tag {
 	case "BlockStored":
-		hashes, err := hashList(f.hashes)
+		blocks, err := t.chainOf(f)
 		if err != nil {
-			return fmt.Errorf("BlockStored: block_hashes: %w", err)
+			return err
 		}
-		parent, err := hashKey(f.parent)
-		if err != nil {
-			return fmt.Errorf("BlockStored: parent_block_hash: %w", err)
-		}
-		tokens, err := intList(f.tokens)
-		if err != nil {
-			return fmt.Errorf("BlockStored: token_ids: %w", err)
-		}
-		size64, ok := asInt(f.size)
-		size := int(size64)
-		if !ok || size <= 0 {
-			return fmt.Errorf("BlockStored: block_size is %v (%T), not a positive whole number", f.size, f.size)
-		}
-		t.blockSize = size
-		ours := ""
-		if parent != "" {
-			p, ok := t.known[parent]
-			if !ok {
-				return nil // a block whose prefix we never saw: not ours to name, and harmless to skip
+		for _, b := range blocks {
+			if _, seen := t.known[b.eng]; !seen {
+				t.order = append(t.order, b.eng)
 			}
-			ours = p
-		}
-		for i, h := range hashes {
-			lo, hi := i*size, (i+1)*size
-			if hi > len(tokens) {
-				break
-			}
-			ours = nodeapi.BlockHash(ours, tokens[lo:hi])
-			if _, seen := t.known[h]; !seen {
-				t.order = append(t.order, h)
-			}
-			t.known[h] = ours
-			t.stored = append(t.stored, ours)
+			t.known[b.eng] = b.ours
+			t.stored = append(t.stored, b.ours)
 		}
 		for len(t.order) > maxKnown {
 			delete(t.known, t.order[0])
@@ -233,6 +220,102 @@ func (t *Translator) event(ev any) error {
 		t.reset()
 	default:
 		// A newer engine's event we do not know: no statement, not an error.
+	}
+	return nil
+}
+
+// block is one stored block: the engine's hash and ours.
+type block struct{ eng, ours string }
+
+// chainOf names a BlockStored's blocks with our hashes, chained from the
+// parent's. A parent we never saw (on the card or below it) names nothing:
+// not ours to name, and harmless to skip. Caller holds mu.
+func (t *Translator) chainOf(f fields) ([]block, error) {
+	hashes, err := hashList(f.hashes)
+	if err != nil {
+		return nil, fmt.Errorf("BlockStored: block_hashes: %w", err)
+	}
+	parent, err := hashKey(f.parent)
+	if err != nil {
+		return nil, fmt.Errorf("BlockStored: parent_block_hash: %w", err)
+	}
+	tokens, err := intList(f.tokens)
+	if err != nil {
+		return nil, fmt.Errorf("BlockStored: token_ids: %w", err)
+	}
+	if len(tokens) == 0 {
+		return nil, nil // a tier that names the engine's hash alone (no self-describing payload)
+	}
+	size64, ok := asInt(f.size)
+	size := int(size64)
+	if !ok || size <= 0 {
+		return nil, fmt.Errorf("BlockStored: block_size is %v (%T), not a positive whole number", f.size, f.size)
+	}
+	t.blockSize = size
+	ours := ""
+	if parent != "" {
+		p, ok := t.known[parent]
+		if !ok {
+			p, ok = t.cpuKnown[parent]
+		}
+		if !ok {
+			return nil, nil
+		}
+		ours = p
+	}
+	var out []block
+	for i, h := range hashes {
+		lo, hi := i*size, (i+1)*size
+		if hi > len(tokens) {
+			break
+		}
+		ours = nodeapi.BlockHash(ours, tokens[lo:hi])
+		out = append(out, block{eng: h, ours: ours})
+	}
+	return out, nil
+}
+
+// cpuEvent applies one event of the host-memory tier: the first store of a
+// block and its last remove are reported (CPUStored, CPURemoved). Caller
+// holds mu.
+func (t *Translator) cpuEvent(f fields) error {
+	switch f.tag {
+	case "BlockStored":
+		blocks, err := t.chainOf(f)
+		if err != nil {
+			return err
+		}
+		for _, b := range blocks {
+			if _, seen := t.cpuKnown[b.eng]; !seen {
+				t.cpuOrder = append(t.cpuOrder, b.eng)
+			}
+			t.cpuKnown[b.eng] = b.ours
+			if t.cpuRefs[b.ours]++; t.cpuRefs[b.ours] == 1 {
+				t.cpuStored = append(t.cpuStored, b.ours)
+			}
+		}
+		for len(t.cpuOrder) > maxKnown {
+			delete(t.cpuKnown, t.cpuOrder[0])
+			t.cpuOrder = t.cpuOrder[1:]
+		}
+	case "BlockRemoved":
+		hashes, err := hashList(f.hashes)
+		if err != nil {
+			return fmt.Errorf("BlockRemoved: block_hashes: %w", err)
+		}
+		for _, h := range hashes {
+			ours, ok := t.cpuKnown[h]
+			if !ok {
+				continue
+			}
+			if t.cpuRefs[ours]--; t.cpuRefs[ours] <= 0 {
+				delete(t.cpuRefs, ours)
+				delete(t.cpuKnown, h)
+				t.cpuRemoved = append(t.cpuRemoved, ours)
+			}
+		}
+	case "AllBlocksCleared":
+		t.reset()
 	}
 	return nil
 }
@@ -319,12 +402,13 @@ func hashList(v any) ([]string, error) {
 func (t *Translator) Drain() *nodeapi.KVBlocks {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.cleared && len(t.stored) == 0 && len(t.removed) == 0 {
+	if !t.cleared && len(t.stored) == 0 && len(t.removed) == 0 && len(t.cpuStored) == 0 && len(t.cpuRemoved) == 0 {
 		return nil
 	}
 	t.seq++
-	out := &nodeapi.KVBlocks{Seq: t.seq, BlockSize: t.blockSize, Stored: t.stored, Removed: t.removed, Cleared: t.cleared}
-	t.stored, t.removed, t.cleared = nil, nil, false
+	out := &nodeapi.KVBlocks{Seq: t.seq, BlockSize: t.blockSize, Stored: t.stored, Removed: t.removed, Cleared: t.cleared,
+		CPUStored: t.cpuStored, CPURemoved: t.cpuRemoved}
+	t.stored, t.removed, t.cpuStored, t.cpuRemoved, t.cleared = nil, nil, nil, nil, false
 	return out
 }
 

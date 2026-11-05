@@ -226,3 +226,49 @@ func TestTranslatorSkipsATierBelowTheCard(t *testing.T) {
 		t.Fatalf("drain %+v: want the card's 2 blocks stored and none removed", got)
 	}
 }
+
+// PLAN T24.56: with vLLM's self_describing_kv_events, a CPU-tier BlockStored
+// carries tokens like the card's, so the block is named with OUR hash and
+// reported as CPU-held — and stays CPU-held when the card evicts it. A block
+// two chunks share is announced twice and removed twice; only the first
+// store and the last remove are news.
+func TestTranslatorReportsTheCPUTierWhenItDescribesItself(t *testing.T) {
+	tr := NewTranslator()
+	two := toks(200, 32)
+	gpu := map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(21), uint64(22)}, "parent_block_hash": nil,
+		"token_ids": two, "block_size": int8(16), "medium": "GPU"}
+	cpu := map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(21), uint64(22)}, "parent_block_hash": nil,
+		"token_ids": two, "block_size": int8(16), "medium": "CPU"}
+	b, err := msgpack.Marshal([]any{1790000001.0, []any{gpu, cpu, cpu,
+		map[string]any{"type": "BlockRemoved", "block_hashes": []any{uint64(21), uint64(22)}, "medium": "GPU"},
+	}, int8(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Frame(0, b); err != nil {
+		t.Fatal(err)
+	}
+	got := tr.Drain()
+	if got == nil || len(got.Stored) != 2 || len(got.Removed) != 2 {
+		t.Fatalf("the card stored and evicted 2 blocks: %+v", got)
+	}
+	if len(got.CPUStored) != 2 || got.CPUStored[0] != got.Stored[0] || got.CPUStored[1] != got.Stored[1] {
+		t.Fatalf("the CPU tier holds the same 2 blocks, by our hash, once each: %+v", got)
+	}
+	// The first of two removes is not news; the second is.
+	rm := map[string]any{"type": "BlockRemoved", "block_hashes": []any{uint64(21)}, "medium": "CPU"}
+	b1, _ := msgpack.Marshal([]any{1790000002.0, []any{rm}, int8(0)})
+	if err := tr.Frame(1, b1); err != nil {
+		t.Fatal(err)
+	}
+	if d := tr.Drain(); d != nil {
+		t.Fatalf("one of two announcements removed: nothing is news yet, got %+v", d)
+	}
+	b2, _ := msgpack.Marshal([]any{1790000003.0, []any{rm}, int8(0)})
+	if err := tr.Frame(2, b2); err != nil {
+		t.Fatal(err)
+	}
+	if d := tr.Drain(); d == nil || len(d.CPURemoved) != 1 || d.CPURemoved[0] != got.Stored[0] {
+		t.Fatalf("the last remove reports the block gone from the CPU tier: %+v", d)
+	}
+}

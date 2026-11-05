@@ -272,6 +272,20 @@ func contractFeatures() map[string]bool {
 		// worker that can fetch a prefix outranks a busy one that holds it
 		// (ADR-089). With no peer tier the prefix score is kv_block_events'.
 		"kv_peer_hits": true,
+		// The policy's routing.stickyTtlSeconds sets the pin lifetime of
+		// session and prefix pins live, with no restart (PLAN T24.55): a pin
+		// placed after the policy lands expires by it, one already placed keeps
+		// its stamped expiry, and 0 is the leader's start value
+		// (OPOD_STICKY_SESSION_TTL_SECONDS). Without this key a leader ignores
+		// the field.
+		"sticky_ttl_policy": true,
+		// A worker reports the blocks its host-memory tier holds
+		// (kv_blocks.cpu_stored / cpu_removed, from vLLM's self-describing
+		// offload events), /loadz counts them (prefix_index.cpu_blocks), and
+		// under the policy's routing.prefixBlockTier cpu-lower a leading block
+		// held there beyond the card's is credited at 0.8 of a card block
+		// (PLAN T24.56). Default gpu: the card alone, as before.
+		"kv_cpu_tier_hits": true,
 		// POST /admin/v1/shards/create accepts expert: true (PLAN T18.5): the
 		// gang is a mixture-of-experts model's expert-parallel shape on vLLM's
 		// own launcher — one `vllm serve` per part, data-parallel attention

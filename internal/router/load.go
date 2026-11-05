@@ -223,8 +223,8 @@ func prefixKeysFrom(ctx context.Context) []string {
 const defaultPrefixTTL = 10 * time.Minute
 
 func (r *Router) prefixTTL() time.Duration {
-	if r.stickyTTL > 0 {
-		return r.stickyTTL
+	if ttl := r.StickyTTL(); ttl > 0 {
+		return ttl
 	}
 	return defaultPrefixTTL
 }
