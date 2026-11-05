@@ -127,6 +127,7 @@ type Server struct {
 
 func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger, orch *scheduler.Orchestrator) *Server {
 	routed := router.New(eng, st)
+	routed.SetLogger(log) // the leader's level and JSON format, not slog.Default()'s
 
 	// Wire catalog-driven fallback chains: when a request to model X fails,
 	// retry against X's catalog fallback list in order. The resolver
