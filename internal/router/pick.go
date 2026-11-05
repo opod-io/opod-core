@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -121,6 +122,17 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// and — for a worker with a peer tier — a sibling's (prefixblocks.go): a
 	// warm cache outweighs a little load, a peer-warm one less of it.
 	hits := r.blockCredits(ctx, ids, func(id string) bool { return caps[id].kvPeer })
+	if r.log != nil && hits != nil {
+		// What the block index credited each candidate with (debug: one line
+		// per pick that had a chain), so an operator can see why a worker
+		// that holds the prompt did or did not win.
+		per := make([]string, 0, len(hits))
+		for _, id := range ids {
+			h := hits[id]
+			per = append(per, fmt.Sprintf("%s:card=%d,cpu=%d,peer=%d,credit=%.2f", id, h.blocks, h.cpu, h.peer, h.credit))
+		}
+		r.log.Debug("prefix block credits", "model", model, "chain", len(prefixBlocksFrom(ctx)), "candidates", strings.Join(per, " "))
+	}
 	for _, w := range workers {
 		sat, sc := r.loadRank(w.NodeID)
 		hit := hits[w.NodeID]
