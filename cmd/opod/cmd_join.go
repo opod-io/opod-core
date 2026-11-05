@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -192,6 +193,19 @@ func cmdJoin(args []string) {
 		addr = adv
 		log.Info("using advertised address from OPOD_ADVERTISE_ADDR", "addr", addr)
 	}
+	// OPOD_BIND_ADDR (T10.22): what this host listens on when the advertised
+	// address is not its own. The leader keeps dialling addr.
+	listen, bindHost, err := bindAddress(addr, env.BindAddr)
+	if err != nil {
+		die("%v", err)
+	}
+	if bindHost == "0.0.0.0" || bindHost == "::" {
+		warn(os.Stdout, "OPOD_BIND_ADDR %s listens on every interface: gang processes bind it too, and llama.cpp's rpc-server has no authentication — firewall its ports", env.BindAddr)
+	}
+	if bindHost != "" {
+		caps.BindHost = bindHost
+		log.Info("listening on OPOD_BIND_ADDR; the leader dials the advertised address", "listen", listen, "advertised", addr)
+	}
 	// Keep a STABLE identity across container recreates/restarts so we don't
 	// orphan a "stale · no heartbeat" registration on the leader every time.
 	// Precedence: OPOD_NODE_ID env (deterministic — a manager sets one per
@@ -350,7 +364,7 @@ func cmdJoin(args []string) {
 	// Worker HTTP server (binds to the tailnet/LAN address from mesh)
 	go func() {
 		defer wg.Done()
-		if err := srv.Start(ctx, addr); err != nil && err != context.Canceled {
+		if err := srv.Start(ctx, listen); err != nil && err != context.Canceled {
 			log.Error("worker server exited", "err", err)
 			cancel()
 		}
@@ -512,3 +526,30 @@ func loadNodeConfig(path string) (*NodeConfig, error) {
 }
 
 var _ = loadNodeConfig // reserve for v0.5 worker resume
+
+// bindAddress is the address the worker listens on and the host its gang
+// processes bind (PLAN T10.22). bind "" keeps the advertised address for both
+// (host ""). A bind with no port takes the advertised port. A wildcard is
+// taken only when stated — never as a fallback — because it puts the
+// unauthenticated llama.cpp RPC port on every interface; the caller warns.
+func bindAddress(advertised, bind string) (listen, host string, err error) {
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		return advertised, "", nil
+	}
+	h, p, splitErr := net.SplitHostPort(bind)
+	if splitErr != nil {
+		h, p = strings.Trim(bind, "[]"), ""
+	}
+	if h == "" {
+		return "", "", fmt.Errorf("OPOD_BIND_ADDR %q names no host: name an address this host owns, or 0.0.0.0 to listen on every interface", bind)
+	}
+	if p == "" {
+		_, ap, aErr := net.SplitHostPort(advertised)
+		if aErr != nil {
+			return "", "", fmt.Errorf("OPOD_BIND_ADDR %q has no port and the advertised address %q has none to take", bind, advertised)
+		}
+		p = ap
+	}
+	return net.JoinHostPort(h, p), h, nil
+}

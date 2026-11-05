@@ -935,6 +935,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_KV_TIER` | worker | `cpu` \| `peer`: the tier below VRAM the engine keeps its KV cache in, stated on registration; with `peer` the leader counts a prefix a sibling peer holds as a peer hit for this worker. Unset = VRAM only |
 | `OPOD_PLAN_REVISION` | worker | the plan revision this worker process was started for; the leader splits traffic per revision |
 | `OPOD_ADVERTISE_ADDR` | worker | the `host:port` the leader should dial (overlay / multi-NIC hosts) |
+| `OPOD_BIND_ADDR` | worker | the `host[:port]` the worker listens on, and the host its llama.cpp gang processes (`rpc-server`, the `llama-server` coordinator) bind, when the advertised address is not one this host owns (NAT, a port forward). Unset = the advertised address. `0.0.0.0` is taken only when you set it, with a warning: llama.cpp's `rpc-server` has no authentication |
 | `OPOD_NODE_ID` | worker | a stable node id across restarts (else `node.yaml`, else `POD_NAME`, else random) |
 | `POD_NAME` | worker | the pod's name, injected by any Kubernetes manifest; a worker with no `OPOD_NODE_ID` and no `node.yaml` takes `n_<pod name>` as its id rather than a random one per restart |
 | `OPOD_LEADER_CA` | worker | PEM certificate the worker trusts for a TLS leader — exactly that one |

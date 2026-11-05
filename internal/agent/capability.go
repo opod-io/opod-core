@@ -52,6 +52,12 @@ type Capabilities struct {
 	// guessing. nil = not read (a platform with no reader); an empty list =
 	// read, and none given.
 	GivenDevices *[]nodeapi.GivenDevice `json:"GivenDevices,omitempty"`
+	// BindHost (from OPOD_BIND_ADDR) is the host this worker's gang processes
+	// bind when it differs from the advertised one: behind NAT or a port
+	// forward the advertised address is the leader's to dial and not one this
+	// host owns, so binding it fails. The leader still dials the advertised
+	// address. "" = bind the advertised host, as before the field.
+	BindHost string `json:"BindHost,omitempty"`
 }
 
 // GPU describes a single GPU device.

@@ -60,6 +60,7 @@ type Env struct {
 	KVTier        string `env:"OPOD_KV_TIER" side:"worker" doc:"cpu | peer: the tier below VRAM the engine keeps its KV cache in, stated on registration; with peer the leader counts a prefix a sibling peer holds as a peer hit for this worker. Unset = VRAM only"`
 	PlanRevision  string `env:"OPOD_PLAN_REVISION" side:"worker" doc:"the plan revision this worker process was started for; the leader routes a share of traffic per revision (R15.17)"`
 	AdvertiseAddr string `env:"OPOD_ADVERTISE_ADDR" side:"worker" doc:"the host:port the leader should dial (overlay / multi-NIC hosts)"`
+	BindAddr      string `env:"OPOD_BIND_ADDR" side:"worker" doc:"the host[:port] this worker listens on, and the host its gang processes (llama.cpp rpc-server, the llama-server coordinator) bind, when the advertised address is not one this host owns (NAT, a port forward, an overlay). Never 0.0.0.0 by default: rpc-server has no authentication. Unset = the advertised address"`
 	NodeID        string `env:"OPOD_NODE_ID" side:"worker" doc:"a stable node id across restarts (else node.yaml, else POD_NAME, else random)"`
 	PodName       string `env:"POD_NAME" side:"worker" doc:"the pod's name, injected by any Kubernetes manifest; a worker with no OPOD_NODE_ID and no node.yaml derives its id from it (n_<pod name>) rather than minting a random one per restart"`
 	LeaderCA      string `env:"OPOD_LEADER_CA" side:"worker" doc:"PEM certificate the worker trusts for a TLS leader (exactly that one)"`

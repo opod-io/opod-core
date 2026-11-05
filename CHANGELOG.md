@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`OPOD_BIND_ADDR`: a worker behind NAT can listen on its own address.** The worker listened on, and its gang
+  processes (llama.cpp `rpc-server`, the `llama-server` coordinator) bound, the address it advertises — which behind NAT
+  or a port forward is not the host's, so the bind failed. `OPOD_BIND_ADDR=host[:port]` names what the host owns; the
+  worker states it on registration (`BindHost` in its capabilities) and the leader binds gang processes there while it
+  keeps dialling the advertised address. Unset = as before. `0.0.0.0` is taken only when stated, with a warning.
 - **Leftovers removed or wired.** The `opod_callback_*` metrics, which nothing has emitted since callbacks left core,
   are gone. The config view names the response cache's fields in snake case and drops its empty `egress` object. A
   default model is recorded under the engine that serves it, not always `ollama:`. The SGLang NVIDIA and AMD images

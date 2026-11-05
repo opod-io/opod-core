@@ -71,6 +71,7 @@ OPOD_ENGINE=<engine> OPOD_LOAD_MODEL=<catalog id> opod join "http://<leader-host
 | `OPOD_ENGINE_FLAGS` | JSON of engine knobs — see [Engine flags](#engine-flags) |
 | `HF_TOKEN` | For gated Hugging Face repos |
 | `OPOD_ADVERTISE_ADDR` | `host:8081` the leader should dial back, when the default address is wrong (VPN, several NICs) |
+| `OPOD_BIND_ADDR` | `host[:port]` the worker listens on, and the host its llama.cpp gang processes (`rpc-server`, the `llama-server` coordinator) bind, when the advertised address is not this host's own (NAT, a port forward). Unset = the advertised address |
 
 Instead of `OPOD_LOAD_MODEL`, you can also join an idle worker and place a model from the leader: `opod model add <id> --node <node-id>`.
 
@@ -286,6 +287,7 @@ To share one card between two workers, give each a memory budget: `opod join --g
 | A gang will not form: `rpc-server not found` | llama.cpp built without `-DGGML_RPC=ON`, or the Homebrew bottle | Build from source as above |
 | vLLM: `heads must be divisible by …` | Tensor parallel does not divide the model's heads | Set `OPOD_ENGINE_FLAGS='{"tp":"<power of 2>"}'` |
 | The leader cannot reach the worker | The worker advertised an address the leader cannot dial | `OPOD_ADVERTISE_ADDR=<ip>:8081` on the worker |
+| The worker or a llama.cpp gang process stops with `bind: cannot assign requested address` | The advertised address is the NAT's or a forward's, not this host's | `OPOD_BIND_ADDR=<this host's own ip>` on the worker |
 
 `opod doctor` checks the local machine and names the fix for what it finds. More: the [README](../README.md), [QUICKSTART](../QUICKSTART.md), and [`images/README.md`](../images/README.md) for every image's limits.
 

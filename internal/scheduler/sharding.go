@@ -452,8 +452,10 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 			}
 			// rpc-server speaks the unauthenticated llama.cpp RPC protocol, so
 			// bind it to the worker's advertised (mesh) address only — not every
-			// interface. Fall back to 0.0.0.0 only when the address is unknown.
-			rpcBind := wHost
+			// interface — or the host it registered from OPOD_BIND_ADDR when the
+			// advertised one is not its own (T10.22). Fall back to 0.0.0.0 only
+			// when the address is unknown. The leader still dials wHost.
+			rpcBind := bindHostOf(w, wHost)
 			if rpcBind == "" {
 				rpcBind = "0.0.0.0"
 				o.Log.Warn("worker address unknown — rpc-server binding 0.0.0.0 (unauthenticated RPC exposed on all interfaces)",
@@ -462,7 +464,7 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 			// Worker probes the same address rpc-server binds (loopback when we
 			// fell back to 0.0.0.0); the leader dials via the worker's address below.
 			healthHost := rpcBind
-			if rpcBind == "0.0.0.0" {
+			if rpcBind == "0.0.0.0" || rpcBind == "::" {
 				healthHost = "127.0.0.1"
 			}
 			spec := agent.ProcessSpec{
@@ -545,8 +547,11 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 		if sErr != nil {
 			host = coordHost.node.Address
 		}
-		coordHostBind = host
-		coordHealthHost = host
+		coordHostBind = bindHostOf(*coordHost.node, host)
+		coordHealthHost = coordHostBind
+		if coordHostBind == "0.0.0.0" || coordHostBind == "::" {
+			coordHealthHost = "127.0.0.1"
+		}
 		if coordHostBind == "" {
 			coordHostBind = "0.0.0.0"
 			coordHealthHost = "127.0.0.1"
@@ -750,6 +755,19 @@ func unreachable(ctx context.Context, endpoints []string) []string {
 		_ = conn.Close()
 	}
 	return bad
+}
+
+// bindHostOf is the host a gang process on n binds: the BindHost the worker
+// registered (OPOD_BIND_ADDR, T10.22) when it stated one, else advertised —
+// which is also what the leader dials, so a worker behind no NAT is unchanged.
+func bindHostOf(n store.Node, advertised string) string {
+	var caps struct {
+		BindHost string `json:"BindHost"`
+	}
+	if n.HardwareJSON != "" && json.Unmarshal([]byte(n.HardwareJSON), &caps) == nil && caps.BindHost != "" {
+		return caps.BindHost
+	}
+	return advertised
 }
 
 func hostOf(addr string) string {
