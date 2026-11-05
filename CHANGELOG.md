@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **Routing by held blocks recovers after a leader restart.** A worker drained its block changes before posting them, so
+  a failed post, or a 404 from a restarted leader, lost that batch; the shared block every chain starts with (the system
+  prompt) was never stored again, and no worker was credited for anything until it was. After a heartbeat that did not
+  land, the next one now restates every block held. The router also logs through the leader's logger (its level and
+  JSON), with one debug line per pick naming each candidate's credited blocks.
 - **A block in a worker's CPU tier can count for routing** (`routing.prefixBlockTier: cpu-lower`, feature
   `kv_cpu_tier_hits`). A vLLM worker with KV events and a CPU tier now asks vLLM to describe its CPU-tier blocks, reports
   them on its heartbeat, and the leader indexes them; under `cpu-lower` a leading block held there beyond the card's is
