@@ -5,7 +5,10 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## Unreleased
+## v0.4.0 — 2026-11-04
+
+Everything since v0.3.0 (2026-10-31). Breaking: usage is pushed (feature `usage_push`) and the leader keeps no
+usage table, so a manager that reads `usage_stream` must move to the push; requires opod-sdk v0.5.3.
 
 - **Routing by held blocks recovers after a leader restart.** A worker drained its block changes before posting them, so
   a failed post, or a 404 from a restarted leader, lost that batch; the shared block every chain starts with (the system
