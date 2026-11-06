@@ -69,12 +69,21 @@ func (r *Router) rememberSticky(ctx context.Context, model, nodeID string) {
 	r.mu.Unlock()
 }
 
-// userIDFor returns the authenticated user id from ctx, or "" when no
-// auth key is attached (dev mode with require_keys=false). Stickiness
-// is disabled for the anonymous case.
+// userIDFor returns whom a pin belongs to: the authenticated key's user
+// id, else the key itself — a key with no user (every key a mounted auth
+// snapshot creates, and `opod token create` without one) is still one
+// caller, so it pins as one. "key:" keeps a key id apart from a user id.
+// "" only when no key is attached (dev mode with require_keys=false):
+// stickiness is disabled for the anonymous case.
 func userIDFor(ctx context.Context) string {
-	if k := auth.KeyFrom(ctx); k != nil {
+	k := auth.KeyFrom(ctx)
+	switch {
+	case k == nil:
+		return ""
+	case k.UserID != "":
 		return k.UserID
+	case k.ID != "":
+		return "key:" + k.ID
 	}
 	return ""
 }

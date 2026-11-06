@@ -5,6 +5,12 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## Unreleased
+
+- **A key with no user id gets a sticky pin.** The pin was keyed by the key's user id only, and every key a mounted
+  auth snapshot creates has none, so on a managed leader stickiness never fired, whatever `routing.stickyTtlSeconds`
+  said. Such a key now pins as itself (`key:<id>`); a key with a user id pins by it, as before.
+
 ## v0.4.0 — 2026-11-04
 
 Everything since v0.3.0 (2026-10-31). Breaking: usage is pushed (feature `usage_push`) and the leader keeps no

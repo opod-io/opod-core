@@ -784,8 +784,8 @@ Routing overrides travel in their own namespaced bag rather than as top-level fi
 mirrored by an `X-Opod-*` header for clients that can only set headers (body wins on
 conflict). `user` is read for accounting and the sticky pin.
 
-Sticky routing is keyed by `(user_id, model)` from the request context — there is no
-`SessionID` field and no session header (see § Sticky sessions).
+Sticky routing is keyed by `(user_id, model)` from the request context — the key itself when it
+carries no user id — and there is no `SessionID` field and no session header (see § Sticky sessions).
 
 LiteLLM is used as a reference for edge cases in protocol translation but we don't ship it; we hand-write the adapters in Go for control and zero-dep deployment.
 
@@ -806,7 +806,7 @@ Recent latency is used, but not as a per-node score: it feeds the p95 check that
 
 ### Sticky sessions
 
-- The pin is keyed by **`(user_id, model)`** — the authenticated key's user id from the request context (`internal/router/sticky.go`). There is no `X-Session-Id` header and no `SessionID` derivation; an unauthenticated request (dev mode, `require_keys: false`) is never pinned.
+- The pin is keyed by **`(user_id, model)`** — the authenticated key's user id from the request context (`internal/router/sticky.go`), or the key's own id when it has no user id (every key a mounted auth snapshot creates; until v0.4.0 those were never pinned). There is no `X-Session-Id` header and no `SessionID` derivation; an unauthenticated request (dev mode, `require_keys: false`) is never pinned.
 - Bound to the worker that last served that tuple for `router.sticky_session_ttl_seconds` (`OPOD_STICKY_SESSION_TTL_SECONDS`). **0 — the default — disables it**; the legacy `router.sticky_sessions` boolean is parsed and superseded. A policy snapshot's `routing.stickyTtlSeconds` overrides it live, with no restart (feature `sticky_ttl_policy`): pins placed afterwards expire by it, pins already placed keep their stamped expiry, and 0 gives back the start value. Prefix-affinity pins expire by the same TTL (10 minutes when none is set).
 - Soft binding: the pin only reorders the candidates the load scorer already accepted, so a saturated or drained worker loses it and the cache miss is absorbed. `model=auto` is never pinned.
 

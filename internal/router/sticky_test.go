@@ -59,6 +59,28 @@ func TestStickyPick_RemembersAndReturns(t *testing.T) {
 	}
 }
 
+// A key with no user id — every key a mounted auth snapshot creates — pins
+// as itself (PLAN T24.55: with only the user id, stickiness never fired on
+// an endpoint a manager runs, whatever its TTL). Two such keys do not share
+// a pin, and a key id never reads as a user of the same name.
+func TestStickyPick_AKeyWithNoUserPinsAsItself(t *testing.T) {
+	r := &Router{stickiness: map[string]stickyEntry{}}
+	r.SetStickyTTL(time.Minute)
+	k1 := auth.WithTestKey(context.Background(), &store.APIKey{ID: "snap_k_1"})
+	r.rememberSticky(k1, "qwen3-14b", "worker-X")
+	if got := r.stickyPick(k1, "qwen3-14b"); got != "worker-X" {
+		t.Fatalf("a key with no user id: got %q, want worker-X", got)
+	}
+	k2 := auth.WithTestKey(context.Background(), &store.APIKey{ID: "snap_k_2"})
+	if got := r.stickyPick(k2, "qwen3-14b"); got != "" {
+		t.Fatalf("another key inherited the pin: %q", got)
+	}
+	user := auth.WithTestKey(context.Background(), &store.APIKey{UserID: "snap_k_1"})
+	if got := r.stickyPick(user, "qwen3-14b"); got != "" {
+		t.Fatalf("a user named like a key id inherited the key's pin: %q", got)
+	}
+}
+
 // TestStickyPick_ExpiresOnTTL — past the TTL, the entry is dropped.
 func TestStickyPick_ExpiresOnTTL(t *testing.T) {
 	r := &Router{stickiness: map[string]stickyEntry{}}
