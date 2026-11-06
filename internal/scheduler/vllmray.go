@@ -166,10 +166,12 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 		o.Log.Info("cross-machine TP: skipping CUDA-graph capture (--enforce-eager)",
 			"model", entry.ID, "tp", split.TP)
 	}
+	overrides, extra := agent.EngineFlags(par.Flags).VLLMShellOverrides()
 	vllmCmd := vllmGangCommand(vllmGang{
 		Model: model, ServedAs: entry.ID, Host: headHost, Port: vllmPort,
 		TP: gpusPerNode, PP: pp, Eager: eager,
-		ToolArgs: agent.ToolParserArgs("vllm", models.ToolParser(&entry, "vllm"), par.Flags["extra"]),
+		ToolArgs:  agent.ToolParserArgs("vllm", models.ToolParser(&entry, "vllm"), par.Flags["extra"]),
+		Overrides: overrides, Extra: extra,
 	})
 	vllmSpec := agent.ProcessSpec{
 		ID:      gangShardID(entry.ID, gangID, "vllm-ray"),
@@ -256,6 +258,13 @@ type vllmGang struct {
 	// ToolArgs turn on the model's tool-call parser (agent.ToolParserArgs,
 	// PLAN T19.25); none = the catalog names no parser for it.
 	ToolArgs []string
+	// Overrides and Extra are the gang's flags by the rule a worker's take
+	// (agent.EngineFlags.VLLMShellOverrides): max_model_len, kv_cache_dtype,
+	// pp_layer_partition and extra — which carries a KV tier's size (PLAN
+	// T26.6). A Ray gang read none of them until 2026-11-06, so a plan's
+	// context, KV cache type and tier never reached its engine.
+	Overrides string
+	Extra     string
 }
 
 // vllmGangCommand is the `vllm serve` line the Ray head runs under a login
@@ -278,7 +287,15 @@ func vllmGangCommand(g vllmGang) string {
 	if g.Eager {
 		eager = " --enforce-eager"
 	}
-	return agent.MemFractionShell("vllm") + fmt.Sprintf(
+	pre := agent.MemFractionShell("vllm")
+	if g.Overrides != "" {
+		pre += g.Overrides + " "
+	}
+	extra := ""
+	if g.Extra != "" {
+		extra = " " + g.Extra
+	}
+	return pre + fmt.Sprintf(
 		// Served under the catalog id AND the repo name, like agent.launchVLLM:
 		// the leader resolves a catalog id to the engine's native name at
 		// dispatch, so a coordinator that served the id alone answered 404
@@ -287,5 +304,5 @@ func vllmGangCommand(g vllmGang) string {
 			"--tensor-parallel-size %d --pipeline-parallel-size %d --host %s --port %d "+
 			"--trust-remote-code --gpu-memory-utilization "+agent.MemFractionVar+eager,
 		shellQuote(g.Model), shellQuote(g.ServedAs), shellQuote(g.Model),
-		g.TP, g.PP, g.Host, g.Port) + quoteArgs(g.ToolArgs)
+		g.TP, g.PP, g.Host, g.Port) + extra + quoteArgs(g.ToolArgs)
 }

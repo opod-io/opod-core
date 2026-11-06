@@ -92,3 +92,22 @@ func TestVLLMRayGangQuotesTheModelName(t *testing.T) {
 		t.Errorf("the model name must be shell-escaped:\n%s", got)
 	}
 }
+
+// A Ray gang's plan flags reach its engine by the rule a worker's take
+// (PLAN T26.6, design-partner cell 2026-11-06): the head ran `vllm serve` with
+// none of them, so a gang's context, KV cache type and KV tier never started.
+func TestVLLMRayGangCarriesThePlansFlags(t *testing.T) {
+	overrides, extra := agent.EngineFlags{"max_model_len": "4096", "kv_cache_dtype": "fp8", "pp_layer_partition": "12,16",
+		"extra": "--num-gpu-blocks-override 4096 --kv-offloading-size 4 --kv-offloading-backend native"}.VLLMShellOverrides()
+	got := vllmGangCommand(vllmGang{Model: "org/m", ServedAs: "m", Host: "h", Port: 9100, TP: 1, PP: 2, Overrides: overrides, Extra: extra})
+	for _, want := range []string{"--max-model-len", "4096", "--kv-cache-dtype", "fp8", "--kv-offloading-size", "--kv-offloading-backend",
+		"--num-gpu-blocks-override", "export VLLM_PP_LAYER_PARTITION=12,16;"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	// The overrides are shell assignments: they run before the exec.
+	if strings.Index(got, "VLLM_PP_LAYER_PARTITION") > strings.Index(got, "exec vllm serve") {
+		t.Errorf("the overrides must precede the exec:\n%s", got)
+	}
+}
