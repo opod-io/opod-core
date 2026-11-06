@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,7 +24,8 @@ type startedProcs struct {
 	mu      sync.Mutex
 	specs   []agent.ProcessSpec
 	stopped []string
-	failAt  int // 1-based index of the start that fails; 0 = never
+	failAt  int      // 1-based index of the start that fails; 0 = never
+	orphans []string // processes a previous leader left running, which the list returns
 	srv     *httptest.Server
 }
 
@@ -56,8 +58,14 @@ func newFakeWorker(t *testing.T, failAt int) *startedProcs {
 			}
 			w.stopped = append(w.stopped, body.ID)
 			_, _ = io.WriteString(rw, `{}`)
+		case strings.HasSuffix(r.URL.Path, "/v1/process/list"):
+			list := []agent.ProcessInfo{}
+			for _, id := range w.orphans {
+				list = append(list, agent.ProcessInfo{ID: id, Status: "running"})
+			}
+			_ = json.NewEncoder(rw).Encode(list)
 		default:
-			_, _ = io.WriteString(rw, `[]`) // the process LIST the orphan sweep asks for
+			_, _ = io.WriteString(rw, `[]`)
 		}
 	}))
 	t.Cleanup(w.srv.Close)
@@ -298,5 +306,28 @@ func TestSGLangGangServesItsMetrics(t *testing.T) {
 		DistAddr: "10.0.0.1:29500", NNodes: 2, NodeRank: 0, TP: 1, PP: 2})
 	if !strings.Contains(got, "--enable-metrics") {
 		t.Errorf("a gang part starts without --enable-metrics:\n%s", got)
+	}
+}
+
+// A gang a previous leader formed still runs on its parts after that leader is
+// replaced; the new leader's create must stop it first, for every backend — the
+// sweep lived in llama.cpp's path alone, and a vLLM Ray gang on the
+// design-partner cell (2026-11-06) never re-formed: "process … already exists
+// (running)". A sibling gang's process is left alone.
+func TestEveryGangBackendStopsWhatAPreviousLeaderLeft(t *testing.T) {
+	w0, w1 := newFakeWorker(t, 0), newFakeWorker(t, 0)
+	o, entry, nodes := sglangFixture(t, w0, w1)
+	mine, sibling := agent.GangProcessPrefix(entry.ID, "g0")+"ray-head", agent.GangProcessPrefix(entry.ID, "g1")+"rank-0"
+	w0.orphans = []string{mine, sibling}
+	if err := o.CreateSharded(context.Background(), entry, "g0", 0, []string{nodes[0].ID, nodes[1].ID}, Parallelism{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	w0.mu.Lock()
+	defer w0.mu.Unlock()
+	if !slices.Contains(w0.stopped, mine) {
+		t.Fatalf("the previous leader's process of this gang was not stopped: stopped %v", w0.stopped)
+	}
+	if slices.Contains(w0.stopped, sibling) {
+		t.Fatalf("a sibling gang's process was stopped: %v", w0.stopped)
 	}
 }

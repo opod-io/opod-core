@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **Every gang backend stops what a previous leader left.** After a leader restart, a gang's processes still run
+  on its parts. Only llama.cpp's create swept them, so a vLLM Ray, SGLang or expert gang refused to re-form with
+  `process "s-…" already exists (running)` until its parts restarted. The sweep now runs in the shared create.
 - **A vLLM Ray gang takes its plan's engine flags.** The head's `vllm serve` was built from the model, the
   parallelism and the memory fraction only, so a gang's `max_model_len`, `kv_cache_dtype`, `pp_layer_partition`
   and `extra` — and a KV tier's size, which rides `extra` — never reached the engine. They now do, by the rule a

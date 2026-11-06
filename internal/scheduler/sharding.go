@@ -352,6 +352,23 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 	// replaces only that gang — the whole point of gangs is that the others
 	// keep serving through it.
 	o.replacePrior(ctx, entry.ID, gangID, replaceModel)
+	// The store-driven teardown above only sees shards THIS leader recorded.
+	// After a leader restart (fresh state) the previous convergence's
+	// processes still run on the workers, and the create below collides with
+	// `process "s-…" already exists`. Sweep every registered worker for
+	// processes carrying this shard prefix and stop them — for EVERY backend:
+	// it lived in llama.cpp's path alone, so a vLLM Ray gang could not re-form
+	// under a new leader until its parts restarted (design-partner cell,
+	// 2026-11-06: "process s-…-g0-ray-head already exists (running)").
+	//
+	// Scoped to the gang being built, NOT the model: a sweep by model prefix
+	// would stop a sibling gang's parts, which are serving requests right now,
+	// on every node the two gangs share.
+	if replaceModel {
+		o.stopOrphanShardProcs(ctx, entry)
+	} else {
+		o.stopOrphanGangProcs(ctx, entry, gangID)
+	}
 	// Which placer chose the parts is worth a line: a control plane always
 	// names the nodes (its ledger decided); the leader's own picker is the
 	// standalone CLI's path, and two placers with two truths is what W8 warns of.
@@ -384,21 +401,6 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 	// on disk.
 	if entry.Source.Type != "huggingface" && entry.Source.Path == "" {
 		return fmt.Errorf("sharded model %s requires source.path (local GGUF path)", entry.ID)
-	}
-
-	// The store-driven teardown above only sees shards THIS leader recorded.
-	// After a leader restart (fresh state) the previous convergence's
-	// rpc-servers / coordinator still run on the workers, and the create below
-	// collides with `process "s-…" already exists`. Sweep every registered
-	// worker for processes carrying this shard prefix and stop them.
-	//
-	// Scoped to the gang being built, NOT the model: a sweep by model prefix
-	// would stop a sibling gang's parts, which are serving requests right now,
-	// on every node the two gangs share.
-	if replaceModel {
-		o.stopOrphanShardProcs(ctx, entry)
-	} else {
-		o.stopOrphanGangProcs(ctx, entry, gangID)
 	}
 
 	rpcPortBase := entry.Sharding.RPCPortBase
