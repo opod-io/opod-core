@@ -75,7 +75,7 @@ images:
     base: ghcr.io/ggml-org/llama.cpp:full-intel
     weights: [gguf]
     gang: rpc
-    proven: true
+    proven: true   # an all-Intel RPC gang answered on two Intel hosts 2026-10-28, from a dirty build carrying e763153; rerun on every LLAMA_RELEASE bump (README)
     hardware: Intel Arc A770 / Arc Pro B60 (SYCL, oneAPI; served on an Arc A770)
     families: [intel:xe-hpg, intel:xe2]
     requires:

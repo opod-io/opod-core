@@ -54,6 +54,12 @@ architecture). Each is `--target rpc-export` of its Dockerfile, built by CI disp
 rather than compile it under emulation. Bootstrap one from an already published worker without compiling:
 `RPC_SOURCE=<image> images/build.sh rpc-bootstrap [vendor]`.
 
+**After a `LLAMA_RELEASE` bump, `proven: true` on a gang row has to be earned again.** A new release can break a
+pair without breaking a single-card serve: the SYCL reorder optimisation once attached backend data that the RPC
+server refuses, and only an all-Intel gang showed it (fixed by `GGML_SYCL_ENABLE_OPT=0`, `e763153`). Before the
+bump ships, form a two-part gang on each vendor whose row says `gang: rpc` and `proven: true`
+and send it a request; set `proven: false` on any that does not answer.
+
 **The `io.opod.llamacpp.rpc=true` label.** Upstream's llama.cpp images are built without the RPC backend, so the
 image name does not say whether a worker can be a part of a gang — and a part on an image without `rpc-server`
 fails at process launch. Every worker image whose final stage really carries the pair (`/opt/llama-rpc` plus the
