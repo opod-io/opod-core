@@ -7,6 +7,9 @@ the last section.
 
 ## Unreleased
 
+- **An answer's usage carries the engine's cached tokens.** `usage.prompt_tokens_details.cached_tokens` is in the
+  chat answer, streamed or not, when the engine reported a prefix-cache count — as OpenAI's answer does. It reached
+  the usage record only; the answer had the three counts.
 - **Every gang backend stops what a previous leader left.** After a leader restart, a gang's processes still run
   on its parts. Only llama.cpp's create swept them, so a vLLM Ray, SGLang or expert gang refused to re-form with
   `process "s-…" already exists (running)` until its parts restarted. The sweep now runs in the shared create.

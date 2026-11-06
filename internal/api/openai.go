@@ -245,6 +245,25 @@ type usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// PromptTokensDetails carries the engine's prefix-cache count, as OpenAI's
+	// answer does (usage.prompt_tokens_details.cached_tokens) — a client or a
+	// gateway in front reads it for cost; absent when the engine reported none.
+	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+type promptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// openAIUsage is an engine's usage in the OpenAI answer's shape. The cached
+// count reached the usage record (T32.47) but not the client: the answer's
+// usage had the three counts only.
+func openAIUsage(u *engines.Usage) usage {
+	out := usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	if u.CachedTokens > 0 {
+		out.PromptTokensDetails = &promptTokensDetails{CachedTokens: u.CachedTokens}
+	}
+	return out
 }
 
 type chatChunk struct {
@@ -459,11 +478,8 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 				}},
 			}
 			if ev.Usage != nil {
-				finalChunk.Usage = &usage{
-					PromptTokens:     ev.Usage.PromptTokens,
-					CompletionTokens: ev.Usage.CompletionTokens,
-					TotalTokens:      ev.Usage.TotalTokens,
-				}
+				u := openAIUsage(ev.Usage)
+				finalChunk.Usage = &u
 			}
 			sendChunk(w, flusher, finalChunk)
 			_, _ = io.WriteString(w, "data: [DONE]\n\n")
@@ -619,11 +635,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		}},
 	}
 	if u != nil {
-		resp.Usage = usage{
-			PromptTokens:     u.PromptTokens,
-			CompletionTokens: u.CompletionTokens,
-			TotalTokens:      u.TotalTokens,
-		}
+		resp.Usage = openAIUsage(u)
 	}
 	writeJSON(w, http.StatusOK, resp)
 	deliver(w)
