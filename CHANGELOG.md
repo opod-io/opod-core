@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **A vLLM Ray gang takes its plan's engine flags.** The head's `vllm serve` was built from the model, the
+  parallelism and the memory fraction only, so a gang's `max_model_len`, `kv_cache_dtype`, `pp_layer_partition`
+  and `extra` — and a KV tier's size, which rides `extra` — never reached the engine. They now do, by the rule a
+  worker's launch uses.
 - **A key with no user id gets a sticky pin.** The pin was keyed by the key's user id only, and every key a mounted
   auth snapshot creates has none, so on a managed leader stickiness never fired, whatever `routing.stickyTtlSeconds`
   said. Such a key now pins as itself (`key:<id>`); a key with a user id pins by it, as before.
