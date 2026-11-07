@@ -27,6 +27,10 @@ func TestLoadScrapesVLLMMetrics(t *testing.T) {
 	if ld.TokensPerSec != 0 {
 		t.Fatalf("first sample has no rate, got %v", ld.TokensPerSec)
 	}
+	// The counters travel too (PLAN T28.7): the leader weighs the rate by them.
+	if ld.PrefixHitTokensTotal == nil || *ld.PrefixHitTokensTotal != 30 || ld.PrefixQueryTokensTotal == nil || *ld.PrefixQueryTokensTotal != 40 {
+		t.Fatalf("prefix counters %v / %v", ld.PrefixHitTokensTotal, ld.PrefixQueryTokensTotal)
+	}
 	ld, _ = d.Load(context.Background())
 	if ld.TokensPerSec <= 0 {
 		t.Fatalf("second sample must carry a generation rate, got %+v", ld)

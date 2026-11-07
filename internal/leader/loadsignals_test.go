@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +58,19 @@ func TestLoadzAggregatesWorkerLoad(t *testing.T) {
 	if ld.Workers != 2 || ld.Reporting != 2 || ld.KVUsedPct != 90 || ld.QueueDepth != 3 || ld.TokensPerSec != 20 || ld.PrefixHitPct != 30 {
 		t.Fatalf("aggregate %+v", ld)
 	}
+	// PLAN T28.7: where the engines count hits and queries, the rate is
+	// weighted by traffic — an idle worker adds nothing (the mean read 49 %),
+	// and a cold one with a little traffic counts for its little.
+	heartbeat("w1", `,"load":{"prefix_hit_pct":0,"prefix_hit_tokens_total":0,"prefix_query_tokens_total":0}`)
+	heartbeat("w2", `,"load":{"prefix_hit_pct":98,"prefix_hit_tokens_total":980,"prefix_query_tokens_total":1000}`)
+	if ld := loadz(); ld.PrefixHitPct != 98 || ld.PrefixQueryTokensTotal == nil || *ld.PrefixQueryTokensTotal != 1000 {
+		t.Fatalf("an idle worker must not halve the hit rate: %+v", ld)
+	}
+	heartbeat("w1", `,"load":{"prefix_hit_pct":10,"prefix_hit_tokens_total":3,"prefix_query_tokens_total":30}`)
+	if ld := loadz(); math.Abs(ld.PrefixHitPct-983.0/1030*100) > 1e-9 {
+		t.Fatalf("hit tokens ÷ query tokens over the workers = 95.4 %%, got %v", ld.PrefixHitPct)
+	}
+	heartbeat("w1", `,"load":{"kv_used_pct":40,"queue_depth":1,"tokens_per_s":12.5,"prefix_hit_pct":50}`)
 	// a worker without a sample counts as alive but not reporting
 	heartbeat("w1", ``)
 	if ld := loadz(); ld.Workers != 2 || ld.Reporting != 2 {

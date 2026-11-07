@@ -129,6 +129,11 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if hok && qok && queries > 0 {
 		ld.PrefixHitPct = hits / queries * 100
 	}
+	// The counters themselves (PLAN T28.7), so the leader weighs each
+	// worker's rate by its traffic.
+	if hok && qok {
+		ld.PrefixHitTokensTotal, ld.PrefixQueryTokensTotal = new(int64(hits)), new(int64(queries))
+	}
 	readTier(m, &ld)
 	// The engine's own time to first token (PLAN T24.25): the leader's
 	// ttft_p50_ms minus this is what the leader and the network add.

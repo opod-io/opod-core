@@ -295,6 +295,10 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		addStated(&out.KVUsedTokens, ld.KVUsedTokens)
 		addStated(&out.PreemptionsTotal, ld.PreemptionsTotal)
 		addStated(&out.EvictionsTotal, ld.EvictionsTotal)
+		// The prefix cache's own counters (PLAN T28.7), summed: their ratio is
+		// the hit rate below.
+		addStated(&out.PrefixHitTokensTotal, ld.PrefixHitTokensTotal)
+		addStated(&out.PrefixQueryTokensTotal, ld.PrefixQueryTokensTotal)
 		// The engines' host KV tiers (PLAN T26.4): counters summed like the
 		// pool's, the fill the fullest tier's.
 		addStated(&out.TierHitTokensTotal, ld.TierHitTokensTotal)
@@ -369,6 +373,18 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	// prefix-cache hit rate as a fraction of itself.
 	if prefixSamples > 0 {
 		out.PrefixHitPct = prefixSum / float64(prefixSamples)
+		// Where the engines count hits and queries (vLLM), the rate is hit
+		// tokens ÷ query tokens over the samples (PLAN T28.7): weighted by
+		// traffic, so a worker that has served nothing adds nothing — the mean
+		// of the rates read 49 % for two workers whose traffic, all on one of
+		// them, hit 98 %. The mean stands only for an engine that publishes a
+		// rate and no counters.
+		if q := out.PrefixQueryTokensTotal; q != nil {
+			out.PrefixHitPct = 0
+			if *q > 0 && out.PrefixHitTokensTotal != nil {
+				out.PrefixHitPct = float64(*out.PrefixHitTokensTotal) / float64(*q) * 100
+			}
+		}
 		// KV pressure as a PROPORTIONAL figure (PLAN T11.20): the mean use
 		// across the samples, times the workers it speaks for — "how many
 		// workers' worth of cache is in use". A horizontal scaler computes

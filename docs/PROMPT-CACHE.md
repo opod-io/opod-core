@@ -50,7 +50,7 @@ shares whatever the setting.
 ## How to see whether it works
 
 The engines count prefix-cache hits and queries; opod's leader reports the hit rate on `/loadz` as
-`prefix_hit_pct`, and the control plane shows it on the endpoint page (*Load*). A long average prompt with a low hit
+`prefix_hit_pct` (on vLLM hit tokens ÷ looked-up tokens over all workers, so weighted by traffic), and the control plane shows it on the endpoint page (*Load*). A long average prompt with a low hit
 rate means the prompts share little prefix: check the order of their parts first. A hit rate that drops at the same
 time every day usually means a date in the chat template.
 

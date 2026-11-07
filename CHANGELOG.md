@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`/loadz` `prefix_hit_pct` is weighted by traffic on vLLM.** It was the plain mean of the workers' rates, and a
+  worker that had served nothing counted as 0 %: two workers, all traffic on one at 98 %, read 49 %. A vLLM worker now
+  sends its prefix-cache counters (`prefix_hit_tokens_total`, `prefix_query_tokens_total`) and the leader divides
+  their sums; `/loadz` carries the two sums too. An engine that publishes only a rate (SGLang, TensorRT-LLM) keeps
+  the mean. Needs SDK v0.6.1.
 - **An answer's usage carries the engine's cached tokens.** `usage.prompt_tokens_details.cached_tokens` is in the
   chat answer, streamed or not, when the engine reported a prefix-cache count — as OpenAI's answer does. It reached
   the usage record only; the answer had the three counts.
