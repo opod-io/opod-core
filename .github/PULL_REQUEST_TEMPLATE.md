@@ -16,8 +16,7 @@ Closes #
 - [ ] Bug fix (non-breaking, restores intended behavior)
 - [ ] New feature (non-breaking, adds a capability)
 - [ ] Breaking change (requires config / API / schema migration)
-<!-- Catalog entries are NOT in this repo: model YAMLs live in opod-io/opod-sdk and are
-     embedded into the binary. A catalog change is a PR there, not here. -->
+<!-- Catalog entries are pkg/catalog/<id>.yaml (schema: pkg/catalog/README.md), embedded into the binary. -->
 - [ ] Docs only (README / ARCHITECTURE / MODELS / QUICKSTART / site)
 - [ ] Refactor (no functional change)
 - [ ] Tooling / CI

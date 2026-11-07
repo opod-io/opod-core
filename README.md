@@ -9,7 +9,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/code%20of%20conduct-Contributor%20Covenant%202.1-5e4b8b)](CODE_OF_CONDUCT.md)
 [![Discussions](https://img.shields.io/github/discussions/opod-io/opod-core?label=discussions)](https://github.com/opod-io/opod-core/discussions)
 
-[**opod.io**](https://opod.io) · [**Enterprise: Opod Control Plane**](#-enterprise-opod-control-plane) · [Engines](docs/ENGINES.md) · [Discussions](https://github.com/opod-io/opod-core/discussions) · [Go SDK](https://github.com/opod-io/opod-sdk) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · Apache-2.0
+[**opod.io**](https://opod.io) · [**Enterprise: Opod Control Plane**](#-enterprise-opod-control-plane) · [Engines](docs/ENGINES.md) · [Discussions](https://github.com/opod-io/opod-core/discussions) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · Apache-2.0
 
 **Maintainer:** [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) — [hadi.work.ca@gmail.com](mailto:hadi.work.ca@gmail.com) · [hadi@opod.io](mailto:hadi@opod.io)
 
@@ -26,7 +26,6 @@
 | Part | What it is | Where |
 |---|---|---|
 | **Opod core** (this repo) | The open runtime: `opod up` (leader) and `opod join` (worker). Apache-2.0, CLI only | here |
-| **Opod SDK** | The Go contract for anything that manages a leader: the `/admin/v1` and `/loadz` types, the node protocol, the environment variables, the model catalog. Types only, no client. Apache-2.0 | [github.com/opod-io/opod-sdk](https://github.com/opod-io/opod-sdk) |
 | **Opod Control Plane** (`opodcp`) | **The enterprise product on top of core** — see [below](#-enterprise-opod-control-plane) | [opod.io](https://opod.io) · [hadi@opod.io](mailto:hadi@opod.io) |
 
 ### 🏢 Enterprise: Opod Control Plane
@@ -43,7 +42,7 @@ Core is complete on its own: everything on this page is open source with no usag
 | Your identity system | SSO with any OIDC provider, roles, audit |
 | A screen for operators | A web console for endpoints, GPUs, rollouts, keys and usage |
 
-The Control Plane drives core through the same open contract a script would ([opod-sdk](https://github.com/opod-io/opod-sdk)), so the leaders keep serving when it is down. **Free for up to 4 GPUs.** Licences and support: **[opod.io](https://opod.io)** · **[hadi@opod.io](mailto:hadi@opod.io)**.
+The Control Plane drives core through the same open contract a script would (the `/admin/v1` routes, the mounted plan and auth files), so the leaders keep serving when it is down. **Free for up to 4 GPUs.** Licences and support: **[opod.io](https://opod.io)** · **[hadi@opod.io](mailto:hadi@opod.io)**.
 
 ## 🗺️ Where Opod sits
 
@@ -519,7 +518,7 @@ Everything in the dashboard/fleet-management direction lives in a separate produ
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
-Opod ships a curated catalog of **48 open-weight models**, embedded in the binary from [`opod-io/opod-sdk/catalog`](https://github.com/opod-io/opod-sdk) (`opod catalog ls`, `opod catalog export <dir>`), spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `opod model add hf:<owner>/<repo>` (HuggingFace direct) or `opod model add ollama:<name>` (any Ollama-pullable tag). See the SDK's `catalog/README.md` for the YAML schema if you want to PR an entry; a file dropped in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` adds or overrides one locally. `opod fetch <repo> <file> --dir <models dir>` makes one GGUF present in a models directory — exclusive per file (a second caller waits for the first), written to a temp sibling and renamed only when the byte count matches the server's, skipped when already there — the same pull a worker runs before launching llama-server.
+Opod ships a curated catalog of **48 open-weight models**, embedded in the binary from [`pkg/catalog`](pkg/catalog) (`opod catalog ls`, `opod catalog export <dir>`), spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `opod model add hf:<owner>/<repo>` (HuggingFace direct) or `opod model add ollama:<name>` (any Ollama-pullable tag). See the SDK's `catalog/README.md` for the YAML schema if you want to PR an entry; a file dropped in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` adds or overrides one locally. `opod fetch <repo> <file> --dir <models dir>` makes one GGUF present in a models directory — exclusive per file (a second caller waits for the first), written to a temp sibling and renamed only when the byte count matches the server's, skipped when already there — the same pull a worker runs before launching llama-server.
 
 **Signed catalog files.** A catalog entry decides which weights get pulled, so files you add can be signed with [minisign](https://jedisct1.github.io/minisign/): `minisign -S -m my-model.yaml` writes `my-model.yaml.minisig` beside it. Set `OPOD_CATALOG_PUBKEY` (the public key line, or the path of your `minisign.pub`) and every signed file in `~/.opod/catalog/`, `$OPOD_CATALOG_DIR` and the share directories must verify — at every catalog load, and in `opod model add --from my-model.yaml`, which also saves the signature beside its copy. A signature that is present and does not verify is always a refusal that names the file. Unsigned files keep loading unless you also set `OPOD_CATALOG_REQUIRE_SIGNED=1` — that switch is what makes it a boundary, since whoever can write the directory could otherwise just delete the signature. The embedded catalog ships inside the binary and is not subject to any of this, and neither is an unedited `opod catalog export` copy of it.
 
@@ -1078,7 +1077,7 @@ For a model too large to fit on any single machine, Opod can split it across N w
 **Prereqs:**
 - `llama-server` on PATH on whichever machine runs the coordinator — by default the shard worker with the most **GPU** memory, so install llama.cpp there (`brew install llama.cpp`, or your distro's build).
 - `rpc-server` on PATH on every worker that will host a part. (At time of writing this needs a source build of llama.cpp with `-DGGML_RPC=ON`; the Homebrew bottle doesn't include it. The `opod-worker-llamacpp-*` container images carry the pair already.)
-- A catalog entry with `sharding.required: true`. `source.type: file` + `source.path` is a local GGUF the leader can read (the bundled `llama-3.3-70b-sharded` entry, in [`opod-io/opod-sdk/catalog`](https://github.com/opod-io/opod-sdk), is that shape); a `huggingface` source with a `file:` is downloaded by the leader and fanned out for you.
+- A catalog entry with `sharding.required: true`. `source.type: file` + `source.path` is a local GGUF the leader can read (the bundled `llama-3.3-70b-sharded` entry, in [`pkg/catalog`](pkg/catalog), is that shape); a `huggingface` source with a `file:` is downloaded by the leader and fanned out for you.
 - N workers already joined and `ready` (`opod node ls`).
 
 **One command on the leader:**
@@ -1181,10 +1180,10 @@ opod model add --from ./my-model.yaml           # from a user-supplied catalog Y
 
 **Four ways to install a model:**
 
-1. **Curated catalog** — the 48 entries embedded from `opod-sdk/catalog` (`opod catalog ls`). Hardware-floor checks apply.
+1. **Curated catalog** — the 48 entries embedded from `pkg/catalog` (`opod catalog ls`). Hardware-floor checks apply.
 2. **Scheme prefix** (`hf:` / `ollama:` / `file:`) — one-liner for anything the engine supports; no hardware check.
 3. **`--from <my.yaml>`** — install from a user-written catalog YAML. The file is copied into `~/.opod/catalog/` so it persists and shows up in `opod model search` / `info` next run.
-4. **Drop-in dir** — write a YAML to `~/.opod/catalog/<id>.yaml` directly, then `opod model add <id>` treats it like a built-in entry. Same schema as the SDK's `catalog/*.yaml` (`id`, `display_name`, `source.{type,repo,ollama_name,path}`, `hardware`, `capabilities`).
+4. **Drop-in dir** — write a YAML to `~/.opod/catalog/<id>.yaml` directly, then `opod model add <id>` treats it like a built-in entry. Same schema as `pkg/catalog/*.yaml` (`id`, `display_name`, `source.{type,repo,ollama_name,path}`, `hardware`, `capabilities`).
 
 This:
 1. Checks the entry's `hardware.min_ram_gb` (and `min_vram_gb`) against the cluster — an install that overshoots the floor is refused with a clear error. Pass `--force` to override (e.g. when you know swap or a quantization knob will save you).

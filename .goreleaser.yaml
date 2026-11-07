@@ -40,7 +40,7 @@ archives:
 #
 # Install path: /usr/bin/opod (so it's on PATH out of the box).
 # The catalog is NOT packaged: it is embedded in the binary from
-# opod-io/opod-sdk (R9.8), so there is nothing to ship under
+# pkg/catalog (R9.8), so there is nothing to ship under
 # /usr/share/opod/catalog/. The binary still merges an operator's
 # overrides from /usr/local/share/opod/catalog, /usr/share/opod/catalog,
 # $OPOD_CATALOG_DIR and ~/.opod/catalog if any of them exist.

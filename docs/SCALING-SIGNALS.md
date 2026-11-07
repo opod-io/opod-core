@@ -8,8 +8,8 @@ tooling — can decide how many workers should exist. This document is the contr
 
 Unauthenticated, probe-grade, on the leader's API port — and, when `OPOD_PROBE_LISTEN` is set, on a second
 always-plain port beside `/healthz`, `/readyz` and `/metrics` (see *The probe port* below). One JSON object,
-aggregated over the workers that hold the leader's model. The typed shape is
-`github.com/opod-io/opod-sdk/adminapi.Load`; read that rather than this example when you write a client:
+aggregated over the workers that hold the leader's model. The leader writes it from
+`pkg/adminapi.Load` (`opod-core/pkg/adminapi/types.go`), which says what each field means:
 
 ```json
 {

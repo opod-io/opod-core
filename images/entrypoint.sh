@@ -29,7 +29,7 @@ else
 fi
 CATALOG="${OPOD_CATALOG_DIR:-/usr/local/share/opod/catalog}"
 mkdir -p "$DATA" "$MODELS" "$MODELS/hf" "$MODELS/llamacpp"
-# The catalog is embedded in the binary (opod-sdk/catalog, R9.8); the file copy
+# The catalog is embedded in the binary (pkg/catalog, R9.8); the file copy
 # this script reads repo/file from is exported once, so no image carries one.
 [ -d "$CATALOG" ] || opod catalog export "$CATALOG" >/dev/null 2>&1 || true
 export OPOD_DATA_DIR="$DATA" OPOD_CATALOG_DIR="$CATALOG"

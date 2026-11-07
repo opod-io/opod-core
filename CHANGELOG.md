@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **The wire types moved in from opod-sdk (T9.50).** `adminapi`, `nodeapi` and `catalog` are now `pkg/` in this
+  repo (`github.com/opod-io/opod/pkg/...`), copied from the SDK's final commit `c82d906`; core no longer requires
+  `github.com/opod-io/opod-sdk`. A catalog entry is a PR here (`pkg/catalog/<id>.yaml`). `pkg/` is what the leader
+  and the worker put on the wire, not a supported public client API; a test holds it to the standard library.
 - **A worker states its engine's version.** The heartbeat's `engine` state carries `version`, read once from the
   running engine: vLLM's `/version`, SGLang's `/server_info`, llama-server's `/props` `build_info` (for example
   `b11028-972d2313b`). `GET /admin/v1/nodes` shows it on each node's `engine`. Needs SDK v0.6.2.

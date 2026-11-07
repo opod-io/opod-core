@@ -679,7 +679,7 @@ caller — records `completion_tokens` as the content chunks delivered (one toke
 stream; an estimate where an engine batches tokens) and `prompt_tokens` 0, which only the engine can count.
 
 `usage.cost_usd` is a column that is always 0 — rating and showback are out of the product (ADR-003); it is kept
-so a reader of the SDK's `UsageData` does not break, and goes in the next breaking release. The columns added
+so a reader of `adminapi.UsageData` does not break, and goes in the next breaking release. The columns added
 after the first schema (`bound_key_id`, `boot_id`, `engine_silent_since`, `cold`, `gang_id`, `ttft_ms`,
 `node_id`, the key expiry) arrive through the idempotent column migrations in
 `runColumnMigrations`, and removed columns leave through `runColumnDrops`, so an older database is upgraded in place at open time.
@@ -1040,7 +1040,7 @@ Five, all linked by `internal/engines/all`. `GET /admin/v1/capabilities` reports
 
 ### Catalog
 
-YAML files in the SDK's `catalog/<id>.yaml` (`opod-io/opod-sdk/catalog`, embedded in the binary since R9.8 — `opod catalog ls|export`):
+YAML files in `pkg/catalog/<id>.yaml` (embedded in the binary since R9.8 — `opod catalog ls|export`):
 
 ```yaml
 id: qwen3-coder
@@ -1336,12 +1336,12 @@ opod/
 │   ├── images.yaml            # the images as data: engine, vendor, arch, weights, gang, proven, node requirements
 │   └── images.go, recommend.go  # package images: embeds the manifest; `opod image ls | show | recommend` prints it
 │
-├── (catalog lives in opod-io/opod-sdk/catalog — embedded, one copy for the leader and the control plane)
+├── (catalog lives in pkg/catalog — embedded, one copy for the leader and the control plane)
 │   ├── llama-3.2-1b.yaml
 │   ├── llama-3.2-3b.yaml
 │   ├── llama-3.3-70b-sharded.yaml
 │   ├── qwen-coder-{7b,14b,32b}.yaml
-│   └── … (see opod-sdk/catalog/README.md)
+│   └── … (see pkg/catalog/README.md)
 │
 └── installer/
     ├── install.sh             # the curl | sh script
@@ -1477,7 +1477,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 | Task | Touch these files |
 |---|---|
 | Add a new inference engine | `internal/engines/<name>/` (implement `Engine`, `engines.Register` in `init`), one line in `internal/engines/all`, `enginetest.Run` conformance test |
-| Add a new model to the catalog | `opod-sdk/catalog/<id>.yaml` — see the SDK's catalog/README.md for the schema; bump the SDK and the go.mod require |
+| Add a new model to the catalog | `pkg/catalog/<id>.yaml` — see `pkg/catalog/README.md` for the schema |
 | Add a new CLI subcommand | `cmd/opod/cmd_<name>.go` + add a case in `cmd/opod/main.go` + add the mutating function in `internal/control/` first (CLI is the source of truth) |
 | Add a new admin HTTP endpoint | `internal/leader/admin_<name>.go` — must delegate to `internal/control/` |
 | Add a metric | declare in `internal/metrics/metrics.go`, increment at the relevant call site |
@@ -1540,7 +1540,7 @@ E.g. swapping LAN for Tailscale tsnet:
 
 ### Add a new model to the catalog
 
-Add `catalog/<id>.yaml` in `opod-io/opod-sdk` (embedded into the binary; an operator can also drop a file in `~/.opod/catalog` or `OPOD_CATALOG_DIR` to add or override one at runtime). A dropped-in file can carry a minisign signature — see "Signed catalog files". See the SDK's catalog/README.md for the schema and required fields.
+Add `pkg/catalog/<id>.yaml` (embedded into the binary; an operator can also drop a file in `~/.opod/catalog` or `OPOD_CATALOG_DIR` to add or override one at runtime). A dropped-in file can carry a minisign signature — see "Signed catalog files". See the SDK's catalog/README.md for the schema and required fields.
 
 ## Stable admin surface (v1)
 
@@ -1570,8 +1570,8 @@ promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `
 `tls_listener`, `self_load`, `fetch_snapshot`, `cache_prune` and `ttft`.
 
 The wire types of this surface — `Load`, the usage and lifecycle stream batches, the auth and policy
-snapshot documents, `Route`/`Version`/`Capabilities` — live in the SDK module
-`github.com/opod-io/opod-sdk/adminapi` (Apache-2.0, stdlib only). The leader marshals those exact structs,
+snapshot documents, `Route`/`Version`/`Capabilities` — live in
+`github.com/opod-io/opod/pkg/adminapi` (stdlib only; they moved in from the retired opod-sdk module, T9.50). The leader marshals those exact structs,
 so a manager imports the package instead of mirroring it; a field changed there is a field changed on the wire.
 
 `capabilities` also lists the **engine drivers linked into the binary** (feature `engines`):
@@ -1581,7 +1581,7 @@ model by (`ollama_name`, `repo`, `path`, or `id`), reported by probing the drive
 rather than restating it. A manager that offers engines by name checks its list against this one, so a
 dropped or renamed driver is a failed comparison and not a worker that dies at launch. Engine ids and
 aliases are additive-only like the routes; `TestLeaderContract` pins the published ones. The type is
-core-local (`leader.EngineInfo`, `internal/leader/contract.go`) until the next SDK tag carries it on `adminapi.Capabilities`.
+core-local (`leader.EngineInfo`, `internal/leader/contract.go`), not on `adminapi.Capabilities`.
 
 Mechanisms a manager drives through this surface:
 
@@ -1656,7 +1656,7 @@ Mechanisms a manager drives through this surface:
   about 132 B), into a queue capped by bytes (`OPOD_USAGE_QUEUE_MB`, default 64 MiB ≈ 440 000 records; measured heap
   70 MiB at the cap). An exporter (`internal/usage`, our own small OTLP/HTTP client, not the SDK's batch processor,
   which frees a record before the receiver has it) turns the oldest ≤ 1 MiB into one `ExportLogsServiceRequest`
-  (event `opod.usage`, names in `opod-sdk/adminapi/usagelog.go`) and frees it only on a 2xx. A 400 or a partial
+  (event `opod.usage`, names in `pkg/adminapi/usagelog.go`) and frees it only on a 2xx. A 400 or a partial
   success's rejected records are permanent per OTLP: freed and counted `rejected`. A 5xx, 429, 401, 403 or a network
   error frees nothing and backs off from 1 s to 30 s under the server's context. Past the cap the oldest record goes
   (`opod_usage_dropped_total{reason="full"}`). The key a receiver dedupes on is (`opod.leader.boot`,

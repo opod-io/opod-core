@@ -5,7 +5,7 @@
 | Ask "how do I…", get setup help, discuss a design | [GitHub Discussions](https://github.com/opod-io/opod-core/discussions) |
 | Report something broken | [Bug report](https://github.com/opod-io/opod-core/issues/new?template=bug_report.yml) — include `opod version` and `opod doctor` output |
 | Propose a capability or a CLI change | [Feature request](https://github.com/opod-io/opod-core/issues/new?template=feature_request.yml) |
-| Add or fix a model in the catalog | The catalog lives in [`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk): [catalog request](https://github.com/opod-io/opod-sdk/issues/new?template=catalog_request.yml) or a PR with `catalog/<id>.yaml` |
+| Add or fix a model in the catalog | [catalog request](https://github.com/opod-io/opod-core/issues/new?template=catalog_request.yml) or a PR with `pkg/catalog/<id>.yaml` |
 | Report a security problem | **Privately**, per [SECURITY.md](SECURITY.md) — never in a public issue |
 | Run Opod across many GPUs with a console, rollouts and a VRAM ledger | The control plane, a separate product: [opod.io](https://opod.io) |
 

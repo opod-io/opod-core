@@ -709,11 +709,6 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
         <p><a href="https://github.com/opod-io/opod-core">github.com/opod-io/opod-core →</a></p>
       </div>
       <div class="card">
-        <div class="card-head"><h3>opod-sdk</h3><span class="chip ready">Apache-2.0</span></div>
-        <p>Wire types and an admin client for the leader's <code>/admin/v1</code> surface. Use it to build your own manager, or to integrate opod into a platform you already have.</p>
-        <p><a href="https://github.com/opod-io/opod-sdk">github.com/opod-io/opod-sdk →</a></p>
-      </div>
-      <div class="card">
         <div class="card-head"><h3>Images</h3><span class="chip ready">public pull</span></div>
         <p>Leader, worker (llama.cpp CPU/NVIDIA, vLLM NVIDIA) and control-plane images pull anonymously from <code>ghcr.io/opod-io</code>. Air-gapped installs mirror them into your own registry.</p>
         <p><a href="https://github.com/orgs/opod-io/packages">ghcr.io/opod-io →</a></p>
@@ -774,7 +769,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
     <div class="eyebrow">FAQ</div>
     <h2>Questions people ask first.</h2>
     <div style="margin-top:18px">
-      <details><summary>Is opod open source?</summary><p>The core runtime (<code>opod</code>) and the SDK are Apache-2.0 with no usage limit. The control plane (<code>opodcp</code>) is proprietary. Its images are publicly pullable, and it is free with no key up to 4 GPUs in one cell. The runtime never depends on the control plane: you can run core on its own, or manage it with your own tooling through <code>/admin/v1</code>.</p></details>
+      <details><summary>Is opod open source?</summary><p>The core runtime (<code>opod</code>) is Apache-2.0 with no usage limit. The control plane (<code>opodcp</code>) is proprietary. Its images are publicly pullable, and it is free with no key up to 4 GPUs in one cell. The runtime never depends on the control plane: you can run core on its own, or manage it with your own tooling through <code>/admin/v1</code>.</p></details>
       <details><summary>Do I need Kubernetes?</summary><p>For the control plane, yes: Kubernetes is its only executor. If you don't have a cluster, <code>opodcp infra up</code> builds k3s on your Linux machines over SSH. The core runtime alone needs no Kubernetes and runs on a Mac or Linux box.</p></details>
       <details><summary>Does traffic flow through the control plane?</summary><p>No. Clients call the endpoint's Service, and the leader answers. The control plane writes the plan, keys and routing policy into a Secret the leader mounts, and pulls events and usage from the leader. Its console includes a playground proxy for convenience, but your applications never need it.</p></details>
       <details><summary>What happens above the free tier, or when a key expires?</summary><p>The free tier is 4 GPUs in one cell. Only new placements beyond the licensed number of GPUs are refused, and the refusal includes the remedy. Running workers are never stopped. An expired key keeps its ceiling through a grace period, then the free tier applies to new placements. Keys are verified offline against a public key built into the binary.</p></details>
@@ -806,7 +801,6 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
     <div>© 2026 Opod contributors · core is Apache-2.0 · control plane is proprietary, free up to 4 GPUs</div>
     <nav aria-label="Footer">
       <a href="https://github.com/opod-io/opod-core">GitHub</a>
-      <a href="https://github.com/opod-io/opod-sdk">SDK</a>
       <a href="https://github.com/opod-io/opod-core/blob/main/SECURITY.md">Security</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="mailto:hadi@opod.io">Contact</a>

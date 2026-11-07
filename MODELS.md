@@ -92,7 +92,7 @@ For per-model walkthroughs (with detailed install + client snippets), the curate
 
 Use the [picker table above](#-picker-table--what-to-install). It covers 41 of the 48 catalog entries with size, RAM, capability ratings, and license — the seven left out are the reranker `bge-reranker-v2-m3-gguf` (for `/v1/rerank`, not chat) and variants and test fixtures (`llama-3.1-8b`, `llama-3.2-3b-gguf`, `llama-3.2-3b-sharded`, `nomic-embed-text-v1.5-gguf`, `qwen2.5-0.5b-gguf`, `mimo-7b-ray`; `opod model info <id>` describes each) — pick the row that matches your hardware, then go by use case.
 
-The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-sdk/issues/new?template=catalog_request.yml) in the SDK repo, where the catalog lives, if you'd like a full walkthrough added.
+The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `opod model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/opod-io/opod-core/issues/new?template=catalog_request.yml) if you'd like a full walkthrough added.
 
 ### Installing models that aren't in the catalog
 
@@ -491,7 +491,7 @@ aider --model openai/deepseek-r1-8b
 **Prereqs (one-time):**
 - `llama-server` on PATH on whichever machine runs the **coordinator** — by default the part host with the most **GPU** memory, not the leader, so install llama.cpp there (`brew install llama.cpp`, or your distro's build)
 - `rpc-server` on PATH on every worker that hosts a part — needs a source build of llama.cpp with `-DGGML_RPC=ON` (the Homebrew bottle doesn't include it). The `opod-worker-llamacpp-*` container images carry the pair already
-- The catalog entry, which lives in [`opod-io/opod-sdk/catalog/llama-3.3-70b-sharded.yaml`](https://github.com/opod-io/opod-sdk) and is embedded in the binary — already `sharding.required: true`, `source.type: file`
+- The catalog entry, which lives in [`pkg/catalog/llama-3.3-70b-sharded.yaml`](pkg/catalog/llama-3.3-70b-sharded.yaml) and is embedded in the binary — already `sharding.required: true`, `source.type: file`
 - That entry is a `file:` source, so place the GGUF at `/var/lib/opod/models/llama-3.3-70b-q4_k_m.gguf` yourself (or override `source.path` in `~/.opod/catalog/`). An entry with a `huggingface` source + `file:` is downloaded by the leader and fanned out for you
 - At least 2 workers joined and `ready` (`opod node ls`)
 
@@ -686,5 +686,5 @@ carry no RAM floor, license badge or engine hints:
 - **Whisper / transcription** — no catalog entry *and* no route: core serves no `/v1/audio/*` (ADR-022). A model that only transcribes has nowhere to land yet
 
 If you want one curated: open an issue at https://github.com/opod-io/opod-core/issues with the
-Ollama tag / HF repo + your hardware target. Catalog entries themselves live in
-[`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk), so that is where the YAML PR goes.
+Ollama tag / HF repo + your hardware target. Catalog entries themselves are
+`pkg/catalog/<id>.yaml` in this repo, so that is where the YAML PR goes.

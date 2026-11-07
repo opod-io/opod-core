@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing.
 
-If you're here to fix a typo, you can skip the rest of this file — open a PR. **Catalog entries are not in this repo:** the bundled catalog is embedded from [`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk), so a new or corrected model YAML is a PR there.
+If you're here to fix a typo, you can skip the rest of this file — open a PR. **Catalog entries:** the bundled catalog is `pkg/catalog/<id>.yaml` in this repo (schema in `pkg/catalog/README.md`), embedded into the binary.
 
 For everything else, the goal of this doc is to get you to a green `make check` (or `make integration` for a stricter pre-push smoke) and a running cluster in under 30 minutes.
 
@@ -57,7 +57,7 @@ Quick map. Deeper explanation in [ARCHITECTURE.md](ARCHITECTURE.md).
 | Add a new admin HTTP endpoint | `internal/leader/admin_<name>.go` — decode request, authenticate, delegate to `internal/control/` |
 | Add a new inference engine | a package: `internal/engines/<name>/` implementing `Engine` from `types.go`, registered from its own `init` with `engines.Register(engines.Descriptor{…})` and blank-imported by `internal/engines/all`. Add a `conformance_test.go` calling `enginetest.Run`. Full steps in [ARCHITECTURE.md → Add a new inference engine](ARCHITECTURE.md#add-a-new-inference-engine) |
 | Add a route to the OpenAI surface (e.g. `/v1/completions`) | `internal/api/`, wired in `internal/leader/server.go`. A *second* wire shape (Anthropic Messages, audio) is out of scope for core — it belongs in a shim in front of the gateway (ADR-022). Rerank came back only by an amendment (ADR-084), which is the way any new surface arrives |
-| Add a model to the catalog | not here — `catalog/<id>.yaml` in [`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk) (schema in that repo's `catalog/README.md`). To add or override one locally instead, drop a file in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` |
+| Add a model to the catalog | `pkg/catalog/<id>.yaml` (schema in `pkg/catalog/README.md`). To add or override one locally instead, drop a file in `~/.opod/catalog/` or `$OPOD_CATALOG_DIR` |
 | Add a config field | extend `Config` in `internal/config/config.go`, add a default in `Default()`, optionally an env override in `applyEnv()`, document in [README.md → Full reference](README.md#full-reference). A variable a *manager* may set goes in `internal/config/env.go` instead — `TestEnvSurfaceOutsideConfigIsTheAllowlist` fails when library code reads one that is not on that list |
 | Add a container image | a row in **four** places, held together by `cmd/opod/images_drift_test.go`: `images/build.sh`, `.github/workflows/images.yml`, `images/images.yaml` and the table in `images/README.md` |
 | Add a metric | declare in `internal/metrics/metrics.go`, increment at the call site |
@@ -99,6 +99,6 @@ Use **GitHub Discussions** for design questions, RFCs, and "is this a bug?". Use
 - [ARCHITECTURE.md](ARCHITECTURE.md) — design rationale, subsystem boundaries, and the rule that the CLI and the admin API are two callers of one function in `internal/control/`
 - [README.md → Deliberately out of scope](README.md#deliberately-out-of-scope) — what this project has decided not to become, and why
 - [CHANGELOG.md](CHANGELOG.md) — the feature inventory by area, newest notes on top
-- [`opod-io/opod-sdk`](https://github.com/opod-io/opod-sdk) — the catalog YAML schema (`catalog/README.md` there) and the `/admin/v1` wire types
+- `pkg/` — the `/admin/v1` and worker wire types and the catalog (`pkg/catalog/README.md` for its schema). They are what the leader and the worker put on the wire, not a supported client API.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - [SECURITY.md](SECURITY.md) — vulnerability disclosure process

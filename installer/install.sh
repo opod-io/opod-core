@@ -349,7 +349,7 @@ install_binary() {
     chmod +x "$target" 2>/dev/null || sudo chmod +x "$target"
     ok "installed opod ${VERSION} to ${target}"
 
-    # The model catalog is embedded in the binary (opod-sdk/catalog); this
+    # The model catalog is embedded in the binary (pkg/catalog); this
     # directory is for the user's own additions and overrides, which
     # resolveCatalogDirs picks up automatically.
     mkdir -p "$HOME/.opod/catalog" 2>/dev/null || true

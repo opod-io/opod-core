@@ -15,6 +15,7 @@ on:
   push:
     paths:
       - 'internal/models/**'
+      - 'pkg/catalog/**'
       - 'go.mod'
       - '.github/workflows/catalog-live.yml'
 

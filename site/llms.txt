@@ -26,7 +26,6 @@
 
 - [Website](https://opod.io/): quickstart, use cases, measured numbers, FAQ.
 - [Core repository](https://github.com/opod-io/opod-core): Apache-2.0 source, README, QUICKSTART, ARCHITECTURE, CONTRIBUTING (DCO, no CLA).
-- [SDK repository](https://github.com/opod-io/opod-sdk): Apache-2.0 wire types and admin client for the leader's `/admin/v1` surface.
 - [Images and chart](https://github.com/orgs/opod-io/packages): `ghcr.io/opod-io/*`, anonymous pull, linux/amd64 + linux/arm64.
 
 ## Facts
