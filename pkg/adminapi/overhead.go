@@ -11,7 +11,9 @@ package adminapi
 // depends on the shape and the manager adds it (PLAN T23.18): flat at 157–160
 // MiB on an RTX 3060 Ti for 0.5B to 7B models, and ≈ 570 on an RTX 5090 (628
 // MiB beyond weights and KV at 72 slots of 32,768 tokens, less its ≈ 66 MiB
-// compute buffer). The fixed part depends on the card, so CardOverheadMiB
+// compute buffer), and ≈ 365 on an AMD Radeon RX 7900 XTX (402 MiB beyond weights
+// and KV at 1 slot of 8,192 tokens and 430 at 60 slots of 32,768, less the
+// 0.5B compute buffer and mask). The fixed part depends on the card, so CardOverheadMiB
 // holds it per card and this table carries the largest. A vendor not measured
 // yet takes the engine's largest figure, so a budget is never overrun by a
 // guess. 0 = no figure for this engine; the caller keeps its own.
@@ -48,5 +50,9 @@ func CardOverheadMiB(engine, vendor, card string) int {
 }
 
 var cardOverheadMiB = map[string]map[string]int{
-	"llamacpp": {"NVIDIA GeForce RTX 3060 Ti": 160, "NVIDIA GeForce RTX 5090": 570},
+	"llamacpp": {
+		"NVIDIA GeForce RTX 3060 Ti": 160,
+		"NVIDIA GeForce RTX 5090":    570,
+		"AMD Radeon RX 7900 XTX":     365,
+	},
 }

@@ -28,8 +28,10 @@ func TestCardOverheadMiB(t *testing.T) {
 	}{
 		{"llamacpp", "nvidia", "NVIDIA GeForce RTX 3060 Ti", 160},
 		{"llamacpp", "nvidia", "NVIDIA GeForce RTX 5090", 570},
-		{"llamacpp", "nvidia", "NVIDIA RTX A6000", 570},     // not measured: the largest
-		{"llamacpp", "nvidia", "", 570},                     // card not known yet
+		{"llamacpp", "nvidia", "NVIDIA RTX A6000", 570}, // not measured: the largest
+		{"llamacpp", "nvidia", "", 570},                 // card not known yet
+		{"llamacpp", "amd", "AMD Radeon RX 7900 XTX", 365},
+		{"llamacpp", "amd", "AMD Instinct MI300X", 570},     // an AMD card not measured: the largest
 		{"vllm", "amd", "NVIDIA GeForce RTX 3060 Ti", 1103}, // no card row: the vendor's figure
 		{"sglang", "nvidia", "", 0},
 	} {
