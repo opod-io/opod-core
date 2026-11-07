@@ -172,8 +172,13 @@ func TestAVendorEngineOutlivesTheJoinProcessDrain(t *testing.T) {
 	if err := os.WriteFile(engine, []byte("trap ': > \"$DONE\"; exit 0' TERM\nwhile :; do sleep 0.05; done\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The wait block is read BEFORE READY: the SIGTERM the test sends after it
+	// may land while the shell reads a command substitution, which cuts the
+	// read short, and eval then fails on half an if (exit 2, about 1 in 50 runs
+	// on Linux). The entrypoint itself parses its file, so it never meets that.
 	script := `set -euo pipefail
 eval "$(sed -n '/^STOPPING=0$/,/^# A DOOR is/p' entrypoint.sh)"
+WAIT_BLOCK="$(sed -n '/^if \[ -n "\${ENGINE_PID:-}" \]; then$/,/^fi$/p' entrypoint.sh)"
 log() { :; }
 bash "$ENGINE_SH" &
 ENGINE_PID=$!
@@ -183,7 +188,7 @@ JOIN_PID=$!
 trap forward_stop TERM INT
 while [ ! -f "$UP" ]; do sleep 0.02; done
 echo READY
-eval "$(sed -n '/^if \[ -n "\${ENGINE_PID:-}" \]; then$/,/^fi$/p' entrypoint.sh)"`
+eval "$WAIT_BLOCK"`
 	cmd := exec.Command(bash, "-c", script)
 	cmd.Dir = "."
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "JOIN=" + join, "ENGINE_SH=" + engine, "SEEN=" + seen, "DONE=" + engineDone, "UP=" + up}
