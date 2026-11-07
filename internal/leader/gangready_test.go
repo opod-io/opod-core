@@ -179,3 +179,47 @@ func TestAGangPartsHeartbeatWritesNoPlacementForTheGangsModel(t *testing.T) {
 		t.Error("a plain worker that reports the model must still get its row")
 	}
 }
+
+// A node that runs a gang's part, and not its coordinator, serves nothing of
+// its own, so its worker's engine report is not what keeps it in rotation:
+// once an SGLang group forms, rank 1 binds a dummy health server on the engine
+// port, the worker's model list gets an error, and the "no report" that
+// followed took the node — and the gang — out 30 s after it began to serve
+// (design-partner cell, 2026-11-07). The coordinator's node and a plain
+// worker keep the rule.
+func TestAGangRankThatSendsNoReportStaysInRotation(t *testing.T) {
+	srv, ts, _ := drainFixture(t) // w1 and w2 registered
+	ctx := context.Background()
+	maxAge := srv.heartbeatMaxAge()
+	now := time.Now()
+	for _, sh := range []store.Shard{
+		{ID: "coord", ModelID: "m", GangID: "g0", Role: "coordinator", NodeID: "w1", Address: "w1:30000",
+			ProcessID: "p0", Status: "ready", ConfigJSON: `{"engine":"sglang"}`, CreatedAt: now, LastSeen: now},
+		{ID: "rank-1", ModelID: "m", GangID: "g0", Role: "rank", NodeID: "w2", Address: "w2",
+			ProcessID: "p1", Status: "ready", CreatedAt: now, LastSeen: now},
+	} {
+		if err := srv.store.Shards().Create(ctx, sh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	silent := func(id string) bool {
+		wireHeartbeat(t, ts, `{"id":"`+id+`","loaded_models":null}`)
+		n, _ := srv.store.Nodes().Get(ctx, id)
+		if n.EngineSilentSince.IsZero() {
+			return false
+		}
+		n.EngineSilentSince = time.Now().Add(-maxAge - 10*time.Second) // silent past the bound
+		if err := srv.store.Nodes().Upsert(ctx, *n); err != nil {
+			t.Fatal(err)
+		}
+		wireHeartbeat(t, ts, `{"id":"`+id+`","loaded_models":null}`)
+		n, _ = srv.store.Nodes().Get(ctx, id)
+		return !n.TakesNewWork(maxAge, time.Now())
+	}
+	if silent("w2") {
+		t.Error("a gang rank whose worker sends no engine report left rotation")
+	}
+	if !silent("w1") {
+		t.Error("the coordinator's node runs the gang's API on its worker's engine port: its silence must still count")
+	}
+}
