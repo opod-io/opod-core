@@ -138,3 +138,44 @@ func TestUpdateStatusIfLeavesAReformedRowAlone(t *testing.T) {
 		t.Fatalf("the row's own incarnation must move: moved=%v err=%v", moved, err)
 	}
 }
+
+// A gang's parts hold no placement row: the worker that runs an SGLang gang's
+// rank 0 finds the head on its engine port and reports the model as its own,
+// and a row from that report let the router fall through to the worker, and
+// /readyz read 200, while the coordinator row still read starting (the
+// design-partner cell, 2026-11-07: one chat got 502 in that window).
+func TestAGangPartsHeartbeatWritesNoPlacementForTheGangsModel(t *testing.T) {
+	srv, _, _ := drainFixture(t) // w1 and w2 registered
+	st := srv.store
+	ctx := context.Background()
+	admin := Caller{Admin: true}
+	now := time.Now()
+	if err := st.Shards().Create(ctx, store.Shard{ID: "coord", ModelID: "m", GangID: "g0", Role: "coordinator",
+		NodeID: "w1", Address: "w1:30000", ProcessID: "p0", Status: "starting", ConfigJSON: `{"engine":"sglang"}`,
+		CreatedAt: now, LastSeen: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"w1", "w2"} {
+		if err := srv.HeartbeatNode(ctx, HeartbeatRequest{ID: id, LoadedModels: []string{"m"}}, admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held := func(node string) bool {
+		ps, err := st.Placements().GetByNode(ctx, node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range ps {
+			if p.ModelID == "m" {
+				return true
+			}
+		}
+		return false
+	}
+	if held("w1") {
+		t.Error("the node running the gang's rank 0 got a placement row for the gang's model")
+	}
+	if !held("w2") {
+		t.Error("a plain worker that reports the model must still get its row")
+	}
+}

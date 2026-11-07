@@ -5,6 +5,14 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## Unreleased
+
+- **A gang's part gets no placement row for the gang's model.** The worker that runs an SGLang gang's rank 0 finds the
+  head on its own engine port and reports the model as loaded, so the leader stored a placement for it. With v0.4.1's
+  `starting` coordinator, that row was a second way in: in the seconds between the head answering and the coordinator
+  row turning `ready`, the router sent a request to the worker (it got `502`) and `/readyz` read 200. The leader now
+  skips a reported model that the same node runs a gang part of. The gang's coordinator is the only route to it.
+
 ## v0.4.1 — 2026-11-07
 
 Everything since v0.4.0 (2026-11-04). Breaking for a Go importer: the module path is now

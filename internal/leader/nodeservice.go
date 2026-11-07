@@ -377,11 +377,12 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 			resident[s.catalogIDForNative(m)] = true
 		}
 	}
+	gangPart := s.gangModelsOn(ctx, req.ID)
 	placements := make([]store.Placement, 0, len(req.LoadedModels))
 	seen := make(map[string]bool, len(req.LoadedModels))
 	for _, m := range req.LoadedModels {
 		id := s.catalogIDForNative(m)
-		if seen[id] {
+		if seen[id] || gangPart[id] {
 			continue
 		}
 		seen[id] = true
@@ -416,6 +417,32 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 		}
 	}
 	return nil
+}
+
+// gangModelsOn is the models node runs a part of a gang of. A gang's parts
+// hold no placement row: the router reaches them through the gang's
+// coordinator row (servableGangNodes says the same). But the worker that runs
+// an SGLang gang's rank 0 finds the head on its own engine port and reports the
+// model as loaded, and a row from that report is a second, ungated way in: in
+// the seconds between the head answering and its coordinator row turning ready
+// (gangready.go) the router fell through to it, a request got 502, and /readyz
+// read 200 for a gang that did not serve (design-partner cell, 2026-11-07).
+// A failed read keeps the report whole: it proves nothing about the node.
+func (s *Server) gangModelsOn(ctx context.Context, node string) map[string]bool {
+	shards, err := s.store.Shards().List(ctx)
+	if err != nil {
+		return nil
+	}
+	var out map[string]bool
+	for _, sh := range shards {
+		if sh.NodeID == node {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[sh.ModelID] = true
+		}
+	}
+	return out
 }
 
 // DrainNode takes the node out of rotation: the router stops choosing it for
