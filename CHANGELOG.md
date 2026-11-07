@@ -5,8 +5,18 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## Unreleased
+## v0.4.2 — 2026-11-07
 
+Fixes to v0.4.1's gang readiness, found on hardware the same day. No contract change.
+
+- **An SGLang gang across machines keeps serving after its first 30 s.** Once the group forms, every SGLang rank but 0
+  binds a dummy health server on the engine port. The rank's worker then got an error for its model list and sent no
+  engine report, and past the bound the leader took that node, and with it the whole gang, out of rotation: every
+  request got `503` "1 part(s) whose engine stopped answering". A node that runs a gang part, and not its coordinator,
+  serves nothing of its own, so its missing report now reads as "nothing loaded". Its part is still judged by its
+  process state. Seen on a leader built from v0.4.1; v0.4.0 has the same rule and the same worker images.
+- **`/v1/models` lists a gang's model only once a coordinator is ready.** With v0.4.1's `starting` coordinator, the list
+  still showed the model for the minutes its head loaded, and every request in that time got `503`.
 - **A gang's part gets no placement row for the gang's model.** The worker that runs an SGLang gang's rank 0 finds the
   head on its own engine port and reports the model as loaded, so the leader stored a placement for it. With v0.4.1's
   `starting` coordinator, that row was a second way in: in the seconds between the head answering and the coordinator
