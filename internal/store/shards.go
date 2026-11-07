@@ -138,6 +138,23 @@ func (s *sqliteShards) UpdateStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// UpdateStatusIf moves one row from status `from` to `to`, and only while it
+// is still the incarnation the caller read (the same match as DeleteRows) and
+// still reads `from`. A gang re-formed under the same ids between the read and
+// this write is a new incarnation, and a fact learnt about the old one must not
+// land on it. It reports whether the row moved.
+func (s *sqliteShards) UpdateStatusIf(ctx context.Context, r Shard, from, to string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE shards SET status = ?, last_seen = ?
+		 WHERE id = ? AND node_id = ? AND address = ? AND process_id = ? AND created_at = ? AND status = ?`,
+		to, time.Now().Unix(), r.ID, r.NodeID, r.Address, r.ProcessID, r.CreatedAt.Unix(), from)
+	if err != nil {
+		return false, fmt.Errorf("update shard %s status: %w", r.ID, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *sqliteShards) Delete(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM shards WHERE id = ?`, id)
 	return err

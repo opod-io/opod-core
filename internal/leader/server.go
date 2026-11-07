@@ -294,6 +294,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// has no parts at all. Nothing to heal within without a plan file, and
 	// gangSpecs is then empty, so this is a no-op for standalone `opod up`.
 	s.StartGangHealer(ctx)
+	// A gang whose head is launched ungated (SGLang, vLLM over Ray or expert)
+	// reads its coordinator "starting" until the head's API answers.
+	s.StartGangReadiness(ctx)
 	s.StartAuthWatcher(ctx)
 	s.StartPolicyWatcher(ctx)
 	s.StartTrimmer(ctx)

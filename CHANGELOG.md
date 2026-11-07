@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **An SGLang or vLLM gang reads `ready` only when its API answers (T32.58).** These gangs start their head without
+  waiting for it, because its API comes up only after every part has joined and the weights are loaded. Their
+  coordinator row was stored `ready` at launch. So `/admin/v1/shards` and `/readyz` said "serving" while every request
+  got 503 — for about 45 s (vLLM, pipeline 2) to 2 min 20 s (SGLang, tensor 2) on a 1.5B model across two machines. The
+  coordinator row of an SGLang, vLLM-over-Ray or vLLM expert gang now reads `starting`. Every 5 s the leader asks each
+  `starting` coordinator `GET /v1/models`, and stores `ready` when it answers. A gang create still returns as soon as
+  every part is launched. llama.cpp gangs are unchanged: their create already waits for the coordinator.
 - **llama.cpp's fixed overhead on an AMD Radeon RX 7900 XTX is measured: 365 MiB (T23.18).** `adminapi.CardOverheadMiB`
   gave it the engine's largest figure, 570 MiB. Measured with qwen2.5-0.5b Q4_K_M: 402 MiB beyond weights and KV at 1 slot
   of 8,192 tokens, 430 at 60 slots of 32,768, less the compute buffer and mask the manager adds. Another AMD card keeps 570.

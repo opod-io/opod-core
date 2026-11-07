@@ -100,6 +100,9 @@ func TestExpertGangStartsTheProvenRanks(t *testing.T) {
 			if s.Address != rank0Host+":9100" || !strings.Contains(s.ConfigJSON, `"vllm"`) {
 				t.Errorf("the router dials rank 0's API with the vLLM driver: %+v", s)
 			}
+			if s.Status != "starting" {
+				t.Errorf("a coordinator launched ungated reads starting until its API answers (T32.58), got %q", s.Status)
+			}
 		case "rank":
 			ranks++
 		}

@@ -139,6 +139,11 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 			row.Role = "coordinator"
 			row.Address = host + ":" + strconv.Itoa(servePort)
 			row.ConfigJSON = `{"engine":"sglang"}` // the router picks the driver by it
+			// Starting until its API answers: the launch is not gated on it
+			// (above), so the leader's gang readiness loop (leader/gangready.go)
+			// moves the row to ready when it does. A ready coordinator row is one
+			// that can answer — the CP's serving reads it.
+			row.Status = "starting"
 		}
 		if err := o.Store.Shards().Create(ctx, row); err != nil {
 			_ = o.callWorkerStop(ctx, w, spec.ID)
@@ -155,7 +160,7 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 	}
 	o.Log.Info("sglang gang up", "model", entry.ID, "gang", gangID, "nodes", len(workers),
 		"tp", split.TP, "pp", split.PP, "coordinator", created[0].Address,
-		"note", "SGLang is loading and forming the group — first requests warm it up")
+		"note", "SGLang is loading and forming the group — the coordinator reads starting until its API answers")
 	return nil
 }
 

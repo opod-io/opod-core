@@ -296,6 +296,9 @@ type ShardStore interface {
 	// GangsOf lists the model's gang ids, oldest gang first.
 	GangsOf(ctx context.Context, modelID string) ([]string, error)
 	UpdateStatus(ctx context.Context, id, status string) error
+	// UpdateStatusIf moves r from `from` to `to` only while the stored row is
+	// still r's incarnation and still reads `from`; it reports whether it moved.
+	UpdateStatusIf(ctx context.Context, r Shard, from, to string) (bool, error)
 	List(ctx context.Context) ([]Shard, error)
 	Delete(ctx context.Context, id string) error
 	DeleteByModel(ctx context.Context, modelID string) error

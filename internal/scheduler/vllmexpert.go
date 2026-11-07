@@ -185,6 +185,8 @@ func (o *Orchestrator) createShardedVLLMExpert(ctx context.Context, entry models
 			row.Role = "coordinator"
 			row.Address = host + ":" + strconv.Itoa(servePort)
 			row.ConfigJSON = `{"engine":"vllm"}` // the router picks the driver by it
+			// Starting until its API answers (leader/gangready.go), as for SGLang.
+			row.Status = "starting"
 		}
 		if err := o.Store.Shards().Create(ctx, row); err != nil {
 			_ = o.callWorkerStop(ctx, w, spec.ID)
@@ -201,7 +203,7 @@ func (o *Orchestrator) createShardedVLLMExpert(ctx context.Context, entry models
 	}
 	o.Log.Info("expert gang up", "model", entry.ID, "gang", gangID, "parts", len(workers),
 		"dp", split.DP, "tp", split.TP, "ep", split.DP*split.TP, "coordinator", created[0].Address,
-		"note", "vLLM is loading and forming the data-parallel group — first requests warm it up")
+		"note", "vLLM is loading and forming the data-parallel group — the coordinator reads starting until its API answers")
 	return nil
 }
 

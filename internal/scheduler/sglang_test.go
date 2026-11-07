@@ -178,6 +178,11 @@ func TestSGLangGangStartsOneRankPerMachine(t *testing.T) {
 			if !strings.Contains(s.Address, ":") {
 				t.Errorf("a coordinator the router dials needs a port: %q", s.Address)
 			}
+			// PLAN T32.58: the head's API binds minutes after launch, so the row
+			// waits for the leader's readiness loop instead of reading ready.
+			if s.Status != "starting" {
+				t.Errorf("a coordinator launched ungated reads starting until its API answers, got %q", s.Status)
+			}
 		case "rank":
 			parts++
 		}

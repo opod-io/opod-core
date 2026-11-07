@@ -139,8 +139,9 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	// Ray nodes). Serve under the CATALOG id (--served-model-name) so the router
 	// needs no name translation, and bind the head's advertised address so the
 	// leader can dial it. No HealthPort: vLLM's cross-node load is slow (minutes),
-	// so we register optimistically and let the first requests warm it up rather
-	// than blocking the launch on readiness.
+	// so the launch is not blocked on readiness; the coordinator row is stored
+	// "starting" and the leader's gang readiness loop (leader/gangready.go) moves
+	// it to ready when the API answers.
 	const vllmPort = 9100
 	if split.TP > split.DevicesPerRank {
 		o.Log.Warn("tensor-parallel ACROSS MACHINES — all-reduce twice per layer over the network; "+
@@ -199,7 +200,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	coordRec := store.Shard{
 		ID: gangShardID(entry.ID, gangID, "vllm-ray-coord"), ModelID: entry.ID, GangID: gangID, Role: "coordinator",
 		NodeID: head.ID, Address: fmt.Sprintf("%s:%d", headHost, vllmPort),
-		ProcessID: vllmSpec.ID, Status: "ready", ConfigJSON: `{"engine":"vllm"}`, // the router picks the driver by it
+		ProcessID: vllmSpec.ID, Status: "starting", ConfigJSON: `{"engine":"vllm"}`, // the router picks the driver by it
 		CreatedAt: time.Now(), LastSeen: time.Now(),
 	}
 	if err := o.Store.Shards().Create(ctx, coordRec); err != nil {
@@ -214,7 +215,7 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 	}
 	o.Log.Info("vllm-ray coordinator up (PHASE 2)", "model", entry.ID,
 		"endpoint", coordRec.Address, "tp", gpusPerNode, "pp", pp,
-		"note", "vLLM is loading across the Ray cluster — first requests warm it up")
+		"note", "vLLM is loading across the Ray cluster — the coordinator reads starting until its API answers")
 	return nil
 }
 
