@@ -111,11 +111,23 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 			takes[n.ID] = n.TakesNewWork(maxAge, now)
 		}
 		// A sharded model is served by its whole gang: one part on a node
-		// that takes no new work takes the model off the list.
+		// that takes no new work takes the model off the list, and so does a
+		// model none of whose gangs has a ready coordinator — a vLLM or SGLang
+		// head reads "starting" until its API answers, minutes after the
+		// create (PLAN T32.58), and listing it then promised a 503.
 		gangDown := map[string]bool{}
 		if shards, err := h.Store.Shards().List(r.Context()); err == nil {
+			coordReady := map[string]bool{}
 			for _, sh := range shards {
 				if sh.NodeID != "" && sh.NodeID != "local" && !takes[sh.NodeID] {
+					gangDown[sh.ModelID] = true
+				}
+				if sh.Role == "coordinator" && sh.Status == "ready" {
+					coordReady[sh.ModelID] = true
+				}
+			}
+			for _, sh := range shards {
+				if !coordReady[sh.ModelID] {
 					gangDown[sh.ModelID] = true
 				}
 			}

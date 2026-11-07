@@ -155,3 +155,36 @@ func TestModelsListDropsAGangWithAPartDown(t *testing.T) {
 		t.Fatalf("a gang with a part on a drained node must leave the list: %q", got)
 	}
 }
+
+// A vLLM or SGLang gang's coordinator reads "starting" until its head's API
+// answers (PLAN T32.58): until then a request for the model is a 503, so the
+// model is not on the list, and it joins the list when the row turns ready.
+func TestModelsListWaitsForAGangsCoordinatorToBeReady(t *testing.T) {
+	srv, ts, _ := drainFixture(t)
+	ctx, now := context.Background(), time.Now()
+	st := srv.store
+	if err := st.Nodes().Upsert(ctx, store.Node{ID: "local", Hostname: "leader", State: store.NodeStateReady, LastHeartbeat: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Placements().Upsert(ctx, store.Placement{NodeID: "local", ModelID: "g", Status: "ready", LastSeen: now}); err != nil {
+		t.Fatal(err)
+	}
+	coord := store.Shard{ID: "c", ModelID: "g", Role: "coordinator", NodeID: "w1", Address: "192.0.2.1:30000", ProcessID: "p0",
+		Status: "starting", ConfigJSON: `{"engine":"sglang"}`, CreatedAt: now, LastSeen: now}
+	for _, sh := range []store.Shard{coord,
+		{ID: "r1", ModelID: "g", Role: "rank", NodeID: "w2", Address: "192.0.2.2", ProcessID: "p1", Status: "ready", CreatedAt: now, LastSeen: now},
+	} {
+		if err := st.Shards().Create(ctx, sh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := listedModels(t, ts); got != "m" {
+		t.Fatalf("a gang whose coordinator is starting must not be listed: %q", got)
+	}
+	if moved, err := st.Shards().UpdateStatusIf(ctx, coord, "starting", "ready"); err != nil || !moved {
+		t.Fatalf("mark ready: moved=%v err=%v", moved, err)
+	}
+	if got := listedModels(t, ts); got != "g,m" {
+		t.Fatalf("the gang joins the list once its coordinator is ready: %q", got)
+	}
+}
