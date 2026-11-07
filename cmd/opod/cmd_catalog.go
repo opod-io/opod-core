@@ -8,7 +8,7 @@ import (
 )
 
 // opod catalog ls | export <dir> — the bundled catalog is embedded in the
-// binary (opod-sdk/catalog, R9.8); export writes it out as files for the
+// binary (pkg/catalog, R9.8); export writes it out as files for the
 // worker entrypoint and for operators who keep drop-in overrides beside it.
 func cmdCatalog(args []string) {
 	help := helpSpec{

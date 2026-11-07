@@ -64,14 +64,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/metrics"
 	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // PolicyAdmission and PolicyAdmissionClass are the shared wire types
-// (opod-sdk/adminapi).
+// (pkg/adminapi).
 type PolicyAdmission = adminapi.PolicyAdmission
 type PolicyAdmissionClass = adminapi.PolicyAdmissionClass
 

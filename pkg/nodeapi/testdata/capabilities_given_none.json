@@ -1,0 +1,9 @@
+{
+  "Arch": "amd64",
+  "CPUCores": 8,
+  "GPUs": null,
+  "GivenDevices": [],
+  "Hostname": "opod-ep-chat-1",
+  "OS": "linux",
+  "RAMGB": 32
+}

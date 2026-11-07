@@ -11,10 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // PLAN T11.31: a sleeper whose card a manager gave away while it slept was

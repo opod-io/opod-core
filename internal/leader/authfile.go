@@ -34,16 +34,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 const defaultAuthPath = "/etc/opod-auth/auth.json"
 
 // SnapshotKeyPrefix marks api_keys rows owned by the auth snapshot; only
-// those are revoked when they leave the file. It is the SDK's, because a
+// those are revoked when they leave the file. It is pkg/adminapi's, because a
 // manager strips it from every record that names the key.
 const SnapshotKeyPrefix = adminapi.SnapshotKeyPrefix
 
@@ -99,7 +98,7 @@ func (s *Server) nodeMTLS() *nodeMTLSPolicy {
 // letting one through unchecked.
 func (p *nodeMTLSPolicy) ClientCAs() *x509.CertPool { return p.pool }
 
-// AuthSnapshot / SnapshotKey are the shared wire types (opod-sdk/adminapi).
+// AuthSnapshot / SnapshotKey are the shared wire types (pkg/adminapi).
 type AuthSnapshot = adminapi.AuthSnapshot
 type SnapshotKey = adminapi.SnapshotKey
 

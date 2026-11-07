@@ -1,0 +1,16 @@
+{
+  "boot_id": "0123456789abcdef",
+  "id": "n_worker-0",
+  "load": {
+    "kv_used_pct": 0,
+    "prefix_hit_pct": 98,
+    "prefix_hit_tokens_total": 980,
+    "prefix_query_tokens_total": 1000,
+    "queue_depth": 0,
+    "sampled_at": 1789732800,
+    "tokens_per_s": 0
+  },
+  "loaded_models": [
+    "m"
+  ]
+}

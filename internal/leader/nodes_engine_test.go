@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // /loadz counts the workers whose engine is not serving; the node list says

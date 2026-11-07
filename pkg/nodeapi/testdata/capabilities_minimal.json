@@ -1,0 +1,8 @@
+{
+  "Arch": "amd64",
+  "CPUCores": 8,
+  "GPUs": null,
+  "Hostname": "node-b",
+  "OS": "linux",
+  "RAMGB": 16
+}

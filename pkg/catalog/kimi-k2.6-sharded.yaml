@@ -1,0 +1,35 @@
+# Kimi K2.6 Thinking — Moonshot's frontier coding model.
+# 1T total parameters / 32B active per token (MoE). Modified MIT license.
+# Frontier-tier on SWE-Bench Pro (58.33 agentic, 78.57 coding avg).
+#
+# At Q4 weights are ~500 GB — must be sharded across multiple nodes.
+# Prereqs (same as other sharded entries):
+#   1. Download GGUF, e.g.:
+#        - https://huggingface.co/unsloth/Kimi-K2.6-GGUF        (Q8 / Q4 dynamic quants)
+#        - https://huggingface.co/bartowski/moonshotai_Kimi-K2.6-GGUF
+#        - https://huggingface.co/ubergarm/Kimi-K2.6-GGUF       (MoE-optimized quants)
+#   2. brew install llama.cpp on every node.
+#   3. At least 4 workers joined.
+# Then: `opod model add kimi-k2.6-sharded`
+id: kimi-k2.6-sharded
+display_name: Moonshot Kimi K2.6 (1T MoE, sharded, frontier coding)
+source:
+  type: file
+  path: /var/lib/opod/models/kimi-k2.6-q4_k_m.gguf
+size_bytes: 500000000000
+quant: q4_k_m
+context_window: 200000
+capabilities: [chat, code, reasoning, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 512
+tags: [moe, sharded, frontier, coding, agentic]
+license: mit
+license_url: https://huggingface.co/moonshotai/Kimi-K2.6/blob/main/LICENSE
+released: 2026-05-15
+sharding:
+  required: true
+  default_shards: 4
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

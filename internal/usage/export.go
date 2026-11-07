@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
@@ -18,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // maxBatchBytes bounds one push. OTLP receivers commonly cap a request near

@@ -1,0 +1,37 @@
+# StepFun Step-3.7-Flash — Apache-2.0 frontier vision-language MoE.
+# 198B total / 11B active (sparse MoE), 256K context, ~400 tok/s on a DGX.
+# SWE-Bench Pro 56.26. Native multimodal (text + images + GUIs + documents).
+# Three selectable reasoning levels (low / medium / high). 10 languages.
+#
+# Q4 weights are ~100 GB — sharding required on most consumer setups,
+# but fits a single 96 GB H200 or 2× 48 GB workstation cards.
+#
+# Prereqs:
+#   1. Download GGUF/weights, e.g.:
+#        - https://huggingface.co/stepfun-ai/Step-3.7-Flash       (official weights)
+#        - https://github.com/stepfun-ai/Step-3.7-Flash           (repo + setup)
+#        - HF community GGUF quants
+#   2. brew install llama.cpp on every node.
+#   3. 2-4 workers joined.
+id: step-3.7-flash-sharded
+display_name: StepFun Step-3.7-Flash (198B MoE VLM, Apache-2.0, sharded)
+source:
+  type: file
+  path: /var/lib/opod/models/step-3.7-flash-q4_k_m.gguf
+size_bytes: 100000000000
+quant: q4_k_m
+context_window: 262144
+capabilities: [chat, code, reasoning, tools, vision]
+recommended_engines: [llamacpp, vllm]
+hardware:
+  min_ram_gb: 128
+tags: [moe, sharded, frontier, agentic, multimodal, vlm]
+license: apache-2.0
+license_url: https://huggingface.co/stepfun-ai/Step-3.7-Flash/blob/main/LICENSE
+released: 2026-02-19
+sharding:
+  required: true
+  default_shards: 2
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

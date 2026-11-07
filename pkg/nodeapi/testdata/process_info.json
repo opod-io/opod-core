@@ -1,0 +1,14 @@
+{
+  "address": "192.0.2.10:50052",
+  "args": [
+    "-p",
+    "50052"
+  ],
+  "command": "rpc-server",
+  "exit_err": "exit status 1",
+  "id": "s-qwen-0",
+  "pid": 4242,
+  "restarts": 2,
+  "started_at": "2026-09-18T12:00:00Z",
+  "status": "failed"
+}

@@ -51,13 +51,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/api"
 	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
-// DoorRoutes is the routes file's wire type (opod-sdk/adminapi).
+// DoorRoutes is the routes file's wire type (pkg/adminapi).
 type (
 	DoorRoutes    = adminapi.DoorRoutes
 	DoorRoute     = adminapi.DoorRoute

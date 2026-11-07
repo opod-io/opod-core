@@ -24,8 +24,8 @@ import (
 	"time"
 )
 
-// authSnapshotStatus is the auth snapshot as /loadz reports it. Core-local
-// until the next SDK tag carries it on adminapi.Load, with these JSON names.
+// authSnapshotStatus is the auth snapshot as /loadz reports it. Core-local:
+// not on adminapi.Load; a move into pkg/adminapi keeps these JSON names.
 //
 // /loadz is unauthenticated (it is a probe, served on the probe port too).
 // Nothing here is a credential: a revision string, a timestamp, counts and a

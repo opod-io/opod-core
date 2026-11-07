@@ -12,12 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/metrics"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 var (

@@ -1,0 +1,20 @@
+{
+  "Args": [
+    "-p",
+    "50052"
+  ],
+  "Command": "rpc-server",
+  "Env": {
+    "CUDA_VISIBLE_DEVICES": "0"
+  },
+  "HealthHost": "0.0.0.0",
+  "HealthPath": "/health",
+  "HealthPort": 50052,
+  "ID": "s-qwen-0",
+  "LogLines": 400,
+  "MaxRestarts": 5,
+  "ReadyTimeout": 900000000000,
+  "Restart": true,
+  "RestartBackoff": 1000000000,
+  "WorkDir": "/data"
+}

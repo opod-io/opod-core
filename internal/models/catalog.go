@@ -10,13 +10,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/opod-io/opod-sdk/catalog"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/pkg/catalog"
 	"gopkg.in/yaml.v3"
 )
 
 // Entry is a single catalog entry, loaded from catalog/<id>.yaml.
-// The catalog schema lives in the SDK (opod-io/opod-sdk/catalog, R9.8): one
+// The catalog schema lives in pkg/catalog (R9.8): one
 // set of files and one set of types that the leader and the control plane
 // both read. The names below are the ones this package always used.
 type (
@@ -30,7 +30,7 @@ type (
 // LoadCatalog returns the catalog.
 //
 // With dir empty — the normal case — it starts from the catalog embedded in
-// the binary (BundledCatalog: the SDK's files, always present, never looked
+// the binary (BundledCatalog: pkg/catalog's files, always present, never looked
 // up on disk) and merges every override directory that exists over it, keyed
 // by id. A later source replaces an earlier one's entry whole, so a user's
 // drop-in wins over the embedded entry of the same id ("edit locally to
@@ -78,7 +78,7 @@ func LoadCatalogTrusted(trust *CatalogTrust, dir string, overrides ...string) ([
 		}
 		out = got
 	} else {
-		// The bundled set is the SDK's embedded catalog (R9.8) — always
+		// The bundled set is pkg/catalog's embedded catalog (R9.8) — always
 		// present, never a directory the binary has to find. Directories
 		// override it: later ones overwrite earlier ones, keyed by id. We do
 		// not warn about a shadowed entry — the effective entry is what the
@@ -109,7 +109,7 @@ func LoadCatalogTrusted(trust *CatalogTrust, dir string, overrides ...string) ([
 	return out, nil
 }
 
-// BundledCatalog parses the SDK's embedded catalog — what `opod` knows with
+// BundledCatalog parses pkg/catalog's embedded catalog — what `opod` knows with
 // no directory at all.
 func BundledCatalog() ([]Entry, error) {
 	names := catalog.Names()

@@ -1,0 +1,22 @@
+{
+  "Arch": "amd64",
+  "CPUCores": 32,
+  "Engine": "vllm",
+  "GPUs": [
+    {
+      "Name": "NVIDIA RTX A6000",
+      "VRAMGB": 47
+    }
+  ],
+  "GivenDevices": [
+    {
+      "Index": 0,
+      "PCI": "0000:41:00.0",
+      "UUID": "GPU-6f1c2a3b-0000-4000-8000-000000000001",
+      "Vendor": "nvidia"
+    }
+  ],
+  "Hostname": "opod-ep-chat-0",
+  "OS": "linux",
+  "RAMGB": 128
+}

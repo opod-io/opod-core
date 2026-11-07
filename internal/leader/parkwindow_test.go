@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // T11.2 / ADR-065 — the park window.

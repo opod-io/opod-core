@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // detectMemAndGPU returns (ramGB, gpus). NVIDIA GPUs are detected via

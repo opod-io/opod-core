@@ -42,14 +42,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 const defaultPolicyPath = "/etc/opod-auth/policy.json"
 
-// PolicySnapshot and its parts are the shared wire types (opod-sdk/adminapi).
+// PolicySnapshot and its parts are the shared wire types (pkg/adminapi).
 type (
 	PolicySnapshot = adminapi.PolicySnapshot
 	PolicyRouting  = adminapi.PolicyRouting
@@ -121,7 +120,7 @@ func (s *Server) StartPolicyWatcher(ctx context.Context) {
 		}
 		lastMod = st.ModTime()
 		s.applyPolicySnapshot(&doc)
-		s.applyRevisionWeights(doc.Routing.Revisions) // R15.17; typed since opod-sdk v0.2.1
+		s.applyRevisionWeights(doc.Routing.Revisions) // R15.17
 	}
 	load()
 	go func() {
@@ -209,7 +208,7 @@ func (s *Server) applyWakeMarks(ids []string) bool {
 
 // applyRevisionWeights hands policy.routing.revisions to the router (R15.17,
 // feature routing_weights). Empty or absent turns the split off, which is every
-// endpoint that is not mid-canary. (Until opod-sdk v0.2.1 carried the field this
+// endpoint that is not mid-canary. (Until adminapi carried the field this
 // re-parsed the raw snapshot; it is the shared type's now.)
 func (s *Server) applyRevisionWeights(ws []adminapi.RevisionWeight) {
 	if s.router == nil {

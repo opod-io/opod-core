@@ -12,10 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 func rec(model string, i int) Record {

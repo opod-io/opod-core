@@ -1,0 +1,15 @@
+{
+  "Arch": "amd64",
+  "CPUCores": 16,
+  "Engine": "vllm",
+  "GPUs": [
+    {
+      "Name": "NVIDIA RTX A6000",
+      "VRAMGB": 47
+    }
+  ],
+  "Hostname": "node-c",
+  "KVTier": "peer",
+  "OS": "linux",
+  "RAMGB": 64
+}

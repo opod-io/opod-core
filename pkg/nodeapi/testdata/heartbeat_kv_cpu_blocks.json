@@ -1,0 +1,20 @@
+{
+  "boot_id": "0123456789abcdef",
+  "id": "n_worker-0",
+  "kv_blocks": {
+    "block_size": 16,
+    "cpu_removed": [
+      "1a2b3c4d5e6f7081"
+    ],
+    "cpu_stored": [
+      "0f1e2d3c4b5a6978"
+    ],
+    "removed": [
+      "0f1e2d3c4b5a6978"
+    ],
+    "seq": 8
+  },
+  "loaded_models": [
+    "m"
+  ]
+}

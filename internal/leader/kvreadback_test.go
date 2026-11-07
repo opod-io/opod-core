@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // PLAN T23.2: what each engine says it built rides its worker's heartbeat. The

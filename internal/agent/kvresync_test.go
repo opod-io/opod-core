@@ -11,8 +11,8 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/opod-io/opod/internal/kvevents"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // A heartbeat that did not land — here a 404 from a leader that restarted and

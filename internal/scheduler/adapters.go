@@ -40,7 +40,7 @@ type AdapterResult struct {
 // the adapter's own r, omitted when the caller did not state one: an engine's
 // LoRA slots are sized at its start, so a worker told the rank can refuse an
 // adapter its engine cannot take — naming both numbers — instead of relaying
-// the engine's error. The type becomes the SDK's nodeapi.LoadAdapterRequest
+// the engine's error. The type becomes pkg/nodeapi.LoadAdapterRequest
 // when core adopts that package.
 type loadAdapterRequest struct {
 	Base   string `json:"base"`

@@ -36,7 +36,7 @@ import (
 	"github.com/go-zeromq/zmq4"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 const (

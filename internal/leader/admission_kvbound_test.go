@@ -14,12 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/router"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // beatKV is one heartbeat from worker id holding "m" with slots and, when

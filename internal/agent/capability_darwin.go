@@ -3,11 +3,11 @@
 package agent
 
 import (
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // detectMemAndGPU returns (ramGB, gpus). On Apple Silicon the GPU shares

@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // Capabilities summarizes the host machine's resources.

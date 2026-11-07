@@ -24,11 +24,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/opod-io/opod/internal/agent"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/scheduler"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // partWorker answers the process list with the part's process in the status

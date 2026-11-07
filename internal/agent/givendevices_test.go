@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // fakeHost builds a /dev and a /sys the way a container sees them: sysfs is
@@ -217,7 +217,7 @@ func TestGivenDevicesNoneIsAnEmptyList(t *testing.T) {
 	}
 }
 
-// The agent's Capabilities and the SDK's are one document: what a worker
+// The agent's Capabilities and pkg/nodeapi's are one document: what a worker
 // registers decodes into nodeapi.Capabilities with the devices intact, and a
 // worker that states nothing puts no key on the wire.
 func TestCapabilitiesGivenDevicesMatchTheSDK(t *testing.T) {

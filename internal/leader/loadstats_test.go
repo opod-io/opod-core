@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // A probe is served like any other request and counted like none of them.

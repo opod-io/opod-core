@@ -1,0 +1,15 @@
+{
+  "Args": null,
+  "Command": "rpc-server",
+  "Env": null,
+  "HealthHost": "",
+  "HealthPath": "",
+  "HealthPort": 0,
+  "ID": "s-qwen-0",
+  "LogLines": 0,
+  "MaxRestarts": 0,
+  "ReadyTimeout": 0,
+  "Restart": false,
+  "RestartBackoff": 0,
+  "WorkDir": ""
+}

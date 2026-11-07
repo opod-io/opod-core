@@ -313,7 +313,7 @@ func (o *Orchestrator) PlaceOnNodes(ctx context.Context, entry models.Entry, nod
 // field what agent.modelLoad reads. File names one GGUF inside Repo: without
 // it a worker given a repository that holds several files has to choose by
 // itself, and may not choose the one the catalog entry means. Key names and
-// the omitted-when-empty File are the wire; the type becomes the SDK's
+// the omitted-when-empty File are the wire; the type becomes pkg/nodeapi's
 // nodeapi.LoadModelRequest when core adopts that package.
 type loadModelRequest struct {
 	ID         string `json:"id"`
@@ -354,7 +354,7 @@ func (o *Orchestrator) callWorkerLoad(ctx context.Context, node store.Node, entr
 
 // unloadModelRequest / unloadModelResponse are the worker's /v1/model/unload
 // wire (agent.modelUnload): the load body's source fields without `file` and
-// `pin`. They become the SDK's nodeapi.UnloadModelRequest / Response when
+// `pin`. They become pkg/nodeapi.UnloadModelRequest / Response when
 // core adopts that package.
 type unloadModelRequest struct {
 	ID         string `json:"id"`

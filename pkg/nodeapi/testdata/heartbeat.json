@@ -1,0 +1,19 @@
+{
+  "boot_id": "0123456789abcdef",
+  "id": "n_worker-0",
+  "load": {
+    "kv_used_pct": 62.5,
+    "prefix_hit_pct": 41,
+    "queue_depth": 3,
+    "sampled_at": 1789732800,
+    "tokens_per_s": 148.25
+  },
+  "loaded_models": [
+    "qwen2.5-0.5b-gguf",
+    "qwen2.5-0.5b-gguf:support"
+  ],
+  "resident_models": [
+    "qwen2.5-0.5b-gguf"
+  ],
+  "sleeping": true
+}

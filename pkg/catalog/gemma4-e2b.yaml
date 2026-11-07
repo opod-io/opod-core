@@ -1,0 +1,16 @@
+id: gemma4-e2b
+display_name: Google Gemma 4 E2B (mobile/edge, multimodal — text + image + audio)
+source:
+  type: ollama
+  ollama_name: gemma4:e2b
+size_bytes: 7200000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, vision, audio]
+recommended_engines: [ollama, llamacpp]
+hardware:
+  min_ram_gb: 8
+tags: [small, edge, mobile, multimodal, google, restricted-license]
+license: gemma
+license_url: https://ai.google.dev/gemma/terms
+released: 2026-06-05

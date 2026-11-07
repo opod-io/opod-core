@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opod-io/opod-sdk/adminapi"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // T32.23: the fetch reports whether the repository publishes a signature, and

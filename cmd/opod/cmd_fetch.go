@@ -11,10 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/fetch"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // opod fetch <repo> <file> [--dir <models dir>] — make one GGUF present in

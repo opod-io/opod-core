@@ -14,7 +14,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/opod-io/opod-sdk/adminapi"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // SignatureOf says whether repo at opt.Revision publishes a signature beside

@@ -9,10 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/kvevents"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 type tokenizingEngine struct {

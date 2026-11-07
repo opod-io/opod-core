@@ -12,17 +12,15 @@ import (
 	"context"
 	"net/http"
 	"slices"
-
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/router"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -234,9 +232,8 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// loadResponse is adminapi.Load plus the fields that have not reached an SDK
-// tag yet (the capabilitiesResponse pattern): embedded, so the wire shape
-// only gains keys.
+// loadResponse is adminapi.Load plus the core-local fields (the
+// capabilitiesResponse pattern): embedded, so the wire shape only gains keys.
 type loadResponse struct {
 	adminapi.Load
 	// AuthSnapshot is the auth snapshot in force — revision, age, bound and

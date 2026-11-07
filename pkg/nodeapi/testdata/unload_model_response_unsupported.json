@@ -1,0 +1,5 @@
+{
+  "engine": "vllm",
+  "reason": "the engine cannot unload a model and this worker did not start it; stop the engine, or the worker, instead",
+  "status": "unsupported"
+}

@@ -1,0 +1,15 @@
+id: mimo-audio
+display_name: Xiaomi MiMo-Audio 7B (speech + audio understanding)
+source:
+  type: huggingface
+  repo: XiaomiMiMo/MiMo-Audio-7B-Instruct
+size_bytes: 4800000000
+context_window: 32768
+capabilities: [chat, audio]
+recommended_engines: [vllm, mlx]
+hardware:
+  min_ram_gb: 8
+tags: [audio, small, xiaomi, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/XiaomiMiMo/MiMo-Audio-7B-Instruct
+released: 2026-01-20

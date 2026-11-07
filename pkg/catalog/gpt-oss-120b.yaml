@@ -1,0 +1,29 @@
+id: gpt-oss-120b
+display_name: OpenAI gpt-oss 120B (open-weight, Apache-2.0)
+source:
+  type: ollama
+  ollama_name: gpt-oss:120b
+size_bytes: 65000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, reasoning, tools]
+recommended_engines: [ollama, vllm, llamacpp]
+tool_parser:
+  vllm: openai
+  sglang: gpt-oss
+hardware:
+  min_ram_gb: 80
+  min_vram_gb: 80
+tags: [reasoning, thinking, large, openai]
+license: apache-2.0
+license_url: https://huggingface.co/openai/gpt-oss-120b/blob/main/LICENSE
+released: 2025-08-05
+architecture:   # shape the control plane validates a split against (R2.2); public config values
+  params: 117000000000
+  layers: 36
+  heads: 64
+  kv_heads: 8
+  experts: 128
+  head_dim: 64            # config.json head_dim
+  sliding_window: 128     # layer_types: 18 sliding_attention, 18 full_attention
+  sliding_layers: 18

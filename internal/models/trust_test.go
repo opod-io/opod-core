@@ -11,7 +11,8 @@ import (
 	"testing"
 
 	"github.com/jedisct1/go-minisign"
-	"github.com/opod-io/opod-sdk/catalog"
+
+	"github.com/opod-io/opod/pkg/catalog"
 )
 
 // testSigner is a throwaway minisign keypair, generated per test. No key

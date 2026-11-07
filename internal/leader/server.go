@@ -454,7 +454,7 @@ func (s *Server) routes() http.Handler {
 	// each role — because the two processes know different things:
 	//
 	//   on a DOOR    how far behind it is and how big its backlog is (/loadz is
-	//                the SDK's typed shape and has no field for either);
+	//                adminapi.Load's typed shape and has no field for either);
 	//   on a LEADER  the doors it has heard from and the TOTAL they are
 	//                carrying, which is the number a scaler for the doors must
 	//                read: a single door sees only its share, and keep-alive

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod-sdk/catalog"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod/pkg/catalog"
 )
 
 // TestDocsReferenceRealCommands verifies that every `opod <verb>` mentioned
@@ -197,7 +197,7 @@ func TestCatalogRestrictiveLicenseTagged(t *testing.T) {
 	}
 }
 
-// TestCatalogParses verifies every embedded catalog file (opod-sdk/catalog) loads cleanly through
+// TestCatalogParses verifies every embedded catalog file (pkg/catalog) loads cleanly through
 // the same parser the binary uses at startup. Catches malformed entries
 // before they reach `opod up`.
 func TestCatalogParses(t *testing.T) {

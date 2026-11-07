@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // PLAN T24.56: the index keeps a worker's CPU-tier blocks beside its card's;

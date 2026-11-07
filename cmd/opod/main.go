@@ -194,7 +194,7 @@ Commands:
   model ls                 List installed models
   model ps                 Models resident in engine RAM + free memory
   model search [q]         Search the catalog
-  catalog ls               List the bundled catalog (embedded; opod-sdk/catalog)
+  catalog ls               List the bundled catalog (embedded; pkg/catalog)
   catalog export <dir>     Write the bundled catalog out as files (overrides go beside them)
   fetch <repo> <file>      Make one GGUF present in --dir / $OPOD_MODELS_DIR (exclusive, atomic; a control plane's prefetch)
   fetch --snapshot <repo>[@rev]

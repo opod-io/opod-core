@@ -1,0 +1,20 @@
+{
+  "Arch": "amd64",
+  "CPUCores": 32,
+  "Engine": "vllm",
+  "GPUs": [
+    {
+      "Name": "NVIDIA A100-SXM4-80GB",
+      "VRAMGB": 79
+    },
+    {
+      "Name": "NVIDIA A100-SXM4-80GB",
+      "VRAMGB": 79
+    }
+  ],
+  "Hostname": "node-a",
+  "OS": "linux",
+  "PlanRevision": 7,
+  "RAMGB": 128,
+  "Role": "decode"
+}

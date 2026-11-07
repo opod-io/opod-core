@@ -1,0 +1,11 @@
+[
+  {
+    "name": "support",
+    "rank": 64,
+    "source": "example/qwen3-8b-support-lora"
+  },
+  {
+    "name": "legal",
+    "source": "/data/adapters/legal"
+  }
+]

@@ -16,13 +16,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
+
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // EngineLoad is one sample of an engine's pressure: the heartbeat's wire type
-// itself (opod-sdk nodeapi.EngineLoad), so a field a driver fills is a field
+// itself (pkg/nodeapi.EngineLoad), so a field a driver fills is a field
 // the leader reads, with no second copy to drift. KVUsedPct is the pressure
 // signal; the pointer fields are the engine's own report of the KV pool it
 // built and what it did with it (PLAN T23.2), nil when the engine does not say.

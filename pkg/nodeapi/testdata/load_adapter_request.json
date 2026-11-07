@@ -1,0 +1,6 @@
+{
+  "base": "qwen3-8b",
+  "name": "support",
+  "rank": 64,
+  "source": "example/qwen3-8b-support-lora"
+}

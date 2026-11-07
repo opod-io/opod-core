@@ -1,0 +1,7 @@
+[
+  {
+    "id": "qwen3-8b:support",
+    "name": "support",
+    "source": "example/qwen3-8b-support-lora"
+  }
+]

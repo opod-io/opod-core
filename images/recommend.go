@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/opod-io/opod-sdk/catalog"
+	"github.com/opod-io/opod/pkg/catalog"
 )
 
 // Recommendation answers "which image serves this catalog model", per vendor.

@@ -107,7 +107,7 @@ func cmdDoctor(args []string) {
 		warn(os.Stdout, "  → sign the file (`minisign -S -m <file>`), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
 	} else {
 		warn(os.Stdout, "catalog: %v", err)
-		// The catalog is embedded in the binary (from the SDK); what can be
+		// The catalog is embedded in the binary (pkg/catalog); what can be
 		// wrong is a file a user added beside it (T10.21: the hint named a
 		// bundled directory that no longer exists).
 		warn(os.Stdout, "  → the built-in catalog is in this binary: check the files you added in OPOD_CATALOG_DIR (default ~/.opod/catalog), or unset it")

@@ -1,0 +1,5 @@
+{
+  "model": "llama-3.2-3b.gguf",
+  "reason": "not resident in this worker's engine",
+  "status": "noop"
+}

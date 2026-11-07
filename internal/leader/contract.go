@@ -4,10 +4,9 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // The leader's stable admin surface, v1.
@@ -28,7 +27,7 @@ import (
 const ContractVersion = adminapi.ContractVersion
 
 // ContractRoute is one method+pattern pair of the frozen surface — the shared
-// wire type (opod-sdk/adminapi); patterns use chi placeholders exactly as registered.
+// wire type (pkg/adminapi); patterns use chi placeholders exactly as registered.
 type ContractRoute = adminapi.Route
 
 // LeaderContract is the frozen list. Keep it sorted by section; append only.
@@ -390,7 +389,7 @@ func contractFeatures() map[string]bool {
 		"kv_tier_load": true,
 		// OPOD_ENGINE_OVERHEAD_MIB: the engine's overhead outside its pool for
 		// the card's vendor, which a budgeted launch takes off the budget before
-		// dividing (PLAN T23.3). Unset, the launch uses the SDK table's figure
+		// dividing (PLAN T23.3). Unset, the launch uses adminapi's table figure
 		// for an unmeasured vendor (adminapi.EngineOverheadMiB).
 		"engine_overhead": true,
 		// /loadz carries tier_ghost (PLAN T26.14): from the workers' cache
@@ -463,9 +462,8 @@ func (s *Server) adminVersion(w http.ResponseWriter, _ *http.Request) {
 // compares its own list against this one instead of finding out at process
 // launch that a name was dropped or renamed.
 //
-// Core-local for now: this type (and the Engines field below) moves to
-// opod-sdk/adminapi — onto adminapi.Capabilities — at the next SDK tag, with
-// these exact JSON names.
+// Core-local: this type (and the Engines field below) is not on
+// adminapi.Capabilities; a move into pkg/adminapi keeps these JSON names.
 type EngineInfo struct {
 	// ID is the canonical engine name: what `opod up --engine`, a plan and a
 	// worker's registration all resolve to.
@@ -477,8 +475,8 @@ type EngineInfo struct {
 	Native string `json:"native"`
 }
 
-// capabilitiesResponse is adminapi.Capabilities plus the fields that have not
-// reached an SDK tag yet. Embedded, so the wire shape only gains keys.
+// capabilitiesResponse is adminapi.Capabilities plus the core-local fields.
+// Embedded, so the wire shape only gains keys.
 type capabilitiesResponse struct {
 	adminapi.Capabilities
 	Engines []EngineInfo `json:"engines"`

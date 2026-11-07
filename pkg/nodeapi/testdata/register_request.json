@@ -1,0 +1,10 @@
+{
+  "address": "192.0.2.10:8081",
+  "arch": "amd64",
+  "boot_id": "0123456789abcdef",
+  "hardware_json": "{\"Hostname\":\"node-a\",\"OS\":\"linux\",\"Arch\":\"amd64\",\"CPUCores\":32,\"RAMGB\":128,\"GPUs\":[{\"Name\":\"NVIDIA A100-SXM4-80GB\",\"VRAMGB\":79},{\"Name\":\"NVIDIA A100-SXM4-80GB\",\"VRAMGB\":79}],\"Role\":\"decode\",\"PlanRevision\":7,\"Engine\":\"vllm\"}",
+  "hostname": "node-a",
+  "id": "n_worker-0",
+  "os": "linux",
+  "ram_gb": 128
+}

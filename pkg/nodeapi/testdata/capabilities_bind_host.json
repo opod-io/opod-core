@@ -1,0 +1,15 @@
+{
+  "Arch": "amd64",
+  "BindHost": "10.0.0.5",
+  "CPUCores": 8,
+  "Engine": "llamacpp",
+  "GPUs": [
+    {
+      "Name": "NVIDIA RTX A6000",
+      "VRAMGB": 47
+    }
+  ],
+  "Hostname": "node-d",
+  "OS": "linux",
+  "RAMGB": 32
+}

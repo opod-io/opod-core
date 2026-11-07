@@ -15,8 +15,7 @@ import (
 	"time"
 
 	"github.com/opod-io/opod/internal/kvevents"
-
-	"github.com/opod-io/opod-sdk/nodeapi"
+	"github.com/opod-io/opod/pkg/nodeapi"
 
 	"github.com/opod-io/opod/internal/auth"
 	"github.com/opod-io/opod/internal/engines"

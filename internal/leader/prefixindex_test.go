@@ -13,11 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/engines"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // The index holds what each worker's engine said it holds, counts LEADING

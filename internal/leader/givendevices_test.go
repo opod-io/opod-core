@@ -10,10 +10,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"github.com/opod-io/opod/internal/config"
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // Feature worker_devices: the devices a worker states it was given reach a

@@ -2,7 +2,7 @@
 
 package agent
 
-import "github.com/opod-io/opod-sdk/nodeapi"
+import "github.com/opod-io/opod/pkg/nodeapi"
 
 // detectMemAndGPU is a stub for non-Darwin, non-Linux builds (mostly for
 // developer cross-compilation). Returns zero values.

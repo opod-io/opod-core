@@ -1,0 +1,14 @@
+{
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "content": "s",
+      "role": "system"
+    },
+    {
+      "content": "u",
+      "role": "user"
+    }
+  ],
+  "model": "m"
+}

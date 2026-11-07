@@ -1,0 +1,5 @@
+{
+  "engine": "llamacpp",
+  "reason": "engine has no sleep mode; park the pod instead",
+  "status": "unsupported"
+}

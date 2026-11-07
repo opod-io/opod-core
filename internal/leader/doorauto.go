@@ -32,9 +32,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
-
 	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 const (

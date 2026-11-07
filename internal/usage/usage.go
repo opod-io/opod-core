@@ -2,7 +2,7 @@
 // one and the receiver that takes it (feature usage_push, T32.34).
 //
 // The leader keeps no usage table. Each finished request becomes one OTLP log
-// record (names in opod-sdk adminapi/usagelog.go), encoded once on Add and
+// record (names in pkg/adminapi/usagelog.go), encoded once on Add and
 // held in a queue capped by BYTES, so the cap is exact rather than a guess at
 // the size of a Go struct. An exporter sends the oldest records to the URL in
 // OPOD_USAGE_OTLP_ENDPOINT and frees them only when the receiver answers 2xx.
@@ -19,12 +19,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod-sdk/adminapi"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // DefaultQueueMB is the queue's size when OPOD_USAGE_QUEUE_MB is unset: about

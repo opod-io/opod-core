@@ -1,0 +1,34 @@
+# BGE Reranker v2 M3 as GGUF — the catalog's reranker (ADR-084: /v1/rerank is
+# back). A cross-encoder: it scores (query, document) pairs, most relevant
+# first; it generates nothing and embeds nothing.
+#
+# llama-server serves /v1/rerank only when started with --reranking. A control
+# plane that knows the endpoint's protocol adds it; a hand-run worker pins it
+# through the documented `extra` engine flag. vLLM serves the original
+# safetensors (BAAI/bge-reranker-v2-m3, XLMRobertaForSequenceClassification)
+# as a pooling model with no flag; this entry is the GGUF form for llama.cpp.
+#
+# Install:  opod model add bge-reranker-v2-m3-gguf
+# Use:      POST /v1/rerank { "model": "bge-reranker-v2-m3-gguf", "query": "...", "documents": ["...", "..."] }
+id: bge-reranker-v2-m3-gguf
+display_name: BGE Reranker v2 M3 (GGUF, multilingual, 8K ctx)
+source:
+  type: huggingface
+  repo: gpustack/bge-reranker-v2-m3-GGUF
+  file: bge-reranker-v2-m3-Q4_K_M.gguf
+size_bytes: 438376864
+quant: q4_k_m
+context_window: 8192
+capabilities: [rerank]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 2
+architecture:
+  params: 568000000
+  layers: 24
+  heads: 16
+  kv_heads: 16
+tags: [rerank, reranker, retrieval, multilingual, bge, gguf, small, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/BAAI/bge-reranker-v2-m3
+released: 2024-03-15

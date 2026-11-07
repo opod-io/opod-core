@@ -46,7 +46,7 @@ const (
 // unloadModelRequest is the body of /v1/model/unload: the load request's
 // source fields without `file` and `pin`, so the worker resolves the
 // engine-native name exactly as the load did. Key names are the wire; the
-// type becomes the SDK's nodeapi.UnloadModelRequest when core adopts that
+// type becomes pkg/nodeapi.UnloadModelRequest when core adopts that
 // package.
 type unloadModelRequest struct {
 	ID         string `json:"id"`

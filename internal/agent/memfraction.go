@@ -3,7 +3,7 @@ package agent
 import (
 	"strconv"
 
-	"github.com/opod-io/opod-sdk/adminapi"
+	"github.com/opod-io/opod/pkg/adminapi"
 )
 
 // MemFractionShell is the one rule for turning a worker's VRAM BUDGET into the
@@ -61,7 +61,7 @@ func MemFractionShell(engine string) string {
 }
 
 // overheadMiB is the engine's overhead when the manager names none
-// (OPOD_ENGINE_OVERHEAD_MIB unset): the SDK table's figure for a vendor not
+// (OPOD_ENGINE_OVERHEAD_MIB unset): adminapi's table figure for a vendor not
 // measured, which is the engine's largest, else the engine's own row here.
 func overheadMiB(engine string) int {
 	if mib := adminapi.EngineOverheadMiB(engine, ""); mib > 0 {
@@ -78,12 +78,12 @@ type memKnob struct {
 	defaultFraction string
 	// overheadMiB is what the engine process holds on its card OUTSIDE the
 	// pool its fraction bounds, taken off the budget before dividing, for an
-	// engine the SDK's EngineOverheadMiB has no figure for.
+	// engine adminapi.EngineOverheadMiB has no figure for.
 	overheadMiB int
 }
 
 // memKnobs is every engine's translation. vLLM's overhead is measured per
-// vendor and lives in the SDK (adminapi.EngineOverheadMiB, which the manager
+// vendor and lives in pkg/adminapi (adminapi.EngineOverheadMiB, which the manager
 // passes as OPOD_ENGINE_OVERHEAD_MIB for the card's vendor); SGLang keeps
 // 768 MiB, an estimate beside vLLM's pool that no measurement of its own has
 // replaced yet (its fraction also leaves out its activations and CUDA-graph

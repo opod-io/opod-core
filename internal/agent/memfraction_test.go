@@ -123,7 +123,7 @@ func TestTheCardSizeFromTheManagerWins(t *testing.T) {
 }
 
 // Every engine whose fraction a budget is translated into has an overhead:
-// vLLM's from the SDK's per-vendor table, SGLang's from its own row.
+// vLLM's from adminapi's per-vendor table, SGLang's from its own row.
 func TestEveryFractionEngineHasOneOverheadRow(t *testing.T) {
 	for _, engine := range []string{"vllm", "sglang"} {
 		if _, ok := memKnobs[engine]; !ok || overheadMiB(engine) <= 0 {
@@ -137,7 +137,7 @@ func TestEveryFractionEngineHasOneOverheadRow(t *testing.T) {
 
 // The manager names the overhead for the card's vendor (OPOD_ENGINE_OVERHEAD_MIB,
 // PLAN T23.3): vLLM measured 837 MiB beside its pool on NVIDIA and 1103 on AMD.
-// Unset or not a number, the SDK's figure for an unmeasured vendor applies.
+// Unset or not a number, adminapi's figure for an unmeasured vendor applies.
 func TestTheManagersOverheadWins(t *testing.T) {
 	if _, err := exec.LookPath("awk"); err != nil {
 		t.Skip("no awk on this machine")

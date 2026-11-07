@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod-sdk/nodeapi"
-
 	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod/pkg/nodeapi"
 )
 
 // Serving capacity, per model.
