@@ -230,6 +230,21 @@ func (s *Driver) serverInfoPool() int64 {
 
 var _ engines.SlotReporter = (*Driver)(nil)
 
+// Version is SGLang's `version` in /server_info (the older spelling
+// /get_server_info answers the same body).
+func (s *Driver) Version(ctx context.Context) (string, error) {
+	var body struct {
+		Version string `json:"version"`
+	}
+	err := s.GetJSON(ctx, "/server_info", &body)
+	if err != nil {
+		err = s.GetJSON(ctx, "/get_server_info", &body)
+	}
+	return body.Version, err
+}
+
+var _ engines.Versioner = (*Driver)(nil)
+
 // Embeddings come from the shared OpenAI-compatible client this driver embeds.
 var _ engines.EmbedEngine = (*Driver)(nil)
 

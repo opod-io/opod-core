@@ -28,6 +28,13 @@ import (
 // built and what it did with it (PLAN T23.2), nil when the engine does not say.
 type EngineLoad = nodeapi.EngineLoad
 
+// Versioner is implemented by engines that state their own version (PLAN
+// T29.5): what the running process says it is, read once by the worker and
+// carried in its heartbeat's engine state.
+type Versioner interface {
+	Version(ctx context.Context) (string, error)
+}
+
 // LoadReporter is implemented by engines that can report EngineLoad.
 type LoadReporter interface {
 	Load(ctx context.Context) (EngineLoad, error)

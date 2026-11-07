@@ -48,6 +48,17 @@ type Driver struct {
 	ttft    engines.HistogramWindow // time_to_first_token_seconds → the last minute's median (T24.25)
 }
 
+// Version is vLLM's GET /version (`{"version":"0.33.0"}`).
+func (v *Driver) Version(ctx context.Context) (string, error) {
+	var body struct {
+		Version string `json:"version"`
+	}
+	err := v.GetJSON(ctx, "/version", &body)
+	return body.Version, err
+}
+
+var _ engines.Versioner = (*Driver)(nil)
+
 // New returns a driver for a vLLM server at endpoint (e.g. http://gpu:8000).
 // apiKey is optional — set when vLLM was launched with --api-key.
 func New(endpoint, apiKey string) *Driver {

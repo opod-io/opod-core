@@ -202,6 +202,29 @@ func (c Client) List(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// GetJSON GETs one of the engine's own JSON routes (path, e.g. "/version")
+// with the client's auth and decodes at most 1 MiB of it into into.
+func (c Client) GetJSON(ctx context.Context, path string, into any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	c.applyAuth(req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return engines.Unreachable(c.Driver, c.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return engines.Upstream(c.Driver, "GET "+path, resp.StatusCode, b)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(into); err != nil {
+		return fmt.Errorf("%s GET %s: decode: %w", c.Driver, path, err)
+	}
+	return nil
+}
+
 // Chat POSTs an OpenAI chat completion and adapts the streamed SSE response
 // into Opod's StreamEvent channel. Synchronous failures return an error and
 // a nil channel; once a channel is returned it is always closed.

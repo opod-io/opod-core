@@ -181,6 +181,18 @@ func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	return ld, nil
 }
 
+// Version is llama-server's /props `build_info` (e.g. "b11028-972d2313b"):
+// the release build and commit, which is how llama.cpp names a version.
+func (l *Driver) Version(ctx context.Context) (string, error) {
+	var props struct {
+		BuildInfo string `json:"build_info"`
+	}
+	err := l.GetJSON(ctx, "/props", &props)
+	return props.BuildInfo, err
+}
+
+var _ engines.Versioner = (*Driver)(nil)
+
 // totalSlots is the server's slot count from /props, read once: it is fixed
 // for the process's life (`-np`). 0 when the server does not say.
 func (l *Driver) totalSlots(ctx context.Context) int {

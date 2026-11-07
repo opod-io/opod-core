@@ -37,6 +37,9 @@ type Agent struct {
 	BootID       string
 	Capabilities Capabilities
 	Engine       engines.Engine // local engine; queried for loaded_models
+	// engineVersion is the engine's own version, read once it serves (PLAN
+	// T29.5): the image fixes the binary, so it is the worker's for its life.
+	engineVersion string
 	// Aliases translates the engine's native model names into the ids this
 	// worker was asked to load, so the leader's placements are keyed by the
 	// identity the plan named. Shared with the Server; nil is safe.
@@ -184,6 +187,7 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 	// anything counting workers is capacity — it is not, and this is where that
 	// gets said.
 	if st := engineState(a.Procs); st != nil {
+		st.Version = a.engineVersionOf(ctx, st)
 		hb["engine"] = st
 	}
 	// Load signals (build item 14) ride the same heartbeat; best-effort too.
@@ -451,6 +455,25 @@ func engineNotRunning(err error) bool {
 // heartbeat. nil = nothing of ours launched an engine here (a llama.cpp RPC
 // part, a worker whose engine is started by the platform), which is a
 // different thing from a healthy engine and is sent as nothing at all.
+// engineVersionOf is the engine's version once it has said it: asked only
+// while the engine serves, and kept once read (PLAN T29.5). Best-effort and
+// bounded like every other part of the heartbeat.
+func (a *Agent) engineVersionOf(ctx context.Context, st *nodeapi.EngineState) string {
+	if a.engineVersion != "" || st.State != nodeapi.EngineServing {
+		return a.engineVersion
+	}
+	vr, ok := a.Engine.(engines.Versioner)
+	if !ok || a.Engine == nil {
+		return ""
+	}
+	vctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if v, err := vr.Version(vctx); err == nil {
+		a.engineVersion = v
+	}
+	return a.engineVersion
+}
+
 func engineState(procs *Supervisor) *nodeapi.EngineState {
 	if procs == nil {
 		return nil
