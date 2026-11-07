@@ -162,7 +162,7 @@ The roster: `cursor`, `aider`, `continue`, `zed`, `cline`, `openclaw`, `opencode
 
 ### B) The console
 
-Core has no web dashboard (ADR-022). The console — Connect cards, Playground, keys, teams — is the control plane (`opodcp`, `helm install opod`). From core alone, use the CLI (`opod connect`, `opod token`) or curl.
+Core has no web dashboard (ADR-022). The console — Connect cards, Playground, keys, teams — is the control plane (`opodcp`, `helm install opodcp`). From core alone, use the CLI (`opod connect`, `opod token`) or curl.
 
 ### C) curl from your terminal
 

@@ -230,8 +230,8 @@
       <div class="term">
         <div class="bar"><i></i><i></i><i></i><span>any Kubernetes ≥ 1.28</span></div>
         <div class="code" data-nocopy><pre><span class="c"># install the control plane (console included)</span>
-<span class="p">$ </span>helm install opod oci://ghcr.io/opod-io/charts/opod \
-    --version 0.1.0 -n opod --create-namespace \
+<span class="p">$ </span>helm install opodcp oci://ghcr.io/opod-io/charts/opodcp \
+    --version 0.1.0 -n opodcp --create-namespace \
     --set admin.token=$ADMIN_TOKEN
 
 <span class="c"># create an endpoint: the placer picks a GPU with room</span>
@@ -328,10 +328,10 @@
         <h3>Install the control plane</h3>
         <p>This installs one Deployment with the console embedded, a preflight Job, RBAC and per-vendor probe DaemonSets. It adds no databases.</p>
         <div class="block code"><pre>export ADMIN_TOKEN=$(openssl rand -hex 16)
-helm install opod oci://ghcr.io/opod-io/charts/opod --version 0.1.0 \
-  -n opod --create-namespace --set admin.token=$ADMIN_TOKEN
+helm install opodcp oci://ghcr.io/opod-io/charts/opodcp --version 0.1.0 \
+  -n opodcp --create-namespace --set admin.token=$ADMIN_TOKEN
 
-kubectl -n opod port-forward svc/opod-opodcp 8080:8080
+kubectl -n opodcp port-forward svc/opodcp 8080:8080
 # console: http://127.0.0.1:8080  (sign in with $ADMIN_TOKEN)</pre></div>
       </div></div>
 
@@ -366,9 +366,9 @@ curl -s -X POST $OPOD/api/v1/endpoints/&lt;id&gt;/gateway/v1/chat/completions \
         <h3>Make a cluster and install</h3>
         <div class="block code"><pre>kind create cluster --name opod
 export ADMIN_TOKEN=$(openssl rand -hex 16)
-helm install opod oci://ghcr.io/opod-io/charts/opod --version 0.1.0 \
-  -n opod --create-namespace --set admin.token=$ADMIN_TOKEN --wait
-kubectl -n opod port-forward svc/opod-opodcp 8080:8080 &amp;</pre></div>
+helm install opodcp oci://ghcr.io/opod-io/charts/opodcp --version 0.1.0 \
+  -n opodcp --create-namespace --set admin.token=$ADMIN_TOKEN --wait
+kubectl -n opodcp port-forward svc/opodcp 8080:8080 &amp;</pre></div>
       </div></div>
 
       <div class="step"><div class="num">2</div><div>
@@ -422,8 +422,8 @@ agents:
 ./opodcp preflight --kubeconfig ~/.opodcp/lab/kubeconfig
 
 export KUBECONFIG=~/.opodcp/lab/kubeconfig
-helm install opod oci://ghcr.io/opod-io/charts/opod --version 0.1.0 \
-  -n opod --create-namespace --set admin.token=$(openssl rand -hex 16)</pre></div>
+helm install opodcp oci://ghcr.io/opod-io/charts/opodcp --version 0.1.0 \
+  -n opodcp --create-namespace --set admin.token=$(openssl rand -hex 16)</pre></div>
         <p>Then continue from step 4 of the Kubernetes path. Use <code>--local</code> when the server is the machine you are typing on.</p>
       </div></div>
       <div class="note good">Measured on a design-partner cell: <code>infra up</code> built a 9-machine cluster in 80 s, and preflight to first token on an A6000 took 127 s.</div>
@@ -781,7 +781,7 @@ POST /api/v1/rollouts/&lt;id&gt;/rollback</pre></div>
       <details><summary>Does anything phone home?</summary><p>No. Core has no telemetry. The control plane needs no connection to us: there is no licence server and no remote kill switch. It needs to reach your registry and model hub (or your mirrors) to pull images and weights.</p></details>
       <details><summary>Which models can I run?</summary><p>Anything in the catalog (Qwen, Llama, Gemma, GLM, DeepSeek, gpt-oss, Mistral, Phi, vision and embedding models), or a Hugging Face GGUF or safetensors repo you add. Sizing is up to you: the ledger tells you what fits on each card before anything is scheduled.</p></details>
       <details><summary>Can I pack models on AMD, Intel or Tenstorrent cards?</summary><p>The ledger places on any card whose VRAM is measured, which today means NVIDIA and AMD. Serving is proven on NVIDIA. AMD is waiting on its worker image, and Intel and Tenstorrent are inventoried only. We use those three words on purpose, because each one is checkable.</p></details>
-      <details><summary>How do I remove it?</summary><p><code>helm uninstall opod -n opod</code> removes the control plane. Endpoints are ordinary Deployments and Services labelled <code>opod.io/endpoint</code>; delete them from the console first, or remove them by label. <code>opodcp infra down</code> uninstalls a k3s cluster that opod built.</p></details>
+      <details><summary>How do I remove it?</summary><p><code>helm uninstall opodcp -n opodcp</code> removes the control plane. Endpoints are ordinary Deployments and Services labelled <code>opod.io/endpoint</code>; delete them from the console first, or remove them by label. <code>opodcp infra down</code> uninstalls a k3s cluster that opod built.</p></details>
     </div>
   </div>
 </section>

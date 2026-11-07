@@ -35,7 +35,7 @@ Core is complete on its own: everything on this page is open source with no usag
 
 | You need… | The Control Plane gives you |
 |---|---|
-| One install on the cluster you already run | `helm install opod` on any Kubernetes (EKS, GKE, AKS, on-prem). On bare metal, `opodcp infra up` installs k3s for you |
+| One install on the cluster you already run | `helm install opodcp` on any Kubernetes (EKS, GKE, AKS, on-prem). On bare metal, `opodcp infra up` installs k3s for you |
 | To know which card holds what | A **per-GPU memory ledger**: every card measured, every model's KV cache sized, models packed onto cards instead of one per card |
 | Changes without outages | **Verified rollouts** of a new model, engine or image, judged before the old one is removed |
 | Capacity that follows load | An autoscaler per endpoint, down to zero and back |
