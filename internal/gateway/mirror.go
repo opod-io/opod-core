@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // RegistryHeader is set on the leader's GET /admin/v1/nodes to

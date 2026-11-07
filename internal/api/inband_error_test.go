@@ -15,8 +15,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	_ "github.com/opod-io/opod/internal/engines/all"
+	"github.com/opod-io/opod-core/internal/engines"
+	_ "github.com/opod-io/opod-core/internal/engines/all"
 )
 
 const roleChunk = `data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}` + "\n\n"

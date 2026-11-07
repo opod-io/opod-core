@@ -7,8 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **The module path is `github.com/opod-io/opod-core`, the repository's own name.** It was `github.com/opod-io/opod`,
+  a repository that does not exist, so nothing could fetch core as a Go module. Every import changed with it; the
+  `opod` binary, its commands and the images are unchanged.
 - **The wire types moved in from opod-sdk (T9.50).** `adminapi`, `nodeapi` and `catalog` are now `pkg/` in this
-  repo (`github.com/opod-io/opod/pkg/...`), copied from the SDK's final commit `c82d906`; core no longer requires
+  repo (`github.com/opod-io/opod-core/pkg/...`), copied from the SDK's final commit `c82d906`; core no longer requires
   `github.com/opod-io/opod-sdk`. A catalog entry is a PR here (`pkg/catalog/<id>.yaml`). `pkg/` is what the leader
   and the worker put on the wire, not a supported public client API; a test holds it to the standard library.
 - **A worker states its engine's version.** The heartbeat's `engine` state carries `version`, read once from the

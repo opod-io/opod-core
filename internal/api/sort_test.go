@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod-core/internal/router"
 )
 
 func TestMergeBodyAndHeaders_Sort(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // stubEngine implements engines.Engine for tests. Each Chat call records the

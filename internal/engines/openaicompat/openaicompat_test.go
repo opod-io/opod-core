@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // A caller's response_format reaches the engine verbatim: the schema is the

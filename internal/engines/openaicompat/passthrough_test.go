@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // Every field the caller sent and we do not model reaches the engine body

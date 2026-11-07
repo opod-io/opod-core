@@ -16,8 +16,8 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // maxBatchBytes bounds one push. OTLP receivers commonly cap a request near
@@ -208,7 +208,7 @@ func (e *Exporter) request(recs [][]byte) ([]byte, error) {
 			intAttr(adminapi.UsageAttrLeaderBoot, e.q.Boot()),
 		}},
 		ScopeLogs: []*logspb.ScopeLogs{{
-			Scope:      &commonpb.InstrumentationScope{Name: "github.com/opod-io/opod/internal/usage"},
+			Scope:      &commonpb.InstrumentationScope{Name: "github.com/opod-io/opod-core/internal/usage"},
 			LogRecords: lrs,
 		}},
 	}}})

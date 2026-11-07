@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	_ "github.com/opod-io/opod/internal/engines/all" // getOrCreateRemote resolves drivers via the registry
+	"github.com/opod-io/opod-core/internal/engines"
+	_ "github.com/opod-io/opod-core/internal/engines/all" // getOrCreateRemote resolves drivers via the registry
 )
 
 // TestGetOrCreateRemote_NoDuplicates is a regression test for the

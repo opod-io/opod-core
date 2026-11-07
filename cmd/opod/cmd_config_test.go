@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // captureOut runs f with os.Stdout sent to a pipe and returns what it wrote.

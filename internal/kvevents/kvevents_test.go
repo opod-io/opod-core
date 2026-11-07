@@ -11,7 +11,7 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 func batch(t *testing.T, events ...any) []byte {

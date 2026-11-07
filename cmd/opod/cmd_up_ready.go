@@ -14,11 +14,11 @@ import (
 	"net/url"
 
 	"github.com/mattn/go-isatty"
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func printReady(cfg *config.Config, adminKey string) {

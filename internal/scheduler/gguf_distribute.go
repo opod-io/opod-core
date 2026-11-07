@@ -13,8 +13,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ensureGGUFOnAllWorkers makes sure localPath is present on every worker

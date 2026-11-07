@@ -31,7 +31,7 @@ import (
 
 	"github.com/jedisct1/go-minisign"
 
-	"github.com/opod-io/opod/pkg/catalog"
+	"github.com/opod-io/opod-core/pkg/catalog"
 )
 
 // SignatureSuffix is appended to a catalog file's full name: minisign's own

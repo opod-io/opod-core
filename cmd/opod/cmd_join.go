@@ -16,13 +16,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/opod-io/opod/internal/kvevents"
+	"github.com/opod-io/opod-core/internal/kvevents"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/mesh"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/mesh"
+	"github.com/opod-io/opod-core/internal/models"
 
 	"gopkg.in/yaml.v3"
 )

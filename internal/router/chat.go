@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"

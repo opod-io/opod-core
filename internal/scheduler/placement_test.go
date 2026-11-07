@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // One rule for "which rows are workers" (WorkerFor), asked by the leader's own

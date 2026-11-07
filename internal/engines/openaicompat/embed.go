@@ -13,7 +13,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // embedBody is the request the OpenAI embeddings route takes. Input is an

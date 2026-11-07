@@ -8,9 +8,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A removed node leaves nothing behind on the leader or the router: not its

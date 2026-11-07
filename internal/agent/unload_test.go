@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	_ "github.com/opod-io/opod/internal/engines/ollama" // the registry's native-name rule for "ollama"
+	"github.com/opod-io/opod-core/internal/engines"
+	_ "github.com/opod-io/opod-core/internal/engines/ollama" // the registry's native-name rule for "ollama"
 )
 
 // launchedStub is an engine the worker launches itself (vLLM, SGLang,

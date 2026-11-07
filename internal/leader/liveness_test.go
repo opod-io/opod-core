@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // deadEngine is a leader with no local engine (router-only / shard mode).

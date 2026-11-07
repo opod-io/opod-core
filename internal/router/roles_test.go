@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func TestDecodeOnlyKeepsCompleteServersAndDecodeHalves(t *testing.T) {

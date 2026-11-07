@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/batch"
+	"github.com/opod-io/opod-core/internal/batch"
 )
 
 // opod batch run — a generic OpenAI batch client (internal/batch). It reads an

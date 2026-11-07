@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // T11.3 — a gang's pressure comes from its COORDINATOR.

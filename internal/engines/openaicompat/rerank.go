@@ -27,7 +27,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // RerankPath is the route every rerank-capable engine and an opod worker serve.

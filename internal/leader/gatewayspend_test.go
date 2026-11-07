@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func gwServer(t *testing.T) (*Server, store.Store) {

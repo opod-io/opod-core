@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	_ "github.com/opod-io/opod/internal/engines/all"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	_ "github.com/opod-io/opod-core/internal/engines/all"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // The leader reaches every worker through the OpenAI-wire driver, whatever the

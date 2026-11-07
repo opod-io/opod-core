@@ -29,10 +29,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // Orchestrator owns the shard-lifecycle operations on the leader.

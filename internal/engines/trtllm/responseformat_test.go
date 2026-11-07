@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/trtllm"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/trtllm"
 )
 
 // PLAN T27.8: trtllm-serve 1.2.1 reads an OpenAI json_schema response_format

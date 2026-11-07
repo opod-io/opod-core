@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/lifecycle"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/lifecycle"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 const gib = int64(1) << 30

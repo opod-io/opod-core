@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // The leader's stable admin surface, v1.

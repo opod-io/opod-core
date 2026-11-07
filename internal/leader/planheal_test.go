@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func defaultGangIDForTest() string { return store.DefaultGangID }

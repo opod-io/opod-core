@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // parseModelAddArgs is the CLI-level parser; verify both orderings and the

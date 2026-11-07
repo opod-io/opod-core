@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // cachedEngine answers from its prefix cache and says how much.

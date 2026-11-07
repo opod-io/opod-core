@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // Client is the reusable OpenAI-compatible HTTP core a driver embeds.

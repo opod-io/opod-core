@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/router"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/router"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // admitOn asks the gate for a slot as one standard request and, once granted,

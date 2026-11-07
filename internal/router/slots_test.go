@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ADR-091: a worker whose requests in flight reach its slots ranks behind

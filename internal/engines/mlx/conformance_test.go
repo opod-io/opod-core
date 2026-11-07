@@ -3,8 +3,8 @@ package mlx_test
 import (
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/enginetest"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/enginetest"
 )
 
 func TestConformance(t *testing.T) {

@@ -46,8 +46,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // cacheSaltState is the mode the policy set and the key salts are made with.

@@ -42,8 +42,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ErrPartLost marks a create that ended because a part's worker went away

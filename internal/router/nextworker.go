@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A worker that has just gone away — its pod was moved, its machine died —

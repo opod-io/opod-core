@@ -19,7 +19,7 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 // EngineLoad is one sample of an engine's pressure: the heartbeat's wire type

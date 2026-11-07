@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // poolEngine is an engine that knows whether its connection pool was released.

@@ -31,12 +31,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod/internal/kvevents"
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/internal/kvevents"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/fetch"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/fetch"
 )
 
 // Server is the worker's HTTP surface.

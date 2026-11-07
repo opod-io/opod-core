@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // deltaCorpus is every shape a delta has been seen to take, plus the ones

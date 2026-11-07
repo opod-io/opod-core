@@ -3,7 +3,7 @@ package agent
 import (
 	"strconv"
 
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // MemFractionShell is the one rule for turning a worker's VRAM BUDGET into the

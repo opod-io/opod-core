@@ -42,7 +42,7 @@ linters:
         - (*compress/gzip.Reader).Close
         - (*compress/gzip.Writer).Close
         - (*bufio.Scanner).Buffer
-        - (github.com/opod-io/opod/internal/store.Store).Close
+        - (github.com/opod-io/opod-core/internal/store.Store).Close
         # Terminal output — error means "stdout/stderr is closed", which
         # would already be killing the process. Not worth a check at every
         # call site.

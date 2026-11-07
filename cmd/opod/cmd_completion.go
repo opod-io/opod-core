@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opod-io/opod/internal/control"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/control"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // cmdCompletion prints a shell completion script. Outputs are designed to

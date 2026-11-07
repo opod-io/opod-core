@@ -9,8 +9,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // cpuPick sets up two workers of model "m": "warm" holds the request's eight

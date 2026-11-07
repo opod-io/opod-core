@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/agent"
+	"github.com/opod-io/opod-core/internal/agent"
 )
 
 // A gang part is started with the budget its PLAN gave it, not with a constant.

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
-	usagelog "github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
+	usagelog "github.com/opod-io/opod-core/internal/usage"
 )
 
 // cancelEngine streams the way every real producer does: it sends what it has,

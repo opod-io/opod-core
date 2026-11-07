@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // contractedServer is a leader the way an external manager runs one

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // The router could not reach the worker it picked and had no other to ask. The

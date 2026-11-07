@@ -37,7 +37,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // requestWakeBudget is how long a request is held for a sleeping engine to

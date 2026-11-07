@@ -12,7 +12,7 @@ import (
 
 	"github.com/jedisct1/go-minisign"
 
-	"github.com/opod-io/opod/pkg/catalog"
+	"github.com/opod-io/opod-core/pkg/catalog"
 )
 
 // testSigner is a throwaway minisign keypair, generated per test. No key

@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ---- a tiny CA, because the whole row is about who signed what -------------

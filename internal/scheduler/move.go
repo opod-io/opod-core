@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ErrMoveNotFound marks a move that names a node the leader does not know.

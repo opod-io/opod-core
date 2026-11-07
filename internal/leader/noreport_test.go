@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // wireHeartbeat posts a heartbeat body exactly as given — the difference

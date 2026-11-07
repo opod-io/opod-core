@@ -35,8 +35,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/opod-io/opod/internal/fetch"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/fetch"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // ReasonSGLangPPTiedLlama names the refusal. It is the create's error.code

@@ -8,7 +8,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod-core/internal/config"
 )
 
 // cmdConfig shows the effective runtime config (secrets redacted) and

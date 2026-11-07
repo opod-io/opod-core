@@ -35,7 +35,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod-core/internal/auth"
 )
 
 // The request classes, highest first. The index is the rank.

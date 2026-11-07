@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/opod-io/opod/internal/api"
+	"github.com/opod-io/opod-core/internal/api"
 )
 
 // dispatchAnthropicMessages serves POST /v1/messages.

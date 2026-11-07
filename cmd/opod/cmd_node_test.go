@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // nodeTestConfig is a CLI config over a temp data dir with a saved admin key

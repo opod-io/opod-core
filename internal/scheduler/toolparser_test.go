@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // PLAN T19.25, the gang half: a vLLM or SGLang gang serves the same API as a

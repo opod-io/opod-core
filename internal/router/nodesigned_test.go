@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/auth"
-	_ "github.com/opod-io/opod/internal/engines/all"
+	"github.com/opod-io/opod-core/internal/auth"
+	_ "github.com/opod-io/opod-core/internal/engines/all"
 )
 
 func TestTheRouterSignsItsCallsToAWorker(t *testing.T) {

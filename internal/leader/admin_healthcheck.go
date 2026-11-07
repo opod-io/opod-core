@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // healthcheck serves POST /admin/v1/healthcheck.

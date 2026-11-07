@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod-core/internal/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )

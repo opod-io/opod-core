@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/events"
-	"github.com/opod-io/opod/internal/lifecycle"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/events"
+	"github.com/opod-io/opod-core/internal/lifecycle"
 )
 
 // AttachLifecycle wires the memory-lifecycle manager into the server:

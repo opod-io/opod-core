@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.Entry, gangID string, workers []store.Node, par Parallelism, ports *portAllocator) error {

@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod/internal/gateway"
-	"github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/gateway"
+	"github.com/opod-io/opod-core/internal/usage"
 )
 
 // gatewayLoops are the three background loops a door runs.

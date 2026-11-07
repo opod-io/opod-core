@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A worker whose pod is replaced keeps its row, and every pick walked past it

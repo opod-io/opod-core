@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/usage"
 )
 
 // usageQueueBytes reads OPOD_USAGE_QUEUE_MB. A value that is not a positive

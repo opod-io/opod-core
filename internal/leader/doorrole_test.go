@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod-core/internal/config"
 )
 
 // fakeEndpoint is an endpoint's leader as far as a door can tell: it accepts

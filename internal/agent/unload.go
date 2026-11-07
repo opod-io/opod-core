@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // Unload statuses. "unloaded" and "unsupported" are the words the adapter and

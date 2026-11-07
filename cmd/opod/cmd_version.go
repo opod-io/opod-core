@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/opod-io/opod/internal/leader"
+	"github.com/opod-io/opod-core/internal/leader"
 )
 
 func cmdVersion(args []string) {

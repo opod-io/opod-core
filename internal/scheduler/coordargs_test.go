@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/agent"
+	"github.com/opod-io/opod-core/internal/agent"
 )
 
 // T11.3, found on a cluster: the leader scrapes a gang's coordinator for the

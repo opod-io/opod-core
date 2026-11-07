@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/gateway"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/gateway"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A managed leader keeps its worker registry in memory, so every restart

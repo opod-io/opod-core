@@ -3,7 +3,7 @@ package leader
 import (
 	"net/http"
 
-	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod-core/internal/config"
 )
 
 // ---- config view ----

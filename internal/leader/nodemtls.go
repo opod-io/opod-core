@@ -34,7 +34,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod-core/internal/auth"
 )
 
 type nodeCertCtxKey struct{}

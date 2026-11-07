@@ -17,10 +17,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/scheduler"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func TestARefusedSGLangPipelineAnswers409WithItsName(t *testing.T) {

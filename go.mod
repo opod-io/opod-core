@@ -1,4 +1,4 @@
-module github.com/opod-io/opod
+module github.com/opod-io/opod-core
 
 go 1.26.0
 

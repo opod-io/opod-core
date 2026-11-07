@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod-core/internal/metrics"
 )
 
 // setAsideFor is how long a worker that gave a request NOTHING — it could not

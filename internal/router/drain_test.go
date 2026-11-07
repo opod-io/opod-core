@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func drainRouter(t *testing.T, nodes ...store.Node) (*Router, store.Store) {

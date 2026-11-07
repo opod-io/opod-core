@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // fakeEngine scripts the residency report and records load/unload calls.

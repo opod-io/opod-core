@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/usage"
 )
 
 // gatewayLiveFor is how long a gateway counts as a door after its last push.

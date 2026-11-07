@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 // fakeHost builds a /dev and a /sys the way a container sees them: sysfs is

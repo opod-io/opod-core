@@ -15,7 +15,7 @@ import (
 
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 const name = "ollama"

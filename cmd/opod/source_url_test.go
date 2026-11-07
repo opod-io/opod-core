@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // The page for a catalog entry's weights. A repo string names the bytes but is

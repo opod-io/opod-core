@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // answerEngine streams one delta and finishes at once: an engine with no wait

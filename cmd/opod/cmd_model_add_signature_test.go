@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/jedisct1/go-minisign"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // testMinisignKey is a throwaway keypair generated in the test; no key

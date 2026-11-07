@@ -1,6 +1,6 @@
 package models
 
-import "github.com/opod-io/opod/internal/agent"
+import "github.com/opod-io/opod-core/internal/agent"
 
 // AutoPick selects the largest catalog entry that fits the host's RAM with headroom.
 // Returns the entry and ok=true on a match. headroomGB defaults to 4 if <=0.

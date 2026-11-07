@@ -15,7 +15,7 @@ import (
 // instrumentation-library name. The global TracerProvider (set in
 // internal/leader/tracing.go) decides whether spans are exported
 // or NoOp'd, so there's zero overhead when OTLP isn't configured.
-var tracer trace.Tracer = otel.Tracer("github.com/opod-io/opod/internal/engines")
+var tracer trace.Tracer = otel.Tracer("github.com/opod-io/opod-core/internal/engines")
 
 // StartChatSpan opens a "<driver>.Chat" span with the standard attributes
 // every Opod engine driver records: driver name, model id, target

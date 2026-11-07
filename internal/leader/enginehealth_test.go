@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 // /loadz says how many workers a leader has. This is how much of that count is

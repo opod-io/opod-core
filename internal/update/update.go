@@ -21,7 +21,7 @@ import (
 )
 
 // Repo is the GitHub repository releases are fetched from. It is NOT the Go
-// module path (github.com/opod-io/opod, which stays): every URL that has to
+// module path (github.com/opod-io/opod-core, which stays): every URL that has to
 // resolve on github.com is built from this one constant.
 const Repo = "opod-io/opod-core"
 

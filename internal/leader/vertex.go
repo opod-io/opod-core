@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/api"
+	"github.com/opod-io/opod-core/internal/api"
 )
 
 // maxVertexInstances bounds one predict request: each instance is a full chat

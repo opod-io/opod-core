@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 // A worker whose engine keeps installed models and loads on request reports

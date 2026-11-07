@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/opod-io/opod/internal/fetch"
+	"github.com/opod-io/opod-core/internal/fetch"
 )
 
 // fakeHub serves configs[repo] at /<repo>/resolve/main/config.json and 404s

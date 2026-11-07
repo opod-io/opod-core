@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // SourceCompatibleWithEngine reports whether a catalog (or synthetic) source

@@ -16,7 +16,7 @@ import (
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 func rec(model string, i int) Record {

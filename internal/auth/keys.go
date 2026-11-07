@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // keyPrefix is the visible prefix on every Opod-issued API key.

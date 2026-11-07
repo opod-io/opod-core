@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/metrics"
+	"github.com/opod-io/opod-core/internal/metrics"
 )
 
 func TestObserveTTFTIgnoresNonStreamedAnswers(t *testing.T) {

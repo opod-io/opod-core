@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // listStub answers List the way a scripted engine would.

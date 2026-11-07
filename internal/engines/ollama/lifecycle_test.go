@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines/ollama"
+	"github.com/opod-io/opod-core/internal/engines/ollama"
 )
 
 // TestResident verifies /api/ps parsing — name + RAM/VRAM byte fields are

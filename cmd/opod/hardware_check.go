@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // checkHardwareForModel compares the host's detected capabilities against the

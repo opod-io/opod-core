@@ -3,8 +3,8 @@ package router
 import (
 	"encoding/json"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // nodeCaps is what the pick path reads off a node's capabilities blob: the

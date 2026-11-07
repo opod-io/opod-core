@@ -31,7 +31,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/opod-io/opod/internal/api"
+	"github.com/opod-io/opod-core/internal/api"
 )
 
 // vertexGRPCService is the service's full name; its methods are served at

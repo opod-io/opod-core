@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/agent"
-	_ "github.com/opod-io/opod/internal/engines/all" // the real drivers' SingleModel facts
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	_ "github.com/opod-io/opod-core/internal/engines/all" // the real drivers' SingleModel facts
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func nodeRunning(t *testing.T, id, engine string) store.Node {

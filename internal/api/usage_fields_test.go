@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/router"
 )
 
 // T32.47: a record says what the request did (its route), how many prompt

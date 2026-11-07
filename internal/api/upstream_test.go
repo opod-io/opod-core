@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // TestUpstreamPassthrough: a remote/OpenAI-compatible engine's 503/429/4xx is

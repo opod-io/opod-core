@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // A 1 MB prompt keys on its first 4 KiB (the chain's cap, T19.23) and must

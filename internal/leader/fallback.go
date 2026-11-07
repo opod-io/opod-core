@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/httpsafe"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/httpsafe"
 )
 
 const fallbackTimeout = 10 * time.Minute // long generations; the client's own timeout still applies

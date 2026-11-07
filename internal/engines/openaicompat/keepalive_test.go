@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // engineKeepAlive is the shortest idle keep-alive among the engines this

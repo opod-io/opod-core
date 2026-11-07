@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func req(class int, flow string) *heldReq {

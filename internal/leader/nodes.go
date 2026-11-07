@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/gateway"
-	"github.com/opod-io/opod/internal/store"
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/gateway"
+	"github.com/opod-io/opod-core/internal/store"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 // registryRebuildWindow is how long after the FIRST worker comes back the

@@ -8,8 +8,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 const peerCaps = `{"KVTier":"peer"}`

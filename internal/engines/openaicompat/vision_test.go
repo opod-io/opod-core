@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // An image reaches an OpenAI-shaped engine as a content part, its data URL

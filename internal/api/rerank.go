@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/router"
 )
 
 // ---- /v1/rerank ----

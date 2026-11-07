@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/enginetest"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/enginetest"
 )
 
 // fakeOllama speaks enough of the Ollama HTTP API for the conformance suite.

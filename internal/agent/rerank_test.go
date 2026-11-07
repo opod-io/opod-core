@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	_ "github.com/opod-io/opod/internal/engines/sglang" // a worker's own engine in the hop test
-	_ "github.com/opod-io/opod/internal/engines/vllm"   // how a leader dials a worker
+	"github.com/opod-io/opod-core/internal/engines"
+	_ "github.com/opod-io/opod-core/internal/engines/sglang" // a worker's own engine in the hop test
+	_ "github.com/opod-io/opod-core/internal/engines/vllm"   // how a leader dials a worker
 )
 
 // The whole hop (ADR-084): a leader dials a worker through the vLLM driver, the

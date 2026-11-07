@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
-	"github.com/opod-io/opod/internal/update"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
+	"github.com/opod-io/opod-core/internal/update"
 )
 
 func modelSearch(query string, sortReleased bool, since string, asJSON bool) {

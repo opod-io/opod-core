@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/opod-io/opod/internal/api"
-	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod-core/internal/api"
+	"github.com/opod-io/opod-core/internal/router"
 )
 
 // dispatchOpenAIChat serves POST /v1/chat/completions: it reads the body's

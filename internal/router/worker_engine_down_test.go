@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // plainWorker answers every request with status and body, as a worker does

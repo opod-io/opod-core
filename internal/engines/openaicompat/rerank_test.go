@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // vLLM and llama.cpp answer an object with `results`; the engine is asked for

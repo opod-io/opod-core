@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod-core/internal/config"
 )
 
 // T10.21: `opod token create --node NAME` keeps NAME, in either order, and a

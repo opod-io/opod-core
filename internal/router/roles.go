@@ -13,7 +13,7 @@ package router
 import (
 	"encoding/json"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // roleOf reads the role a worker registered (capabilities JSON, field Role).

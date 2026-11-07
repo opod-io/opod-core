@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 // A shape the operator named is sent exactly as typed: the picker is not even

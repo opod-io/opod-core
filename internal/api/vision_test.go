@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // An image for a catalog model without `vision` is refused by name; a vision

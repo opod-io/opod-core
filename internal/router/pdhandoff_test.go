@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // pdWorker is one half of a fake prefill/decode pair: it records every chat

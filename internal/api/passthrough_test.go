@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/openaicompat"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/openaicompat"
 )
 
 // recordingEngine keeps the request it was handed and answers one token with

@@ -39,10 +39,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/router"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/internal/router"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // noteSlots records what a worker's heartbeat (or a door's mirror) says about

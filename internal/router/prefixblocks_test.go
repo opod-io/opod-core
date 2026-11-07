@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // held is a fake block index: node → the chain it holds from the start.

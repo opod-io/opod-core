@@ -15,10 +15,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/router"
-	"github.com/opod-io/opod/internal/store"
-	catalog "github.com/opod-io/opod/pkg/catalog"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/router"
+	"github.com/opod-io/opod-core/internal/store"
+	catalog "github.com/opod-io/opod-core/pkg/catalog"
 )
 
 // embedStub stands in for the router: it records the model name it was

@@ -3,8 +3,8 @@ package sglang_test
 import (
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/enginetest"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/enginetest"
 )
 
 // The suite every driver passes. SGLang is on the OpenAI wire, so what is

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 func collect(ctx context.Context, sse string, span bool) []engines.StreamEvent {

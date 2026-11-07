@@ -23,8 +23,8 @@ import (
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // DefaultQueueMB is the queue's size when OPOD_USAGE_QUEUE_MB is unset: about

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func cmdModel(args []string) {

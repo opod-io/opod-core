@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/events"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/events"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // E2: one record() → one event-log row AND one bus event on the family topic.

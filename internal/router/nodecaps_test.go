@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // After the first sight of a node's blob the pick path parses nothing: the

@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // scriptedWorker answers /v1/process/get from a script the test changes as it

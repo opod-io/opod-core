@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // engineBeat is a heartbeat from a worker whose engine is in state and

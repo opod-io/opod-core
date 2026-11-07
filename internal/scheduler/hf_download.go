@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opod-io/opod/internal/fetch"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/fetch"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // ensureLocalGGUF resolves the local filesystem path of a sharded model's

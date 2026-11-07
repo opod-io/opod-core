@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // T32.23: the result a manager reads from the pod's status is one JSON line of

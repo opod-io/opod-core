@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 // A pod can be Running while the engine inside it crash-loops, restarts on a

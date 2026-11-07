@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/scheduler"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // The salt per mode and per caller: team mode keys a team's keys alike and

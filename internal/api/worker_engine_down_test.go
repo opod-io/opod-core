@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 func TestAWorkersDeadEngineIsNoCapacityInTheWorkersName(t *testing.T) {

@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // BootstrapAdminKey mints the first admin key when the store has no keys at

@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/images"
+	"github.com/opod-io/opod-core/images"
 )
 
 func repoFile(t *testing.T, rel string) string {

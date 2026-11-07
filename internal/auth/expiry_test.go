@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // fakeKeyStore stubs out the APIKeyStore interface so the middleware

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // opod catalog ls | export <dir> — the bundled catalog is embedded in the

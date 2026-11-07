@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/opod-io/opod/internal/kvevents"
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/internal/kvevents"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // Agent is the per-node loop on a worker. It registers with the leader on

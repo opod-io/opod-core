@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // `opod model add <id> --node <n>` on a worker whose engine serves one model

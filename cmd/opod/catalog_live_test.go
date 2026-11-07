@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // TestCatalogSourcesReachable does a lightweight HEAD against the upstream

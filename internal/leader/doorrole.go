@@ -51,9 +51,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/api"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/internal/api"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // DoorRoutes is the routes file's wire type (pkg/adminapi).

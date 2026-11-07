@@ -1,6 +1,6 @@
 package update
 
-// The Go module path is github.com/opod-io/opod; the GitHub repository is
+// The Go module path is github.com/opod-io/opod-core; the GitHub repository is
 // opod-io/opod-core (Repo). They differ on purpose, and the difference is easy
 // to forget: a URL written from the module path looks right and is dead — the
 // installer's release lookup, the Homebrew formula, the release publisher and

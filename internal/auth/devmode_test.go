@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // When require_keys is false (dev mode), the middleware must still inject a

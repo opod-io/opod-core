@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opod-io/opod/pkg/nodeapi"
+	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
 // The accelerators this worker process was GIVEN (feature worker_devices).

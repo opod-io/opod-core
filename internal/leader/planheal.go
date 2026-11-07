@@ -66,9 +66,9 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/scheduler"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // healAfter is how long a plan-declared gang must be completely absent before

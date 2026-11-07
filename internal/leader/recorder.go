@@ -10,7 +10,7 @@ package leader
 import (
 	"strings"
 
-	"github.com/opod-io/opod/internal/events"
+	"github.com/opod-io/opod-core/internal/events"
 )
 
 func topicFor(typ string) events.Topic {

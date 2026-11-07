@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/opod-io/opod/images"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/images"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // opod image ls | show <image> | recommend <model> — the container images this

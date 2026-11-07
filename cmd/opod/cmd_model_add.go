@@ -12,8 +12,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/models"
 	"gopkg.in/yaml.v3"
 )
 

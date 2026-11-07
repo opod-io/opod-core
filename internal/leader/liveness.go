@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // Liveness — one rule for "is this worker still there?", applied everywhere

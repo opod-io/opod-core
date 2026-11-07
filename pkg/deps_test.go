@@ -18,7 +18,7 @@ func TestPkgImportsOnlyTheStandardLibraryAndItself(t *testing.T) {
 		t.Fatalf("go list: %v", err)
 	}
 	for _, p := range strings.Fields(string(out)) {
-		if !strings.HasPrefix(p, "github.com/opod-io/opod/pkg/") && p != "github.com/opod-io/opod/pkg" {
+		if !strings.HasPrefix(p, "github.com/opod-io/opod-core/pkg/") && p != "github.com/opod-io/opod-core/pkg" {
 			t.Errorf("a pkg/ package depends on %s: only the standard library and pkg/ itself are allowed", p)
 		}
 	}

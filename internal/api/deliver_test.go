@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	usagelog "github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/engines"
+	usagelog "github.com/opod-io/opod-core/internal/usage"
 )
 
 // everythingEngine answers chat, embeddings and rerank in one go.

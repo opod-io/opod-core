@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // cmdNode dispatches `opod node <subcommand>`. ls/show read the leader's

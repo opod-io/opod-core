@@ -34,7 +34,7 @@ import (
 // day a collector is connected.
 //
 // Inserts a default 5s export timeout so a slow collector can't pin the
-// process. Tracer name is "github.com/opod-io/opod".
+// process. Tracer name is "github.com/opod-io/opod-core".
 func initTracing(ctx context.Context, endpoint, sampleRatio, version string, log *slog.Logger) (func(context.Context) error, error) {
 	sampler, ratio, err := traceSampler(sampleRatio)
 	if err != nil {

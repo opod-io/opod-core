@@ -23,9 +23,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/internal/store"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -35,7 +35,7 @@ import (
 // instrumentation-library name; the global TracerProvider (set in
 // internal/leader/tracing.go) decides whether they're exported
 // or no-op'd.
-var tracer trace.Tracer = otel.Tracer("github.com/opod-io/opod/internal/router")
+var tracer trace.Tracer = otel.Tracer("github.com/opod-io/opod-core/internal/router")
 
 // FallbackChains carries the per-class fallback lists for a single
 // primary model. Generic is the catalog's `fallback:`; the typed lists

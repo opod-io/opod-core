@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A worker answers /v1/model/load when the model is pulled AND loaded, which on

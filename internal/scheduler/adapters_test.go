@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func adapterWorker(t *testing.T, status int) *httptest.Server {

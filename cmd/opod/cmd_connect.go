@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opod-io/opod/internal/control"
+	"github.com/opod-io/opod-core/internal/control"
 )
 
 func cmdConnect(args []string) {

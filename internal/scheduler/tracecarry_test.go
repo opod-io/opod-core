@@ -13,8 +13,8 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // T32.42: a model load or unload the leader sends for a traced request (an

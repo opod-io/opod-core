@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/router"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/router"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // overridesContext extracts overrides from the request body extras +

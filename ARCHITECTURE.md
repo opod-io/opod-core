@@ -1571,7 +1571,7 @@ promises; the ones a manager most often gates on are `plan_file`, `auth_file`, `
 
 The wire types of this surface — `Load`, the usage and lifecycle stream batches, the auth and policy
 snapshot documents, `Route`/`Version`/`Capabilities` — live in
-`github.com/opod-io/opod/pkg/adminapi` (stdlib only; they moved in from the retired opod-sdk module, T9.50). The leader marshals those exact structs,
+`github.com/opod-io/opod-core/pkg/adminapi` (stdlib only; they moved in from the retired opod-sdk module, T9.50). The leader marshals those exact structs,
 so a manager imports the package instead of mirroring it; a field changed there is a field changed on the wire.
 
 `capabilities` also lists the **engine drivers linked into the binary** (feature `engines`):

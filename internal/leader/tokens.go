@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod-core/internal/auth"
 )
 
 // ---- token admin ----

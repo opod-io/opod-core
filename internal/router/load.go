@@ -30,7 +30,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // LoadSignal is what the picker reads about one worker: the engine's own

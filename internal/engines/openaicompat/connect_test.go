@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // A worker whose pod was just removed is not a closed port — its address is

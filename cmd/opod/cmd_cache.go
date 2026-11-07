@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/opod-io/opod/internal/fetch"
+	"github.com/opod-io/opod-core/internal/fetch"
 )
 
 // opod cache ls|prune — the node's weight cache (ADR-046).

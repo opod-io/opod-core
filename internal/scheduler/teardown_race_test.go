@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // stopWorker answers every call; its FIRST stop blocks until released — a

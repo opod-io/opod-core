@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // validGangID refuses a gang id that would corrupt the ids built from it.

@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 func capturedPost(t *testing.T, send func(a *Agent) error, eng engines.Engine, al *Aliases, caps Capabilities) map[string]json.RawMessage {

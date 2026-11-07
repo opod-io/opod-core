@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // Rerank routes one rerank request (ADR-084) through the same dispatch as

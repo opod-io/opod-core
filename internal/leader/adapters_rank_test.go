@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/scheduler"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // POST /admin/v1/adapters carries the adapter's rank to the workers, and a

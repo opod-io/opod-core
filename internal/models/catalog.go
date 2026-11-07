@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/pkg/catalog"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/pkg/catalog"
 	"gopkg.in/yaml.v3"
 )
 

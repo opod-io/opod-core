@@ -27,8 +27,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/openaicompat"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/openaicompat"
 )
 
 const name = "sglang"

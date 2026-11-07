@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // Two gangs of one model must not collide on the shards table's primary key.

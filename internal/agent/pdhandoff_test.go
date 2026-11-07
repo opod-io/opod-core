@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/fetch"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/fetch"
 )
 
 // oneShotRecorder is an engine that can also answer without a stream, as the

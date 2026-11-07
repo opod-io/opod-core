@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/gateway"
-	"github.com/opod-io/opod/internal/store"
-	"github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/gateway"
+	"github.com/opod-io/opod-core/internal/store"
+	"github.com/opod-io/opod-core/internal/usage"
 )
 
 // T11.1 slice 2, end to end in one process: a LEADER with a worker joined to

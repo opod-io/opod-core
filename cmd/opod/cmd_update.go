@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/opod-io/opod/internal/update"
+	"github.com/opod-io/opod-core/internal/update"
 )
 
 // cmdUpdate checks the latest Opod release on GitHub and, unless --check,

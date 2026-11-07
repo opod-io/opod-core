@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/opod-io/opod/pkg/adminapi"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // logEvent appends one lifecycle event; best-effort (a full disk must not

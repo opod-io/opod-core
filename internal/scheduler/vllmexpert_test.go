@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // vllmEntry is the catalog entry a manager writes for a vLLM gang.

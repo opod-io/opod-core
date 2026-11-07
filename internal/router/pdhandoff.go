@@ -29,9 +29,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // prefillStep is what a vLLM prefill engine is asked for: compute the prompt,

@@ -29,7 +29,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // RevisionWeight is one revision's share of the traffic.

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/openaicompat"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/openaicompat"
 )
 
 // relay writes evs as the worker's stream and returns what the leader reads

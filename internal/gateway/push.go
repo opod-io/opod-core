@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opod-io/opod/internal/usage"
+	"github.com/opod-io/opod-core/internal/usage"
 )
 
 // QueueLimit bounds what one door holds while the leader is away. At ~200

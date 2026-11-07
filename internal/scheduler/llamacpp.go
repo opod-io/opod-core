@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // LlamaCppLaunchSpec describes how to launch a single-node llama-server.

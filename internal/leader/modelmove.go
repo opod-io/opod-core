@@ -21,8 +21,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 // MoveModelRequest is the move route's body. The two timeouts are optional

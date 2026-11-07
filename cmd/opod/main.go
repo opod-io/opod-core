@@ -10,10 +10,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opod-io/opod/internal/update"
+	"github.com/opod-io/opod-core/internal/update"
 
 	// Link every in-tree engine driver (engines.Register in each init).
-	_ "github.com/opod-io/opod/internal/engines/all"
+	_ "github.com/opod-io/opod-core/internal/engines/all"
 )
 
 // version is overwritten at link time via -ldflags.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
+	"github.com/opod-io/opod-core/internal/config"
 )
 
 // The startup banner is what an operator audits. It once read

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/leader"
+	"github.com/opod-io/opod-core/internal/leader"
 )
 
 // TestVersionFeaturesIsTheContract: `opod version --features` is what the image

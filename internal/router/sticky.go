@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/metrics"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/metrics"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func (r *Router) stickyPick(ctx context.Context, model string) string {

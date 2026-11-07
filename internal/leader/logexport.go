@@ -73,7 +73,7 @@ func ExportLogs(ctx context.Context, endpoint, version string, base *slog.Logger
 			logsdk.WithExportTimeout(logExportTimeout),
 		)),
 	)
-	exported := otelslog.NewHandler("github.com/opod-io/opod", otelslog.WithLoggerProvider(provider))
+	exported := otelslog.NewHandler("github.com/opod-io/opod-core", otelslog.WithLoggerProvider(provider))
 	log := slog.New(teeHandler{local: base.Handler(), export: exported})
 	log.Info("log export enabled", "endpoint", endpoint, "scheme", scheme)
 	return log, provider.Shutdown, nil

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/fetch"
+	"github.com/opod-io/opod-core/internal/fetch"
 	"gopkg.in/yaml.v3"
 )
 

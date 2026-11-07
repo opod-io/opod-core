@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func newPolicyTestServer(t *testing.T, eng interface{ Health(context.Context) error }) (*Server, *httptest.Server) {

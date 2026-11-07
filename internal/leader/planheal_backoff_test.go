@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 func TestHealBackoffSchedule(t *testing.T) {

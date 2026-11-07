@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/opod-io/opod/internal/router"
+	"github.com/opod-io/opod-core/internal/router"
 
-	"github.com/opod-io/opod/internal/auth"
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/metrics"
-	usagelog "github.com/opod-io/opod/internal/usage" // api has a wire type named usage
+	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
+	usagelog "github.com/opod-io/opod-core/internal/usage" // api has a wire type named usage
 )
 
 // recordUsage hands the record of a finished request to h.Usage and updates

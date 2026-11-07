@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	_ "github.com/opod-io/opod/internal/engines/all"
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/pkg/catalog"
+	"github.com/opod-io/opod-core/internal/engines"
+	_ "github.com/opod-io/opod-core/internal/engines/all"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/pkg/catalog"
 )
 
 func mustLoad(t *testing.T) Manifest {

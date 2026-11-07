@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
-	"github.com/opod-io/opod/internal/engines/enginetest"
-	"github.com/opod-io/opod/internal/engines/trtllm"
+	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines/enginetest"
+	"github.com/opod-io/opod-core/internal/engines/trtllm"
 )
 
 // The suite every driver passes. trtllm-serve is on the OpenAI wire, so this

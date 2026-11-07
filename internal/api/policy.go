@@ -3,8 +3,8 @@ package api
 import (
 	"sync/atomic"
 
-	"github.com/opod-io/opod/internal/cache"
-	"github.com/opod-io/opod/internal/models"
+	"github.com/opod-io/opod-core/internal/cache"
+	"github.com/opod-io/opod-core/internal/models"
 )
 
 // Policy is the request-path policy a Handler serves under: the catalog that

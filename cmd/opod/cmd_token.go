@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod-core/internal/auth"
 )
 
 func cmdToken(args []string) {

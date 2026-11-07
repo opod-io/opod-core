@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A gateway must keep serving when the leader is unreachable — that is the

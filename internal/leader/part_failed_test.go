@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 func TestAFailedCoordinatorIsADefiniteAnswerWithItsOwnLines(t *testing.T) {

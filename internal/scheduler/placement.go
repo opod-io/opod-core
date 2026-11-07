@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ErrUnplaceable marks a create refused because its workers could not be

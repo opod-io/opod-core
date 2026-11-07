@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // rerankEngine scores documents with fixed numbers, in no particular order.

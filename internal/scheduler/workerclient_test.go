@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/models"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/models"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A leader-driven load (`opod model add <id> --node <n>`) carries the catalog

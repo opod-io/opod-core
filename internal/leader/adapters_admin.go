@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/opod-io/opod/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 var adminAdapterName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

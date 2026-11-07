@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/opod-io/opod/internal/config"
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/config"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // Every driver this binary links must be startable: `opod up` and `opod join`

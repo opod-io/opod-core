@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/engines"
+	"github.com/opod-io/opod-core/internal/engines"
 )
 
 // fakeVLLM answers the two routes the adapter code uses and the model list.

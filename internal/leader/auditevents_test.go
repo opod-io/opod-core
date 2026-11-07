@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opod-io/opod/internal/auth"
+	"github.com/opod-io/opod-core/internal/auth"
 )
 
 // TestAdminCallsRideTheEventStream (P12-3): a state-changing /admin/v1 call

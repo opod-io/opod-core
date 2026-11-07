@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/opod-io/opod/internal/scheduler"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/scheduler"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // ---- shard endpoints ----

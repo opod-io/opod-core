@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/opod-io/opod/internal/agent"
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // PLAN T10.22: behind NAT the advertised address is the leader's to dial and

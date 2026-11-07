@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opod-io/opod/internal/store"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // A gang whose engine is ONE distributed process — SGLang's launcher, vLLM over
