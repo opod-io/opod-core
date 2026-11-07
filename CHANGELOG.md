@@ -5,7 +5,11 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## Unreleased
+## v0.4.1 — 2026-11-07
+
+Everything since v0.4.0 (2026-11-04). Breaking for a Go importer: the module path is now
+`github.com/opod-io/opod-core`, and the wire types are core's own `pkg/` packages (opod-sdk is retired). The binary,
+its commands, its routes and the images are unchanged in name.
 
 - **An SGLang or vLLM gang reads `ready` only when its API answers (T32.58).** These gangs start their head without
   waiting for it, because its API comes up only after every part has joined and the weights are loaded. Their
