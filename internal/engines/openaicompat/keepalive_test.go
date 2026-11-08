@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,26 +37,46 @@ func chatOnce(t *testing.T, c Client) error {
 
 const sseAnswer = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 
-// countingEngine is an OpenAI server that counts the chat requests it served
-// and the connections it accepted, and closes a connection that sat idle for
-// idle — what every engine does after its keep-alive timeout.
-func countingEngine(t *testing.T, idle time.Duration) (srv *httptest.Server, hits, conns *atomic.Int32) {
-	hits, conns = new(atomic.Int32), new(atomic.Int32)
-	srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// countingEngine is an OpenAI server that counts the chat requests it served,
+// the connections it accepted and the ones that carried a request, and closes
+// a connection that sat idle for idle — what every engine does after its
+// keep-alive timeout.
+type countedEngine struct {
+	srv      *httptest.Server
+	hits     *atomic.Int32
+	accepted atomic.Int32
+	mu       sync.Mutex
+	served   map[net.Conn]bool // connections that went active: they carried a request
+}
+
+func (e *countedEngine) servedOn() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.served)
+}
+
+func countingEngine(t *testing.T, idle time.Duration) *countedEngine {
+	e := &countedEngine{hits: new(atomic.Int32), served: map[net.Conn]bool{}}
+	e.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
-		hits.Add(1)
+		e.hits.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, sseAnswer)
 	}))
-	srv.Config.IdleTimeout = idle
-	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
-		if s == http.StateNew {
-			conns.Add(1)
+	e.srv.Config.IdleTimeout = idle
+	e.srv.Config.ConnState = func(c net.Conn, s http.ConnState) {
+		switch s {
+		case http.StateNew:
+			e.accepted.Add(1)
+		case http.StateActive:
+			e.mu.Lock()
+			e.served[c] = true
+			e.mu.Unlock()
 		}
 	}
-	srv.Start()
-	t.Cleanup(srv.Close)
-	return srv, hits, conns
+	e.srv.Start()
+	t.Cleanup(e.srv.Close)
+	return e
 }
 
 // The client must retire a pooled connection before the engine does, or a
@@ -77,7 +98,8 @@ func TestTheClientRetiresAnIdleConnectionBeforeTheEngines(t *testing.T) {
 	// An engine that would keep the connection longer than the client: after
 	// the client's idle timeout the next request is on a NEW connection — the
 	// client dropped the old one first — and is served exactly once.
-	srv, hits, conns := countingEngine(t, IdleConnTimeout+2*time.Second)
+	eng := countingEngine(t, IdleConnTimeout+2*time.Second)
+	srv, hits := eng.srv, eng.hits
 	c = NewClient("llamacpp", srv.URL, nil)
 	if err := chatOnce(t, c); err != nil {
 		t.Fatal(err)
@@ -86,15 +108,20 @@ func TestTheClientRetiresAnIdleConnectionBeforeTheEngines(t *testing.T) {
 	if err := chatOnce(t, c); err != nil {
 		t.Fatalf("the request after an idle pause failed: %v", err)
 	}
-	if h, n := hits.Load(), conns.Load(); h != 2 || n != 2 {
-		t.Fatalf("engine served %d requests on %d connections, want 2 on 2 (the client retires the idle one itself)", h, n)
+	// Count the connections that carried a request, not every accept: a
+	// connection the transport opened and never sent a request on (seen once
+	// on a loaded Linux CI runner, 2026-11-08: 3 accepted for 2 requests, not
+	// reproduced in 240 runs under load) says nothing about reuse.
+	if h, n := hits.Load(), eng.servedOn(); h != 2 || n != 2 {
+		t.Fatalf("engine served %d requests on %d connections (%d accepted), want 2 on 2 (the client retires the idle one itself)", h, n, eng.accepted.Load())
 	}
 }
 
 // An engine that closed the idle connection itself: the next request succeeds
 // and reaches the engine exactly once.
 func TestARequestAfterTheEngineClosedTheIdleConnectionIsServedOnce(t *testing.T) {
-	srv, hits, _ := countingEngine(t, 200*time.Millisecond)
+	eng := countingEngine(t, 200*time.Millisecond)
+	srv, hits := eng.srv, eng.hits
 	c := NewClient("llamacpp", srv.URL, nil)
 	if err := chatOnce(t, c); err != nil {
 		t.Fatal(err)
