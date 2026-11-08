@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -81,5 +82,29 @@ func TestEmbedSurfacesAnUpstreamFailure(t *testing.T) {
 	_, err := Embed(context.Background(), c, engines.EmbedRequest{Model: "m", Inputs: []string{"a"}})
 	if err == nil {
 		t.Fatal("a 400 from the engine must reach the caller")
+	}
+}
+
+// A worker whose engine has no embeddings route answers 501 by name; read
+// through this client it is engines.ErrEmbedNotSupported, so the leader
+// refuses 501 too (PLAN T32.61). A 404 is not that: vLLM answers one for an
+// unknown model, and it stays an upstream error.
+func TestEmbedReadsAWorkers501AsNotSupportedAndA404AsUpstream(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   bool
+	}{{http.StatusNotImplemented, true}, {http.StatusNotFound, false}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "engine trtllm does not produce embeddings", tc.status)
+		}))
+		c := NewClient("vllm", srv.URL, nil)
+		_, err := Embed(context.Background(), c, engines.EmbedRequest{Model: "m", Inputs: []string{"a"}})
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%d: no error", tc.status)
+		}
+		if got := errors.Is(err, engines.ErrEmbedNotSupported); got != tc.want {
+			t.Errorf("%d: ErrEmbedNotSupported = %v, want %v (%v)", tc.status, got, tc.want, err)
+		}
 	}
 }

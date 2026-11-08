@@ -70,7 +70,15 @@ func Embed(ctx context.Context, c Client, req engines.EmbedRequest) (engines.Emb
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return engines.EmbedResponse{}, engines.FromWorkerAnswer(c.Driver, c.BaseURL, "POST /v1/embeddings", resp.StatusCode, b)
+		up := engines.FromWorkerAnswer(c.Driver, c.BaseURL, "POST /v1/embeddings", resp.StatusCode, b)
+		if resp.StatusCode == http.StatusNotImplemented {
+			// A worker whose engine has no embeddings route refuses 501 by name
+			// (agent/server.go); the leader dials it through a driver that does
+			// embed, so the refusal is read here, as Rerank reads its own. A 404
+			// stays an upstream error: vLLM answers one for an unknown model.
+			return engines.EmbedResponse{}, fmt.Errorf("%w: %w", engines.ErrEmbedNotSupported, up)
+		}
+		return engines.EmbedResponse{}, up
 	}
 
 	var out embedResponse
