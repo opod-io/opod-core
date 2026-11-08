@@ -54,7 +54,7 @@ var (
 
 	routerPicksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_router_picks_total",
-		Help: "Router dispatch decisions by path (local|worker|shard|fallback-to-local) and outcome (ok|error|stale-heartbeat).",
+		Help: "Router dispatch decisions by path (local|worker|shard|fallback-to-local) and outcome (ok | none-reachable | store-error | no-workers | all-workers-stale | a skipped worker's why: error | draining | stale-heartbeat | engine-stopped | cooldown).",
 	}, []string{"path", "outcome"})
 
 	routerInflight = promauto.NewGaugeVec(prometheus.GaugeOpts{
@@ -64,12 +64,12 @@ var (
 
 	pdHandoffTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_pd_handoff_total",
-		Help: "Prefill/decode handoffs by outcome: split (KV computed on a prefill worker and pulled by decode) | retried (the decode step failed with the KV and was served unsplit) | not split, with why (penalty | penalty-unknown | engine | prefill-failed | no-prefill).",
+		Help: "Prefill/decode handoffs by outcome: split (KV computed on a prefill worker and pulled by decode) | retried (the decode step failed with the KV and was served unsplit) | not split, with why (penalty | penalty-unknown | engine | prefill-failed | no-prefill | pair-failing).",
 	}, []string{"outcome"})
 
 	routerFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_router_fallback_total",
-		Help: "Fallback chain activations by operation (chat|embed) and reason (primary-error|latency-reorder|cap-exhausted).",
+		Help: "Fallback chain activations by operation (chat|embed|rerank|chain) and reason (primary-error|per-request|retry|next-worker|context-length|content-policy; cap-exhausted with op chain).",
 	}, []string{"op", "reason"})
 
 	routerAttemptDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -133,7 +133,10 @@ func SetRouterCooldownsActive(n int) {
 }
 
 // ObserveRouterPick records a dispatch decision. Path is one of
-// local | worker | shard | fallback-to-local; outcome is ok | error | stale-heartbeat.
+// local | worker | shard | fallback-to-local; outcome is ok, none-reachable,
+// store-error, no-workers, all-workers-stale, or the reason a worker was
+// skipped (router.takesRequests: error | draining | stale-heartbeat |
+// engine-stopped | cooldown).
 func ObserveRouterPick(path, outcome string) {
 	routerPicksTotal.WithLabelValues(path, outcome).Inc()
 }
@@ -147,8 +150,9 @@ func SetRouterInflight(node string, n int) {
 // ObservePDHandoff counts one request's prefill/decode outcome (PLAN T16.9).
 func ObservePDHandoff(outcome string) { pdHandoffTotal.WithLabelValues(outcome).Inc() }
 
-// ObserveRouterFallback records a fallback activation. op is chat | embed;
-// reason is primary-error | latency-reorder | cap-exhausted.
+// ObserveRouterFallback records a fallback activation. op is chat | embed |
+// rerank, or chain for cap-exhausted; reason is primary-error | per-request |
+// retry | next-worker | context-length | content-policy | cap-exhausted.
 func ObserveRouterFallback(op, reason string) {
 	routerFallbackTotal.WithLabelValues(op, reason).Inc()
 }
