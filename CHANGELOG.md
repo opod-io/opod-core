@@ -27,6 +27,14 @@ the last section.
   the worker's score. A worker on an older core (404) keeps its heartbeat's sample. `/gatewayz` lists each worker's
   sample and its age under `load_samples`. A gang ranks on its head node's pulled sample, and what was sent to the gang after it.
 
+- **A conversation keeps its worker (T28.3, ADR-109, feature `session_routing`).** A request names its conversation with
+  `X-Opod-Session` (or the OpenAI `user` field) and the pin is the conversation's, so two conversations under one key
+  each keep their own worker; a request with neither pins per key, as before. With the policy's
+  `routing.session.signedRoute`, a 200 answer carries `X-Opod-Session-Route`, a token signed with the key every door
+  holds; echoed, any door routes the next turn to that worker, and a token that does not verify is ignored. With
+  `routing.session.turnPriority`, a later turn of an active conversation leaves the hold first inside its flow, capped
+  (`min(turns, 4) + seconds waited / 2`). A pin never lands a request on a saturated worker or one with no free slot.
+
 ## v0.4.2 — 2026-11-07
 
 Fixes to v0.4.1's gang readiness, found on hardware the same day. No contract change.

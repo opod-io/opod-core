@@ -286,6 +286,14 @@ func contractFeatures() map[string]bool {
 		// T28.1). /gatewayz names each worker's sample and its age. Without
 		// this key a leader ignores the field and ranks on heartbeats.
 		"load_pull": true,
+		// A request names its conversation (X-Opod-Session, else the OpenAI
+		// `user` field) and the pin is the conversation's, not the key's;
+		// routing.session.signedRoute answers X-Opod-Session-Route, a signed
+		// token any door of the endpoint honours when it is echoed;
+		// routing.session.turnPriority ranks a flow's waiters by their
+		// session's turns, capped (ADR-109, PLAN T28.3). A pin never lands a
+		// request on a saturated worker or one with no free slot.
+		"session_routing": true,
 		// A worker reports the blocks its host-memory tier holds
 		// (kv_blocks.cpu_stored / cpu_removed, from vLLM's self-describing
 		// offload events), /loadz counts them (prefix_index.cpu_blocks), and

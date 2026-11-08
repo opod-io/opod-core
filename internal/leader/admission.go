@@ -95,6 +95,8 @@ type admissionState struct {
 	// held counts the requests waiting for a slot, every pool and class.
 	held atomic.Int64
 	gate slotGate
+	// turnPriority is routing.session.turnPriority (ADR-109 §5).
+	turnPriority atomic.Bool
 }
 
 // set installs the policy's admission half.
@@ -251,7 +253,12 @@ func (p *pool) give(g *grant) {
 // lock held.
 func (p *pool) dispatch(cfg *classConfig, a *admissionState) {
 	for p.all > 0 {
-		h := p.q.popEligible(func(class int) bool { return p.canGrant(cfg, class) })
+		var rank func(*heldReq) float64
+		if a.turnPriority.Load() {
+			now := time.Now()
+			rank = func(h *heldReq) float64 { return turnRank(h, now) }
+		}
+		h := p.q.popEligible(func(class int) bool { return p.canGrant(cfg, class) }, rank)
 		if h == nil {
 			return
 		}
@@ -404,7 +411,8 @@ func (s *Server) admit(ctx context.Context, model string, started time.Time) (re
 		g.mu.Unlock()
 		return nil, s.shedOut(class, "deadline", s.busyReason(cv, model))
 	}
-	h := &heldReq{class: class, flow: admissionIdentFrom(ctx).flow, node: node, done: make(chan struct{})}
+	id := admissionIdentFrom(ctx)
+	h := &heldReq{class: class, flow: id.flow, turns: id.turns, heldAt: time.Now(), node: node, done: make(chan struct{})}
 	if !p.enqueue(h, cfg, a) {
 		g.mu.Unlock()
 		return nil, s.shedOut(class, "cap", s.busyReason(cv, model))

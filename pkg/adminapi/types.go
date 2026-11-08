@@ -445,6 +445,25 @@ const (
 	PrefixBlockTierCPULower = "cpu-lower"
 )
 
+// PolicySession is routing.session (ADR-109).
+type PolicySession struct {
+	// TTLSec is how long a session stays pinned to the worker that last
+	// served it, in seconds. 0 = StickyTTLSeconds.
+	TTLSec int `json:"ttlSec,omitempty"`
+	// SignedRoute: every answer to a request with a session carries
+	// X-Opod-Session-Route, a token naming the worker that served it, signed
+	// with the key every front door of the endpoint shares. A request that
+	// echoes it is routed to that worker by any door — the pin survives a
+	// conversation alternating doors. A bad, expired or stale token is a miss,
+	// never an error.
+	SignedRoute bool `json:"signedRoute,omitempty"`
+	// TurnPriority: among one flow's held requests, a later turn of an active
+	// session leaves first, by min(turns in 120 s, 4) + seconds waited / 2 —
+	// so a first turn that waited 8 s outranks any later turn. Classes and the
+	// fairness between flows are untouched.
+	TurnPriority bool `json:"turnPriority,omitempty"`
+}
+
 // PolicyRouting names the fallback target used when the leader has no
 // capacity (an OpenAI-compatible base URL).
 type PolicyRouting struct {
@@ -497,6 +516,12 @@ type PolicyRouting struct {
 	// times this leaves the rank, and the worker is scored on what is in
 	// flight alone. 0 = 500 ms; below 100 is read as 100.
 	LoadRefreshMs int `json:"loadRefreshMs,omitempty"`
+	// Session (feature "session_routing", ADR-109, PLAN T28.3) is how a
+	// conversation keeps its worker. A request names its conversation with the
+	// X-Opod-Session header, else the OpenAI `user` field; one with neither is
+	// pinned per key, as before. nil = sessions pin for StickyTTLSeconds, no
+	// signed route, no turn priority.
+	Session *PolicySession `json:"session,omitempty"`
 	// PrefixBlockTier (feature "kv_cpu_tier_hits") is which tiers a held
 	// block is credited from under PrefixBlockWeight: PrefixBlockTierGPU (the
 	// card only, the default) or PrefixBlockTierCPULower (also a block the

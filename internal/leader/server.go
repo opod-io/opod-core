@@ -90,6 +90,10 @@ type Server struct {
 	// ADR-109); loadRefreshMs is the policy's interval (0 = the default).
 	pull          *loadPuller
 	loadRefreshMs atomic.Int64
+	// session is routing.session; turns counts each session's recent
+	// requests (session.go, ADR-109).
+	session sessionPolicy
+	turns   sessionTurns
 	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
 	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
 	// crash-loops still heartbeats and still holds its card; this is where that

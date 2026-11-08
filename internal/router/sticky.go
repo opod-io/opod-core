@@ -10,14 +10,18 @@ import (
 )
 
 func (r *Router) stickyPick(ctx context.Context, model string) string {
-	if r.StickyTTL() <= 0 || model == "" || model == "auto" {
+	if model == "" || model == "auto" {
 		return ""
 	}
-	userID := userIDFor(ctx)
-	if userID == "" {
+	// A verified route token (session.go) names the worker this conversation
+	// last landed on, whichever door served it.
+	if n := routedNodeFrom(ctx); n != "" {
+		return n
+	}
+	key, ttl := r.pinKey(ctx, model)
+	if key == "" || ttl <= 0 {
 		return ""
 	}
-	key := userID + "|" + model
 	r.mu.RLock()
 	entry, ok := r.stickiness[key]
 	r.mu.RUnlock()
@@ -44,15 +48,13 @@ func (r *Router) stickyPick(ctx context.Context, model string) string {
 // picked-but-failed node isn't pinned). The next request for the same tuple
 // within stickyTTL will land on the same node (assuming it's still healthy).
 func (r *Router) rememberSticky(ctx context.Context, model, nodeID string) {
-	ttl := r.StickyTTL()
-	if ttl <= 0 || model == "" || model == "auto" || nodeID == "" {
+	if model == "" || model == "auto" || nodeID == "" {
 		return
 	}
-	userID := userIDFor(ctx)
-	if userID == "" {
+	key, ttl := r.pinKey(ctx, model)
+	if key == "" || ttl <= 0 {
 		return
 	}
-	key := userID + "|" + model
 	r.mu.Lock()
 	r.stickiness[key] = stickyEntry{NodeID: nodeID, ExpiresAt: time.Now().Add(ttl)}
 	r.stickyInserts++

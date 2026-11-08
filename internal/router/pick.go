@@ -175,7 +175,7 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// while another has one free: it would queue in that engine, where no
 	// request class ranks it (ADR-091).
 	stickyNode := r.stickyPick(ctx, model)
-	if stickyNode != "" && !r.slotsFullLocked(stickyNode) {
+	if stickyNode != "" && r.pinHonoured(stickyNode) {
 		workers = preferNode(workers, stickyNode)
 	}
 

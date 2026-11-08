@@ -34,8 +34,10 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/router"
 )
 
 // The request classes, highest first. The index is the rank.
@@ -154,6 +156,9 @@ func (c *classConfig) shareCap(class, slots int) int {
 type admissionIdent struct {
 	class int
 	flow  string
+	// turns is how many requests the request's session has sent in the last
+	// sessionTurnWindow, this one included (ADR-109 §5); 0 = no session.
+	turns int
 }
 
 type admissionIdentKey struct{}
@@ -192,7 +197,8 @@ func (s *Server) requestIdent(r *http.Request) admissionIdent {
 			flow = "team:" + rank.team
 		}
 	}
-	return admissionIdent{class: effectiveClass(rank.class, r.Header.Get(classHeader)), flow: flow}
+	return admissionIdent{class: effectiveClass(rank.class, r.Header.Get(classHeader)), flow: flow,
+		turns: s.turns.note(router.SessionFrom(r.Context()), time.Now())}
 }
 
 // ---- the queues: pure, no locks, no clock ------------------------------------
@@ -201,8 +207,12 @@ func (s *Server) requestIdent(r *http.Request) admissionIdent {
 type heldReq struct {
 	class int
 	flow  string
-	node  func() string // where the router sent it, once granted (pool.take)
-	grant *grant        // its slot, once granted. Written under slotGate.mu.
+	// turns and heldAt rank a flow's waiters under turn priority (ADR-109
+	// §5): min(turns, 4) + seconds waited / 2.
+	turns  int
+	heldAt time.Time
+	node   func() string // where the router sent it, once granted (pool.take)
+	grant  *grant        // its slot, once granted. Written under slotGate.mu.
 	// done is closed when the request leaves the queue by the gate's hand:
 	// granted a slot, or shed (shedWhy says why). Written under slotGate.mu.
 	done    chan struct{}
@@ -261,7 +271,23 @@ func (q *drrQueue) push(h *heldReq) {
 }
 
 // pop takes the next request by deficit round robin, or nil.
-func (q *drrQueue) pop() *heldReq {
+func (q *drrQueue) pop() *heldReq { return q.popRanked(nil) }
+
+// turnRank is a held request's place inside its flow under turn priority: a
+// later turn of an active session goes first, capped at 4 so that waiting
+// counts too — a first turn held 8 s outranks any later turn (ADR-109 §5).
+func turnRank(h *heldReq, now time.Time) float64 {
+	return float64(min(h.turns, turnPriorityCap)) + now.Sub(h.heldAt).Seconds()/2
+}
+
+// turnPriorityCap bounds the turn bonus (ADR-109 §5).
+const turnPriorityCap = 4
+
+// popRanked is pop, with the flow's request chosen by rank (highest first,
+// the oldest on a tie) instead of the oldest; nil rank = the oldest. Only the
+// choice INSIDE the visited flow changes, so classes and the fairness between
+// flows are untouched.
+func (q *drrQueue) popRanked(rank func(*heldReq) float64) *heldReq {
 	if q.n == 0 {
 		return nil
 	}
@@ -272,8 +298,17 @@ func (q *drrQueue) pop() *heldReq {
 	if f.deficit < 1 {
 		f.deficit += drrQuantum // the visit's credit
 	}
-	h := f.reqs[0]
-	f.reqs = f.reqs[1:]
+	pick := 0
+	if rank != nil {
+		best := rank(f.reqs[0])
+		for i := 1; i < len(f.reqs); i++ {
+			if r := rank(f.reqs[i]); r > best {
+				pick, best = i, r
+			}
+		}
+	}
+	h := f.reqs[pick]
+	f.reqs = append(f.reqs[:pick], f.reqs[pick+1:]...)
 	f.deficit--
 	q.n--
 	if len(f.reqs) == 0 {
@@ -355,18 +390,18 @@ func (c *classQueues) total() int {
 // pop is the next request to get a slot: the highest class with one waiting,
 // and inside it the next flow's oldest.
 func (c *classQueues) pop() *heldReq {
-	return c.popEligible(func(int) bool { return true })
+	return c.popEligible(func(int) bool { return true }, nil)
 }
 
 // popEligible is pop over the classes eligible says may take a slot now: a
 // class at its share is passed over and the next class is tried, so a capped
 // class never idles a slot a lower class could use.
-func (c *classQueues) popEligible(eligible func(class int) bool) *heldReq {
+func (c *classQueues) popEligible(eligible func(class int) bool, rank func(*heldReq) float64) *heldReq {
 	for i := range c.q {
 		if c.q[i].n == 0 || !eligible(i) {
 			continue
 		}
-		if h := c.q[i].pop(); h != nil {
+		if h := c.q[i].popRanked(rank); h != nil {
 			return h
 		}
 	}
