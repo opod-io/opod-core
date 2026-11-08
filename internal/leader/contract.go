@@ -278,6 +278,14 @@ func contractFeatures() map[string]bool {
 		// (OPOD_STICKY_SESSION_TTL_SECONDS). Without this key a leader ignores
 		// the field.
 		"sticky_ttl_policy": true,
+		// Every router process — this leader and every front door — pulls
+		// each worker's engine load (GET /v1/load on the worker) every
+		// routing.loadRefreshMs (500 ms by default) and ranks on it; a pulled
+		// sample older than three intervals is not ranked on, and requests
+		// sent after a sample count toward the worker's rank (ADR-109, PLAN
+		// T28.1). /gatewayz names each worker's sample and its age. Without
+		// this key a leader ignores the field and ranks on heartbeats.
+		"load_pull": true,
 		// A worker reports the blocks its host-memory tier holds
 		// (kv_blocks.cpu_stored / cpu_removed, from vLLM's self-describing
 		// offload events), /loadz counts them (prefix_index.cpu_blocks), and

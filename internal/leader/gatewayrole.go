@@ -183,6 +183,7 @@ func (s *Server) gatewayz(w http.ResponseWriter, _ *http.Request) {
 		"spend_lag_bound_s":  spendLagBoundMS / 1000,
 		"gateways":           s.gateways.seenDoors(now),
 		"admission":          s.admissionFairness(live),
+		"load_samples":       s.loadSampleAges(now),
 	})
 }
 
@@ -236,6 +237,7 @@ func (s *Server) GatewayStatus() map[string]any {
 	queued, sent, dropped, pushErr := s.front.push.Stats()
 	spendAge, bound, doors, spendErr := s.front.spend.Age()
 	out := map[string]any{
+		"load_samples":      s.loadSampleAges(time.Now()),
 		"gateway":           s.front.id,
 		"registry_fresh":    fresh,
 		"registry_age_s":    int(age.Seconds()),

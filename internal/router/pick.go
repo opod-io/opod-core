@@ -604,6 +604,7 @@ func (r *Router) incInflight(nodeID, model string) {
 	r.mu.Lock()
 	r.inflight[nodeID]++
 	r.inflightDim[nodeID+"|"+model]++
+	r.noteSentLocked(nodeID, time.Now())
 	n := r.inflight[nodeID]
 	r.mu.Unlock()
 	metrics.SetRouterInflight(nodeID, n)

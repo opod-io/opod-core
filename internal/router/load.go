@@ -39,6 +39,39 @@ import (
 type LoadSignal struct {
 	KVUsedPct  float64
 	QueueDepth int64
+	// SampledAt is when the engine was scraped. Set on a pulled sample
+	// (ADR-109): requests sent to the worker after it count toward its rank,
+	// since its queue figure cannot hold them yet. Zero = not dated.
+	SampledAt time.Time
+}
+
+// sentKeep bounds the per-worker record of send times: the last this many,
+// none older than sentWindow. A sample is a few hundred ms old, so ten
+// seconds is far past any one the rank reads.
+const (
+	sentKeep   = 64
+	sentWindow = 10 * time.Second
+)
+
+// noteSentLocked records that a request was sent to node at now. Caller
+// holds r.mu.
+func (r *Router) noteSentLocked(node string, now time.Time) {
+	ts := append(r.sent[node], now)
+	cut := 0
+	for cut < len(ts) && (len(ts)-cut > sentKeep || now.Sub(ts[cut]) > sentWindow) {
+		cut++
+	}
+	r.sent[node] = ts[cut:]
+}
+
+// sentSinceLocked counts the requests sent to node after at. Caller holds
+// r.mu (read).
+func (r *Router) sentSinceLocked(node string, at time.Time) int {
+	n := 0
+	for i := len(r.sent[node]) - 1; i >= 0 && r.sent[node][i].After(at); i-- {
+		n++
+	}
+	return n
 }
 
 // LoadSource answers the current signal for a worker node.
@@ -124,6 +157,11 @@ func (r *Router) loadRank(nodeID string) (saturated bool, score float64) {
 		return false, score
 	}
 	score += float64(sig.QueueDepth)
+	if !sig.SampledAt.IsZero() {
+		// Sent after the sample: not in its queue figure yet (ADR-109), so a
+		// burst between two pulls spreads instead of herding on one worker.
+		score += float64(r.sentSinceLocked(nodeID, sig.SampledAt))
+	}
 	if r.kvWeight > 0 {
 		score += r.kvWeight * sig.KVUsedPct / 100
 	}

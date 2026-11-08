@@ -161,6 +161,7 @@ type Router struct {
 	mu          sync.RWMutex
 	inflight    map[string]int            // node_id → live request count
 	inflightDim map[string]int            // node_id + "|" + model → live request count (drain waits)
+	sent        map[string][]time.Time    // node_id → when its recent requests were sent (load.go: sent since the sample)
 	remotes     map[string]engines.Engine // node_id → cached remote engine
 	cooldowns   map[string]time.Time      // node_id → time the node leaves the penalty box
 	failures    map[string]int            // node_id → consecutive recent failures
@@ -225,6 +226,7 @@ func New(local engines.Engine, st store.Store) *Router {
 		log:         slog.Default(),
 		inflight:    make(map[string]int),
 		inflightDim: make(map[string]int),
+		sent:        make(map[string][]time.Time),
 		remotes:     make(map[string]engines.Engine),
 		cooldowns:   make(map[string]time.Time),
 		failures:    make(map[string]int),

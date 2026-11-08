@@ -116,6 +116,8 @@ type Server struct {
 	// Warm is the engine's warm-up (warmup.go): /readyz is not ready until the
 	// engine has answered one generation. nil = no gate.
 	Warm *Warmup
+
+	loadCache loadCache // the last engine sample GET /v1/load served (loadroute.go)
 	// gang is set once the leader started a process here (/v1/process/start):
 	// this worker is a gang member, reached by peers on its processes' own
 	// ports, so its stop also waits for them (waitForPeers).
@@ -142,6 +144,7 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/v1/model/unload", s.auth(s.modelUnload))           // its counterpart: the model leaves this worker (unload.go, feature worker_unload)
 	mux.HandleFunc("/v1/model/sleep", s.auth(s.modelSleep))             // sleep tier (build item 13): engine drops its GPU working set, process stays
 	mux.HandleFunc("/v1/model/resume", s.auth(s.modelResume))
+	mux.HandleFunc(nodeapi.PathLoad, s.auth(s.load))            // a router's fresh load sample (feature "load_pull", ADR-109)
 	mux.HandleFunc(nodeapi.PathTokenize, s.auth(s.tokenize))    // the leader has no tokenizer (feature "kv_block_events")   // wake it (sub-second on vLLM)
 	mux.HandleFunc("/v1/adapters", s.auth(s.adaptersList))      // LoRA variants held (adapters.go, feature lora)
 	mux.HandleFunc("/v1/adapters/load", s.auth(s.adaptersLoad)) // load one into the engine, served as <base>:<name>

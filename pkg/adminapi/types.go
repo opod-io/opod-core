@@ -491,6 +491,12 @@ type PolicyRouting struct {
 	// router.sticky_session_ttl_seconds; with neither, session pins are off
 	// and prefix pins expire after 10 minutes).
 	StickyTTLSeconds int `json:"stickyTtlSeconds,omitempty"`
+	// LoadRefreshMs (feature "load_pull", ADR-109) is how often each router
+	// process — the leader and every front door — pulls each worker's engine
+	// load to rank on (GET /v1/load on the worker). A sample older than three
+	// times this leaves the rank, and the worker is scored on what is in
+	// flight alone. 0 = 500 ms; below 100 is read as 100.
+	LoadRefreshMs int `json:"loadRefreshMs,omitempty"`
 	// PrefixBlockTier (feature "kv_cpu_tier_hits") is which tiers a held
 	// block is credited from under PrefixBlockWeight: PrefixBlockTierGPU (the
 	// card only, the default) or PrefixBlockTierCPULower (also a block the

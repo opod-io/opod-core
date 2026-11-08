@@ -19,6 +19,14 @@ the last section.
   loaded and `/readyz` answers `503 engine warming up`. Any answer from the engine counts (an embeddings-only model
   refuses a chat); no answer is tried again on the next heartbeat. A sleeping engine is not warmed.
 
+- **Every router pulls its workers' load, a front door included (T28.1, ADR-109, feature `load_pull`).** The picker
+  ranked a worker on its engine's queue and KV from the heartbeat, up to 5 s old, and a front door got no sample at
+  all. The leader and every door now `GET /v1/load` from each worker every `routing.loadRefreshMs` (500 ms by default,
+  floor 100 ms; a new field in the policy snapshot); the worker scrapes its engine at most once per interval whoever
+  asks. A pulled sample older than three intervals is not ranked on, and requests sent after a sample count toward
+  the worker's score. A worker on an older core (404) keeps its heartbeat's sample. `/gatewayz` lists each worker's
+  sample and its age under `load_samples`. Gang coordinators keep their own 5 s sample for now.
+
 ## v0.4.2 — 2026-11-07
 
 Fixes to v0.4.1's gang readiness, found on hardware the same day. No contract change.

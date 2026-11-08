@@ -148,6 +148,8 @@ var contractFeatureFloor = []string{
 	"kv_peer_hits",
 	// PLAN T24.55: the policy sets the sticky pin lifetime live
 	"sticky_ttl_policy",
+	// ADR-109: every router pulls its workers' load, with an age rule
+	"load_pull",
 	// PLAN T24.56: CPU-tier blocks in the index, credited under cpu-lower
 	"kv_cpu_tier_hits",
 	// ADR-090: expert-parallel gangs on vLLM's own launcher

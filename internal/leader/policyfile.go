@@ -151,6 +151,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
 		s.router.SetStickyTTL(s.stickyTTLFor(r.StickyTTLSeconds))
+		s.loadRefreshMs.Store(int64(r.LoadRefreshMs))
 		if strings.EqualFold(strings.TrimSpace(r.PrefixBlockTier), adminapi.PrefixBlockTierCPULower) {
 			s.router.SetPrefixBlockCPU(s.prefix.leadingAny)
 		} else {

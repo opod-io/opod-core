@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/api"
@@ -85,6 +86,10 @@ type Server struct {
 	// leader instead and this queue stays empty.
 	usage   *usage.Queue
 	gangEng sync.Map // coordinator shard id → gangCoordEngine: the driver is kept because tokens_per_s is a rate it holds between samples
+	// pull holds the engine load pulled from each worker (loadpull.go,
+	// ADR-109); loadRefreshMs is the policy's interval (0 = the default).
+	pull          *loadPuller
+	loadRefreshMs atomic.Int64
 	// nodeEngine: node id → nodeEngineSample, what the worker says its ENGINE
 	// PROCESS is doing (feature "engine_liveness"). A worker whose engine
 	// crash-loops still heartbeats and still holds its card; this is where that
@@ -199,6 +204,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// catalog (label bounding) and the response cache.
 	openaiH.SetPolicy(&api.Policy{Catalog: cat, Cache: buildResponseCache(cfg.Observability.ResponseCache, st, log)})
 	s := &Server{
+		pull:       newLoadPuller(),
 		cfg:        cfg,
 		store:      st,
 		engine:     eng,
@@ -297,6 +303,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// A gang whose head is launched ungated (SGLang, vLLM over Ray or expert)
 	// reads its coordinator "starting" until the head's API answers.
 	s.StartGangReadiness(ctx)
+	// Both roles route, so both pull their workers' load (ADR-109).
+	s.StartLoadPuller(ctx)
 	s.StartAuthWatcher(ctx)
 	s.StartPolicyWatcher(ctx)
 	s.StartTrimmer(ctx)

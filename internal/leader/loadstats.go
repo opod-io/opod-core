@@ -572,6 +572,15 @@ func (s *Server) servesNow(ctx context.Context, nodeID, model string) bool {
 // it is fresh (loadSampleMaxAge), else nothing — a stuck engine must not
 // keep a stale pressure number in the pick order any more than on /loadz.
 func (s *Server) loadSignal(nodeID string) (router.LoadSignal, bool) {
+	// A pulled sample (loadpull.go) wins while it is fresh; a pulled sample
+	// gone stale ranks nothing, which is the rule biting. A worker that is not
+	// pulled keeps its heartbeat's sample and that sample's 30 s rule.
+	if smp, pulls, fresh := s.pulledLoad(nodeID, time.Now()); pulls {
+		if !fresh {
+			return router.LoadSignal{}, false
+		}
+		return router.LoadSignal{KVUsedPct: smp.KVUsedPct, QueueDepth: smp.QueueDepth, SampledAt: smp.at}, true
+	}
 	v, ok := s.nodeLoad.Load(nodeID)
 	if !ok {
 		return router.LoadSignal{}, false

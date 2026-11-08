@@ -76,6 +76,7 @@ const (
 	PathModelSleep     = "/v1/model/sleep"  // POST, no body → SleepResponse
 	PathModelResume    = "/v1/model/resume" // POST, no body → SleepResponse
 	PathTokenize       = "/v1/tokenize"     // POST TokenizeRequest → TokenizeResponse | 501 (feature "kv_block_events")
+	PathLoad           = "/v1/load"         // GET ?maxAgeMs=N → EngineLoad | 501 (feature "load_pull", ADR-109)
 	PathAdapters       = "/v1/adapters"     // GET → []HeldAdapter
 	PathAdaptersLoad   = "/v1/adapters/load"
 	PathAdaptersUnload = "/v1/adapters/unload"
@@ -466,6 +467,10 @@ type EngineLoad struct {
 	TokensPerSec float64 `json:"tokens_per_s"`   // generated tokens per second since the previous sample
 	PrefixHitPct float64 `json:"prefix_hit_pct"` // prefix-cache hit rate, 0–100 (0 when the engine does not report it, or has had no query yet)
 	SampledAt    int64   `json:"sampled_at"`     // unix seconds
+	// SampledAtMs is when the engine was scraped, in unix milliseconds, on a
+	// sample served by PathLoad (ADR-109): a router ranks on samples a few
+	// hundred ms old, which whole seconds cannot date. 0 on a heartbeat's.
+	SampledAtMs int64 `json:"sampled_at_ms,omitempty"`
 	// What the engine itself says it allocated and did (PLAN T23.2, feature
 	// "kv_readback"), so a manager can set the KV pool it PLANNED beside the
 	// one the engine really built. Each is read from the engine's own report —
