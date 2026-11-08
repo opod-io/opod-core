@@ -684,10 +684,6 @@ after the first schema (`bound_key_id`, `boot_id`, `engine_silent_since`, `cold`
 `node_id`, the key expiry) arrive through the idempotent column migrations in
 `runColumnMigrations`, and removed columns leave through `runColumnDrops`, so an older database is upgraded in place at open time.
 
-### Postgres (planned — not implemented)
-
-Same schema, swap the driver. `internal/store` already exposes a `Store` interface that a `postgres.go` backend would implement; only the SQLite backend exists today.
-
 ### Model files
 
 Not in SQLite. GGUFs downloaded for sharding land in `storage.models_dir` as `<models_dir>/<source.file>`; Ollama-sourced models live wherever Ollama keeps them. The placements table records which nodes can serve which model.
