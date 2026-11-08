@@ -140,6 +140,28 @@ type Load struct {
 	// map, and the leader's does not include the doors'. Absent before any
 	// pull answers.
 	LoadSamples map[string]LoadSample `json:"load_samples,omitempty"`
+	// Sessions counts, over the last minute, the requests that named a
+	// conversation and what their pins did (feature "session_routing",
+	// ADR-109). Absent while routing.session is off; present with zeros when
+	// it is on and no caller sent a session — Requests1m against RPM1m is the
+	// share of traffic that names one. Each process counts its own: the
+	// leader's does not include the doors'.
+	Sessions *SessionLoad `json:"sessions,omitempty"`
+}
+
+// SessionLoad is Load.Sessions. A request is counted once its answer is done.
+type SessionLoad struct {
+	// Requests1m: requests that named a conversation (X-Opod-Session, else
+	// the OpenAI user field).
+	Requests1m int64 `json:"requests_1m"`
+	// PinHits1m: of those, the ones that landed on the worker their pin named.
+	PinHits1m int64 `json:"pin_hits_1m"`
+	// PinMoves1m: the ones whose pinned worker was saturated, full or gone,
+	// so they routed by load and the pin moved. A request with no pin yet (a
+	// first turn, or an expired pin) is in neither.
+	PinMoves1m int64 `json:"pin_moves_1m"`
+	// RouteTokens1m: the ones that echoed a route token that verified.
+	RouteTokens1m int64 `json:"route_tokens_1m"`
 }
 
 // LoadSample is one worker's entry in Load.LoadSamples.

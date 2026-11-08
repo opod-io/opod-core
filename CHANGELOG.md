@@ -13,6 +13,12 @@ the last section.
   any pull answers. It is typed in `pkg/adminapi` (`Load.LoadSamples`, `LoadSample`), so the control plane reads it;
   a heartbeat source is `ranked` only while its sample is inside the 30 s rule.
 
+- **`/loadz` counts the requests that name a conversation and what their pins did (T28.3, feature
+  `session_routing`).** A `sessions` block — `requests_1m` (requests with `X-Opod-Session` or a `user` field),
+  `pin_hits_1m` (landed on the pinned worker), `pin_moves_1m` (the pinned worker was saturated, full or gone, so the pin
+  moved) and `route_tokens_1m` (echoed route tokens that verified) — typed as `adminapi.SessionLoad`. It is absent while
+  `routing.session` is off and all zeros when it is on and no caller sends a session. Each process counts its own.
+
 - **A usage record the queue dropped while its batch was in flight is no longer counted as lost (T32.63).** Under
   load the queue's cap could drop the oldest records while an export batch held copies of them; the batch then landed,
   and the records were both delivered and counted in `opod_usage_dropped_total`, so the control plane's `missing`

@@ -95,6 +95,40 @@ func (s *Server) withSession(r *http.Request, body []byte, model string) *http.R
 	return r.WithContext(ctx)
 }
 
+// countSession adds a finished request to /loadz's session counts (T28.3):
+// whether it named a conversation, and what its pin did.
+func (s *Server) countSession(ctx context.Context, now time.Time) {
+	if router.SessionFrom(ctx) == "" {
+		return
+	}
+	l := &s.load
+	l.bump(&l.sessRing, &l.sessSec, now)
+	switch router.PinFrom(ctx) {
+	case router.PinHit:
+		l.bump(&l.hitRing, &l.hitSec, now)
+	case router.PinMoved:
+		l.bump(&l.movedRing, &l.movedSec, now)
+	}
+	if router.RoutedNodeFrom(ctx) != "" {
+		l.bump(&l.tokenRing, &l.tokenSec, now)
+	}
+}
+
+// sessionLoad is /loadz's session block: nil while routing.session is off,
+// so a reader can tell "off" from "on, and no caller sends a session".
+func (s *Server) sessionLoad(now time.Time) *adminapi.SessionLoad {
+	if s.session.p.Load() == nil {
+		return nil
+	}
+	l := &s.load
+	return &adminapi.SessionLoad{
+		Requests1m:    l.sum(&l.sessRing, &l.sessSec, now),
+		PinHits1m:     l.sum(&l.hitRing, &l.hitSec, now),
+		PinMoves1m:    l.sum(&l.movedRing, &l.movedSec, now),
+		RouteTokens1m: l.sum(&l.tokenRing, &l.tokenSec, now),
+	}
+}
+
 // routeToken is what a route token says.
 type routeToken struct {
 	Node    string `json:"n"`

@@ -92,6 +92,7 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 	defer release()
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	s.openaiH.ChatCompletions(w, r)
+	s.countSession(r.Context(), time.Now())
 }
 
 // writeBodyReadError maps a request-body read failure to the matching

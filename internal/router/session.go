@@ -62,6 +62,9 @@ func routedNodeFrom(ctx context.Context) string {
 	return n
 }
 
+// RoutedNodeFrom is the worker a verified route token named ("" = none).
+func RoutedNodeFrom(ctx context.Context) string { return routedNodeFrom(ctx) }
+
 // pinKey is whose pin this request reads and writes, and for how long it
 // lasts: the conversation when the request has one, else the caller.
 func (r *Router) pinKey(ctx context.Context, model string) (string, time.Duration) {

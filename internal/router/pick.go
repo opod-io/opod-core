@@ -189,12 +189,15 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	// expired cases, so emitting again here (the old default "miss")
 	// double-counted every non-sticky request. When a pin existed we
 	// landed on it ("hit") or had to route elsewhere ("miss").
-	if stickyNode != "" {
-		if node.ID == stickyNode {
-			metrics.ObserveStickyOutcome("hit")
-		} else {
-			metrics.ObserveStickyOutcome("miss")
-		}
+	switch {
+	case stickyNode == "":
+		notePin(ctx, "")
+	case node.ID == stickyNode:
+		metrics.ObserveStickyOutcome("hit")
+		notePin(ctx, PinHit)
+	default:
+		metrics.ObserveStickyOutcome("miss")
+		notePin(ctx, PinMoved)
 	}
 	// NB: the pin is refreshed on the caller's *success* path
 	// (Chat/Embed), not here at pick time — a node that's picked but then

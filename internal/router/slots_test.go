@@ -87,3 +87,32 @@ func TestPickPrefixPinYieldsToFullSlots(t *testing.T) {
 		t.Fatalf("both free: the pin decides over load order: want a, got %q", node)
 	}
 }
+
+// The pick notes what the pin did on the request's trace, for the leader's
+// /loadz session counts (T28.3): moved when the pinned worker is full, hit when
+// the pin decides, nothing when there was no pin.
+func TestPickNotesWhatThePinDid(t *testing.T) {
+	r, _ := drainRouter(t, store.Node{ID: "a", State: store.NodeStateReady}, store.Node{ID: "b", State: store.NodeStateReady})
+	r.SetStickyTTL(time.Minute)
+	r.SetSlotSource(func(k string) (int, bool) { return 1, k == "a" || k == "b" })
+	ctx := auth.WithTestKey(context.Background(), &store.APIKey{UserID: "alice"})
+	pick := func() string {
+		c := WithTrace(ctx)
+		if _, _, err := r.pick(c, "m"); err != nil {
+			t.Fatal(err)
+		}
+		return PinFrom(c)
+	}
+	if got := pick(); got != "" {
+		t.Fatalf("no pin yet: noted %q", got)
+	}
+	r.rememberSticky(ctx, "m", "a")
+	r.inflight["a"] = 1
+	if got := pick(); got != PinMoved {
+		t.Fatalf("pinned worker full: noted %q, want %q", got, PinMoved)
+	}
+	r.inflight["a"] = 0
+	if got := pick(); got != PinHit {
+		t.Fatalf("pin decides: noted %q, want %q", got, PinHit)
+	}
+}

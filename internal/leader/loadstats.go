@@ -26,13 +26,20 @@ import (
 )
 
 type loadStats struct {
-	mu       sync.Mutex
-	reqRing  [60]int64 // requests started, bucketed by absolute second % 60
-	errRing  [60]int64 // 5xx responses
-	reqSec   [60]int64 // absolute second each reqRing bucket counts for
-	errSec   [60]int64
-	inFlight int64 // atomic
-	lastReq  int64 // atomic, unix seconds
+	mu      sync.Mutex
+	reqRing [60]int64 // requests started, bucketed by absolute second % 60
+	errRing [60]int64 // 5xx responses
+	reqSec  [60]int64 // absolute second each reqRing bucket counts for
+	errSec  [60]int64
+	// Session counts (ADR-109, T28.3): requests that named a conversation,
+	// and of those the ones whose pin held, moved, or came from a verified
+	// route token. Counted when the request's answer is done.
+	sessRing, sessSec   [60]int64
+	hitRing, hitSec     [60]int64
+	movedRing, movedSec [60]int64
+	tokenRing, tokenSec [60]int64
+	inFlight            int64 // atomic
+	lastReq             int64 // atomic, unix seconds
 }
 
 func (l *loadStats) bump(ring *[60]int64, stamps *[60]int64, now time.Time) {
@@ -234,6 +241,7 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// /loadz is what a probe, an operator and the control plane read on every
 	// router process.
 	out.LoadSamples = s.loadSampleAges(now)
+	out.Sessions = s.sessionLoad(now)
 	writeJSON(w, http.StatusOK, out)
 }
 

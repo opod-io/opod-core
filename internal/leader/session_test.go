@@ -151,3 +151,38 @@ func TestSessionTurnsCountTheWindow(t *testing.T) {
 		t.Fatalf("after the window a session starts again at 1, got %d", n)
 	}
 }
+
+// /loadz's session block (T28.3): absent while routing.session is off, zeros
+// when it is on and nothing names a session, and the counts once requests do.
+func TestLoadzCountsSessionsAndTheirPins(t *testing.T) {
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := sessionDoor(t, st)
+	now := time.Now()
+
+	srv.applySessionPolicy(nil)
+	if got := srv.sessionLoad(now); got != nil {
+		t.Fatalf("routing.session off: %+v, want no block", got)
+	}
+	srv.applySessionPolicy(&adminapi.PolicySession{TTLSec: 300, SignedRoute: true})
+	if got := srv.sessionLoad(now); got == nil || *got != (adminapi.SessionLoad{}) {
+		t.Fatalf("on, nothing sent: %+v, want zeros", got)
+	}
+
+	plain := router.WithTrace(context.Background())
+	srv.countSession(plain, now) // no session: not counted
+	sess := router.WithTrace(router.WithSession(context.Background(), "conv-1", time.Minute))
+	srv.countSession(sess, now)
+	echoed := router.WithTrace(router.WithRoutedNode(router.WithSession(context.Background(), "conv-2", time.Minute), "w1"))
+	srv.countSession(echoed, now)
+	got := srv.sessionLoad(now)
+	if got.Requests1m != 2 || got.RouteTokens1m != 1 || got.PinHits1m != 0 || got.PinMoves1m != 0 {
+		t.Fatalf("counted %+v, want 2 requests, 1 route token, no pin outcome", *got)
+	}
+	if later := srv.sessionLoad(now.Add(61 * time.Second)); later.Requests1m != 0 {
+		t.Fatalf("a minute later: %+v, want the window empty", *later)
+	}
+}

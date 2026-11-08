@@ -28,9 +28,43 @@ type routeTrace struct {
 	// it as opod.node_id, where the router key is the gang's pseudo node
 	// (T32.42). Spans only; the usage row keeps the gang key.
 	head string
+	// pin is what the conversation's pin did on the last pick (PinHit,
+	// PinMoved; "" = there was no pin), for the leader's /loadz session
+	// counts (ADR-109).
+	pin string
 }
 
 type traceKey struct{}
+
+// The values PinFrom returns besides "" (no pin existed for the request).
+const (
+	// PinHit: the request landed on the worker its pin named.
+	PinHit = "hit"
+	// PinMoved: a pin existed and the request went elsewhere — the pinned
+	// worker was saturated, full or gone, and the pin moves to where it lands.
+	PinMoved = "moved"
+)
+
+// notePin records the pin's outcome of a pick. A no-op when no trace is
+// installed.
+func notePin(ctx context.Context, outcome string) {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		t.pin = outcome
+		t.mu.Unlock()
+	}
+}
+
+// PinFrom is what the request's pin did on its last pick: PinHit, PinMoved,
+// or "" when it had no pin (or no trace was installed).
+func PinFrom(ctx context.Context) string {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.pin
+	}
+	return ""
+}
 
 // WithTrace returns ctx carrying a route trace: the one ctx already carries,
 // else a new empty one. Reusing it lets a caller that installed the trace
