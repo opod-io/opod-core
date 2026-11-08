@@ -2,10 +2,13 @@
 
 BIN := opod
 PKG := ./cmd/opod
-GOFLAGS ?= -trimpath
+# BUILDFLAGS, not GOFLAGS: make reads GOFLAGS from the environment, so
+# `GOFLAGS=-count=1 make check` (an uncached test run) handed -count to go build.
+# The go command itself still applies GOFLAGS, to the commands that know a flag.
+BUILDFLAGS ?= -trimpath
 
 build:
-	go build $(GOFLAGS) -o $(BIN) $(PKG)
+	go build $(BUILDFLAGS) -o $(BIN) $(PKG)
 
 test:
 	go test ./...
