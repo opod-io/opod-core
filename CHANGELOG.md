@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+## v0.4.4 — 2026-11-08
+
+What the control plane needs to show how routing decides: `/loadz` states the sample each worker is ranked on and what
+conversations' pins did, typed in `pkg/adminapi`. Also a usage-count fix and a removed dead knob.
+
 - **`/loadz` lists the sample the picker ranks each worker on (T28.1, feature `load_pull`).** The `load_samples` map
   `/gatewayz` already carried — per worker its `source` (`pull` or `heartbeat`), `age_ms` and whether it is still
   `ranked` — is now on `/loadz` too, so a probe or an operator reads it on the leader and on every door. Omitted before
