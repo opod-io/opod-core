@@ -229,6 +229,10 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// What a host KV tier would have served (feature "tier_ghost", T26.14).
 	out.TierGhost = s.prefix.ghostState()
 	out.AuthSnapshot = s.authSnapshotState(now)
+	// Which sample the picker ranks each worker on and how old it is (feature
+	// "load_pull", ADR-109) — the same map /gatewayz carries, here too because
+	// /loadz is what a probe or an operator reads on every router process.
+	out.LoadSamples = s.loadSampleAges(now)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -240,6 +244,9 @@ type loadResponse struct {
 	// whether keyed traffic is refused for its age (feature
 	// "auth_snapshot_age", ADR-085). Absent on a leader with no snapshot.
 	AuthSnapshot *authSnapshotStatus `json:"auth_snapshot,omitempty"`
+	// LoadSamples is, per pulled worker, the sample's source, its age and
+	// whether it is still ranked (loadpull.go). Absent before any pull answers.
+	LoadSamples map[string]map[string]any `json:"load_samples,omitempty"`
 }
 
 // aggregateWorkerLoad folds the serving workers' engine samples into the

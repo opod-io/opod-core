@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`/loadz` lists the sample the picker ranks each worker on (T28.1, feature `load_pull`).** The `load_samples` map
+  `/gatewayz` already carried — per worker its `source` (`pull` or `heartbeat`), `age_ms` and whether it is still
+  `ranked` — is now on `/loadz` too, so a probe or an operator reads it on the leader and on every door. Omitted before
+  any pull answers.
+
 - **A usage record the queue dropped while its batch was in flight is no longer counted as lost (T32.63).** Under
   load the queue's cap could drop the oldest records while an export batch held copies of them; the batch then landed,
   and the records were both delivered and counted in `opod_usage_dropped_total`, so the control plane's `missing`

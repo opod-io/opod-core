@@ -3,12 +3,16 @@ package leader
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/opod-io/opod-core/internal/config"
 	"github.com/opod-io/opod-core/internal/engines"
 	"github.com/opod-io/opod-core/internal/store"
 	"github.com/opod-io/opod-core/pkg/nodeapi"
@@ -78,5 +82,93 @@ func TestThePullerFetchesASignedSampleAndMarksA404(t *testing.T) {
 	}
 	if srv.pull.begin("wo", time.Now()) {
 		t.Fatal("a worker that answered 404 is asked again at once")
+	}
+}
+
+// A door ranks on samples it pulls itself: it gets none from heartbeats (only
+// the leader's heartbeat handler stores one), so before ADR-109 it ranked on
+// its own in-flight count alone. Two workers with different KV use; the door
+// pulls both, ranks each on its own figure, and /loadz says so.
+func TestADoorPullsAndRanksOnEachWorkersLoad(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	workerAt := func(kv float64) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != nodeapi.PathLoad {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(engines.EngineLoad{KVUsedPct: kv, SampledAtMs: time.Now().UnixMilli()})
+		}))
+	}
+	busy, idle := workerAt(92), workerAt(8)
+	defer busy.Close()
+	defer idle.Close()
+	host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/admin/v1/shards":
+			_, _ = w.Write([]byte(`[]`))
+		case "/admin/v1/spend":
+			_, _ = w.Write([]byte(`{"ts":0,"doors":1,"lag_bound_ms":10000,"keys":[]}`))
+		default:
+			_, _ = fmt.Fprintf(w, `[{"ID":"busy","Hostname":"busy","Address":%q,"state":"ready","heartbeat_age_seconds":1,"WorkerToken":"sk-orc-b"},`+
+				`{"ID":"idle","Hostname":"idle","Address":%q,"state":"ready","heartbeat_age_seconds":1,"WorkerToken":"sk-orc-i"}]`, host(busy), host(idle))
+		}
+	}))
+	defer leader.Close()
+
+	cfg := config.Default()
+	cfg.Listen = ":0"
+	cfg.Env.Role = "gateway"
+	cfg.Env.LeaderURL = leader.URL
+	cfg.Env.GatewayID = "door-1"
+	cfg.Auth.AdminToken = "sk-orc-contract-test-admin"
+	st, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	door := NewServer(cfg, st, &stubLeaderEngine{}, nil, log, nil)
+	if err := door.StartGatewayRole(ctx); err != nil {
+		t.Fatalf("StartGatewayRole: %v", err)
+	}
+	door.loadRefreshMs.Store(100)
+	door.StartLoadPuller(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, okB := door.loadSignal("busy")
+		i, okI := door.loadSignal("idle")
+		if okB && okI {
+			if b.KVUsedPct != 92 || i.KVUsedPct != 8 {
+				t.Fatalf("door ranks busy on KV %.0f and idle on %.0f, want 92 and 8", b.KVUsedPct, i.KVUsedPct)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the door pulled no sample in 5 s (busy ok=%v, idle ok=%v)", okB, okI)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	rec := httptest.NewRecorder()
+	door.loadz(rec, httptest.NewRequest(http.MethodGet, "/loadz", nil))
+	var lz struct {
+		LoadSamples map[string]struct {
+			Source string `json:"source"`
+			Ranked bool   `json:"ranked"`
+		} `json:"load_samples"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &lz); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"busy", "idle"} {
+		if smp := lz.LoadSamples[id]; smp.Source != "pull" || !smp.Ranked {
+			t.Errorf("/loadz load_samples[%s] = %+v, want a ranked pull", id, smp)
+		}
 	}
 }
