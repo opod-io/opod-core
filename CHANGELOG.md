@@ -25,7 +25,7 @@ the last section.
   floor 100 ms; a new field in the policy snapshot); the worker scrapes its engine at most once per interval whoever
   asks. A pulled sample older than three intervals is not ranked on, and requests sent after a sample count toward
   the worker's score. A worker on an older core (404) keeps its heartbeat's sample. `/gatewayz` lists each worker's
-  sample and its age under `load_samples`. Gang coordinators keep their own 5 s sample for now.
+  sample and its age under `load_samples`. A gang ranks on its head node's pulled sample, and what was sent to the gang after it.
 
 ## v0.4.2 — 2026-11-07
 

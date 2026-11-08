@@ -418,6 +418,11 @@ func (r *Router) gangRank(gangID, modelID string, coord store.Shard) (saturated 
 		return false, score
 	}
 	score += float64(sig.QueueDepth)
+	if !sig.SampledAt.IsZero() {
+		// The head's sample is pulled like a worker's (ADR-109): what was sent
+		// to the gang after it counts too.
+		score += float64(r.sentSinceLocked(gangKey(modelID, gangID), sig.SampledAt))
+	}
 	if r.kvWeight > 0 {
 		score += r.kvWeight * sig.KVUsedPct / 100
 	}
