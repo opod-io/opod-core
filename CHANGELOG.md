@@ -5,7 +5,10 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
-## Unreleased
+## v0.4.3 — 2026-11-07
+
+Everything since v0.4.2 the same day: ready means answered (a warm-up generation), every router pulls its workers' load,
+a conversation keeps its worker (ADR-109), and embeddings on an engine without the route are refused by name.
 
 - **Embeddings on an engine with no embeddings route are refused by name.** Every OpenAI-compatible driver inherited
   `Embed` from the shared client, so a TensorRT-LLM endpoint (whose `trtllm-serve` has no `/v1/embeddings`) answered
