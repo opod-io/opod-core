@@ -12,6 +12,13 @@ the last section.
   `502` with the engine's `404`. A driver now embeds only when its engine does (vLLM, SGLang, llama.cpp, MLX), and the
   leader answers `501 embeddings_not_supported`, as it does for rerank.
 
+- **A worker reports its models only after its engine has answered one generation (T32.60).** The model list
+  answers as soon as an engine's server is up, and TensorRT-LLM listed its model about 70 s before its first
+  generation returned: the leader routed the next request to it and that request waited 72 s. The worker now sends a
+  one-token warm-up request the first time its engine lists a model; until it returns, the heartbeat reports nothing
+  loaded and `/readyz` answers `503 engine warming up`. Any answer from the engine counts (an embeddings-only model
+  refuses a chat); no answer is tried again on the next heartbeat. A sleeping engine is not warmed.
+
 ## v0.4.2 — 2026-11-07
 
 Fixes to v0.4.1's gang readiness, found on hardware the same day. No contract change.

@@ -251,9 +251,11 @@ func cmdJoin(args []string) {
 	if env.KVEvents {
 		blocks = kvevents.NewTranslator()
 	}
-	join := &agent.JoinState{} // the leader's last answer: written by the heartbeat, served on /readyz
+	join := &agent.JoinState{}        // the leader's last answer: written by the heartbeat, served on /readyz
+	warm := agent.NewWarmup(eng, log) // ready means a generation answered (T32.60): the heartbeat and /readyz both read it
 	a := &agent.Agent{
 		Join:              join,
+		Warm:              warm,
 		Blocks:            blocks,
 		NodeID:            nodeID,
 		LeaderURL:         leader,
@@ -312,6 +314,7 @@ func cmdJoin(args []string) {
 		Log:           log,
 		Drain:         drain,
 		Join:          join,
+		Warm:          warm,
 	}
 	// The tool-call parser a vLLM or SGLang launch needs for its model is the
 	// catalog's word (T19.25). An unreadable catalog costs only the parser: the

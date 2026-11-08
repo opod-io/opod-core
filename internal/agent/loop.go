@@ -36,6 +36,9 @@ type Agent struct {
 	BootID       string
 	Capabilities Capabilities
 	Engine       engines.Engine // local engine; queried for loaded_models
+	// Warm gates loaded_models on the engine's first generation (warmup.go,
+	// PLAN T32.60). nil = no gate: a model is reported once listed.
+	Warm *Warmup
 	// engineVersion is the engine's own version, read once it serves (PLAN
 	// T29.5): the image fixes the binary, so it is the worker's for its life.
 	engineVersion string
@@ -85,6 +88,19 @@ func (a *Agent) engineListsAModel(ctx context.Context) bool {
 	defer cancel()
 	m, err := a.Engine.List(lctx)
 	return err == nil && len(m) > 0
+}
+
+// engineSleeps: the engine's own word that it sleeps (build item 13). An
+// engine that cannot say is awake.
+func (a *Agent) engineSleeps(ctx context.Context) bool {
+	sl, ok := a.Engine.(engines.Sleeper)
+	if !ok || a.Engine == nil {
+		return false
+	}
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	sleeping, err := sl.Sleeping(sctx)
+	return err == nil && sleeping
 }
 
 // MaxRefusedRegisters is how many consecutive re-registers the leader may
@@ -141,7 +157,15 @@ func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 		defer cancel()
 		if m, err := a.Engine.List(listCtx); err == nil {
 			loaded = a.Aliases.Resolve(m)
+			// Listed is not yet servable: until the engine has answered one
+			// generation (warmup.go) the report is "nothing loaded" — a
+			// definite report, so the leader holds no routable row for it.
+			// A sleeping engine is not warmed, the request would wake it.
+			if len(m) > 0 && !a.engineSleeps(ctx) && !a.Warm.Observe(m) {
+				loaded = []string{}
+			}
 		} else if engineNotRunning(err) {
+			a.Warm.Reset() // the next engine to come up has generated nothing yet
 			// Nothing listens where the engine would: a definite report — nothing is
 			// loaded — not the absence of one. "No report" (nil) is for an engine that
 			// did not answer in time or answered with an error. The difference
@@ -347,6 +371,9 @@ func (a *Agent) Loop(ctx context.Context) error {
 				continue
 			}
 			beatNow()
+			continue
+		case <-a.Warm.Done():
+			beatNow() // the warm-up returned: report the models now, not at the next tick
 			continue
 		case <-watch:
 			watch = nil

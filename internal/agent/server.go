@@ -113,6 +113,9 @@ type Server struct {
 	// Join is the Agent's record of the leader's last answer, for /readyz.
 	// nil = this server runs without an agent, and /readyz says not joined.
 	Join *JoinState
+	// Warm is the engine's warm-up (warmup.go): /readyz is not ready until the
+	// engine has answered one generation. nil = no gate.
+	Warm *Warmup
 	// gang is set once the leader started a process here (/v1/process/start):
 	// this worker is a gang member, reached by peers on its processes' own
 	// ports, so its stop also waits for them (waitForPeers).
@@ -278,6 +281,11 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		if err := s.Engine.Health(r.Context()); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = fmt.Fprintf(w, "engine: %v", err)
+			return
+		}
+		if ok, why := s.Warm.Ready(); !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, why)
 			return
 		}
 	}
