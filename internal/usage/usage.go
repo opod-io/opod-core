@@ -79,6 +79,13 @@ type Queue struct {
 	seq      int64
 	dropped  int64
 	refused  int64
+	// inflight is the last sequence of the batch an exporter is sending (0 =
+	// none). A record the cap drops at or below it is held in heldDrops, not
+	// counted: the batch carries a copy, and a batch that lands delivered it
+	// (PLAN T32.63 — counted at once, the CP saw it both delivered and missing).
+	// The batch's failure counts them (release).
+	inflight  int64
+	heldDrops int64
 	lastUsed map[string]time.Time
 	notify   chan struct{}
 }
@@ -121,8 +128,13 @@ func (q *Queue) Add(r Record) {
 	q.bytes += len(b) + itemOverhead
 	for q.bytes > q.cap {
 		q.bytes -= len(q.items[0].b) + itemOverhead
+		dropSeq := q.items[0].seq
 		q.items[0] = item{}
 		q.items = q.items[1:]
+		if dropSeq <= q.inflight {
+			q.heldDrops++ // in the batch being sent: lost only if it fails
+			continue
+		}
 		q.dropped++
 		metrics.AddUsageDropped("full", 1)
 	}
@@ -192,14 +204,18 @@ func (q *Queue) peek(maxBytes int) ([][]byte, int64) {
 		n += len(it.b)
 		last = it.seq
 	}
+	q.inflight = last
 	return out, last
 }
 
-// ack frees every record up to and including seq. Records the cap dropped
-// while the batch was in flight are simply no longer there.
+// ack frees every record up to and including seq: the batch that ended at seq
+// left the queue (delivered, or rejected by the receiver, which is counted
+// as rejected). Records the cap dropped while it was in flight are no longer
+// queued, and were not lost: the batch carried them.
 func (q *Queue) ack(seq int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.inflight, q.heldDrops = 0, 0
 	i := 0
 	for i < len(q.items) && q.items[i].seq <= seq {
 		q.bytes -= len(q.items[i].b) + itemOverhead
@@ -208,6 +224,19 @@ func (q *Queue) ack(seq int64) {
 	}
 	q.items = q.items[i:]
 	metrics.SetUsageQueue(q.bytes, len(q.items))
+}
+
+// release ends a batch that did not leave the queue (the send failed): the
+// records the cap dropped while it was in flight are lost after all, and are
+// counted now.
+func (q *Queue) release() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.heldDrops > 0 {
+		q.dropped += q.heldDrops
+		metrics.AddUsageDropped("full", int(q.heldDrops))
+	}
+	q.inflight, q.heldDrops = 0, 0
 }
 
 // The compact encoding: protobuf wire format with our own field numbers. Only

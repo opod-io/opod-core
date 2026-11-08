@@ -5,6 +5,13 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## Unreleased
+
+- **A usage record the queue dropped while its batch was in flight is no longer counted as lost (T32.63).** Under
+  load the queue's cap could drop the oldest records while an export batch held copies of them; the batch then landed,
+  and the records were both delivered and counted in `opod_usage_dropped_total`, so the control plane's `missing`
+  figure was too high by the batch. Such a drop is now counted only if its batch fails.
+
 ## v0.4.3 — 2026-11-07
 
 Everything since v0.4.2 the same day: ready means answered (a warm-up generation), every router pulls its workers' load,

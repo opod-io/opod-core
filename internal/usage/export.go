@@ -141,6 +141,14 @@ func (e *Exporter) Flush(ctx context.Context) (int, error) {
 	if len(recs) == 0 {
 		return 0, nil
 	}
+	// A batch that does not leave the queue gives back its records: any the
+	// cap dropped meanwhile are counted as lost then (Queue.release, T32.63).
+	left := false
+	defer func() {
+		if !left {
+			e.q.release()
+		}
+	}()
 	body, err := e.request(recs)
 	if err != nil {
 		return 0, e.fail(fmt.Errorf("usage export: encode: %w", err))
@@ -167,6 +175,7 @@ func (e *Exporter) Flush(ctx context.Context) (int, error) {
 			rejected = int(out.GetPartialSuccess().GetRejectedLogRecords())
 		}
 		e.q.ack(last)
+		left = true
 		if rejected > 0 {
 			metrics.AddUsageDropped("rejected", rejected)
 		}
@@ -177,6 +186,7 @@ func (e *Exporter) Flush(ctx context.Context) (int, error) {
 		return len(recs), nil
 	case resp.StatusCode == http.StatusBadRequest:
 		e.q.ack(last)
+		left = true
 		metrics.AddUsageDropped("rejected", len(recs))
 		return len(recs), e.fail(fmt.Errorf("usage export to %s: 400, %d records rejected: %s", e.url, len(recs), strings.TrimSpace(string(raw))))
 	default:
