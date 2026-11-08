@@ -69,7 +69,7 @@ var (
 
 	routerFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_router_fallback_total",
-		Help: "Fallback chain activations by operation (chat|embed|rerank|chain) and reason (primary-error|per-request|retry|next-worker|context-length|content-policy; cap-exhausted with op chain).",
+		Help: "Fallback chain activations by operation (chat|embed|rerank) and reason (primary-error|per-request|retry|next-worker|context-length|content-policy).",
 	}, []string{"op", "reason"})
 
 	routerAttemptDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -151,8 +151,8 @@ func SetRouterInflight(node string, n int) {
 func ObservePDHandoff(outcome string) { pdHandoffTotal.WithLabelValues(outcome).Inc() }
 
 // ObserveRouterFallback records a fallback activation. op is chat | embed |
-// rerank, or chain for cap-exhausted; reason is primary-error | per-request |
-// retry | next-worker | context-length | content-policy | cap-exhausted.
+// rerank; reason is primary-error | per-request | retry | next-worker |
+// context-length | content-policy.
 func ObserveRouterFallback(op, reason string) {
 	routerFallbackTotal.WithLabelValues(op, reason).Inc()
 }

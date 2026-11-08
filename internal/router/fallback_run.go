@@ -25,7 +25,6 @@ func (r *Router) maybeSwapTypedChain(chain []string, chains FallbackChains, err 
 	newChain := make([]string, 0, primaryIdx+1+len(typed))
 	newChain = append(newChain, chain[:primaryIdx+1]...)
 	newChain = append(newChain, typed...)
-	newChain = r.applyCap(newChain)
 	metrics.ObserveRouterFallback(op, class.String())
 	if r.log != nil {
 		r.log.Info("router typed fallback",
@@ -47,7 +46,7 @@ func (r *Router) chainFor(model string, ov Overrides) ([]string, string, Fallbac
 		return chain, "request", FallbackChains{}
 	}
 	chains := r.chainsFor(model)
-	return r.applyCap(buildChain(model, chains.Generic)), "catalog", chains
+	return buildChain(model, chains.Generic), "catalog", chains
 }
 
 // waitBackoff sleeps for the backoff interval before retry attempt `n`.

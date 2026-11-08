@@ -1144,7 +1144,7 @@ Router subsystem:
 
 - `opod_router_picks_total{path,outcome}` — counter. `path` is one of `local|worker|shard|fallback-to-local`; `outcome` is `ok|error|store-error|no-workers|stale-heartbeat|all-workers-stale`.
 - `opod_router_inflight{node}` — gauge. Mirrors the router's per-node in-flight request count.
-- `opod_router_fallback_total{op,reason}` — counter. `op` is `chat|embed`; `reason` is `primary-error|latency-reorder|cap-exhausted`.
+- `opod_router_fallback_total{op,reason}` — counter. `op` is `chat|embed|rerank`; `reason` is `primary-error|per-request|retry|next-worker|context-length|content-policy`.
 - `opod_router_attempt_duration_seconds{model,outcome}` — histogram.
 - `opod_router_cooldowns_active` — gauge. Workers in the circuit breaker's penalty box.
 - `opod_router_sticky_hits_total{outcome}` — counter. `hit|miss|expired` for the `(user_id, model)` pin.

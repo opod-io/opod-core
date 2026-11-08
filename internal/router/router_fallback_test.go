@@ -150,31 +150,12 @@ func TestRouter_Chat_NoFallbackBehavesAsBefore(t *testing.T) {
 	}
 }
 
-func TestRouter_MaxFallbackAttemptsCapsChain(t *testing.T) {
-	stub := &stubEngine{name: "stub"}
-	r := newRouterWithStub(t, stub, map[string][]string{
-		"primary": {"f1", "f2", "f3", "f4", "f5"},
-	})
-	// Cap = 2 means we walk primary + 2 fallbacks = 3 candidates total.
-	r.SetMaxFallbackAttempts(2)
-	got := r.resolveChain("primary")
-	if len(got) != 3 {
-		t.Fatalf("cap=2 should yield 3 candidates (primary + 2), got %d: %v", len(got), got)
-	}
-	want := []string{"primary", "f1", "f2"}
-	for i, w := range want {
-		if got[i] != w {
-			t.Errorf("position %d: want %q, got %q", i, w, got[i])
-		}
-	}
-}
-
-func TestRouter_NoCapWalksWholeChain(t *testing.T) {
+func TestRouter_WalksWholeChain(t *testing.T) {
 	stub := &stubEngine{name: "stub"}
 	r := newRouterWithStub(t, stub, map[string][]string{
 		"primary": {"f1", "f2", "f3"},
 	})
-	// Default: no cap → full chain.
+	// The chain is bounded by its candidate list only.
 	got := r.resolveChain("primary")
 	if len(got) != 4 {
 		t.Fatalf("no cap should yield 4 candidates, got %d: %v", len(got), got)

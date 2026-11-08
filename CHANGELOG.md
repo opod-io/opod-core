@@ -19,6 +19,10 @@ the last section.
   moved) and `route_tokens_1m` (echoed route tokens that verified) — typed as `adminapi.SessionLoad`. It is absent while
   `routing.session` is off and all zeros when it is on and no caller sends a session. Each process counts its own.
 
+- **The router's unused fallback cap is gone (T9.51).** `SetMaxFallbackAttempts` had no caller, so
+  `opod_router_fallback_total{op="chain",reason="cap-exhausted"}` could never be emitted; the setter, the cap and that
+  label value are removed. A fallback chain is bounded by its candidate list, as before.
+
 - **A usage record the queue dropped while its batch was in flight is no longer counted as lost (T32.63).** Under
   load the queue's cap could drop the oldest records while an export batch held copies of them; the batch then landed,
   and the records were both delivered and counted in `opod_usage_dropped_total`, so the control plane's `missing`

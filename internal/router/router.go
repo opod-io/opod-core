@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/opod-io/opod-core/internal/engines"
-	"github.com/opod-io/opod-core/internal/metrics"
 	"github.com/opod-io/opod-core/internal/store"
 
 	"go.opentelemetry.io/otel"
@@ -84,11 +83,6 @@ type Router struct {
 	// log emits structured fallback / pick events. Defaults to slog.Default()
 	// when SetLogger isn't called; tests can swap in a discard logger.
 	log *slog.Logger
-
-	// maxFallbackAttempts caps the number of candidates the router will walk
-	// before giving up. 0 means "no cap" (legacy behavior — walk the entire
-	// chain). Set via SetMaxFallbackAttempts.
-	maxFallbackAttempts int
 
 	// heartbeatMaxAge declares how stale a worker's last heartbeat can be
 	// before pick() refuses to route to it. 0 means "no check" (legacy).
@@ -300,14 +294,6 @@ func (r *Router) SetLogger(l *slog.Logger) {
 	}
 }
 
-// SetMaxFallbackAttempts caps how many candidates Chat/Embed will try
-// before giving up. 0 (default) walks the entire chain.
-func (r *Router) SetMaxFallbackAttempts(n int) {
-	if n >= 0 {
-		r.maxFallbackAttempts = n
-	}
-}
-
 // SetHeartbeatMaxAge causes pick() to refuse to dispatch to a worker
 // whose last heartbeat is older than `d`. 0 (default) disables the check.
 // Useful for catching dead workers before the engine call timeout fires.
@@ -364,10 +350,10 @@ func (r *Router) SetLatencyConfig(cfg LatencyConfig) {
 // after classifying the primary's failure.
 //
 // When no resolver is set or the model has no fallback entry, returns
-// just [primary]. Bounded by SetMaxFallbackAttempts when configured.
+// just [primary]. The chain is bounded by its candidate list.
 func (r *Router) resolveChain(model string) []string {
 	chains := r.chainsFor(model)
-	return r.applyCap(buildChain(model, chains.Generic))
+	return buildChain(model, chains.Generic)
 }
 
 // chainsFor returns the typed fallback chains for `model`. A zero
@@ -388,16 +374,6 @@ func buildChain(primary string, fb []string) []string {
 	out = append(out, primary)
 	out = append(out, fb...)
 	return out
-}
-
-// applyCap trims `chain` to MaxFallbackAttempts+1 candidates (primary
-// + N fallbacks). The legacy behavior (limit=0) walks the entire chain.
-func (r *Router) applyCap(chain []string) []string {
-	if limit := r.maxFallbackAttempts; limit > 0 && len(chain) > limit+1 {
-		chain = chain[:limit+1]
-		metrics.ObserveRouterFallback("chain", "cap-exhausted")
-	}
-	return chain
 }
 
 // Name reports the underlying local engine name so /readyz and logs stay
