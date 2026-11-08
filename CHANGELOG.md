@@ -5,6 +5,13 @@ the CLI-only inference runtime. For the per-release diff see
 [Releases](https://github.com/opod-io/opod-core/releases). For what moved to the control plane and why, see
 the last section.
 
+## Unreleased
+
+- **Embeddings on an engine with no embeddings route are refused by name.** Every OpenAI-compatible driver inherited
+  `Embed` from the shared client, so a TensorRT-LLM endpoint (whose `trtllm-serve` has no `/v1/embeddings`) answered
+  `502` with the engine's `404`. A driver now embeds only when its engine does (vLLM, SGLang, llama.cpp, MLX), and the
+  leader answers `501 embeddings_not_supported`, as it does for rerank.
+
 ## v0.4.2 — 2026-11-07
 
 Fixes to v0.4.1's gang readiness, found on hardware the same day. No contract change.

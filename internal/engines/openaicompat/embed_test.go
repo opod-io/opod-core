@@ -36,7 +36,7 @@ func TestEmbedReturnsVectorsInCallerOrder(t *testing.T) {
 			"usage":{"prompt_tokens":7,"total_tokens":7}}`))
 	})
 
-	got, err := c.Embed(context.Background(), engines.EmbedRequest{Model: "m", Inputs: []string{"first", "second"}})
+	got, err := Embed(context.Background(), c, engines.EmbedRequest{Model: "m", Inputs: []string{"first", "second"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestEmbedNoInputsIsRefusedWithoutCallingTheEngine(t *testing.T) {
 	c := embedServer(t, func(http.ResponseWriter, *http.Request) {
 		t.Error("an empty request must not reach the engine")
 	})
-	if _, err := c.Embed(context.Background(), engines.EmbedRequest{Model: "m"}); err == nil {
+	if _, err := Embed(context.Background(), c, engines.EmbedRequest{Model: "m"}); err == nil {
 		t.Fatal("embedding no inputs must be an error")
 	}
 }
@@ -67,7 +67,7 @@ func TestEmbedRejectsAShortOrDuplicateAnswer(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := embedServer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(payload)) })
-			if _, err := c.Embed(context.Background(), engines.EmbedRequest{Model: "m", Inputs: []string{"a", "b"}}); err == nil {
+			if _, err := Embed(context.Background(), c, engines.EmbedRequest{Model: "m", Inputs: []string{"a", "b"}}); err == nil {
 				t.Fatal("a mismatched answer must be an error, not a silent short result")
 			}
 		})
@@ -78,7 +78,7 @@ func TestEmbedSurfacesAnUpstreamFailure(t *testing.T) {
 	c := embedServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "model does not support embeddings", http.StatusBadRequest)
 	})
-	_, err := c.Embed(context.Background(), engines.EmbedRequest{Model: "m", Inputs: []string{"a"}})
+	_, err := Embed(context.Background(), c, engines.EmbedRequest{Model: "m", Inputs: []string{"a"}})
 	if err == nil {
 		t.Fatal("a 400 from the engine must reach the caller")
 	}

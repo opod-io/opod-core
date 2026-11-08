@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -63,5 +64,33 @@ func TestEmbeddings_RoutesByCatalogIDAndAttributesTheWorker(t *testing.T) {
 	}
 	if r := waitForUsage(t, sink); r.NodeID != "w_1" || r.Model != "fixture-embed" || r.Outcome != "ok" {
 		t.Fatalf("usage record %+v: want NodeID w_1, model fixture-embed, outcome ok", r)
+	}
+}
+
+// refusingEmbedder is a router whose picked engine has no embeddings route.
+type refusingEmbedder struct{ engines.Engine }
+
+func (e *refusingEmbedder) Name() string { return "trtllm" }
+func (e *refusingEmbedder) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+	return engines.EmbedResponse{}, fmt.Errorf("engine trtllm: %w", engines.ErrEmbedNotSupported)
+}
+
+// An engine with no embeddings route is refused by name, as rerank is, and not
+// relayed as a 502: a TensorRT-LLM endpoint answered "502 … 404 Not Found"
+// (design-partner cell, 2026-11-07; PLAN T32.61).
+func TestEmbeddingsOnAnEngineWithoutTheRouteAreRefusedByName(t *testing.T) {
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sink := newUsageSink()
+	h := &Handler{Engine: &refusingEmbedder{}, Store: st, Usage: sink.add,
+		Catalog: []catalog.Entry{{ID: "chat-model", Source: catalog.Source{Repo: "org/chat-model"}}}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"chat-model","input":"hello"}`))
+	rec := httptest.NewRecorder()
+	h.Embeddings(rec, req)
+	if rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "embeddings_not_supported") {
+		t.Fatalf("want 501 embeddings_not_supported, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

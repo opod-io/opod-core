@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -145,6 +146,8 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		} else if why, gone := h.capacityGone(ctx, requested, failedNode(ctx, err), err); gone { // no worker left by the pick (openai.go)
 			w.Header().Set("Retry-After", "10")
 			writeJSONError(w, http.StatusServiceUnavailable, "unavailable", why)
+		} else if errors.Is(err, engines.ErrEmbedNotSupported) {
+			writeJSONError(w, http.StatusNotImplemented, "embeddings_not_supported", err.Error())
 		} else {
 			writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
 		}

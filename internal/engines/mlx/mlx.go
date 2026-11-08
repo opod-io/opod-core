@@ -60,3 +60,11 @@ func (m *Driver) Unload(ctx context.Context, modelID string) error {
 }
 
 var _ engines.Engine = (*Driver)(nil)
+
+// Embed serves the engine's /v1/embeddings through the shared OpenAI-compatible
+// client (openaicompat.Embed).
+func (m *Driver) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+	return openaicompat.Embed(ctx, m.Client, req)
+}
+
+var _ engines.EmbedEngine = (*Driver)(nil)

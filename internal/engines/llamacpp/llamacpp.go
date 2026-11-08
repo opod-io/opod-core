@@ -272,7 +272,12 @@ func (l *Driver) Slots(ctx context.Context) (int, bool) {
 
 var _ engines.SlotReporter = (*Driver)(nil)
 
-// Embeddings come from the shared OpenAI-compatible client this driver embeds.
+// Embed serves the engine's /v1/embeddings through the shared OpenAI-compatible
+// client (openaicompat.Embed).
+func (l *Driver) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+	return openaicompat.Embed(ctx, l.Client, req)
+}
+
 var _ engines.EmbedEngine = (*Driver)(nil)
 
 // Rerank serves a reranker GGUF's scores (ADR-084). llama-server must be

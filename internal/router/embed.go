@@ -36,7 +36,7 @@ var embedOp = unaryOp{
 	span:   "Embed",
 	metric: "embed",
 	unsupported: func(engine string) error {
-		return fmt.Errorf("engine %s does not support embeddings", engine)
+		return fmt.Errorf("engine %s: %w", engine, engines.ErrEmbedNotSupported)
 	},
 }
 

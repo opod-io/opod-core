@@ -1,6 +1,9 @@
 package engines
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // EmbedRequest is the engine-agnostic embedding input.
 type EmbedRequest struct {
@@ -13,6 +16,11 @@ type EmbedResponse struct {
 	Vectors [][]float32 // one per input, in the same order
 	Usage   *Usage      // PromptTokens populated; CompletionTokens is zero for embeddings
 }
+
+// ErrEmbedNotSupported says the engine serving this model has no embeddings
+// route. It is a refusal by name (501 embeddings_not_supported), not an
+// upstream failure.
+var ErrEmbedNotSupported = errors.New("this engine does not serve embeddings")
 
 // EmbedEngine is implemented by engines that produce embeddings.
 //

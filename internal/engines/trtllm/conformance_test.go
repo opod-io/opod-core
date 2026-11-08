@@ -23,9 +23,9 @@ func TestConformance(t *testing.T) {
 			Chat:   "Hello",
 			Usage:  &usage,
 			Reason: "stop",
-			// The shared client carries Embed; trtllm-serve has no embeddings
-			// route, so the control plane offers this engine for chat only.
-			Embeds: true,
+			// trtllm-serve has no embeddings route, so the driver is no
+			// EmbedEngine and a request is refused by name (PLAN T32.61).
+			Embeds: false,
 		},
 		NativeNames: []enginetest.NativeNameCase{
 			{Source: engines.Source{ID: "qwen2.5-0.5b", Repo: "Qwen/Qwen2.5-0.5B-Instruct"}, Want: "Qwen/Qwen2.5-0.5B-Instruct"},

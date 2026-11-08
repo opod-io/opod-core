@@ -242,7 +242,12 @@ func (v *Driver) Sleeping(ctx context.Context) (bool, error) {
 	return out.IsSleeping, nil
 }
 
-// Embeddings come from the shared OpenAI-compatible client this driver embeds.
+// Embed serves the engine's /v1/embeddings through the shared OpenAI-compatible
+// client (openaicompat.Embed).
+func (v *Driver) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+	return openaicompat.Embed(ctx, v.Client, req)
+}
+
 var _ engines.EmbedEngine = (*Driver)(nil)
 
 // Rerank serves a pooling (cross-encoder / reranker) model's scores through

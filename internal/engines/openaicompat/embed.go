@@ -37,8 +37,14 @@ type embedResponse struct {
 	} `json:"usage"`
 }
 
-// Embed returns one vector per input, in the caller's order.
-func (c Client) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+// Embed posts req to the engine's /v1/embeddings and returns one vector per
+// input, in the caller's order. It is a function, not a method of Client, for
+// the reason Rerank is: a method on the shared client gave every driver that
+// embeds the client an Embed, so a driver whose engine has no embeddings route
+// (TensorRT-LLM) still read as an EmbedEngine and a request got the engine's
+// 404 as a 502 (design-partner cell, 2026-11-07). A driver whose engine embeds
+// says so with its own Embed method that calls this.
+func Embed(ctx context.Context, c Client, req engines.EmbedRequest) (engines.EmbedResponse, error) {
 	// Asking to embed nothing is a caller mistake, and every driver reports it
 	// the same way (see enginetest). Answering with an empty array instead would
 	// hide the mistake one layer further from where it was made.
