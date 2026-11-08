@@ -97,7 +97,13 @@ type Load struct {
 	KVCapacityTokens *int64 `json:"kv_capacity_tokens,omitempty"`
 	KVUsedTokens     *int64 `json:"kv_used_tokens,omitempty"`
 	PreemptionsTotal *int64 `json:"preemptions_total,omitempty"`
-	EvictionsTotal   *int64 `json:"evictions_total,omitempty"`
+	// SpecDraftTokensTotal and SpecAcceptedTokensTotal are the engines'
+	// speculative-decoding counters (ADR-120), summed over the samples that
+	// state them: accepted ÷ draft is the endpoint's acceptance rate. Absent
+	// when no engine speculates.
+	SpecDraftTokensTotal    *int64 `json:"spec_draft_tokens_total,omitempty"`
+	SpecAcceptedTokensTotal *int64 `json:"spec_accepted_tokens_total,omitempty"`
+	EvictionsTotal          *int64 `json:"evictions_total,omitempty"`
 	// The engines' prefix-cache counters (PLAN T28.7), summed like the fields
 	// above: their ratio is PrefixHitPct, and two reads of them give the rate
 	// over the window between.

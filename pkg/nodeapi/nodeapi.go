@@ -519,6 +519,14 @@ type EngineLoad struct {
 	// publishes no such histogram (llama.cpp) or served nothing in the window:
 	// never a zero for "not said".
 	EngineTTFTP50Ms *int64 `json:"engine_ttft_p50_ms,omitempty"`
+	// Speculative decoding (ADR-120, feature "spec_decode"), counters since the
+	// engine started: SpecDraftTokensTotal is the tokens the proposer offered,
+	// SpecAcceptedTokensTotal the ones the model kept (vLLM:
+	// spec_decode_num_draft_tokens / _num_accepted_tokens). Their ratio over a
+	// window is the acceptance rate. nil = the engine does not say (no
+	// speculation, or an engine that publishes no such counter).
+	SpecDraftTokensTotal    *int64 `json:"spec_draft_tokens_total,omitempty"`
+	SpecAcceptedTokensTotal *int64 `json:"spec_accepted_tokens_total,omitempty"`
 }
 
 // ---- leader → worker: models ----

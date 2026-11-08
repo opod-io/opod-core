@@ -152,6 +152,8 @@ var contractFeatureFloor = []string{
 	"load_pull",
 	// ADR-109: a conversation keeps its worker (session pins, signed route, turn priority)
 	"session_routing",
+	// ADR-120: speculative decoding rendered per engine, its counters on /loadz
+	"spec_decode",
 	// PLAN T24.56: CPU-tier blocks in the index, credited under cpu-lower
 	"kv_cpu_tier_hits",
 	// ADR-090: expert-parallel gangs on vLLM's own launcher

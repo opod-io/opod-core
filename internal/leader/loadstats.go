@@ -304,6 +304,8 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		addStated(&out.KVCapacityTokens, ld.KVCapacityTokens)
 		addStated(&out.KVUsedTokens, ld.KVUsedTokens)
 		addStated(&out.PreemptionsTotal, ld.PreemptionsTotal)
+		addStated(&out.SpecDraftTokensTotal, ld.SpecDraftTokensTotal)
+		addStated(&out.SpecAcceptedTokensTotal, ld.SpecAcceptedTokensTotal)
 		addStated(&out.EvictionsTotal, ld.EvictionsTotal)
 		// The prefix cache's own counters (PLAN T28.7), summed: their ratio is
 		// the hit rate below.

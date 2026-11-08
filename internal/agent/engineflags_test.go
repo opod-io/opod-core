@@ -180,3 +180,40 @@ func TestVLLMMaxNumSeqsIsAlwaysOnTheLine(t *testing.T) {
 		t.Errorf("ollama has no slot count: got %d", got)
 	}
 }
+
+// ADR-120: speculative decoding in each engine's own spelling; a draft method
+// with no draft renders nothing, and the plan's extra wins.
+func TestSpeculativeDecodingIsRenderedPerEngine(t *testing.T) {
+	vllm := func(flags string) string { _, a := ParseEngineFlags(flags).vllmShellOverrides(); return a }
+	sglang := func(flags string) string { _, a := ParseEngineFlags(flags).sglangShellOverrides(); return a }
+	llama := func(flags string) string { return strings.Join(ParseEngineFlags(flags).llamaArgs(), " ") }
+	for _, c := range []struct {
+		name, got, want string
+	}{
+		{"vllm ngram", vllm(`{"spec_method":"ngram"}`), `'--speculative-config' '{"method":"ngram","num_speculative_tokens":4,"prompt_lookup_max":4,"prompt_lookup_min":2}'`},
+		{"vllm draft", vllm(`{"spec_method":"draft","spec_tokens":"3","spec_draft":"/data/models/qwen-0.5b@main"}`), `'--speculative-config' '{"method":"draft_model","model":"/data/models/qwen-0.5b@main","num_speculative_tokens":3}'`},
+		{"sglang ngram", sglang(`{"spec_method":"ngram","spec_tokens":"6"}`), `'--speculative-algorithm' 'NGRAM' '--speculative-num-draft-tokens' '6'`},
+		{"sglang draft", sglang(`{"spec_method":"draft","spec_draft":"Qwen/Qwen2.5-0.5B-Instruct"}`), `'--speculative-algorithm' 'STANDALONE' '--speculative-draft-model-path' 'Qwen/Qwen2.5-0.5B-Instruct' '--speculative-num-steps' '4' '--speculative-eagle-topk' '1' '--speculative-num-draft-tokens' '5'`},
+		{"llama ngram", llama(`{"spec_method":"ngram"}`), `--spec-type ngram-simple --spec-ngram-simple-size-m 4`},
+		{"llama draft", llama(`{"spec_method":"draft","spec_draft":"/data/models/draft.gguf"}`), `--spec-type draft-simple --spec-draft-model /data/models/draft.gguf --spec-draft-n-max 4 --spec-draft-ngl 999`},
+	} {
+		if !strings.Contains(c.got, c.want) {
+			t.Errorf("%s: %q does not carry %q", c.name, c.got, c.want)
+		}
+	}
+	for name, got := range map[string]string{
+		"draft with no draft": vllm(`{"spec_method":"draft"}`),
+		"unknown method":      sglang(`{"spec_method":"eagle"}`),
+		"unsafe draft":        llama(`{"spec_method":"draft","spec_draft":"x; rm -rf /"}`),
+		"extra wins (vllm)":   vllm(`{"spec_method":"ngram","extra":"--speculative-config.method=ngram"}`),
+		"extra wins (sglang)": sglang(`{"spec_method":"ngram","extra":"--speculative-algorithm EAGLE"}`),
+		"extra wins (llama)":  llama(`{"spec_method":"ngram","extra":"--spec-type ngram-map-k"}`),
+	} {
+		if strings.Contains(got, "--speculative-config' '{") || strings.Contains(got, "'NGRAM'") || strings.Contains(got, "STANDALONE") || strings.Contains(got, "ngram-simple") || strings.Contains(got, "draft-simple") {
+			t.Errorf("%s rendered speculation: %q", name, got)
+		}
+	}
+	if got := vllm(`{"spec_method":"ngram","spec_tokens":"99"}`); !strings.Contains(got, `"num_speculative_tokens":4`) {
+		t.Errorf("a token count out of 1–16 falls back to the default: %q", got)
+	}
+}

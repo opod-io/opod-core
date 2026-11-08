@@ -108,3 +108,27 @@ func TestNoKVPoolUntilVLLMSaysOne(t *testing.T) {
 		}
 	}
 }
+
+// ADR-120: a worker that speculates publishes its draft and accepted token
+// counters; one that does not states neither.
+func TestLoadReadsTheSpeculativeCounters(t *testing.T) {
+	body := `vllm:spec_decode_num_draft_tokens_total{engine="0",model_name="m"} 400.0
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="m"} 250.0
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+	defer srv.Close()
+	ld, err := New(srv.URL, "").Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ld.SpecDraftTokensTotal == nil || *ld.SpecDraftTokensTotal != 400 || ld.SpecAcceptedTokensTotal == nil || *ld.SpecAcceptedTokensTotal != 250 {
+		t.Fatalf("speculative counters: draft %v accepted %v, want 400 and 250", ld.SpecDraftTokensTotal, ld.SpecAcceptedTokensTotal)
+	}
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("vllm:num_requests_waiting{model_name=\"m\"} 0\n"))
+	}))
+	defer plain.Close()
+	if ld, _ := New(plain.URL, "").Load(context.Background()); ld.SpecDraftTokensTotal != nil || ld.SpecAcceptedTokensTotal != nil {
+		t.Fatal("a worker that does not speculate states no counters")
+	}
+}

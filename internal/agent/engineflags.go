@@ -33,6 +33,14 @@ package agent
 //	           of objects cannot ride `extra`, which keeps plain tokens only.
 //	           Nothing in the engine deletes from the directory; whoever names
 //	           it bounds it (`opod cache kv-prune`).
+//	vLLM/SGLang/llama.cpp: spec_method (ngram | draft), spec_tokens (1–16, default 4) and
+//	           spec_draft (the draft model: a snapshot directory or a repo id for vLLM and SGLang,
+//	           a GGUF file for llama.cpp) — speculative decoding (ADR-120, PLAN T29.19). The
+//	           launch renders each engine's own spelling: vLLM one --speculative-config JSON
+//	           (method ngram or draft_model), SGLang --speculative-algorithm NGRAM or STANDALONE,
+//	           llama.cpp --spec-type ngram-simple or draft-simple. A draft method with no draft
+//	           renders nothing; an `extra` that already carries the engine's own speculative
+//	           flag wins.
 //	vLLM/SGLang/TensorRT-LLM: no flag for the tool-call parser — the model's catalog entry names it
 //	           (tool_parser) and the launch adds it; an `extra` that already carries the engine's
 //	           parser flag (--tool-call-parser, TensorRT-LLM --tool_parser) wins and the catalog's is
@@ -159,6 +167,9 @@ func (f EngineFlags) vllmShellOverrides() (overrides string, extraArgs string) {
 		sh = append(sh, kvTierFSSeed)
 		args = append(args, "--kv-transfer-config", cfg)
 	}
+	if cfg, ok := f.vllmSpecConfig(); ok {
+		args = append(args, "--speculative-config", cfg)
+	}
 	return strings.Join(sh, " "), shellQuoteAll(args)
 }
 
@@ -248,6 +259,89 @@ func (f EngineFlags) extraValue(name string) string {
 	return out
 }
 
+// The speculative methods a plan may name (ADR-120).
+const (
+	SpecNgram = "ngram"
+	SpecDraft = "draft"
+)
+
+// specDefaultTokens is how many tokens a step proposes when the plan names a
+// method and no count.
+const specDefaultTokens = 4
+
+// spec is the plan's speculative decoding, or ok=false when there is none to
+// render: no method, an unknown one, or a draft method without a draft.
+func (f EngineFlags) spec() (method string, tokens int, draft string, ok bool) {
+	method, _ = f.get("spec_method")
+	method = strings.ToLower(strings.TrimSpace(method))
+	if method != SpecNgram && method != SpecDraft {
+		return "", 0, "", false
+	}
+	tokens = specDefaultTokens
+	if n, has := f.posInt("spec_tokens", 1, 16); has {
+		tokens = n
+	}
+	if method == SpecDraft {
+		draft, _ = f.get("spec_draft")
+		// A snapshot directory is <repo-slug>@<rev>, so '@' is allowed here
+		// beside the plain-token characters; the launch line quotes it.
+		if !isToken(strings.ReplaceAll(draft, "@", "")) || strings.HasPrefix(draft, "-") {
+			return "", 0, "", false
+		}
+	}
+	return method, tokens, draft, true
+}
+
+// vllmSpecConfig is vLLM's --speculative-config value.
+func (f EngineFlags) vllmSpecConfig() (string, bool) {
+	method, n, draft, ok := f.spec()
+	if !ok || f.extraHasPrefix("--speculative-config") || f.extraHasPrefix("--speculative_config") {
+		return "", false
+	}
+	cfg := map[string]any{"num_speculative_tokens": n}
+	if method == SpecNgram {
+		// Look the next tokens up in the prompt: a match of 2–4 tokens
+		// proposes what followed it.
+		cfg["method"], cfg["prompt_lookup_max"], cfg["prompt_lookup_min"] = "ngram", 4, 2
+	} else {
+		cfg["method"], cfg["model"] = "draft_model", draft
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
+// sglangSpecArgs is SGLang's speculative flags.
+func (f EngineFlags) sglangSpecArgs() []string {
+	method, n, draft, ok := f.spec()
+	if !ok || f.extraHasPrefix("--speculative-algorithm") {
+		return nil
+	}
+	if method == SpecNgram {
+		return []string{"--speculative-algorithm", "NGRAM", "--speculative-num-draft-tokens", strconv.Itoa(n)}
+	}
+	// A plain draft model is SGLang's STANDALONE algorithm: n steps of one
+	// token each (top-k 1), checked as n+1 tokens with the target's own.
+	return []string{"--speculative-algorithm", "STANDALONE", "--speculative-draft-model-path", draft,
+		"--speculative-num-steps", strconv.Itoa(n), "--speculative-eagle-topk", "1",
+		"--speculative-num-draft-tokens", strconv.Itoa(n + 1)}
+}
+
+// llamaSpecArgs is llama-server's speculative flags.
+func (f EngineFlags) llamaSpecArgs() []string {
+	method, n, draft, ok := f.spec()
+	if !ok || f.extraHasPrefix("--spec-type") || f.extraHasPrefix("--spec-draft-model") || f.extraHasPrefix("--model-draft") || f.extraHasPrefix("-md") {
+		return nil
+	}
+	if method == SpecNgram {
+		return []string{"--spec-type", "ngram-simple", "--spec-ngram-simple-size-m", strconv.Itoa(n)}
+	}
+	// The draft runs on the same device as the model, wholly on the GPU.
+	return []string{"--spec-type", "draft-simple", "--spec-draft-model", draft, "--spec-draft-n-max", strconv.Itoa(n), "--spec-draft-ngl", "999"}
+}
+
 // extraHasPrefix reports whether any token of the plan's raw `extra` starts
 // with prefix (a flag in any of its spellings, dotted keys included).
 func (f EngineFlags) extraHasPrefix(prefix string) bool {
@@ -311,6 +405,7 @@ func (f EngineFlags) llamaArgs() []string {
 	if v, ok := f.get("tensor_split"); ok && isSplitList(v) {
 		args = append(args, "--tensor-split", v)
 	}
+	args = append(args, f.llamaSpecArgs()...)
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
 	}
@@ -473,6 +568,7 @@ func (f EngineFlags) sglangShellOverrides() (overrides string, extraArgs string)
 	if !f.extraHasPrefix("--enable-cache-report") {
 		args = append(args, "--enable-cache-report")
 	}
+	args = append(args, f.sglangSpecArgs()...)
 	if v, ok := f.get("extra"); ok {
 		args = append(args, splitExtra(v)...)
 	}

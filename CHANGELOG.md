@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **Speculative decoding, rendered per engine (T29.19, ADR-120, feature `spec_decode`).** A worker's engine flags take
+  `spec_method` (`ngram` or `draft`), `spec_tokens` (1–16, default 4) and `spec_draft` (the draft model). The launch writes
+  each engine's own spelling: vLLM one `--speculative-config` JSON (method `ngram` or `draft_model`), SGLang
+  `--speculative-algorithm NGRAM` or `STANDALONE`, llama.cpp `--spec-type ngram-simple` or `draft-simple`. A draft method
+  with no draft renders nothing, and an `extra` that carries the engine's own speculative flag wins. vLLM's draft and
+  accepted token counters reach the load sample (`spec_draft_tokens_total`, `spec_accepted_tokens_total`), and `/loadz`
+  sums them: accepted ÷ draft is the acceptance rate.
+
 ## v0.4.4 — 2026-11-08
 
 What the control plane needs to show how routing decides: `/loadz` states the sample each worker is ranked on and what

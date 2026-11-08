@@ -126,6 +126,13 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if n, ok := engines.First(m, "vllm:num_preemptions_total", "vllm:num_preemptions"); ok {
 		ld.PreemptionsTotal = new(int64(n))
 	}
+	// Speculative decoding (ADR-120): published only while it is on.
+	if n, ok := engines.First(m, "vllm:spec_decode_num_draft_tokens_total", "vllm:spec_decode_num_draft_tokens"); ok {
+		ld.SpecDraftTokensTotal = new(int64(n))
+	}
+	if n, ok := engines.First(m, "vllm:spec_decode_num_accepted_tokens_total", "vllm:spec_decode_num_accepted_tokens"); ok {
+		ld.SpecAcceptedTokensTotal = new(int64(n))
+	}
 	if kv, ok := engines.First(m, "vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"); ok {
 		ld.KVUsedPct = kv * 100
 	}
