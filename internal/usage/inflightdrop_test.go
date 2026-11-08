@@ -41,7 +41,9 @@ func TestARecordDroppedWhileItsBatchIsInFlightIsCountedOnlyIfTheBatchFails(t *te
 	}
 
 	q, _ = fill()
-	held = inBatch(q)
+	if inBatch(q) == 0 {
+		t.Fatal("the second fill held no drops for its batch")
+	}
 	q.release() // the batch failed
 	if got := q.Stats().Dropped; got != 6 {
 		t.Fatalf("after the batch failed: %d dropped, want all 6", got)

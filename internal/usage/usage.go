@@ -73,12 +73,12 @@ type Queue struct {
 	boot int64
 	cap  int
 
-	mu       sync.Mutex
-	items    []item
-	bytes    int
-	seq      int64
-	dropped  int64
-	refused  int64
+	mu      sync.Mutex
+	items   []item
+	bytes   int
+	seq     int64
+	dropped int64
+	refused int64
 	// inflight is the last sequence of the batch an exporter is sending (0 =
 	// none). A record the cap drops at or below it is held in heldDrops, not
 	// counted: the batch carries a copy, and a batch that lands delivered it
@@ -86,8 +86,8 @@ type Queue struct {
 	// The batch's failure counts them (release).
 	inflight  int64
 	heldDrops int64
-	lastUsed map[string]time.Time
-	notify   chan struct{}
+	lastUsed  map[string]time.Time
+	notify    chan struct{}
 }
 
 // NewQueue returns a queue that holds at most capBytes of encoded records.
