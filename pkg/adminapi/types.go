@@ -134,7 +134,35 @@ type Load struct {
 	// worker can serve, or a worker reports no slot count (admission is then
 	// unbounded).
 	AdmissionBound string `json:"admission_bound,omitempty"`
+	// LoadSamples is, per worker node id, the sample this process's picker
+	// ranks that worker on (feature "load_pull", ADR-109): the leader and
+	// every door pull GET /v1/load themselves, so each process has its own
+	// map, and the leader's does not include the doors'. Absent before any
+	// pull answers.
+	LoadSamples map[string]LoadSample `json:"load_samples,omitempty"`
 }
+
+// LoadSample is one worker's entry in Load.LoadSamples.
+type LoadSample struct {
+	// Source is LoadSourcePull, or LoadSourceHeartbeat for a worker whose
+	// core has no /v1/load (it is ranked on its heartbeat's sample).
+	Source string `json:"source"`
+	// AgeMs is how old the pulled sample is, by the worker's own clock stamp.
+	// 0 for a heartbeat source.
+	AgeMs int64 `json:"age_ms,omitempty"`
+	// Ranked is false once a pulled sample is older than three
+	// routing.loadRefreshMs intervals: the worker is then scored on what is in
+	// flight alone.
+	Ranked bool `json:"ranked"`
+	// Why says, for a heartbeat source, why the worker is not pulled.
+	Why string `json:"why,omitempty"`
+}
+
+// The values of LoadSample.Source.
+const (
+	LoadSourcePull      = "pull"
+	LoadSourceHeartbeat = "heartbeat"
+)
 
 // The values of Load.AdmissionBound.
 const (

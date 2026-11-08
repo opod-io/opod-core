@@ -83,6 +83,19 @@ func TestThePullerFetchesASignedSampleAndMarksA404(t *testing.T) {
 	if srv.pull.begin("wo", time.Now()) {
 		t.Fatal("a worker that answered 404 is asked again at once")
 	}
+	// /loadz says which sample each is ranked on: wp's pull, and wo's
+	// heartbeat sample only while that sample is inside its 30 s rule.
+	ages := srv.loadSampleAges(time.Now())
+	if a := ages["wp"]; a.Source != "pull" || !a.Ranked {
+		t.Fatalf("wp: %+v", a)
+	}
+	if a := ages["wo"]; a.Source != "heartbeat" || a.Ranked || a.Why == "" {
+		t.Fatalf("wo with no heartbeat sample: %+v, want an unranked heartbeat source that says why", a)
+	}
+	srv.nodeLoad.Store("wo", nodeLoadSample{at: time.Now().Add(-5 * time.Second)})
+	if a := srv.loadSampleAges(time.Now())["wo"]; !a.Ranked {
+		t.Fatalf("wo with a 5 s old heartbeat sample: %+v, want ranked", a)
+	}
 }
 
 // A door ranks on samples it pulls itself: it gets none from heartbeats (only

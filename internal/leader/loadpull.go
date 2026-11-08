@@ -26,6 +26,7 @@ import (
 	"github.com/opod-io/opod-core/internal/auth"
 	"github.com/opod-io/opod-core/internal/engines"
 	"github.com/opod-io/opod-core/internal/store"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 	"github.com/opod-io/opod-core/pkg/nodeapi"
 )
 
@@ -183,19 +184,30 @@ func (s *Server) pulledLoad(node string, now time.Time) (ld nodeLoadSample, pull
 
 // loadSampleAges is each worker's sample age for /gatewayz and /loadz: which
 // sample the picker reads and how old it is.
-func (s *Server) loadSampleAges(now time.Time) map[string]map[string]any {
-	out := map[string]map[string]any{}
+func (s *Server) loadSampleAges(now time.Time) map[string]adminapi.LoadSample {
+	out := map[string]adminapi.LoadSample{}
 	p := s.pull
 	p.mu.Lock()
 	for node, smp := range p.samples {
-		out[node] = map[string]any{"source": "pull", "age_ms": now.Sub(smp.at).Milliseconds(),
-			"ranked": now.Sub(smp.at) <= loadPullAgeFactor*s.loadRefresh()}
+		age := now.Sub(smp.at)
+		out[node] = adminapi.LoadSample{Source: adminapi.LoadSourcePull, AgeMs: age.Milliseconds(),
+			Ranked: age <= loadPullAgeFactor*s.loadRefresh()}
 	}
 	for node := range p.unsupported {
 		if _, ok := out[node]; !ok {
-			out[node] = map[string]any{"source": "heartbeat", "why": "the worker has no " + nodeapi.PathLoad}
+			out[node] = adminapi.LoadSample{Source: adminapi.LoadSourceHeartbeat, Why: "the worker has no " + nodeapi.PathLoad}
 		}
 	}
 	p.mu.Unlock()
+	// A heartbeat source is ranked under that sample's own 30 s rule.
+	for node, smp := range out {
+		if smp.Source != adminapi.LoadSourceHeartbeat {
+			continue
+		}
+		if v, ok := s.nodeLoad.Load(node); ok && now.Sub(v.(nodeLoadSample).at) <= loadSampleMaxAge {
+			smp.Ranked = true
+			out[node] = smp
+		}
+	}
 	return out
 }
