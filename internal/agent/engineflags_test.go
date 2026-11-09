@@ -194,7 +194,8 @@ func TestSpeculativeDecodingIsRenderedPerEngine(t *testing.T) {
 		{"vllm draft", vllm(`{"spec_method":"draft","spec_tokens":"3","spec_draft":"/data/models/qwen-0.5b@main"}`), `'--speculative-config' '{"method":"draft_model","model":"/data/models/qwen-0.5b@main","num_speculative_tokens":3}'`},
 		{"sglang ngram", sglang(`{"spec_method":"ngram","spec_tokens":"6"}`), `'--speculative-algorithm' 'NGRAM' '--speculative-num-draft-tokens' '6'`},
 		{"sglang draft", sglang(`{"spec_method":"draft","spec_draft":"Qwen/Qwen2.5-0.5B-Instruct"}`), `'--speculative-algorithm' 'STANDALONE' '--speculative-draft-model-path' 'Qwen/Qwen2.5-0.5B-Instruct' '--speculative-num-steps' '4' '--speculative-eagle-topk' '1' '--speculative-num-draft-tokens' '5'`},
-		{"llama ngram", llama(`{"spec_method":"ngram"}`), `--spec-type ngram-simple --spec-ngram-simple-size-m 4`},
+		{"llama ngram", llama(`{"spec_method":"ngram"}`), `--spec-type ngram-simple --spec-ngram-simple-size-n 3 --spec-ngram-simple-size-m 4`},
+		{"llama ngram short", llama(`{"spec_method":"ngram","spec_tokens":"2"}`), `--spec-ngram-simple-size-n 2 --spec-ngram-simple-size-m 2`},
 		{"llama draft", llama(`{"spec_method":"draft","spec_draft":"/data/models/draft.gguf"}`), `--spec-type draft-simple --spec-draft-model /data/models/draft.gguf --spec-draft-n-max 4 --spec-draft-ngl 999`},
 	} {
 		if !strings.Contains(c.got, c.want) {

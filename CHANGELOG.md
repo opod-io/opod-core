@@ -13,7 +13,10 @@ the last section.
   `--speculative-algorithm NGRAM` or `STANDALONE`, llama.cpp `--spec-type ngram-simple` or `draft-simple`. A draft method
   with no draft renders nothing, and an `extra` that carries the engine's own speculative flag wins. vLLM's draft and
   accepted token counters reach the load sample (`spec_draft_tokens_total`, `spec_accepted_tokens_total`), and `/loadz`
-  sums them: accepted ÷ draft is the acceptance rate.
+  sums them: accepted ÷ draft is the acceptance rate. llama.cpp's counters of the same names are read too, and SGLang,
+  which publishes a rate and no counters, reports `spec_accept_pct` (its `spec_accept_rate`, averaged on `/loadz`).
+  llama.cpp's n-gram lookup length is set with the draft length (`--spec-ngram-simple-size-n`, 3 or fewer): with its
+  default of 12 a draft of 4 proposed nothing.
 
 ## v0.4.4 — 2026-11-08
 

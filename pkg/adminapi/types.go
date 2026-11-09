@@ -103,7 +103,11 @@ type Load struct {
 	// when no engine speculates.
 	SpecDraftTokensTotal    *int64 `json:"spec_draft_tokens_total,omitempty"`
 	SpecAcceptedTokensTotal *int64 `json:"spec_accepted_tokens_total,omitempty"`
-	EvictionsTotal          *int64 `json:"evictions_total,omitempty"`
+	// SpecAcceptPct is the mean of the engines' own acceptance rates (0–100)
+	// over the samples that state one — SGLang, which publishes no counters.
+	// Absent when none does.
+	SpecAcceptPct  *float64 `json:"spec_accept_pct,omitempty"`
+	EvictionsTotal *int64   `json:"evictions_total,omitempty"`
 	// The engines' prefix-cache counters (PLAN T28.7), summed like the fields
 	// above: their ratio is PrefixHitPct, and two reads of them give the rate
 	// over the window between.

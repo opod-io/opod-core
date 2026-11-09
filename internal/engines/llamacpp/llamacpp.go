@@ -178,6 +178,14 @@ func (l *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if gen, ok := engines.First(m, "llamacpp:tokens_predicted_total"); ok {
 		ld.TokensPerSec = l.genRate.Rate(gen, now)
 	}
+	// Speculative decoding (ADR-120): the same counters vLLM publishes. They
+	// read 0 while nothing has been drafted, which is the same as not said.
+	if d, ok := engines.First(m, "llamacpp:spec_decode_num_draft_tokens_total"); ok && d > 0 {
+		ld.SpecDraftTokensTotal = new(int64(d))
+		if a, ok := engines.First(m, "llamacpp:spec_decode_num_accepted_tokens_total"); ok {
+			ld.SpecAcceptedTokensTotal = new(int64(a))
+		}
+	}
 	return ld, nil
 }
 

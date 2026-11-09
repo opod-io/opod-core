@@ -84,3 +84,21 @@ func TestLoadDerivesKVPressureFromSlotOccupancy(t *testing.T) {
 		t.Fatal("404 /metrics must be an error")
 	}
 }
+
+// ADR-120: llama-server's speculative counters reach the sample once it has
+// drafted; at 0 drafted (the shipped metrics, speculation off) nothing is said.
+func TestLoadReadsTheSpeculativeCounters(t *testing.T) {
+	off := server(t, shippedMetrics, 4)
+	defer off.Close()
+	if ld, err := New(off.URL).Load(context.Background()); err != nil || ld.SpecDraftTokensTotal != nil || ld.SpecAcceptedTokensTotal != nil {
+		t.Fatalf("speculation off: draft %v accepted %v err %v, want neither", ld.SpecDraftTokensTotal, ld.SpecAcceptedTokensTotal, err)
+	}
+	on := strings.NewReplacer("llamacpp:spec_decode_num_accepted_tokens_total 0", "llamacpp:spec_decode_num_accepted_tokens_total 49",
+		"llamacpp:spec_decode_num_draft_tokens_total 0", "llamacpp:spec_decode_num_draft_tokens_total 51").Replace(shippedMetrics)
+	srv := server(t, on, 4)
+	defer srv.Close()
+	ld, err := New(srv.URL).Load(context.Background())
+	if err != nil || ld.SpecDraftTokensTotal == nil || *ld.SpecDraftTokensTotal != 51 || ld.SpecAcceptedTokensTotal == nil || *ld.SpecAcceptedTokensTotal != 49 {
+		t.Fatalf("speculation on: draft %v accepted %v err %v, want 51 and 49", ld.SpecDraftTokensTotal, ld.SpecAcceptedTokensTotal, err)
+	}
+}

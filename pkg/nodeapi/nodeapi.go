@@ -527,6 +527,10 @@ type EngineLoad struct {
 	// speculation, or an engine that publishes no such counter).
 	SpecDraftTokensTotal    *int64 `json:"spec_draft_tokens_total,omitempty"`
 	SpecAcceptedTokensTotal *int64 `json:"spec_accepted_tokens_total,omitempty"`
+	// SpecAcceptPct is the engine's OWN recent acceptance rate, 0–100, from an
+	// engine that publishes a rate and no counters (SGLang:
+	// spec_accept_rate). nil = not said.
+	SpecAcceptPct *float64 `json:"spec_accept_pct,omitempty"`
 }
 
 // ---- leader → worker: models ----

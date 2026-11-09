@@ -287,6 +287,8 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum, kvSum float64
 	var prefixSamples int
+	var specPctSum float64 // the engines' own acceptance rates (SGLang), averaged below
+	var specPctN int
 	var engineTTFT []int64 // the samples' own TTFT medians, for theirs (T24.25)
 	fold := func(ld engines.EngineLoad) {
 		out.Reporting++
@@ -306,6 +308,10 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 		addStated(&out.PreemptionsTotal, ld.PreemptionsTotal)
 		addStated(&out.SpecDraftTokensTotal, ld.SpecDraftTokensTotal)
 		addStated(&out.SpecAcceptedTokensTotal, ld.SpecAcceptedTokensTotal)
+		if ld.SpecAcceptPct != nil {
+			specPctSum += *ld.SpecAcceptPct
+			specPctN++
+		}
 		addStated(&out.EvictionsTotal, ld.EvictionsTotal)
 		// The prefix cache's own counters (PLAN T28.7), summed: their ratio is
 		// the hit rate below.
@@ -383,6 +389,9 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	// The mean is over the SAMPLES, not the workers: one gang's sample speaks
 	// for every part of it, so dividing by the worker count would read a gang's
 	// prefix-cache hit rate as a fraction of itself.
+	if specPctN > 0 {
+		out.SpecAcceptPct = new(specPctSum / float64(specPctN))
+	}
 	if prefixSamples > 0 {
 		out.PrefixHitPct = prefixSum / float64(prefixSamples)
 		// Where the engines count hits and queries (vLLM), the rate is hit

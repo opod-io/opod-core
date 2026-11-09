@@ -336,7 +336,13 @@ func (f EngineFlags) llamaSpecArgs() []string {
 		return nil
 	}
 	if method == SpecNgram {
-		return []string{"--spec-type", "ngram-simple", "--spec-ngram-simple-size-m", strconv.Itoa(n)}
+		// The lookup length (-n) must not exceed the draft length (-m): with
+		// llama-server's default lookup of 12 a draft of 4 proposes nothing
+		// (read on the design-partner cell, 2026-11-08: 0 draft tokens at
+		// -m 4 and -m 6, 51 of which 49 kept at -n 3 -m 4). 3 matches vLLM's
+		// 2–4 token prompt lookup.
+		lookup := min(3, n)
+		return []string{"--spec-type", "ngram-simple", "--spec-ngram-simple-size-n", strconv.Itoa(lookup), "--spec-ngram-simple-size-m", strconv.Itoa(n)}
 	}
 	// The draft runs on the same device as the model, wholly on the GPU.
 	return []string{"--spec-type", "draft-simple", "--spec-draft-model", draft, "--spec-draft-n-max", strconv.Itoa(n), "--spec-draft-ngl", "999"}

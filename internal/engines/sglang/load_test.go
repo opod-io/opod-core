@@ -81,3 +81,18 @@ func TestNoSleepTier(t *testing.T) {
 		t.Error("SGLang has no sleep mode — claiming one would have the control plane park an endpoint that never wakes")
 	}
 }
+
+// ADR-120: SGLang states its own acceptance rate, a fraction, and no counters.
+func TestLoadReadsSGLangsAcceptanceRate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("sglang:spec_accept_rate{engine_type=\"unified\",model_name=\"m\",tp_rank=\"0\"} 0.2032520325203252\nsglang:token_usage{model_name=\"m\"} 0.1\n"))
+	}))
+	defer srv.Close()
+	ld, err := New(srv.URL, "").Load(context.Background())
+	if err != nil || ld.SpecAcceptPct == nil || fmt.Sprintf("%.1f", *ld.SpecAcceptPct) != "20.3" {
+		t.Fatalf("acceptance: %v err %v, want 20.3", ld.SpecAcceptPct, err)
+	}
+	if ld.SpecDraftTokensTotal != nil {
+		t.Fatal("SGLang states no counters")
+	}
+}

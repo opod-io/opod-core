@@ -149,6 +149,11 @@ func (s *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 	if n, ok := engines.First(m, "sglang:num_retracted_requests_total"); ok {
 		ld.PreemptionsTotal = new(int64(n))
 	}
+	// Speculative decoding (ADR-120): SGLang publishes no draft or accepted
+	// token counters, only its own recent acceptance rate, a fraction.
+	if r, ok := engines.First(m, "sglang:spec_accept_rate"); ok && r > 0 {
+		ld.SpecAcceptPct = new(r * 100)
+	}
 	if hit, ok := engines.First(m, "sglang:cache_hit_rate"); ok {
 		// Released as a fraction in some versions and a percentage in others;
 		// a rate above 1 can only be the latter.
