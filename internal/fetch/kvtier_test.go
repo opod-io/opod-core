@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -146,6 +148,8 @@ func TestKVTierPrunerBoundsABurst(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var passMu sync.Mutex
+	var passes []time.Time // when each pass ended
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -153,6 +157,9 @@ func TestKVTierPrunerBoundsABurst(t *testing.T) {
 			if err != nil {
 				t.Errorf("pass: %v", err)
 			}
+			passMu.Lock()
+			passes = append(passes, time.Now())
+			passMu.Unlock()
 		})
 	}()
 
@@ -176,6 +183,7 @@ func TestKVTierPrunerBoundsABurst(t *testing.T) {
 	// vLLM's layout and its write: <root>_r0/<hhh>/<hh>_g0/<hash>.bin through a
 	// .tmp renamed into place. 6 × the cap at 8 MiB/s: one file every ~4 ms.
 	blob := make([]byte, fileSize)
+	burstStart := time.Now()
 	for i := 0; i < 6*capBytes/fileSize; i++ {
 		sub := filepath.Join(dir, "x_r0", fmt.Sprintf("%03x", i%7), fmt.Sprintf("%02x_g0", i%3))
 		if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -190,14 +198,39 @@ func TestKVTierPrunerBoundsABurst(t *testing.T) {
 		}
 		time.Sleep(4 * time.Millisecond)
 	}
+	burstEnd := time.Now()
 	time.Sleep(every + 50*time.Millisecond)
 	close(stopSample)
 	<-sampled
 	cancel()
 	<-done
 
-	if limit := int64(capBytes) * 5 / 4; peak > limit {
-		t.Fatalf("the tier peaked at %d bytes during the burst, over 1.25 × the %d-byte cap", peak, capBytes)
+	// The design property (T26.20): while the tier grows, the next pass follows
+	// after the hot delay, not the idle period. Asserted on the passes' own
+	// rhythm, which does not depend on how fast a loaded machine lets them run:
+	// the median gap between passes during the burst is far below the idle
+	// period. (A bound on the peak alone failed 1 run in 12 on a CPU-starved
+	// machine at 1.29 × the cap, the pruner's thread waiting while the writer
+	// kept writing — scheduling, not the rule.)
+	passMu.Lock()
+	var gaps []time.Duration
+	for i := 1; i < len(passes); i++ {
+		if passes[i-1].After(burstStart) && passes[i].Before(burstEnd) {
+			gaps = append(gaps, passes[i].Sub(passes[i-1]))
+		}
+	}
+	passMu.Unlock()
+	if len(gaps) < 5 {
+		t.Fatalf("only %d passes during a %s burst: the pruner did not follow the growing tier", len(gaps)+1, burstEnd.Sub(burstStart).Round(time.Millisecond))
+	}
+	slices.Sort(gaps)
+	if median := gaps[len(gaps)/2]; median > every/2 {
+		t.Fatalf("median gap between passes during the burst %s, want the hot cadence (%s), well under the idle period (%s)", median, hot, every)
+	}
+	// And the regression it guards: on the cell the idle period alone let a
+	// burst reach 2 × the cap.
+	if limit := int64(capBytes) * 2; peak >= limit {
+		t.Fatalf("the tier peaked at %d bytes during the burst, 2 × the %d-byte cap or more", peak, capBytes)
 	}
 	if end := kvTierBytes(dir); end > capBytes {
 		t.Fatalf("the tier settled at %d bytes, over its %d-byte cap", end, capBytes)
