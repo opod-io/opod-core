@@ -910,6 +910,9 @@ func (s *Server) LoadModel(ctx context.Context, req LoadRequest) (string, error)
 // background (restarting on crash) and the model becomes servable when vLLM
 // finishes warming up, observed via the engine's /v1/models on the next heartbeat.
 func (s *Server) launchVLLM(model, servedName string) error {
+	if err := s.resolveSpecDraft("vllm"); err != nil {
+		return err
+	}
 	host, port := s.engineAddr(8000)
 	cmdline, err := s.vllmCmdline(model, servedName, host, port)
 	if err != nil {
@@ -1106,6 +1109,9 @@ func (s *Server) pinnedSource(model string) (source, revArgs string, err error) 
 //
 // SGLang has no sleep mode, so there is no equivalent of vLLM's dev-mode flags.
 func (s *Server) launchSGLang(model, servedName string) error {
+	if err := s.resolveSpecDraft("sglang"); err != nil {
+		return err
+	}
 	host, port := s.engineAddr(30000)
 	cmdline, err := s.sglangCmdline(model, servedName, host, port)
 	if err != nil {
@@ -1174,6 +1180,9 @@ func (s *Server) launchLlamaServer(nativeName, repo, file, path, alias string) e
 	// Before a pull that can be many GB: a worker holding a GPU that llama.cpp
 	// cannot reach would serve from the CPU (llamadevices.go).
 	if err := s.checkLlamaReachesDevice(context.Background()); err != nil {
+		return err
+	}
+	if err := s.resolveSpecDraft("llamacpp"); err != nil {
 		return err
 	}
 	// Pull the file ourselves (exclusive, atomic — models.FetchGGUF) and hand
