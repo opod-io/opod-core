@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+## v0.4.5 — 2026-11-09
+
+Speculative decoding: a worker renders the plan's n-gram (or draft) setting in its engine's own flags on vLLM, SGLang and
+llama.cpp, and `/loadz` reports how many proposed tokens the model kept. Proven on the design-partner cell on all three
+engines (2.9–3.5× tokens/s at 1 stream on a copy-heavy load).
+
 - **Speculative decoding, rendered per engine (T29.19, ADR-120, feature `spec_decode`).** A worker's engine flags take
   `spec_method` (`ngram` or `draft`), `spec_tokens` (1–16, default 4) and `spec_draft` (the draft model). The launch writes
   each engine's own spelling: vLLM one `--speculative-config` JSON (method `ngram` or `draft_model`), SGLang
