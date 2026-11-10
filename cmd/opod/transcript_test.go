@@ -61,6 +61,34 @@ type transcriptCase struct {
 	files map[string]string
 }
 
+// managedEnv is a managed leader's host: no key file, the admin token in the
+// environment (T24.102).
+var managedEnv = map[string]string{"OPOD_MANAGED": "1", "OPOD_ADMIN_TOKEN": "transcript-admin-token"}
+
+// managedLeader answers as a running managed leader does, and only to its
+// admin token.
+func managedLeader() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") != "Bearer transcript-admin-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"type":"unauthorized","message":"invalid admin key"}}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/healthz":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/admin/v1/nodes":
+			_, _ = w.Write([]byte(`[{"ID":"n_a","Hostname":"node-a","OS":"linux","Arch":"amd64","Address":"http://10.0.0.7:8081","LastHeartbeat":"2026-11-10T08:00:00Z","State":"ready","state":"ready","heartbeat_age_seconds":2,"placements":[{"NodeID":"n_a","ModelID":"qwen2.5-0.5b-gguf","Status":"ready"}]}]`))
+		case "/admin/v1/shards":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"type":"not_found","message":"no route"}}`))
+		}
+	}
+}
+
 // answer is a stub that replies status and body to every request.
 func answer(status int, body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -240,6 +268,15 @@ var transcripts = []transcriptCase{
 	{name: "connect-unknown-no-tty", args: []string{"connect", "nosuch"}},
 	// node ls reads this host's store, not the leader: an empty store says so.
 	{name: "node-ls-empty-store", args: []string{"node", "ls"}},
+	// T24.102: a managed leader (OPOD_MANAGED=1) keeps its store in its own
+	// memory and has no key file, only the admin token it was started with.
+	// The read verbs ask it; a store command refuses rather than open an
+	// empty store of its own.
+	{name: "node-ls-managed-leader", args: []string{"node", "ls"}, stub: managedLeader(), env: managedEnv},
+	{name: "node-show-managed-leader", args: []string{"node", "show", "n_a"}, stub: managedLeader(), env: managedEnv},
+	{name: "shard-ls-managed-leader", args: []string{"shard", "ls"}, stub: managedLeader(), env: managedEnv},
+	{name: "token-ls-managed-leader", args: []string{"token", "ls"}, stub: managedLeader(), env: managedEnv},
+	{name: "token-ls-managed-no-leader", args: []string{"token", "ls"}, env: managedEnv},
 	// shard ls asks the leader; a leader that refuses the key.
 	{name: "shard-ls-unauthorized", args: []string{"shard", "ls"}, key: true, stub: answer(http.StatusUnauthorized, `{"error":{"type":"unauthorized","message":"invalid admin key"}}`)},
 	{name: "shard-ls-forbidden", args: []string{"shard", "ls"}, key: true, stub: answer(http.StatusForbidden, `{"error":{"type":"forbidden","message":"admin scope required"}}`)},

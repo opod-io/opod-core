@@ -117,7 +117,7 @@ func runUp(args []string) int {
 		caps.OS, caps.Arch, caps.RAMGB, caps.CPUCores)
 
 	// 3. Store
-	st := openStoreOrExit(cfg)
+	st := openLeaderStoreOrExit(cfg)
 	defer st.Close()
 
 	// 4. Bootstrap admin key on first run

@@ -1,0 +1,5 @@
+$ opod token ls
+--- exit 1
+--- stdout
+--- stderr
+opod: this host's leader is managed (OPOD_MANAGED=1): its store lives only inside the running `opod up`, so there is nothing on this host to read or change — and no leader answers at http://127.0.0.1:1 either: check that `opod up` runs in this host or pod, and make changes through the leader's manager

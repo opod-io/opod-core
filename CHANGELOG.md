@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **The CLI on a managed leader's host answers from the running leader (T24.102).** On a host whose leader runs with
+  `OPOD_MANAGED=1` and no key file, `opod node ls` printed "no nodes registered yet" beside a serving worker and
+  `node show`, `model ls` and `token ls` read an empty store of their own, while `shard ls` and `model ps` said "no admin
+  key". Now an admin call also uses the admin token the leader was started with (`OPOD_ADMIN_TOKEN` or
+  `auth.admin_token`, after `OPOD_TOKEN`); over TLS the CLI accepts exactly the certificate in the leader's `tls_cert`
+  file, whatever names it carries, and any other certificate is an answer, never "no leader answering"; `node ls` and
+  `node show` ask the running leader first, as `drain` and `remove` do; and a command that would open the store on a
+  managed host with no `OPOD_STORAGE_DSN` refuses and says what reaches the leader instead.
+
 - **`opod fetch` names the Hub, shows progress and says when a file is cached.** A Hub that does not answer names the
   address and whether it came from `HF_ENDPOINT`; a long download logs its progress every 30 s (a new
   `fetch.Options.Progress`); a cached file says `already cached`; the logs on stderr are one human line per event

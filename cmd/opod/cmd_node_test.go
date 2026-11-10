@@ -162,7 +162,7 @@ func TestNodeLsShowsTheLiveState(t *testing.T) {
 	for _, seconds := range []int{30, 0} { // 0 = the router's check is off; the leader's own 60 s bound applies
 		cfg := config.Default()
 		cfg.Router.HeartbeatMaxAgeSeconds = seconds
-		for _, r := range nodeRows(cfg, nodes, now) {
+		for _, r := range nodeRows(cfg, nodes, nil, now) {
 			if r.State != want[r.ID] {
 				t.Errorf("heartbeat_max_age_seconds=%d: %s shows %q, want %q", seconds, r.ID, r.State, want[r.ID])
 			}

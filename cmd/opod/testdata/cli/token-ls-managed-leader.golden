@@ -1,0 +1,5 @@
+$ opod token ls
+--- exit 1
+--- stdout
+--- stderr
+opod: this host's leader is managed (OPOD_MANAGED=1): its store lives only inside the running `opod up`, so there is nothing on this host to read or change — `opod node ls`, `opod node show`, `opod shard ls` and `opod model ps` ask the running leader; make any other change through the leader's manager

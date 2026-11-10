@@ -1,0 +1,10 @@
+$ opod node show n_a
+--- exit 0
+--- stdout
+n_a  node-a
+  state      ready (last heartbeat 2026-11-10T08:00:00Z)
+  platform   linux/amd64 · 0 GB RAM
+  address    http://10.0.0.7:8081
+  loaded     qwen2.5-0.5b-gguf
+  (opod node show n_a --json for every field)
+--- stderr

@@ -2,4 +2,4 @@ $ opod shard ls
 --- exit 1
 --- stdout
 --- stderr
-opod: list shards: no admin key: none at $DATA/admin.key and OPOD_TOKEN is not set — run this on the leader's host, or set OPOD_TOKEN to an admin key
+opod: list shards: no admin key: none at $DATA/admin.key, and neither OPOD_TOKEN nor OPOD_ADMIN_TOKEN is set — run this on the leader's host, or set OPOD_TOKEN to an admin key

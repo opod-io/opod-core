@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -52,16 +52,46 @@ func newLogger(cfg *config.Config) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 }
 
-func openStoreOrExit(cfg *config.Config) store.Store {
+func openLeaderStoreOrExit(cfg *config.Config) store.Store {
 	dsn := cfg.Storage.DSN
 	// Managed leader (OPOD_MANAGED=1): the store is a rebuildable cache —
 	// keys come from the auth snapshot, nodes from heartbeats, the manager
 	// pulls usage + events by cursor. Nothing durable lands on the machine
 	// unless the operator asks for it with OPOD_STORAGE_DSN.
-	if cfg.Surfaces.Managed && os.Getenv("OPOD_STORAGE_DSN") == "" {
+	if managedInMemory(cfg) {
 		dsn = ":memory:"
 		cfg.Storage.DSN = dsn // what /admin/v1/config reports must be what runs
 	}
+	return openSQLiteOrExit(dsn)
+}
+
+// managedInMemory: a managed leader keeps its store in its own process memory.
+func managedInMemory(cfg *config.Config) bool {
+	return cfg.Surfaces.Managed && os.Getenv("OPOD_STORAGE_DSN") == ""
+}
+
+// openStoreOrExit is the store for a client command (node, model, token,
+// shard …) — never the leader's own, which is openLeaderStoreOrExit. On a
+// managed host that store lives only inside the running `opod up`, and a
+// fresh `:memory:` here answered "no nodes registered yet" beside a serving
+// worker and would take a `token create` that vanished (PLAN T24.102). So a
+// client command refuses there, saying what reaches the real one.
+func openStoreOrExit(cfg *config.Config) store.Store {
+	if managedInMemory(cfg) {
+		die("this host's leader is managed (OPOD_MANAGED=1): its store lives only inside the running `opod up`, so there is nothing on this host to read or change — %s", managedStoreHint(cfg))
+	}
+	return openSQLiteOrExit(cfg.Storage.DSN)
+}
+
+// managedStoreHint says what reaches a managed leader's state instead.
+func managedStoreHint(cfg *config.Config) string {
+	if leaderAnswers(cfg) {
+		return "`opod node ls`, `opod node show`, `opod shard ls` and `opod model ps` ask the running leader; make any other change through the leader's manager"
+	}
+	return "and no leader answers at " + localLeaderURL(cfg) + " either: check that `opod up` runs in this host or pod, and make changes through the leader's manager"
+}
+
+func openSQLiteOrExit(dsn string) store.Store {
 	st, err := store.OpenSQLite(dsn)
 	if err != nil {
 		die("store: %v", err)
@@ -273,22 +303,70 @@ func localLeaderURL(cfg *config.Config) string {
 }
 
 // localLeaderClient is an HTTP client for this host's leader. When the
-// leader serves TLS it trusts the leader's own certificate file — never
-// "skip verification" — so a call to a TLS leader verifies.
+// leader serves TLS it accepts exactly the certificate in the leader's own
+// certificate file — never "skip verification". The check is the leaf itself,
+// not a chain and a name: this host reads the very file the leader serves, and
+// a certificate its manager issued names the leader's service, never
+// localhost, so a name check against https://localhost failed on every managed
+// leader (PLAN T24.102). A self-signed certificate passes the same way.
 func localLeaderClient(cfg *config.Config, timeout time.Duration) *http.Client {
 	c := &http.Client{Timeout: timeout}
 	if cfg.TLSCert == "" || cfg.TLSKey == "" {
 		return c
 	}
-	pem, err := os.ReadFile(cfg.TLSCert)
+	pemBytes, err := os.ReadFile(cfg.TLSCert)
 	if err != nil {
 		return c // the call then fails on the certificate, which names the problem
 	}
-	pool := x509.NewCertPool()
-	if pool.AppendCertsFromPEM(pem) {
-		c.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+	want := leafOf(pemBytes)
+	if want == nil {
+		return c
 	}
+	file := cfg.TLSCert
+	c.Transport = &http.Transport{TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		// The default verification is replaced, not dropped: VerifyConnection
+		// accepts one certificate, byte for byte.
+		InsecureSkipVerify: true, //nolint:gosec // pinned to this host's own leaf in VerifyConnection
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 || !bytes.Equal(cs.PeerCertificates[0].Raw, want) {
+				return &notOurCertError{File: file}
+			}
+			return nil
+		},
+	}}
 	return c
+}
+
+// certProblem says which certificate check failed, for adminCallT's message.
+func certProblem(notOurs *notOurCertError, verify *tls.CertificateVerificationError) string {
+	if notOurs != nil {
+		return notOurs.Error()
+	}
+	return "its certificate did not verify"
+}
+
+// leafOf is the DER of the first certificate in a PEM file (nil = none).
+func leafOf(pemBytes []byte) []byte {
+	for {
+		var b *pem.Block
+		b, pemBytes = pem.Decode(pemBytes)
+		if b == nil {
+			return nil
+		}
+		if b.Type == "CERTIFICATE" {
+			return b.Bytes
+		}
+	}
+}
+
+// notOurCertError: something answered on this host's leader address with a
+// certificate that is not the one the config names — a leader answered, so it
+// is never "no leader answering" and never a reason to fall back to the store.
+type notOurCertError struct{ File string }
+
+func (e *notOurCertError) Error() string {
+	return "it presented a certificate that is not the one in " + e.File
 }
 
 // weightsOpTimeout is the client budget for admin calls that move model
@@ -337,10 +415,15 @@ func adminTargetURL(cfg *config.Config) string {
 }
 
 // adminKey is the key an admin verb sends and where it came from: OPOD_TOKEN,
+// else the admin token this host's leader is started with (OPOD_ADMIN_TOKEN or
+// auth.admin_token — a managed leader has that and no key file, PLAN T24.102),
 // else the key `opod up` wrote on this host.
 func adminKey(cfg *config.Config) (key, source string) {
 	if v := strings.TrimSpace(os.Getenv("OPOD_TOKEN")); v != "" {
 		return v, "OPOD_TOKEN"
+	}
+	if v := strings.TrimSpace(cfg.Auth.AdminToken); v != "" {
+		return v, "the leader's admin token (OPOD_ADMIN_TOKEN or auth.admin_token)"
 	}
 	return readLocalAdminKey(cfg), localAdminKeyPath(cfg)
 }
@@ -440,7 +523,7 @@ func adminCallT(ctx context.Context, cfg *config.Config, method, path string, bo
 	base, source, remote := adminTarget(cfg)
 	key, keySource := adminKey(cfg)
 	if key == "" {
-		return nil, fmt.Errorf("%w: none at %s and OPOD_TOKEN is not set — run this on the leader's host, or set OPOD_TOKEN to an admin key", errNoAdminKey, localAdminKeyPath(cfg))
+		return nil, fmt.Errorf("%w: none at %s, and neither OPOD_TOKEN nor OPOD_ADMIN_TOKEN is set — run this on the leader's host, or set OPOD_TOKEN to an admin key", errNoAdminKey, localAdminKeyPath(cfg))
 	}
 	var reader io.Reader = http.NoBody
 	if body != nil {
@@ -461,6 +544,13 @@ func adminCallT(ctx context.Context, cfg *config.Config, method, path string, bo
 		var ne net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
 			return nil, fmt.Errorf("gave up after %s waiting for %s %s at %s — the leader may still be working on it; check with `opod status`", timeout, method, path, base)
+		}
+		var notOurs *notOurCertError
+		var verify *tls.CertificateVerificationError
+		if errors.As(err, &notOurs) || errors.As(err, &verify) {
+			// A certificate came back, so a leader answered: not errUnreachable,
+			// which would send the command to its offline path (T24.102).
+			return nil, fmt.Errorf("the leader at %s answered, but %s: %w — check tls_cert and OPOD_TLS_CERT on this host", base, certProblem(notOurs, verify), err)
 		}
 		return nil, &unreachableError{URL: base, Source: source, Remote: remote, Cause: err}
 	}

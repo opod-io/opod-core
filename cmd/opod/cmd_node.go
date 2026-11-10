@@ -88,14 +88,12 @@ func cmdNode(args []string) {
 
 func nodeLs(asJSON bool) {
 	cfg := loadConfigOrExit()
-	st := openStoreOrExit(cfg)
-	defer st.Close()
-	nodes, err := st.Nodes().List(context.Background())
+	nodes, live, err := listNodes(cfg)
 	if err != nil {
 		die("list nodes: %v", err)
 	}
 	if asJSON {
-		rows := nodeRows(cfg, nodes, time.Now())
+		rows := nodeRows(cfg, nodes, live, time.Now())
 		out := make([]map[string]string, 0, len(rows))
 		for _, r := range rows {
 			out = append(out, map[string]string{"id": r.ID, "hostname": r.Hostname, "platform": r.Platform, "address": r.Address, "state": r.State, "last_heartbeat": r.LastHB})
@@ -108,7 +106,7 @@ func nodeLs(asJSON bool) {
 		return
 	}
 	fmt.Printf("%-14s %-20s %-12s %-22s %-10s %s\n", "ID", "HOSTNAME", "OS/ARCH", "ADDRESS", "STATE", "LAST HB")
-	for _, r := range nodeRows(cfg, nodes, time.Now()) {
+	for _, r := range nodeRows(cfg, nodes, live, time.Now()) {
 		fmt.Printf("%-14s %-20s %-12s %-22s %-10s %s\n", r.ID, r.Hostname, r.Platform, r.Address, r.State, r.LastHB)
 	}
 }
@@ -121,37 +119,53 @@ type nodeRow struct{ ID, Hostname, Platform, Address, State, LastHB string }
 // under the leader's heartbeat bound), so a worker whose heartbeats stopped
 // reads `lost` here exactly when the leader stops sending it requests, and a
 // drained one reads `draining`.
-func nodeRows(cfg *config.Config, nodes []store.Node, now time.Time) []nodeRow {
+// live, when the running leader answered, is the state it reported per node id,
+// which wins over a recomputation under this host's config.
+func nodeRows(cfg *config.Config, nodes []store.Node, live map[string]string, now time.Time) []nodeRow {
 	maxAge := store.HeartbeatBound(cfg.Router.HeartbeatMaxAgeSeconds)
 	out := make([]nodeRow, 0, len(nodes))
 	for _, n := range nodes {
+		state := live[n.ID]
+		if state == "" {
+			state = n.LiveState(maxAge, now)
+		}
 		out = append(out, nodeRow{
 			ID: n.ID, Hostname: n.Hostname, Platform: n.OS + "/" + n.Arch, Address: n.Address,
-			State: n.LiveState(maxAge, now), LastHB: n.LastHeartbeat.Format(time.RFC3339),
+			State: state, LastHB: n.LastHeartbeat.Format(time.RFC3339),
 		})
 	}
 	return out
 }
 
-func nodeShow(id string, asJSON bool) {
-	cfg := loadConfigOrExit()
+// listNodes is the running leader's registry, or the store's when no leader
+// answers on this host (live is then nil).
+func listNodes(cfg *config.Config) (nodes []store.Node, live map[string]string, err error) {
+	rows, took, err := nodesFromLeader(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if took {
+		live = map[string]string{}
+		for _, r := range rows {
+			nodes = append(nodes, r.Node)
+			live[r.ID] = r.Live
+		}
+		return nodes, live, nil
+	}
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	n, err := st.Nodes().Get(context.Background(), id)
+	nodes, err = st.Nodes().List(context.Background())
+	return nodes, nil, err
+}
+
+func nodeShow(id string, asJSON bool) {
+	cfg := loadConfigOrExit()
+	n, live, loaded, err := showNode(cfg, id)
 	if err != nil {
 		die("get node: %v", err)
 	}
 	if n == nil {
 		die("no node %s (see opod node ls)", id)
-	}
-	// Include the models currently resident on this node, from the heartbeat-
-	// reconciled placements — so callers (and any UI over this API) can see what's
-	// actually loaded on the worker, not just its hardware/state.
-	loaded := []string{}
-	if ps, e := st.Placements().GetByNode(context.Background(), id); e == nil {
-		for _, p := range ps {
-			loaded = append(loaded, p.ModelID)
-		}
 	}
 	if asJSON {
 		fmt.Println(nodeShowJSON(*n, loaded))
@@ -159,7 +173,10 @@ func nodeShow(id string, asJSON bool) {
 	}
 	maxAge := store.HeartbeatBound(cfg.Router.HeartbeatMaxAgeSeconds)
 	fmt.Printf("%s  %s\n", bold(n.ID), n.Hostname)
-	fmt.Printf("  state      %s (last heartbeat %s)\n", n.LiveState(maxAge, time.Now()), n.LastHeartbeat.Format(time.RFC3339))
+	if live == "" {
+		live = n.LiveState(maxAge, time.Now())
+	}
+	fmt.Printf("  state      %s (last heartbeat %s)\n", live, n.LastHeartbeat.Format(time.RFC3339))
 	fmt.Printf("  platform   %s/%s · %d GB RAM\n", n.OS, n.Arch, n.RAMGB)
 	fmt.Printf("  address    %s\n", n.Address)
 	if len(loaded) == 0 {
@@ -213,20 +230,49 @@ const (
 // no body — and only THIS host's leader not running falls back to the store:
 // a store written under a leader that answered is the one thing not to do.
 func throughLeader(cfg *config.Config, method, path string) (took bool, err error) {
-	_, adminErr := adminCall(context.Background(), cfg, method, path, nil)
+	_, took, err = askLeader(cfg, method, path)
+	return took, err
+}
+
+// askLeader is throughLeader with the leader's answer: the read verbs (node ls,
+// node show) ask the running leader first too, because on a managed host the
+// store this command could open is not the leader's (PLAN T24.102).
+func askLeader(cfg *config.Config, method, path string) (body []byte, took bool, err error) {
+	body, adminErr := adminCall(context.Background(), cfg, method, path, nil)
 	switch {
 	case adminErr == nil:
-		return true, nil
+		return body, true, nil
 	case errors.Is(adminErr, errNoAdminKey):
 		// No key reached nobody — but a leader may still run (T10.21).
 		if leaderAnswers(cfg) {
-			return true, fmt.Errorf("a leader answers at %s but this host has no admin key (%s), so the change cannot go through it; run this on the host where `opod up` wrote the key, or set OPOD_TOKEN", localLeaderURL(cfg), localAdminKeyPath(cfg))
+			return nil, true, fmt.Errorf("a leader answers at %s but this host has no admin key (%s, OPOD_TOKEN and OPOD_ADMIN_TOKEN are empty), so this cannot go through it; run this on the host where `opod up` wrote the key, or set OPOD_TOKEN", localLeaderURL(cfg), localAdminKeyPath(cfg))
 		}
-		return false, nil
+		return nil, false, nil
 	case localLeaderDown(adminErr):
-		return false, nil
+		return nil, false, nil
 	}
-	return true, adminErr
+	return nil, true, adminErr
+}
+
+// leaderNode is one row of the running leader's GET /admin/v1/nodes: the node,
+// the state the leader acts on, and what it has resident.
+type leaderNode struct {
+	store.Node
+	Live       string            `json:"state"`
+	Placements []store.Placement `json:"placements,omitempty"`
+}
+
+// nodesFromLeader is the running leader's registry; took=false means no leader
+// answered on this host, and only then may a caller read the store.
+func nodesFromLeader(cfg *config.Config) (rows []leaderNode, took bool, err error) {
+	body, took, err := askLeader(cfg, "GET", "/admin/v1/nodes")
+	if !took || err != nil {
+		return nil, took, err
+	}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, true, fmt.Errorf("read the leader's node list: %w", err)
+	}
+	return rows, true, nil
 }
 
 // setNodeState asks the running leader (POST /admin/v1/nodes/{id}/<verb>, so
@@ -259,6 +305,42 @@ func nodeRemove(id string) {
 		return
 	}
 	ok(os.Stdout, "removed %s and its placements (%s)", id, via)
+}
+
+// showNode is one node and the models resident on it — from the running
+// leader's registry, else (no leader answering on this host) the store's rows,
+// the heartbeat-reconciled placements, so callers see what is actually loaded
+// on the worker, not just its hardware. live is the leader's state ("" = none).
+func showNode(cfg *config.Config, id string) (n *store.Node, live string, loaded []string, err error) {
+	loaded = []string{}
+	rows, took, err := nodesFromLeader(cfg)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if took {
+		for _, r := range rows {
+			if r.ID == id {
+				for _, p := range r.Placements {
+					loaded = append(loaded, p.ModelID)
+				}
+				node := r.Node
+				return &node, r.Live, loaded, nil
+			}
+		}
+		return nil, "", nil, nil
+	}
+	st := openStoreOrExit(cfg)
+	defer st.Close()
+	n, err = st.Nodes().Get(context.Background(), id)
+	if err != nil || n == nil {
+		return n, "", loaded, err
+	}
+	if ps, e := st.Placements().GetByNode(context.Background(), id); e == nil {
+		for _, p := range ps {
+			loaded = append(loaded, p.ModelID)
+		}
+	}
+	return n, "", loaded, nil
 }
 
 // removeNode forgets a node. A running leader must do it itself (DELETE

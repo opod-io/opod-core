@@ -1,0 +1,6 @@
+$ opod node ls
+--- exit 0
+--- stdout
+ID             HOSTNAME             OS/ARCH      ADDRESS                STATE      LAST HB
+n_a            node-a               linux/amd64  http://10.0.0.7:8081   ready      2026-11-10T08:00:00Z
+--- stderr
