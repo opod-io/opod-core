@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`opod doctor` finishes the report and sets an exit code.** Every check is a row with its fix, the report ends with
+  `all checks passed` or `N problem(s) found` (exit 1; it always exited 0), an unknown engine is a failed row instead of
+  the end of the report, and it checks the config file, a leader on this host, the admin key and whether the port is
+  this host's own leader; install hints follow the OS; `--json`.
+
 - **`opod join` says when it registered, and a stop it chose fails.** `registered with leader … as …` once it is in, and
   one line per kind of failure (`refused the join token — mint one: opod token create --node`, `cannot reach the leader …`)
   beside the JSON log, through a new `agent.Agent.OnRegister` hook; 6 refused re-registers or a taken worker port end with

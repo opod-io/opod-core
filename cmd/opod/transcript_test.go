@@ -74,7 +74,12 @@ func routes(bodies map[string]string) http.HandlerFunc {
 }
 
 // hardwareLine is this machine's own facts; goldens say HW.
-var hardwareLine = regexp.MustCompile(`(?m)^(. (?:hardware|detected) ).*$`)
+var hardwareLine = regexp.MustCompile(`(?m)^(. (?:hardware|detected)): .*$`)
+
+// gpuLine and installHint differ by machine and OS (CI runs macOS and Linux):
+// a GPU line exists on some hosts only, and the install command is per OS.
+var gpuLine = regexp.MustCompile(`(?m)^. GPU: .*\n`)
+var installHint = regexp.MustCompile(`(→ install: ).*`)
 
 // jsonLogLine is the structured log on stderr: timestamps and goroutine
 // order make it differ on every run, and it is for machines. A golden pins
@@ -104,6 +109,13 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.79 — doctor finishes the report and sets an exit code. PATH holds
+	// only the system's own tools, so what this machine has installed does
+	// not change the answer.
+	{name: "doctor-all-pass", args: []string{"doctor"}, stub: routes(map[string]string{"/api/version": `{"version":"0.0.0"}`}), noLocal: true,
+		env: map[string]string{"PATH": "/usr/bin:/bin", "OPOD_OLLAMA_ENDPOINT": "{{STUB}}", "OPOD_LISTEN": "{{FREE}}"}},
+	{name: "doctor-engine-down", args: []string{"doctor"}, env: map[string]string{"PATH": "/usr/bin:/bin", "OPOD_LISTEN": "{{FREE}}"}},
+	{name: "doctor-bad-engine", args: []string{"doctor"}, env: map[string]string{"PATH": "/usr/bin:/bin", "OPOD_ENGINE": "bogus", "OPOD_LISTEN": "{{FREE}}"}},
 	// T24.77 — down stops only opod, says so, and a repeat is fine.
 	{name: "down-not-running", args: []string{"down", "--no-unload"}},
 	{name: "down-foreign-pid", args: []string{"down", "--no-unload"}, pidOf: "foreign"},
@@ -282,7 +294,9 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 			s = strings.ReplaceAll(s, strings.TrimPrefix(stubURL, "http://"), "STUB")
 		}
 		s = pidNumber.ReplaceAllString(s, "pid N")
-		s = hardwareLine.ReplaceAllString(s, "${1}HW")
+		s = hardwareLine.ReplaceAllString(s, "${1}: HW")
+		s = gpuLine.ReplaceAllString(s, "")
+		s = installHint.ReplaceAllString(s, "${1}OS-HINT")
 		s = jsonLogLine.ReplaceAllString(s, "")
 		s = strings.ReplaceAll(s, taken.Addr().String(), "TAKEN")
 		s = strings.ReplaceAll(s, free, "FREE")

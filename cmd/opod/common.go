@@ -114,16 +114,26 @@ func engineEndpoint(cfg *config.Config, name string) (canonical, endpoint, apiKe
 }
 
 func newEngineFromConfig(cfg *config.Config) engines.Engine {
+	eng, err := engineFromConfig(cfg)
+	if err != nil {
+		die("%v", err)
+	}
+	return eng
+}
+
+// engineFromConfig is the configured engine, or why there is none: for a
+// caller that reports instead of exiting (doctor).
+func engineFromConfig(cfg *config.Config) (engines.Engine, error) {
 	name := cfg.Engine.Preferred
 	_, endpoint, apiKey, ok := engineEndpoint(cfg, name)
 	if !ok {
-		die("unknown engine %q (valid: %s)", name, strings.Join(engines.Names(), ", "))
+		return nil, fmt.Errorf("unknown engine %q (valid: %s)", name, strings.Join(engines.Names(), ", "))
 	}
 	eng, err := engines.NewWithAuth(name, endpoint, apiKey)
 	if err != nil {
-		die("engine: %v", err)
+		return nil, fmt.Errorf("engine: %w", err)
 	}
-	return eng
+	return eng, nil
 }
 
 func pidFilePath(cfg *config.Config) string {

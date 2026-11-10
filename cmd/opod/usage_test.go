@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -71,5 +72,33 @@ func TestUsageErrorsExitTwoWithOneLine(t *testing.T) {
 				t.Errorf("opod %s: want one opod: line on stderr, no Go usage\n%s", strings.Join(args, " "), got)
 			}
 		})
+	}
+}
+
+// T24.79: doctor --json is the whole report for a script — every check with
+// its state, and the problem count the exit code follows.
+func TestDoctorJSONIsTheWholeReport(t *testing.T) {
+	got := runTranscript(t, transcriptCase{name: "doctor-json", args: []string{"doctor", "--json"},
+		env: map[string]string{"PATH": "/usr/bin:/bin", "OPOD_ENGINE": "bogus", "OPOD_LISTEN": "{{FREE}}"}})
+	head, _, _ := strings.Cut(got, "--- stderr\n")
+	_, stdout, _ := strings.Cut(head, "--- stdout\n")
+	var rep struct {
+		Checks   []doctorCheck `json:"checks"`
+		Problems int           `json:"problems"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rep); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	names := map[string]string{}
+	for _, c := range rep.Checks {
+		names[c.Name] = c.State
+	}
+	for _, want := range []string{"hardware", "config", "leader", "listen port", "admin key", "engine", "data dir", "catalog"} {
+		if _, ok := names[want]; !ok {
+			t.Errorf("no %q check in %v", want, names)
+		}
+	}
+	if names["engine"] != "problem" || rep.Problems < 1 || !strings.Contains(got, "--- exit 1\n") {
+		t.Errorf("a bad engine is a problem and exits 1: %+v\n%s", rep, got)
 	}
 }

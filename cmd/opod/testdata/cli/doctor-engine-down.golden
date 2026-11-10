@@ -1,0 +1,24 @@
+$ opod doctor
+--- exit 1
+--- stdout
+Opod doctor
+============
+✔ hardware: HW
+▶ config: no config file at $DATA/.opod/config.yaml — the defaults are used
+    → opod up writes one on its first run; edit it with opod config edit
+▶ leader: no leader answering at http://FREE
+    → start one with opod up — on a worker host this is expected
+✔ listen port: FREE is free
+▶ admin key: none at $DATA/admin.key
+    → opod up writes it on its first run
+✖ engine: ollama unreachable at http://127.0.0.1:1: Get "http://127.0.0.1:1/api/version": dial tcp 127.0.0.1:1: connect: connection refused
+    → start it with: ollama serve
+▶ ollama binary: not in PATH
+    → install: OS-HINT
+▶ llama.cpp: not installed — needed only for sharded models or engine.preferred=llamacpp
+    → install: OS-HINT
+✔ data dir: $DATA
+✔ catalog: 48 entries
+
+1 problem(s) found — each says its fix above
+--- stderr

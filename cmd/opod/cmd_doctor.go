@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,108 +16,193 @@ import (
 	"github.com/opod-io/opod-core/internal/models"
 )
 
+// doctorCheck is one row of the report. A problem is something to fix; a
+// note is worth knowing and needs nothing.
+type doctorCheck struct {
+	Name   string `json:"name"`
+	State  string `json:"state"` // ok | problem | note
+	Detail string `json:"detail"`
+	Fix    string `json:"fix,omitempty"`
+}
+
 func cmdDoctor(args []string) {
 	if wantsHelp(args) {
 		showHelp(helpSpec{
 			name:    "doctor",
-			summary: "diagnose common setup problems (engine, port, catalog, hardware)",
-			usage:   "opod doctor",
+			summary: "check this host: config, leader, admin key, port, engine, data dir, catalog",
+			usage:   "opod doctor [--json]",
 			examples: []string{
-				"opod doctor              # run all checks, print fix commands for failures",
+				"opod doctor              # every check, each problem with its fix; exit 1 when any is found",
+				"opod doctor --json       # the same, for a script",
 			},
 		})
 	}
-	if len(args) > 0 {
-		dieUsageOf("doctor", "doctor takes no arguments (got %q)", strings.Join(args, " "))
+	rest, asJSON := extractJSONFlag(args)
+	if len(rest) > 0 {
+		dieUsageOf("doctor", "unknown argument %q (doctor takes only --json)", rest[0])
 	}
-	cfg := loadConfigOrExit()
-	fmt.Println("Opod doctor")
-	fmt.Println("============")
+	checks := runDoctor()
+	problems := 0
+	for _, c := range checks {
+		if c.State == "problem" {
+			problems++
+		}
+	}
+	if asJSON {
+		emitJSON(map[string]any{"checks": checks, "problems": problems})
+	} else {
+		fmt.Println("Opod doctor")
+		fmt.Println("============")
+		for _, c := range checks {
+			mark := ansiFor(os.Stdout, "1;32", "✔")
+			switch c.State {
+			case "problem":
+				mark = ansiFor(os.Stdout, "1;31", "✖")
+			case "note":
+				mark = ansiFor(os.Stdout, "1;34", "▶")
+			}
+			fmt.Printf("%s %s: %s\n", mark, c.Name, c.Detail)
+			if c.Fix != "" {
+				fmt.Printf("    → %s\n", c.Fix)
+			}
+		}
+		fmt.Println()
+		if problems == 0 {
+			fmt.Println("all checks passed")
+		} else {
+			fmt.Printf("%d problem(s) found — each says its fix above\n", problems)
+		}
+	}
+	if problems > 0 {
+		os.Exit(1)
+	}
+}
 
-	// Hardware
+// runDoctor runs every check, whatever an earlier one found: a bad config or
+// an unknown engine is a row of the report, never the end of it.
+func runDoctor() []doctorCheck {
+	var out []doctorCheck
+	add := func(name, state, detail, fix string) {
+		out = append(out, doctorCheck{Name: name, State: state, Detail: detail, Fix: fix})
+	}
 	caps := agent.Detect()
-	ok(os.Stdout, "hardware: %s/%s · %d cores · %d GB RAM",
-		caps.OS, caps.Arch, caps.CPUCores, caps.RAMGB)
+	add("hardware", "ok", fmt.Sprintf("%s/%s · %d cores · %d GB RAM", caps.OS, caps.Arch, caps.CPUCores, caps.RAMGB), "")
 	for _, g := range caps.GPUs {
-		ok(os.Stdout, "GPU: %s (%d GB)", g.Name, g.VRAMGB)
+		add("GPU", "ok", fmt.Sprintf("%s (%d GB)", g.Name, g.VRAMGB), "")
 	}
 
-	// Listen port
+	path := config.DefaultPath()
+	cfg, err := config.Load("")
+	switch {
+	case err != nil:
+		add("config", "problem", err.Error(), "fix or remove "+path+" — the checks below use the defaults")
+		cfg = config.Default()
+	case fileExists(path):
+		add("config", "ok", path, "")
+	default:
+		add("config", "note", "no config file at "+path+" — the defaults are used", "opod up writes one on its first run; edit it with opod config edit")
+	}
+
 	addr := cfg.Listen
 	if addr == "" {
 		addr = ":8080"
 	}
-	if portAvailable(addr) {
-		ok(os.Stdout, "listen port %s available", addr)
+	leaderUp := leaderAnswers(cfg)
+	if leaderUp {
+		add("leader", "ok", "answering at "+localLeaderURL(cfg), "")
 	} else {
-		warn("listen port %s already in use", addr)
+		add("leader", "note", "no leader answering at "+localLeaderURL(cfg), "start one with opod up — on a worker host this is expected")
+	}
+	switch {
+	case leaderUp:
+		who := "this host's opod leader"
+		if pid, perr := readPID(cfg); perr == nil {
+			who += fmt.Sprintf(" (pid %d)", pid)
+		}
+		add("listen port", "ok", addr+" is "+who, "")
+	case portAvailable(addr):
+		add("listen port", "ok", addr+" is free", "")
+	default:
+		add("listen port", "problem", addr+" is in use by another program", "stop it, or set listen: in "+path+" or OPOD_LISTEN")
 	}
 
-	// Ollama
-	if path, err := exec.LookPath("ollama"); err == nil {
-		ok(os.Stdout, "ollama binary at %s", path)
-	} else {
-		warn("ollama not found in PATH — install: brew install ollama")
+	keyPath := localAdminKeyPath(cfg)
+	switch {
+	case readLocalAdminKey(cfg) != "":
+		add("admin key", "ok", keyPath, "")
+	case leaderUp:
+		add("admin key", "problem", "a leader answers but there is no admin key at "+keyPath, "run admin commands on the host where opod up wrote it, or set OPOD_TOKEN to an admin key")
+	default:
+		add("admin key", "note", "none at "+keyPath, "opod up writes it on its first run")
 	}
 
-	// llama.cpp — only required for sharded models (rpc-server) and the
-	// llamacpp engine's auto-spawn (llama-server). For a default single-node
-	// Ollama setup, missing binaries are not an error.
-	rpcPath, rpcErr := exec.LookPath("rpc-server")
+	eng, err := engineFromConfig(cfg)
+	if err != nil {
+		add("engine", "problem", err.Error(), "set engine.preferred in "+path+" (or OPOD_ENGINE) to one of the valid names")
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		herr := eng.Health(ctx)
+		cancel()
+		if herr != nil {
+			add("engine", "problem", herr.Error(), engineStartHint(eng.Name()))
+		} else {
+			add("engine", "ok", fmt.Sprintf("%s healthy at %s", eng.Name(), eng.Endpoint()), "")
+		}
+		if eng.Name() == "ollama" {
+			if p, lerr := exec.LookPath("ollama"); lerr == nil {
+				add("ollama binary", "ok", p, "")
+			} else {
+				add("ollama binary", "note", "not in PATH", "install: "+ollamaInstallHint())
+			}
+		}
+	}
+
+	// llama.cpp is only needed for sharded models and engine.preferred=llamacpp.
+	_, rpcErr := exec.LookPath("rpc-server")
 	srvPath, srvErr := exec.LookPath("llama-server")
 	switch {
 	case rpcErr == nil && srvErr == nil:
-		ok(os.Stdout, "llama.cpp binaries present — rpc-server at %s, llama-server at %s", rpcPath, srvPath)
-	case rpcErr != nil && srvErr != nil:
-		note(os.Stdout, "llama.cpp not installed — needed only for sharded models / engine.preferred=llamacpp")
-		note(os.Stdout, "  → install: brew install llama.cpp  (macOS) · apt: see https://github.com/ggml-org/llama.cpp")
-	case rpcErr != nil && srvErr == nil:
-		// Common on macOS: Homebrew's llama.cpp bottle ships llama-server but
-		// not rpc-server. rpc-server requires a source build with -DGGML_RPC=ON.
-		note(os.Stdout, "llama-server found at %s; rpc-server missing", srvPath)
-		note(os.Stdout, "  → rpc-server is not in the Homebrew bottle; only needed for sharded models")
-		note(os.Stdout, "  → if you need sharding, build from source: https://github.com/ggml-org/llama.cpp (cmake -DGGML_RPC=ON)")
+		add("llama.cpp", "ok", "rpc-server and llama-server on PATH", "")
+	case srvErr == nil:
+		add("llama.cpp", "note", "llama-server at "+srvPath+", no rpc-server — needed only for sharded models", "build it with cmake -DGGML_RPC=ON: https://github.com/ggml-org/llama.cpp")
 	default:
-		warn("rpc-server found at %s but llama-server missing", rpcPath)
-		warn("  → install llama.cpp: brew install llama.cpp  (macOS)")
+		add("llama.cpp", "note", "not installed — needed only for sharded models or engine.preferred=llamacpp", "install: "+llamaInstallHint())
 	}
 
-	// Configured engine daemon
-	eng := newEngineFromConfig(cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := eng.Health(ctx); err != nil {
-		warn("%s engine not reachable: %v", eng.Name(), err)
-		warn("  → %s", engineStartHint(eng.Name()))
-	} else {
-		ok(os.Stdout, "%s engine healthy at %s", eng.Name(), eng.Endpoint())
-	}
-
-	// Data dir
 	if _, err := os.Stat(cfg.DataDir); err == nil {
-		ok(os.Stdout, "data dir: %s", cfg.DataDir)
+		add("data dir", "ok", cfg.DataDir, "")
 	} else {
-		warn("data dir missing: %s", cfg.DataDir)
+		add("data dir", "note", "missing: "+cfg.DataDir, "opod up creates it, or: mkdir -p "+cfg.DataDir)
 	}
 
-	// Catalog — `opod up` hard-fails without it, so escalate to a warning
-	// with an actionable hint pointing at the user-writable install location.
 	if entries, err := loadCatalog(cfg); err == nil {
-		ok(os.Stdout, "catalog: %d entries%s", len(entries), catalogPolicyNote(cfg.Env))
+		add("catalog", "ok", fmt.Sprintf("%d entries%s", len(entries), catalogPolicyNote(cfg.Env)), "")
 	} else if errors.Is(err, models.ErrCatalogSignature) {
-		// Not a missing catalog: a file the signature policy refuses. The
-		// message names the file; reinstalling would not change it.
-		warn("catalog: %v", err)
-		warn("  → sign the file (`minisign -S -m <file>`), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
+		add("catalog", "problem", err.Error(), "sign the file (minisign -S -m <file>), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
 	} else {
-		warn("catalog: %v", err)
-		// The catalog is embedded in the binary (pkg/catalog); what can be
-		// wrong is a file a user added beside it (T10.21: the hint named a
-		// bundled directory that no longer exists).
-		warn("  → the built-in catalog is in this binary: check the files you added in OPOD_CATALOG_DIR (default ~/.opod/catalog), or unset it")
+		add("catalog", "problem", err.Error(), "the built-in catalog is in this binary: check the files you added in OPOD_CATALOG_DIR (default ~/.opod/catalog), or unset it")
 	}
+	return out
+}
 
-	fmt.Println()
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// ollamaInstallHint and llamaInstallHint name the install for this OS.
+func ollamaInstallHint() string {
+	if runtime.GOOS == "darwin" {
+		return "brew install ollama"
+	}
+	return "curl -fsSL https://ollama.com/install.sh | sh"
+}
+
+func llamaInstallHint() string {
+	if runtime.GOOS == "darwin" {
+		return "brew install llama.cpp"
+	}
+	return "a release build from https://github.com/ggml-org/llama.cpp/releases, or your distribution's llama.cpp package"
 }
 
 func portAvailable(addr string) bool {
