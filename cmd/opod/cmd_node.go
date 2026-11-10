@@ -390,12 +390,12 @@ func nodeShowJSON(n store.Node, loaded []string) string {
 }
 
 // storedNodeState is the node's stored state column — what drain and
-// undrain set — or "" when this host's store does not hold the row (a node
-// command run on another host goes through the leader without the check).
+// undrain set — as the running leader's registry reports it, else as this
+// host's store holds it; "" when neither holds the row.
 func storedNodeState(cfg *config.Config, id string) string {
-	st := openStoreOrExit(cfg)
-	defer st.Close()
-	n, err := st.Nodes().Get(context.Background(), id)
+	// The running leader's row first (T24.102): on a managed host the store
+	// this command could open is not the leader's, and the guard refuses it.
+	n, _, _, err := showNode(cfg, id)
 	if err != nil || n == nil {
 		return ""
 	}

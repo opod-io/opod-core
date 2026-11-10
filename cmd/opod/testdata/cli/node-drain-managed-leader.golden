@@ -1,0 +1,6 @@
+$ opod node drain n_a
+--- exit 0
+--- stdout
+✔ n_a is draining (through the running leader): it gets no new requests and no new shard parts; requests already on it finish. A sharded model with a part on it stops serving.
+▶ it stays drained across heartbeats and a worker restart — undo with `opod node undrain n_a`
+--- stderr

@@ -82,6 +82,8 @@ func managedLeader() http.HandlerFunc {
 			_, _ = w.Write([]byte(`[{"ID":"n_a","Hostname":"node-a","OS":"linux","Arch":"amd64","Address":"http://10.0.0.7:8081","LastHeartbeat":"2026-11-10T08:00:00Z","State":"ready","state":"ready","heartbeat_age_seconds":2,"placements":[{"NodeID":"n_a","ModelID":"qwen2.5-0.5b-gguf","Status":"ready"}]}]`))
 		case "/admin/v1/shards":
 			_, _ = w.Write([]byte(`[]`))
+		case "/admin/v1/nodes/n_a/drain", "/admin/v1/nodes/n_a/undrain":
+			_, _ = w.Write([]byte(`{"ok":true}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":{"type":"not_found","message":"no route"}}`))
@@ -277,6 +279,7 @@ var transcripts = []transcriptCase{
 	{name: "shard-ls-managed-leader", args: []string{"shard", "ls"}, stub: managedLeader(), env: managedEnv},
 	{name: "token-ls-managed-leader", args: []string{"token", "ls"}, stub: managedLeader(), env: managedEnv},
 	{name: "token-ls-managed-no-leader", args: []string{"token", "ls"}, env: managedEnv},
+	{name: "node-drain-managed-leader", args: []string{"node", "drain", "n_a"}, stub: managedLeader(), env: managedEnv},
 	// T24.103: doctor on a managed leader's host — the admin token is a key,
 	// and no local engine is not a problem there.
 	{name: "doctor-managed-leader", args: []string{"doctor"}, stub: managedLeader(), env: map[string]string{"OPOD_MANAGED": "1", "OPOD_ADMIN_TOKEN": "transcript-admin-token", "PATH": "/usr/bin:/bin"}},

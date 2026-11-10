@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **`opod node drain` and `undrain` on a managed leader's host go through the leader (T24.102).** Their "already
+  draining" check read the store before the call, and on a managed host that read stopped at the new store guard; it now
+  reads the running leader's row first.
+
 - **`opod doctor` on a managed leader's host reads it right (T24.103).** The admin key row takes the leader's admin
   token (`OPOD_ADMIN_TOKEN` or `auth.admin_token`), and the engine row is a note on a managed leader, which runs no engine
   itself. With the pinned certificate (T24.102) the leader and port rows find the running leader. On such a host doctor
