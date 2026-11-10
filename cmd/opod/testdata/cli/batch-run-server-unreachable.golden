@@ -1,0 +1,5 @@
+$ opod batch run --input {{STUB}}/in.jsonl --base-url http://127.0.0.1:1 --dir run --ready-timeout 1s
+--- exit 1
+--- stdout
+--- stderr
+opod: batch: no server answering at http://127.0.0.1:1 within 1s (Get "http://127.0.0.1:1/v1/models": dial tcp 127.0.0.1:1: connect: connection refused) — check --base-url

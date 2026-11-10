@@ -84,7 +84,7 @@ var installHint = regexp.MustCompile(`(→ install: ).*`)
 // jsonLogLine is the structured log on stderr: timestamps and goroutine
 // order make it differ on every run, and it is for machines. A golden pins
 // the lines a person reads; the log keeps its own tests.
-var jsonLogLine = regexp.MustCompile(`(?m)^\{"time":.*\n`)
+var jsonLogLine = regexp.MustCompile(`(?m)^(\{"time":|time=).*\n`)
 
 // pidNumber is a pid in a message; goldens say "pid N".
 var pidNumber = regexp.MustCompile(`pid [0-9]+`)
@@ -109,6 +109,14 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.81 — connect, disconnect, config, batch say what they need and did.
+	{name: "connect-trailing-flag", args: []string{"connect", "curl", "--retries"}},
+	{name: "connect-admin-key-warning", args: []string{"connect", "curl"}, key: true},
+	{name: "disconnect-list-after-name", args: []string{"disconnect", "aider", "--list"}},
+	{name: "config-path-not-created", args: []string{"config", "path"}},
+	{name: "batch-run-no-dir", args: []string{"batch", "run", "--input", "in.jsonl", "--base-url", "http://127.0.0.1:1"}},
+	{name: "batch-run-server-unreachable", args: []string{"batch", "run", "--input", "{{STUB}}/in.jsonl", "--base-url", "http://127.0.0.1:1", "--dir", "run", "--ready-timeout", "1s"},
+		stub: answer(http.StatusOK, `{"custom_id":"a","method":"POST","url":"/v1/chat/completions","body":{}}`), noLocal: true},
 	// T24.80 — update says what this build is, and replacing it asks first.
 	// (A test binary is a development build; neither case reaches the network.)
 	{name: "update-check-dev-build", args: []string{"update", "--check", "--version", "v0.4.5"}},

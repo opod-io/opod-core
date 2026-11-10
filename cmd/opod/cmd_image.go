@@ -94,7 +94,11 @@ func imageFilterFlags(name string, args []string, withEngine bool) (images.Filte
 		engine = fs.String("engine", "", "engine: "+strings.Join(engines.Names(), " | "))
 		valueFlags["--engine"], valueFlags["-engine"] = true, true
 	}
-	parseFlags(fs, "image", reorderFlagsFirst(args, valueFlags))
+	ordered, err := reorderFlagsFirst(args, valueFlags)
+	if err != nil {
+		dieUsageOf("image", "%v", err)
+	}
+	parseFlags(fs, "image", ordered)
 	return images.Filter{Engine: engines.Canonical(strings.ToLower(*engine)), Vendor: *vendor}, fs.Args()
 }
 

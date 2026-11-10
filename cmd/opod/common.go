@@ -183,7 +183,11 @@ func resolveToken(cfg *config.Config, override string) string {
 //
 // valueFlags is the set of flag names (with leading dashes) that take a
 // value (--foo VALUE form). Boolean flags should not be listed here.
-func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
+//
+// A value flag with no value after it — the last word, or followed by another
+// flag — is an error: moved in front of the positionals it would take the
+// first of them as its value (`connect curl --retries` read "curl").
+func reorderFlagsFirst(args []string, valueFlags map[string]bool) ([]string, error) {
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
 	sawTerminator := false
@@ -205,7 +209,10 @@ func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
 			}
 			// --flag value form: also pick up the next token, if this flag
 			// is known to take a value.
-			if valueFlags[a] && i+1 < len(args) {
+			if valueFlags[a] {
+				if i+1 >= len(args) || (strings.HasPrefix(args[i+1], "-") && args[i+1] != "-") {
+					return nil, fmt.Errorf("%s needs a value", a)
+				}
 				flags = append(flags, args[i+1])
 				i++
 			}
@@ -219,7 +226,7 @@ func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
 	if sawTerminator {
 		flags = append(flags, "--")
 	}
-	return append(flags, positionals...)
+	return append(flags, positionals...), nil
 }
 
 // resolveBaseURL returns the URL clients should point at, in this order:

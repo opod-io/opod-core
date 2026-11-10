@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **`connect`, `disconnect`, `config`, `completion` and `batch` say what they need and what they did.** A value flag with
+  no value is a usage error (it took the next word as its value); `connect` warns when the snippet carries the admin key;
+  `disconnect` takes flags after the client and its list ends with its own verb; `config path|edit|show` say when the file
+  does not exist or why the local config is shown; `doctor` flags an engine on the leader's port; completion offers
+  `cache kv-prune` and no longer creates `state.db`; `batch run` says how many lines failed, logs a resume, and its ready
+  check tells no server from a refused key.
+
 - **`opod update` never downgrades by accident.** Versions are compared as semver, not text (a `0.21.0-dev` build took
   `v0.4.5` as an update and installed it); an older target needs `--force`; a development build says so; `--check` exits
   10 when an update exists; replacing the binary asks first or takes `--yes`; a GitHub refusal is its message, and a rate

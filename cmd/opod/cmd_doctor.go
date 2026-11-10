@@ -148,6 +148,13 @@ func runDoctor() []doctorCheck {
 		} else {
 			add("engine", "ok", fmt.Sprintf("%s healthy at %s", eng.Name(), eng.Endpoint()), "")
 		}
+		// MLX-LM's own server defaults to the leader's port, 8080.
+		if _, eport, _ := net.SplitHostPort(strings.TrimPrefix(strings.TrimPrefix(eng.Endpoint(), "http://"), "https://")); eport != "" {
+			if _, lport, _ := net.SplitHostPort(addr); lport == eport {
+				add("engine port", "problem", fmt.Sprintf("the %s endpoint %s uses the leader's port %s", eng.Name(), eng.Endpoint(), lport),
+					"start the engine on another port and set its endpoint (engine."+eng.Name()+"_endpoint in "+path+"), e.g. mlx_lm.server --port 8090")
+			}
+		}
 		if eng.Name() == "ollama" {
 			if p, lerr := exec.LookPath("ollama"); lerr == nil {
 				add("ollama binary", "ok", p, "")

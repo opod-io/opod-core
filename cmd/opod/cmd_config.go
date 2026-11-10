@@ -42,13 +42,19 @@ func cmdConfig(args []string) {
 	case "show":
 		configShow(args[1:])
 	case "path":
-		fmt.Println(loadedConfigPath())
+		fmt.Println(loadedConfigPath()) // alone on stdout: scripts read it
+		if !fileExists(loadedConfigPath()) {
+			fmt.Fprintln(os.Stderr, "(not created yet — the defaults are in use; opod up writes it on its first run)")
+		}
 	case "edit":
 		editor := os.Getenv("EDITOR")
 		if editor == "" {
 			editor = "vi"
 		}
 		fmt.Printf("Run: %s %s\n", editor, loadedConfigPath())
+		if !fileExists(loadedConfigPath()) {
+			fmt.Println("(the file does not exist yet: the editor creates it, and every setting you leave out keeps its default)")
+		}
 		fmt.Println("(then restart opod for changes to take effect)")
 	default:
 		dieUnknownSubcommand("config", args[0], []string{"show", "path", "edit"})
@@ -79,7 +85,11 @@ func configShow(args []string) {
 		if !localLeaderDown(err) && !errors.Is(err, errNoAdminKey) {
 			die("config show: %v", err)
 		}
-		fmt.Fprintln(os.Stderr, "(leader not reachable; showing config loaded by this CLI — secrets redacted)")
+		why := "no leader answering at " + localLeaderURL(cfg)
+		if errors.Is(err, errNoAdminKey) {
+			why = "no admin key at " + localAdminKeyPath(cfg) + " to ask the leader with"
+		}
+		fmt.Fprintf(os.Stderr, "(%s — showing the config this CLI loaded, secrets redacted)\n", why)
 		printConfigLocal(cfg, *asJSON)
 		return
 	}

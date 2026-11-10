@@ -65,7 +65,12 @@ Send an OpenAI batch input (JSONL: custom_id, method, url, body) to an
 OpenAI-compatible server and write output.jsonl + errors.jsonl in --dir.
 Run it again on the same --dir to resume. SIGINT cancels; SIGTERM cancels only
 when the batch object at --status-url is no longer in progress, and otherwise
-stops the run with exit status 75 so it is resumed.`)
+stops the run with exit status 75 so it is resumed.
+
+The key comes from OPOD_API_KEY, else OPENAI_API_KEY.
+
+  OPOD_API_KEY=sk-orc-<key> opod batch run --input batch.jsonl \
+    --base-url http://leader:8080 --dir ./run-1`)
 }
 
 func cmdBatchRun(args []string) {
@@ -127,7 +132,7 @@ func cmdBatchRun(args []string) {
 		ProgressEvery: *every,
 	})
 	if err != nil {
-		die("batch run: %v", err)
+		die("%v", err) // the batch package names itself (batch: …)
 	}
 	state := "completed"
 	switch {
@@ -153,6 +158,12 @@ func cmdBatchRun(args []string) {
 		out["written"] = written
 	}
 	_ = enc.Encode(map[string]any{"batch": out})
+	// A run whose lines failed still completed, as OpenAI's batches do — the
+	// exit stays 0, because the control plane's Job reads any other code as
+	// "run me again" — but it is said, not left in a JSON count.
+	if res.Failed > 0 {
+		warn("%d of %d line(s) failed — see %s", res.Failed, res.Total, res.ErrorPath)
+	}
 	stop()
 	os.Exit(batch.ExitCode(res))
 }

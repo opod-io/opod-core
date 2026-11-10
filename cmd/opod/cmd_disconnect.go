@@ -36,10 +36,14 @@ func cmdDisconnect(args []string) {
 	if wantsHelp(args) {
 		showHelp(help)
 	}
-	parseFlags(fs, "disconnect", args)
+	ordered, err := reorderFlagsFirst(args, nil)
+	if err != nil {
+		dieUsage(help, "%v", err)
+	}
+	parseFlags(fs, "disconnect", ordered)
 
 	if *list {
-		printClientList(os.Stdout)
+		printClientList(os.Stdout, "disconnect")
 		return
 	}
 
@@ -48,7 +52,7 @@ func cmdDisconnect(args []string) {
 		dieHelp(help)
 	}
 	if len(rest) > 1 {
-		die("disconnect takes exactly one client name (got: %s)", strings.Join(rest, " "))
+		dieUsage(help, "disconnect takes one client name (got: %s); opod disconnect --list names them", strings.Join(rest, " "))
 	}
 
 	out, err := control.DisconnectSnippet(rest[0])

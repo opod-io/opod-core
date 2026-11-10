@@ -94,7 +94,11 @@ func cmdJoin(args []string) {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	gpuFlag := fs.String("gpu", "", "pin this worker's engine to one device index (default: every device)")
 	vramFlag := fs.Int("vram-budget", 0, "cap the engine's memory, in GB (default: the whole device)")
-	parseFlags(fs, "join", reorderFlagsFirst(args, map[string]bool{"--gpu": true, "-gpu": true, "--vram-budget": true, "-vram-budget": true}))
+	ordered, err := reorderFlagsFirst(args, map[string]bool{"--gpu": true, "-gpu": true, "--vram-budget": true, "-vram-budget": true})
+	if err != nil {
+		dieUsageOf("join", "%v", err)
+	}
+	parseFlags(fs, "join", ordered)
 	switch fs.NArg() {
 	case 0:
 		dieUsageOf("join", "name the leader: opod join \"<leader-url>?token=<token>\" (quoted: ? is a glob in zsh)")

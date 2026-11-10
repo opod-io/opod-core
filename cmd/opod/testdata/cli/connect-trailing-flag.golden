@@ -1,0 +1,7 @@
+$ opod connect curl --retries
+--- exit 2
+--- stdout
+--- stderr
+opod: --retries needs a value
+  usage: opod connect <client>   |   opod connect --list
+  opod connect --help for every flag

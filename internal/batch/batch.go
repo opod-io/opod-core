@@ -299,6 +299,9 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 	}
 	res.Total = len(lines)
 	res.Completed, res.Failed = rec.okCount, rec.failCount
+	if done := res.Completed + res.Failed; done > 0 {
+		opt.Log.Info("resuming", "done", done, "to_send", res.Total-done, "dir", opt.Dir)
+	}
 
 	// The previous run's in-flight lines: recorded as sent, never answered.
 	// They are written as interrupted before anything new is sent (see the
@@ -663,7 +666,7 @@ func joinURL(base, path string) string {
 // waitReady polls GET <base>/models until it answers 2xx with the key.
 func waitReady(ctx context.Context, opt Options) error {
 	deadline := time.Now().Add(opt.ReadyTimeout)
-	last := ""
+	last, answered, status := "", false, 0
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinURL(opt.BaseURL, "/v1/models"), nil)
 		if err != nil {
@@ -679,12 +682,18 @@ func waitReady(ctx context.Context, opt Options) error {
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				return nil
 			}
-			last = resp.Status
+			last, answered, status = resp.Status, true, resp.StatusCode
 		} else {
 			last = err.Error()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("batch: %s did not accept the key within %s (last: %s)", opt.BaseURL, opt.ReadyTimeout, last)
+			switch {
+			case !answered:
+				return fmt.Errorf("batch: no server answering at %s within %s (%s) — check --base-url", opt.BaseURL, opt.ReadyTimeout, last)
+			case status == http.StatusUnauthorized || status == http.StatusForbidden:
+				return fmt.Errorf("batch: %s did not accept the key (%s) — set OPOD_API_KEY (or OPENAI_API_KEY) to a key it takes", opt.BaseURL, last)
+			}
+			return fmt.Errorf("batch: %s answered %s to GET /v1/models for %s", opt.BaseURL, last, opt.ReadyTimeout)
 		}
 		opt.Log.Info("waiting for the server to accept the key", "last", last)
 		select {

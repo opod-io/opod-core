@@ -1,0 +1,26 @@
+$ opod connect curl
+--- exit 0
+--- stdout
+# curl → Opod — useful for smoke tests
+
+# OpenAI shape:
+curl -s http://127.0.0.1:1/v1/chat/completions \
+  -H "Authorization: Bearer transcript-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "messages": [{"role": "user", "content": "hi in 5 words"}]
+  }'
+
+# Anthropic shape (same endpoint, different path + headers):
+curl -s http://127.0.0.1:1/v1/messages \
+  -H "x-api-key: transcript-admin-key" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "max_tokens": 64,
+    "messages": [{"role": "user", "content": "hi in 5 words"}]
+  }'
+--- stderr
+⚠ this snippet carries this leader's admin key, which can manage the whole leader — give curl its own key instead: opod token create curl, then --token <that key>

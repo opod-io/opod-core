@@ -44,12 +44,15 @@ func cmdConnect(args []string) {
 	if wantsHelp(args) {
 		showHelp(help)
 	}
-	args = reorderFlagsFirst(args, map[string]bool{
+	args, err := reorderFlagsFirst(args, map[string]bool{
 		"-base-url": true, "--base-url": true,
 		"-token": true, "--token": true,
 		"-model": true, "--model": true,
 		"-retries": true, "--retries": true,
 	})
+	if err != nil {
+		dieUsage(help, "%v", err)
+	}
 	parseFlags(fs, "connect", args)
 
 	// 0 = unset (header omitted). The gateway accepts 1-5; reject anything
@@ -59,7 +62,7 @@ func cmdConnect(args []string) {
 	}
 
 	if *list {
-		printClientList(os.Stdout)
+		printClientList(os.Stdout, "connect")
 		return
 	}
 
@@ -88,6 +91,11 @@ func cmdConnect(args []string) {
 	resolvedToken := resolveToken(cfg, *token)
 	if resolvedToken == "" {
 		die("no token available — set $OPOD_TOKEN, pass --token <key>, or run `opod up` to create one")
+	}
+	// Neither --token nor OPOD_TOKEN: the key is this leader's ADMIN key, and
+	// the snippet goes into a third-party tool's config file.
+	if *token == "" && strings.TrimSpace(os.Getenv("OPOD_TOKEN")) == "" {
+		warn("this snippet carries this leader's admin key, which can manage the whole leader — give %s its own key instead: opod token create %s, then --token <that key>", clientID, clientID)
 	}
 
 	out, err := control.ConnectSnippet(control.ConnectInput{
@@ -125,7 +133,8 @@ func pickConnectClient(prompt, seed string) string {
 	return pickFromList(prompt, items, seed)
 }
 
-func printClientList(w *os.File) {
+// printClientList ends with the next command for the verb that listed them.
+func printClientList(w *os.File, verb string) {
 	cs := control.Clients()
 	fmt.Fprintln(w, "Supported clients:")
 	fmt.Fprintln(w)
@@ -141,6 +150,10 @@ func printClientList(w *os.File) {
 		fmt.Fprintf(w, "  %s%s  · %s · %s\n", c.ID, pad, c.Protocol, c.Description)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Print a config snippet for any of these:")
-	fmt.Fprintln(w, "  opod connect <client>")
+	if verb == "disconnect" {
+		fmt.Fprintln(w, "Print the steps that undo `opod connect` for any of these:")
+	} else {
+		fmt.Fprintln(w, "Print a config snippet for any of these:")
+	}
+	fmt.Fprintf(w, "  opod %s <client>\n", verb)
 }

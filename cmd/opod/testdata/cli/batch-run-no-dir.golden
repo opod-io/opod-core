@@ -1,0 +1,6 @@
+$ opod batch run --input in.jsonl --base-url http://127.0.0.1:1
+--- exit 2
+--- stdout
+--- stderr
+opod: batch run needs --dir, the work directory it resumes from
+  opod batch --help for every flag

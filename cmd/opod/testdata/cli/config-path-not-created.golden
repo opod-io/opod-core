@@ -1,0 +1,6 @@
+$ opod config path
+--- exit 0
+--- stdout
+$DATA/.opod/config.yaml
+--- stderr
+(not created yet — the defaults are in use; opod up writes it on its first run)

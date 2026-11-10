@@ -1,0 +1,24 @@
+$ opod disconnect aider --list
+--- exit 0
+--- stdout
+Supported clients:
+
+  cursor         · OpenAI · IDE with built-in AI
+  aider          · OpenAI · Terminal-based AI pair programmer
+  continue       · Both · VS Code / JetBrains AI assistant
+  zed            · OpenAI · Fast multiplayer code editor
+  cline          · Both · VS Code AI extension (Cline / Roo Code)
+  openclaw       · OpenAI · Open-source CLI coding agent (OpenAI-compatible)
+  opencode       · Both · Open-source terminal coding agent (per-provider baseURL override)
+  open-webui     · OpenAI · Self-hosted ChatGPT-style web UI (~85k★ on GitHub)
+  open-notebook  · OpenAI · Open-source NotebookLM alternative (MIT, ~27k★)
+  goose          · OpenAI · Block's OSS terminal agent (Apache-2.0, OpenAI-compatible)
+  plandex        · OpenAI · Terminal-native agentic planner (MIT, OpenAI-compatible)
+  openhands      · Both · Autonomous coding agent (formerly OpenDevin; MIT)
+  codex-cli      · OpenAI · OpenAI's official CLI (supports base-URL override)
+  openai-sdk     · OpenAI · OpenAI Python/JS SDK
+  curl           · Raw HTTP · Direct HTTP calls for testing
+
+Print the steps that undo `opod connect` for any of these:
+  opod disconnect <client>
+--- stderr

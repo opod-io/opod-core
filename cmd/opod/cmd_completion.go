@@ -61,7 +61,11 @@ func cmdCompletion(args []string) {
 		}
 	case "__installed":
 		// Installed model IDs only (for `model remove`).
+		// A tab press must not create the store: no file, no models.
 		cfg := loadConfigOrExit()
+		if !strings.Contains(cfg.Storage.DSN, "://") && !fileExists(cfg.Storage.DSN) {
+			return
+		}
 		st, err := store.OpenSQLite(cfg.Storage.DSN)
 		if err != nil {
 			return
@@ -152,7 +156,7 @@ _opod() {
             ;;
         cache)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "ls prune" -- "$cur") )
+                COMPREPLY=( $(compgen -W "ls prune kv-prune" -- "$cur") )
             fi
             return 0
             ;;
@@ -225,7 +229,7 @@ _opod() {
         'catalog:list or export the bundled catalog'
         'fetch:make model weights present in the models dir'
         'batch:send an OpenAI batch file to an OpenAI URL'
-        'cache:list or prune the weight cache of this node'
+        'cache:list or prune the weight cache, or bound a disk KV tier (kv-prune)'
         'token:manage API keys'
                 'config:show / edit runtime config'
         'doctor:diagnose common problems'
@@ -261,7 +265,7 @@ _opod() {
                 completion) _values 'shell' bash zsh fish ;;
                 image)   _values 'subcommand' ls show recommend ;;
                 catalog) _values 'subcommand' ls export ;;
-                cache)   _values 'subcommand' ls prune ;;
+                cache)   _values 'subcommand' ls prune kv-prune ;;
             esac
             ;;
         args)
@@ -325,7 +329,7 @@ complete -c opod -n "__opod_using_command disconnect" -a "(opod completion __cli
 complete -c opod -n "__opod_using_command shard" -a "create ls list remove rm"
 complete -c opod -n "__opod_using_command image" -a "ls show recommend"
 complete -c opod -n "__opod_using_command catalog" -a "ls export"
-complete -c opod -n "__opod_using_command cache" -a "ls prune"
+complete -c opod -n "__opod_using_command cache" -a "ls prune kv-prune"
 complete -c opod -n "__opod_using_subcommand 'image recommend'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'shard create'" -a "(opod completion __models 2>/dev/null)"
 complete -c opod -n "__opod_using_subcommand 'shard remove'" -a "(opod completion __models 2>/dev/null)"
