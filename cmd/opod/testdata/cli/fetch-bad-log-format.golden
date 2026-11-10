@@ -1,0 +1,7 @@
+$ opod fetch org/repo m.gguf --dir {{DATA}}/models --log-format xml
+--- exit 2
+--- stdout
+--- stderr
+opod: --log-format "xml": text or json
+  usage: opod fetch <hf-repo> <file> [--dir D] [--revision R] [--sha256 S]  |  opod fetch --snapshot <hf-repo>[@<rev>] [--dir D]
+  opod fetch --help for every flag

@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -36,6 +38,24 @@ func cmdFetch(args []string) {
 	rev := fs.String("revision", os.Getenv("OPOD_MODEL_REVISION"), "Hub revision to pin: a commit sha, tag or branch (default $OPOD_MODEL_REVISION; empty = main, which moves)")
 	sum := fs.String("sha256", os.Getenv("OPOD_MODEL_SHA256"), "the digest the file must hash to; a mismatch removes it and fails (default $OPOD_MODEL_SHA256; not with --snapshot)")
 	snap := fs.String("snapshot", "", "fetch the file set a safetensors engine loads from `<hf-repo>[@revision]` instead of one file")
+	logFormat := fs.String("log-format", "text", "text: one human line per event on stderr; json: structured slog lines for a log collector")
+	if wantsHelp(args) {
+		showHelp(helpSpec{
+			name:    "fetch",
+			summary: "make one GGUF file, or a safetensors model's file set, present in a models directory",
+			usage:   "opod fetch <hf-repo> <file> [--dir D] [--revision R] [--sha256 S]  |  opod fetch --snapshot <hf-repo>[@<rev>] [--dir D]",
+			flags:   fs,
+			examples: []string{
+				"opod fetch bartowski/Llama-3.2-3B-Instruct-GGUF Llama-3.2-3B-Instruct-Q4_K_M.gguf --dir /data/models",
+				"opod fetch --snapshot Qwen/Qwen2.5-1.5B-Instruct@main --dir /data/models",
+				"HF_TOKEN=hf_… opod fetch meta-llama/Llama-3.1-8B-Instruct --snapshot … # a gated repository",
+			},
+			notes: []string{
+				"The path is the only line on stdout; progress, `already cached` and every warning are on stderr.",
+				"HF_ENDPOINT points at a Hub mirror (default https://huggingface.co); HF_TOKEN reads gated or private repositories.",
+			},
+		})
+	}
 	// flags may follow the positionals
 	var pos []string
 	for len(args) > 0 {
@@ -56,9 +76,24 @@ func cmdFetch(args []string) {
 	if *dir == "" {
 		dieUsage(usage, "no models directory: pass --dir or set OPOD_MODELS_DIR")
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	var log *slog.Logger
+	switch *logFormat {
+	case "text":
+		log = slog.New(newHumanHandler(os.Stderr))
+	case "json":
+		log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	default:
+		dieUsage(usage, "--log-format %q: text or json", *logFormat)
+	}
 	env := config.FromEnv()
-	opt := fetch.Options{Log: log, Token: env.HFToken, Endpoint: env.HFEndpoint, Revision: *rev, SHA256: *sum}
+	opt := fetch.Options{Log: log, Token: env.HFToken, Endpoint: env.HFEndpoint, Revision: *rev, SHA256: *sum,
+		Progress: func(done, total int64) {
+			if total > 0 {
+				log.Info("still fetching", "done", fmt.Sprintf("%.1f of %.1f GiB (%d%%)", float64(done)/(1<<30), float64(total)/(1<<30), done*100/total))
+				return
+			}
+			log.Info("still fetching", "done", fmt.Sprintf("%.1f GiB", float64(done)/(1<<30)))
+		}}
 	// Ctrl-C, or the SIGTERM Kubernetes sends a prefetch Job's pod it deletes,
 	// cancels the pull instead of killing the process mid-write: the lock is
 	// released and the partial is kept, so the next attempt resumes at once.
@@ -81,7 +116,22 @@ func cmdFetch(args []string) {
 		path, err = fetch.GGUF(ctx, pos[0], pos[1], *dir, opt)
 	}
 	if err != nil {
-		die("fetch: %v", err)
+		// No answer at all is the Hub's address, not the model: say which
+		// address and where it came from.
+		var ue *url.Error
+		var he *fetch.HubError
+		if errors.As(err, &ue) && !errors.As(err, &he) && ctx.Err() == nil {
+			hub, from := env.HFEndpoint, "HF_ENDPOINT"
+			if hub == "" {
+				hub, from = fetch.DefaultHFEndpoint, "the default; HF_ENDPOINT names a mirror"
+			}
+			die("fetch: cannot reach the Hub at %s (%s): %v — check the address and the network, or unset HF_ENDPOINT to use huggingface.co", hub, from, ue.Err)
+		}
+		msg := err.Error()
+		if !strings.HasPrefix(msg, "fetch:") {
+			msg = "fetch: " + msg // the package names itself on most of its errors; say it once
+		}
+		die("%s", msg)
 	}
 	if env.FetchResult != "" {
 		var repo string
@@ -105,7 +155,7 @@ func writeFetchResult(dst, path string, sig adminapi.FetchSignature, log *slog.L
 		err = os.WriteFile(dst, append(line, '\n'), 0o644)
 	}
 	if err != nil {
-		log.Warn("fetch result not written", "to", dst, "err", err)
+		log.Warn(fmt.Sprintf("could not write the result file %s: %v — the weights are at %s", dst, err, path))
 	}
 }
 

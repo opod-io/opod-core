@@ -1,0 +1,6 @@
+$ opod fetch org/gated m.gguf --dir {{DATA}}/models
+--- exit 1
+--- stdout
+--- stderr
+▶ fetching file (url=STUB/org/gated/resolve/main/m.gguf, to=$DATA/models/m.gguf, resume_from=0)
+opod: fetch: hub-token-missing: STUB answered 401 Unauthorized for org/gated and no Hugging Face token was sent — the repository is gated or private (the Hub answers an anonymous caller the same way when it does not exist, so check the name too). Set HF_TOKEN to a token with read access to it

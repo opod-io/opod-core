@@ -1,0 +1,7 @@
+$ opod fetch org/repo m.gguf --dir {{DATA}}/models
+--- exit 0
+--- stdout
+$DATA/models/m.gguf
+--- stderr
+▶ fetching file (url=STUB/org/repo/resolve/main/m.gguf, to=$DATA/models/m.gguf, resume_from=0)
+▶ file fetched (path=$DATA/models/m.gguf, bytes=10, resumed=0, duration_s=D)

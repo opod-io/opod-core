@@ -57,6 +57,8 @@ type transcriptCase struct {
 	// its data directory), as a leader that has heard from workers holds them.
 	nodes []store.Node
 	keys  []store.APIKey // seeded into the store like nodes
+	// files are written under the data directory before the run.
+	files map[string]string
 }
 
 // answer is a stub that replies status and body to every request.
@@ -100,6 +102,9 @@ var clockTime = regexp.MustCompile(`(?m)^(  )[0-9]{2}:[0-9]{2}:[0-9]{2}`)
 var mintedKey = regexp.MustCompile(`sk-orc-[A-Za-z0-9_-]{20,}`)
 var mintedID = regexp.MustCompile(`\bk_[A-Za-z0-9_-]{11}\b`)
 
+// durationField is how long a step took, logged as a number of seconds.
+var durationField = regexp.MustCompile(`duration_s=[0-9.e-]+`)
+
 // pidNumber is a pid in a message; goldens say "pid N".
 var pidNumber = regexp.MustCompile(`pid [0-9]+`)
 
@@ -123,6 +128,17 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.88 — fetch names the Hub, and the path is the only stdout line.
+	{name: "fetch-file", args: []string{"fetch", "org/repo", "m.gguf", "--dir", "{{DATA}}/models"}, noLocal: true,
+		stub: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("GGUF-bytes")) },
+		env:  map[string]string{"HF_ENDPOINT": "{{STUB}}", "OPOD_SKIP_SOURCE_CHECK": "1"}},
+	{name: "fetch-gated", args: []string{"fetch", "org/gated", "m.gguf", "--dir", "{{DATA}}/models"}, noLocal: true,
+		stub: answer(http.StatusUnauthorized, `{"error":"Access to model org/gated is restricted."}`), env: map[string]string{"HF_ENDPOINT": "{{STUB}}"}},
+	{name: "fetch-hub-unreachable", args: []string{"fetch", "org/repo", "m.gguf", "--dir", "{{DATA}}/models"},
+		env: map[string]string{"HF_ENDPOINT": "http://127.0.0.1:1"}},
+	{name: "fetch-already-cached", args: []string{"fetch", "org/repo", "m.gguf", "--dir", "{{DATA}}/models"}, files: map[string]string{"models/m.gguf": "GGUF-bytes"},
+		env: map[string]string{"HF_ENDPOINT": "http://127.0.0.1:1", "OPOD_SKIP_SOURCE_CHECK": "1"}},
+	{name: "fetch-bad-log-format", args: []string{"fetch", "org/repo", "m.gguf", "--dir", "{{DATA}}/models", "--log-format", "xml"}},
 	// T24.87 — cache: a wrong directory is said, empty says empty, one unit.
 	{name: "cache-ls-empty", args: []string{"cache", "ls", "--dir", "{{DATA}}"}},
 	{name: "cache-ls-extra-arg", args: []string{"cache", "ls", "--dir", "{{DATA}}", "x"}},
@@ -303,6 +319,14 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 		}
 	}
 	foreign := 0 // a `sleep` the command must leave running
+	for rel, body := range c.files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(data, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(data, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if len(c.nodes)+len(c.keys) > 0 {
 		st, err := store.OpenSQLite(filepath.Join(data, "state.db"))
 		if err != nil {
@@ -399,6 +423,7 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 			s = strings.ReplaceAll(s, strings.TrimPrefix(stubURL, "http://"), "STUB")
 		}
 		s = pidNumber.ReplaceAllString(s, "pid N")
+		s = durationField.ReplaceAllString(s, "duration_s=D")
 		s = mintedKey.ReplaceAllString(s, "sk-orc-KEY")
 		s = mintedID.ReplaceAllString(s, "k_ID")
 		s = hardwareLine.ReplaceAllString(s, "${1}: HW")

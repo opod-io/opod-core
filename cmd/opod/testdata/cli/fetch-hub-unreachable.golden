@@ -1,0 +1,6 @@
+$ opod fetch org/repo m.gguf --dir {{DATA}}/models
+--- exit 1
+--- stdout
+--- stderr
+▶ fetching file (url=http://127.0.0.1:1/org/repo/resolve/main/m.gguf, to=$DATA/models/m.gguf, resume_from=0)
+opod: fetch: cannot reach the Hub at http://127.0.0.1:1 (HF_ENDPOINT): dial tcp 127.0.0.1:1: connect: connection refused — check the address and the network, or unset HF_ENDPOINT to use huggingface.co

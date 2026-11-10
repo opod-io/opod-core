@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **`opod fetch` names the Hub, shows progress and says when a file is cached.** A Hub that does not answer names the
+  address and whether it came from `HF_ENDPOINT`; a long download logs its progress every 30 s (a new
+  `fetch.Options.Progress`); a cached file says `already cached`; the logs on stderr are one human line per event
+  (`--log-format json` for structured lines); a help screen with examples; a failed result-file write names the file and
+  where the weights are. The path stays the only stdout line, and the Hub refusal reasons (`hub-token-missing`, …) are
+  unchanged.
+
 - **`opod cache *`: a missing directory is said, empty says empty, one unit.** `kv-prune` on a directory that does not
   exist warns (a mistyped `--dir` read as an empty tier and guarded nothing); with `--every` it prints a start line,
   waits for the directory and says so every 10 minutes, and shows an idle pass once a minute. `ls` says when the cache is

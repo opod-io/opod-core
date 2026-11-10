@@ -112,6 +112,11 @@ type Options struct {
 	// does not hash to what the record says is not that version, and serving it
 	// would make the whole version story a lie.
 	SHA256 string
+	// Progress, when set, hears a download's bytes so far and its expected
+	// size (0 = unknown) every ProgressEvery while it runs: a tens-of-GB pull
+	// otherwise says nothing between its first and last line.
+	Progress      func(done, total int64)
+	ProgressEvery time.Duration // default 30 s
 }
 
 func (opt Options) withDefaults() Options {
@@ -212,6 +217,7 @@ func one(ctx context.Context, repo, file, dir string, size int64, opt Options) (
 // digest and recorded in the marker; the next pinned fetch reads the marker.
 func verifiedCached(target string, opt Options) (string, error) {
 	Touch(target) // least-recently-used pruning needs to know it was wanted (ADR-046)
+	opt.Log.Info("already cached", "path", target)
 	want := normalizeDigest(opt.SHA256)
 	if want == "" {
 		return target, nil
@@ -429,7 +435,15 @@ func download(ctx context.Context, opt Options, repo, fileURL, target string, wa
 	if wantSum != "" {
 		sink = io.MultiWriter(f, h)
 	}
-	n, copyErr := io.Copy(sink, resp.Body)
+	var body io.Reader = resp.Body
+	if opt.Progress != nil {
+		every := opt.ProgressEvery
+		if every <= 0 {
+			every = 30 * time.Second
+		}
+		body = &progressReader{r: resp.Body, done: from, total: expected, every: every, last: time.Now(), report: opt.Progress}
+	}
+	n, copyErr := io.Copy(sink, body)
 	closeErr := f.Close()
 	total := from + n
 	if copyErr != nil {
@@ -550,4 +564,24 @@ var errDigest = errors.New("digest mismatch")
 // as hex. Empty = nothing to check.
 func normalizeDigest(want string) string {
 	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(want, "sha256:")))
+}
+
+// progressReader counts what passes through and reports it at most once per
+// every; the caller hears nothing on a read that comes before that.
+type progressReader struct {
+	r           io.Reader
+	done, total int64
+	every       time.Duration
+	last        time.Time
+	report      func(done, total int64)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	if now := time.Now(); now.Sub(p.last) >= p.every {
+		p.last = now
+		p.report(p.done, p.total)
+	}
+	return n, err
 }
