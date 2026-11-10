@@ -92,11 +92,25 @@ func TestAGatewaysModelsDirectoryIsOneItCanMake(t *testing.T) {
 // every one a 503 after a dial timeout; design-partner cell, 2026-10-18). The
 // signal goes to the shell ONLY here, as the kubelet sends it; the worker must
 // get it, finish, and the shell must exit with its status.
-func TestAWorkersStopReachesTheJoinProcess(t *testing.T) {
+// stopBash is a bash the stop path can be judged under: one with `wait -n`
+// (bash 4.3+), as every image ships. Under macOS's /bin/bash 3.2 the wait
+// block's `wait -n` is an invalid option that returns at once, so the exit code
+// raced the SIGTERM trap (6 of 100 runs under load ended 1), and 3.2 itself
+// crashed in its signal handling once — neither is the entrypoint's behaviour.
+func stopBash(t *testing.T) string {
+	t.Helper()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("no bash")
 	}
+	if out, err := exec.Command(bash, "-c", "sleep 0 & wait -n").CombinedOutput(); err != nil {
+		t.Skipf("%s has no `wait -n` (%s) — the entrypoint needs bash 4.3+, as the images ship; run this on Linux or with a newer bash first on PATH", bash, strings.TrimSpace(string(out)))
+	}
+	return bash
+}
+
+func TestAWorkersStopReachesTheJoinProcess(t *testing.T) {
+	bash := stopBash(t)
 	dir := t.TempDir()
 	said := filepath.Join(dir, "goodbye")
 	join := filepath.Join(dir, "join.sh")
@@ -154,10 +168,7 @@ exit "$REAPED"`
 // under the streams the drain was waiting for. It must still be running while
 // the join process drains, and be stopped once that process has exited.
 func TestAVendorEngineOutlivesTheJoinProcessDrain(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("no bash")
-	}
+	bash := stopBash(t)
 	dir := t.TempDir()
 	seen := filepath.Join(dir, "engine-during-drain")
 	engineDone := filepath.Join(dir, "engine-stopped")
