@@ -63,13 +63,14 @@ The output should look like:
 
 ```
 ✔ created node-join (id=k_…, scope=node)
-
-  Key (shown once — store it now):
-    sk-orc-XXXXXXXX
+  the key below is shown once — store it now
+  on the worker: opod join "http://localhost:8080?token=<this key>"
+sk-orc-XXXXXXXX
 ```
 
-It prints the key only; the join command is yours to assemble from the leader's address — one the
-worker can reach, not `localhost` — and that key.
+The key is the only line on stdout (`key=$(./opod token create --node)` holds just it); the other
+lines are on stderr. The join line names this host's own address: replace it with one the worker
+can reach, not `localhost`.
 
 ### Step 3 — join the worker
 

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/opod-io/opod-core/internal/auth"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 func cmdToken(args []string) {
@@ -61,7 +63,11 @@ func cmdToken(args []string) {
 		}
 		tokenRenew(args[1], args[2:])
 	case "ls", "list":
-		tokenList()
+		rest, asJSON := extractJSONFlag(args[1:])
+		if len(rest) > 0 {
+			dieUsageOf("token", "token ls takes only --json (got %q)", rest[0])
+		}
+		tokenList(asJSON)
 	case "revoke":
 		if len(args) < 2 {
 			dieUsageOf("token", "token revoke is missing an argument: opod token revoke <id>")
@@ -74,6 +80,11 @@ func cmdToken(args []string) {
 
 func tokenCreate(name, scope string, expiresAt time.Time) {
 	cfg := loadConfigOrExit()
+	// A managed leader keeps no store of its own: this CLI's would be an
+	// in-memory one, and the key would be "created" and gone.
+	if cfg.Surfaces.Managed && os.Getenv("OPOD_STORAGE_DSN") == "" {
+		die("this leader's keys are managed by its control plane (OPOD_MANAGED=1) — a key created here would be thrown away; create it in the control plane")
+	}
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	// The token's name doubles as its UserID today. Once OIDC lands the
@@ -90,16 +101,23 @@ func tokenCreate(name, scope string, expiresAt time.Time) {
 	if err := st.APIKeys().Create(context.Background(), rec); err != nil {
 		die("persist key: %v", err)
 	}
-	ok(os.Stdout, "created %s (id=%s, scope=%s)", name, rec.ID, scope)
+	// The key alone on stdout, so key=$(opod token create …) captures it;
+	// everything a person reads goes to stderr.
+	ok(os.Stderr, "created %s (id=%s, scope=%s)", name, rec.ID, scope)
 	if !expiresAt.IsZero() {
-		fmt.Printf("  expires: %s (in %s)\n", expiresAt.Format(time.RFC3339), time.Until(expiresAt).Round(time.Second))
+		fmt.Fprintf(os.Stderr, "  expires: %s (in %s)\n", expiresAt.Format(time.RFC3339), time.Until(expiresAt).Round(time.Second))
 	}
-	fmt.Println()
-	fmt.Println("  Key (shown once — store it now):")
-	emitSecret(plain)
+	fmt.Fprintln(os.Stderr, "  the key below is shown once — store it now")
+	if scope == "node" {
+		fmt.Fprintf(os.Stderr, "  on the worker: opod join \"%s?token=<this key>\"\n", resolveBaseURL(cfg, ""))
+	}
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		warn("the key is going to a non-terminal (a pipe, a file, a CI log) — rotate it if that wasn't intended")
+	}
+	fmt.Println(plain)
 }
 
-func tokenList() {
+func tokenList(asJSON bool) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
@@ -107,33 +125,71 @@ func tokenList() {
 	if err != nil {
 		die("list keys: %v", err)
 	}
+	now := time.Now()
+	if asJSON {
+		out := make([]map[string]string, 0, len(keys))
+		for _, k := range keys {
+			out = append(out, map[string]string{"id": k.ID, "name": k.Name, "scope": k.Scope, "state": keyState(k, now),
+				"expires": keyExpiry(k), "created": k.CreatedAt.Format(time.RFC3339)})
+		}
+		emitJSON(out)
+		return
+	}
 	if len(keys) == 0 {
 		fmt.Println("(no API keys — create one with `opod token create`)")
 		return
 	}
-	fmt.Printf("%-14s %-20s %-8s %-7s %-20s %s\n", "ID", "NAME", "SCOPE", "REVOKED", "EXPIRES", "CREATED")
+	fmt.Printf("%-14s %-20s %-8s %-8s %-25s %s\n", "ID", "NAME", "SCOPE", "STATE", "EXPIRES", "CREATED")
 	for _, k := range keys {
-		rev := "no"
-		if k.Revoked {
-			rev = "yes"
-		}
-		expires := "never"
-		if !k.ExpiresAt.IsZero() {
-			expires = k.ExpiresAt.Format(time.RFC3339)
-		}
-		fmt.Printf("%-14s %-20s %-8s %-7s %-20s %s\n",
-			k.ID, k.Name, k.Scope, rev, expires, k.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("%-14s %-20s %-8s %-8s %-25s %s\n",
+			k.ID, k.Name, k.Scope, keyState(k, now), keyExpiry(k), k.CreatedAt.Format(time.RFC3339))
 	}
+}
+
+// keyState is what the key does now: active, expired or revoked.
+func keyState(k store.APIKey, now time.Time) string {
+	switch {
+	case k.Revoked:
+		return "revoked"
+	case !k.ExpiresAt.IsZero() && !k.ExpiresAt.After(now):
+		return "expired"
+	}
+	return "active"
+}
+
+func keyExpiry(k store.APIKey) string {
+	if k.ExpiresAt.IsZero() {
+		return "never"
+	}
+	return k.ExpiresAt.Format(time.RFC3339)
+}
+
+// keyOrExit is the stored key with this id, or an error that names where the
+// ids are.
+func keyOrExit(st store.Store, id string) *store.APIKey {
+	k, err := st.APIKeys().GetByID(context.Background(), id)
+	if err != nil {
+		die("read key %s: %v", id, err)
+	}
+	if k == nil {
+		die("no key %s (see opod token ls)", id)
+	}
+	return k
 }
 
 func tokenRevoke(id string) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	if err := st.APIKeys().Revoke(context.Background(), id); err != nil {
-		die("revoke: %v", err)
+	k := keyOrExit(st, id)
+	if k.Revoked {
+		ok(os.Stdout, "%s (%s) is already revoked — nothing changed", id, k.Name)
+		return
 	}
-	ok(os.Stdout, "revoked %s", id)
+	if err := st.APIKeys().Revoke(context.Background(), id); err != nil {
+		die("revoke %s: %v", id, err)
+	}
+	ok(os.Stdout, "revoked %s (%s, scope %s) — requests carrying it are refused now", id, k.Name, k.Scope)
 }
 
 // parseTokenCreate reads `opod token create`'s arguments: the name, the scope
@@ -150,21 +206,21 @@ func parseTokenCreate(args []string) (name, scope string, expiresAt time.Time) {
 			scope = "node"
 		case "--ttl":
 			if i+1 >= len(args) {
-				die("--ttl requires a duration (e.g. 30m, 2h, 7d)")
+				dieUsageOf("token", "--ttl needs a duration (30m, 2h, 7d)")
 			}
 			d, err := parseFlexibleDuration(args[i+1])
 			if err != nil {
-				die("invalid --ttl: %v", err)
+				dieUsageOf("token", "--ttl: %v", err)
 			}
 			expiresAt = time.Now().Add(d)
 			i++
 		case "--expires-at":
 			if i+1 >= len(args) {
-				die("--expires-at requires YYYY-MM-DD or RFC3339")
+				dieUsageOf("token", "--expires-at needs a date: YYYY-MM-DD or RFC3339")
 			}
 			t, err := parseFlexibleDate(args[i+1])
 			if err != nil {
-				die("invalid --expires-at: %v", err)
+				dieUsageOf("token", "--expires-at: %v", err)
 			}
 			expiresAt = t
 			i++
@@ -172,7 +228,7 @@ func parseTokenCreate(args []string) (name, scope string, expiresAt time.Time) {
 			if strings.HasPrefix(a, "--ttl=") {
 				d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--ttl="))
 				if err != nil {
-					die("invalid --ttl: %v", err)
+					dieUsageOf("token", "--ttl: %v", err)
 				}
 				expiresAt = time.Now().Add(d)
 				continue
@@ -180,15 +236,27 @@ func parseTokenCreate(args []string) (name, scope string, expiresAt time.Time) {
 			if strings.HasPrefix(a, "--expires-at=") {
 				t, err := parseFlexibleDate(strings.TrimPrefix(a, "--expires-at="))
 				if err != nil {
-					die("invalid --expires-at: %v", err)
+					dieUsageOf("token", "--expires-at: %v", err)
 				}
 				expiresAt = t
 				continue
 			}
-			if !named {
-				name, named = a, true
+			if strings.HasPrefix(a, "-") {
+				// It used to become the key's NAME: `--admn` minted a user key.
+				msg := fmt.Sprintf("unknown token create flag %s", a)
+				if g := suggest(strings.TrimLeft(a, "-"), []string{"admin", "node", "ttl", "expires-at"}); g != "" {
+					msg += " — did you mean --" + g + "?"
+				}
+				dieUsageOf("token", "%s", msg)
 			}
+			if named {
+				dieUsageOf("token", "token create takes one name (got %q and %q)", name, a)
+			}
+			name, named = a, true
 		}
+	}
+	if !expiresAt.IsZero() && !expiresAt.After(time.Now()) {
+		dieUsageOf("token", "the expiry %s is in the past — a key that expires before it is used is not a key", expiresAt.Format(time.RFC3339))
 	}
 	// A node key with no name is "node-join"; a name given before or after
 	// --node is kept (T10.21: `--node NAME` dropped NAME).

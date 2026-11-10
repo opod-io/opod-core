@@ -1,0 +1,7 @@
+$ opod token ls
+--- exit 0
+--- stdout
+ID             NAME                 SCOPE    STATE    EXPIRES                   CREATED
+k_seed1        alice-k_seed1        user     revoked  never                     2026-01-01T00:00:00Z
+k_seed2        alice-k_seed2        user     active   never                     2026-01-01T00:00:00Z
+--- stderr

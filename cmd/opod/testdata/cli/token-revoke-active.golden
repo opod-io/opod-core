@@ -1,0 +1,5 @@
+$ opod token revoke k_seed1
+--- exit 0
+--- stdout
+✔ revoked k_seed1 (alice-k_seed1, scope user) — requests carrying it are refused now
+--- stderr

@@ -56,6 +56,7 @@ type transcriptCase struct {
 	// nodes are written into the case's store before the run (state.db in
 	// its data directory), as a leader that has heard from workers holds them.
 	nodes []store.Node
+	keys  []store.APIKey // seeded into the store like nodes
 }
 
 // answer is a stub that replies status and body to every request.
@@ -95,6 +96,10 @@ var jsonLogLine = regexp.MustCompile(`(?m)^(\{"time":|time=).*\n`)
 // clockTime is a step printed in local time; the zone differs per runner.
 var clockTime = regexp.MustCompile(`(?m)^(  )[0-9]{2}:[0-9]{2}:[0-9]{2}`)
 
+// mintedKey and mintedID are what token create generates at random.
+var mintedKey = regexp.MustCompile(`sk-orc-[A-Za-z0-9_-]{20,}`)
+var mintedID = regexp.MustCompile(`\bk_[A-Za-z0-9_-]{11}\b`)
+
 // pidNumber is a pid in a message; goldens say "pid N".
 var pidNumber = regexp.MustCompile(`pid [0-9]+`)
 
@@ -118,6 +123,17 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.85 — token: an unknown flag never becomes a key, the key alone on stdout.
+	{name: "token-create-typo-flag", args: []string{"token", "create", "--admn"}},
+	{name: "token-create-key-alone-on-stdout", args: []string{"token", "create", "ci"}},
+	{name: "token-create-node", args: []string{"token", "create", "--node"}},
+	{name: "token-create-past-expiry", args: []string{"token", "create", "ci", "--expires-at", "2020-01-01"}},
+	{name: "token-create-managed", args: []string{"token", "create", "ci"}, env: map[string]string{"OPOD_MANAGED": "1"}},
+	{name: "token-revoke-repeat", args: []string{"token", "revoke", "k_seed1"}, keys: []store.APIKey{transcriptKey("k_seed1", true)}},
+	{name: "token-revoke-active", args: []string{"token", "revoke", "k_seed1"}, keys: []store.APIKey{transcriptKey("k_seed1", false)}},
+	{name: "token-revoke-unknown", args: []string{"token", "revoke", "k_nope"}},
+	{name: "token-renew-revoked", args: []string{"token", "renew", "k_seed1", "--ttl", "7d"}, keys: []store.APIKey{transcriptKey("k_seed1", true)}},
+	{name: "token-ls", args: []string{"token", "ls"}, keys: []store.APIKey{transcriptKey("k_seed1", true), transcriptKey("k_seed2", false)}},
 	// T24.84 — node: a list for scripts, hints on not-found, "already" on repeats.
 	{name: "node-ls-json-empty", args: []string{"node", "ls", "--json"}},
 	{name: "node-ls-extra-arg", args: []string{"node", "ls", "extra"}},
@@ -269,13 +285,18 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 		}
 	}
 	foreign := 0 // a `sleep` the command must leave running
-	if len(c.nodes) > 0 {
+	if len(c.nodes)+len(c.keys) > 0 {
 		st, err := store.OpenSQLite(filepath.Join(data, "state.db"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, n := range c.nodes {
 			if err := st.Nodes().Upsert(context.Background(), n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, k := range c.keys {
+			if err := st.APIKeys().Create(context.Background(), k); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -360,6 +381,8 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 			s = strings.ReplaceAll(s, strings.TrimPrefix(stubURL, "http://"), "STUB")
 		}
 		s = pidNumber.ReplaceAllString(s, "pid N")
+		s = mintedKey.ReplaceAllString(s, "sk-orc-KEY")
+		s = mintedID.ReplaceAllString(s, "k_ID")
 		s = hardwareLine.ReplaceAllString(s, "${1}: HW")
 		s = clockTime.ReplaceAllString(s, "${1}HH:MM:SS")
 		s = gpuLine.ReplaceAllString(s, "")
@@ -396,4 +419,10 @@ func cleanEnv() []string {
 func transcriptNode(id, state string) store.Node {
 	return store.Node{ID: id, Hostname: "host-" + id, OS: "linux", Arch: "amd64", RAMGB: 64, Address: "192.0.2.10:8081",
 		State: state, LastHeartbeat: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+// transcriptKey is a stored key with fixed facts; its hash matches no key.
+func transcriptKey(id string, revoked bool) store.APIKey {
+	return store.APIKey{ID: id, Hash: "hash-" + id, Name: "alice-" + id, Scope: "user",
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Revoked: revoked}
 }

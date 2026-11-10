@@ -1,0 +1,6 @@
+$ opod token create ci --expires-at 2020-01-01
+--- exit 2
+--- stdout
+--- stderr
+opod: the expiry 2020-01-01T00:00:00Z is in the past — a key that expires before it is used is not a key
+  opod token --help for every flag

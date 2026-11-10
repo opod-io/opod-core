@@ -1,0 +1,5 @@
+$ opod token create ci
+--- exit 1
+--- stdout
+--- stderr
+opod: this leader's keys are managed by its control plane (OPOD_MANAGED=1) — a key created here would be thrown away; create it in the control plane

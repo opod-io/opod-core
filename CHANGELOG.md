@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **`opod token *`: an unknown flag never becomes a key, and the key is alone on stdout.** `token create --admn` minted a
+  user key named `--admn`; an unknown flag is now a usage error with a did-you-mean. The banner goes to stderr so
+  `key=$(opod token create …)` captures the key alone; a past expiry is refused; a `--node` key prints the `opod join` line;
+  under `OPOD_MANAGED=1` with no store DSN `create` refuses (the key would be lost). `ls` has a STATE column
+  (active/expired/revoked) and `--json`; `revoke` names the key and says "already revoked"; `renew` of a revoked key refuses;
+  an unknown id points at `opod token ls`.
+
 - **`opod node *`: a list for scripts, a hint on not-found, "already" on a repeat.** `ls --json`; `show` prints a short
   human summary and `--json` the record; `no node X (see opod node ls)`; a repeat drain or an undrain of a node that is
   not drained says nothing changed, exit 0; extra arguments are usage errors.

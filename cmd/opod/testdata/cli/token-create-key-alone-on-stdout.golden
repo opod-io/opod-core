@@ -1,0 +1,8 @@
+$ opod token create ci
+--- exit 0
+--- stdout
+sk-orc-KEY
+--- stderr
+✔ created ci (id=k_ID, scope=user)
+  the key below is shown once — store it now
+⚠ the key is going to a non-terminal (a pipe, a file, a CI log) — rotate it if that wasn't intended

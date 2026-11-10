@@ -1,0 +1,5 @@
+$ opod token revoke k_nope
+--- exit 1
+--- stdout
+--- stderr
+opod: no key k_nope (see opod token ls)

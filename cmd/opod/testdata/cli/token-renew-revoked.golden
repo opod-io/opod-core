@@ -1,0 +1,5 @@
+$ opod token renew k_seed1 --ttl 7d
+--- exit 1
+--- stdout
+--- stderr
+opod: k_seed1 is revoked; renewing its expiry would not restore it — mint a new key: opod token create

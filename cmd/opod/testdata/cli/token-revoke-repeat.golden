@@ -1,0 +1,5 @@
+$ opod token revoke k_seed1
+--- exit 0
+--- stdout
+✔ k_seed1 (alice-k_seed1) is already revoked — nothing changed
+--- stderr

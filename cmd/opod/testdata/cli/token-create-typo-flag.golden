@@ -1,0 +1,6 @@
+$ opod token create --admn
+--- exit 2
+--- stdout
+--- stderr
+opod: unknown token create flag --admn — did you mean --admin?
+  opod token --help for every flag

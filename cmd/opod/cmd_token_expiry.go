@@ -23,11 +23,11 @@ func tokenExpire(id string, args []string) {
 		switch a {
 		case "--in":
 			if i+1 >= len(args) {
-				die("--in requires a duration (e.g. 1h, 30m, 7d)")
+				dieUsageOf("token", "--in needs a duration (1h, 30m, 7d)")
 			}
 			d, err := parseFlexibleDuration(args[i+1])
 			if err != nil {
-				die("invalid --in: %v", err)
+				dieUsageOf("token", "--in: %v", err)
 			}
 			expiresAt = time.Now().Add(d)
 			i++
@@ -35,19 +35,20 @@ func tokenExpire(id string, args []string) {
 			if strings.HasPrefix(a, "--in=") {
 				d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--in="))
 				if err != nil {
-					die("invalid --in: %v", err)
+					dieUsageOf("token", "--in: %v", err)
 				}
 				expiresAt = time.Now().Add(d)
 				continue
 			}
-			die("unknown flag: %s", a)
+			dieUsageOf("token", "unknown flag %s", a)
 		}
 	}
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
+	keyOrExit(st, id)
 	if err := st.APIKeys().UpdateExpiresAt(context.Background(), id, expiresAt); err != nil {
-		die("update expires_at: %v", err)
+		die("expire %s: %v", id, err)
 	}
 	if expiresAt.Before(time.Now().Add(time.Second)) {
 		ok(os.Stdout, "%s: expired immediately", id)
@@ -67,21 +68,21 @@ func tokenRenew(id string, args []string) {
 		switch a {
 		case "--ttl":
 			if i+1 >= len(args) {
-				die("--ttl requires a duration")
+				dieUsageOf("token", "--ttl needs a duration (30m, 2h, 7d)")
 			}
 			d, err := parseFlexibleDuration(args[i+1])
 			if err != nil {
-				die("invalid --ttl: %v", err)
+				dieUsageOf("token", "--ttl: %v", err)
 			}
 			expiresAt = time.Now().Add(d)
 			i++
 		case "--expires-at":
 			if i+1 >= len(args) {
-				die("--expires-at requires YYYY-MM-DD or RFC3339")
+				dieUsageOf("token", "--expires-at needs a date: YYYY-MM-DD or RFC3339")
 			}
 			t, err := parseFlexibleDate(args[i+1])
 			if err != nil {
-				die("invalid --expires-at: %v", err)
+				dieUsageOf("token", "--expires-at: %v", err)
 			}
 			expiresAt = t
 			i++
@@ -89,7 +90,7 @@ func tokenRenew(id string, args []string) {
 			if strings.HasPrefix(a, "--ttl=") {
 				d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--ttl="))
 				if err != nil {
-					die("invalid --ttl: %v", err)
+					dieUsageOf("token", "--ttl: %v", err)
 				}
 				expiresAt = time.Now().Add(d)
 				continue
@@ -97,22 +98,28 @@ func tokenRenew(id string, args []string) {
 			if strings.HasPrefix(a, "--expires-at=") {
 				t, err := parseFlexibleDate(strings.TrimPrefix(a, "--expires-at="))
 				if err != nil {
-					die("invalid --expires-at: %v", err)
+					dieUsageOf("token", "--expires-at: %v", err)
 				}
 				expiresAt = t
 				continue
 			}
-			die("unknown flag: %s", a)
+			dieUsageOf("token", "unknown flag %s", a)
 		}
 	}
 	if expiresAt.IsZero() {
-		die("renew needs --ttl or --expires-at")
+		dieUsageOf("token", "token renew needs --ttl or --expires-at")
+	}
+	if !expiresAt.After(time.Now()) {
+		dieUsageOf("token", "the new expiry %s is in the past — to end the key now: opod token expire %s", expiresAt.Format(time.RFC3339), id)
 	}
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
+	if keyOrExit(st, id).Revoked {
+		die("%s is revoked; renewing its expiry would not restore it — mint a new key: opod token create", id)
+	}
 	if err := st.APIKeys().UpdateExpiresAt(context.Background(), id, expiresAt); err != nil {
-		die("update expires_at: %v", err)
+		die("renew %s: %v", id, err)
 	}
 	ok(os.Stdout, "%s: renewed — expires %s (in %s)", id,
 		expiresAt.Format(time.RFC3339), time.Until(expiresAt).Round(time.Second))
