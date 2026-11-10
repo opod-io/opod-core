@@ -198,7 +198,7 @@ func runUp(args []string) int {
 			OS:            caps.OS,
 			Arch:          caps.Arch,
 			RAMGB:         caps.RAMGB,
-			Address:       "127.0.0.1" + listen,
+			Address:       localNodeAddress(listen),
 			HardwareJSON:  string(hwJSON),
 			LastHeartbeat: time.Now(),
 			State:         "ready",

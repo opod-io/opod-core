@@ -282,6 +282,25 @@ func resolveBaseURL(cfg *config.Config, override string) string {
 // for a listen address with a host and for a leader serving TLS). An empty or
 // unspecified host ("", 0.0.0.0, ::) is localhost; the scheme is https when
 // the leader serves TLS (tls_cert and tls_key both set).
+// localNodeAddress is the leader's own node row address: the listen host —
+// 127.0.0.1 for an empty or wildcard one — and its port. It was
+// "127.0.0.1" + listen, which read 127.0.0.1127.0.0.1:8080 for a listen with
+// a host (PLAN T24.105).
+func localNodeAddress(listen string) string {
+	if listen == "" {
+		listen = ":8080"
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		host, port = "", strings.TrimPrefix(listen, ":")
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+
 func localLeaderURL(cfg *config.Config) string {
 	listen := cfg.Listen
 	if listen == "" {

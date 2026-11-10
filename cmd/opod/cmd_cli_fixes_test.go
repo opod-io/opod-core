@@ -118,3 +118,19 @@ func TestHelpNamesKVPrune(t *testing.T) {
 		t.Fatalf("opod --help:\n%s", b.String())
 	}
 }
+
+// T24.105: the leader's own node row carries the listen host and port once.
+func TestLocalNodeAddress(t *testing.T) {
+	for listen, want := range map[string]string{
+		"":               "127.0.0.1:8080",
+		":8080":          "127.0.0.1:8080",
+		"127.0.0.1:9000": "127.0.0.1:9000",
+		"0.0.0.0:8080":   "127.0.0.1:8080",
+		"[::]:8080":      "127.0.0.1:8080",
+		"10.0.0.7:8080":  "10.0.0.7:8080",
+	} {
+		if got := localNodeAddress(listen); got != want {
+			t.Errorf("listen %q: address %q, want %q", listen, got, want)
+		}
+	}
+}

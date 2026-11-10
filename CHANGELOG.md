@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **The leader's own node row has its real address (T24.105).** `opod up` wrote `"127.0.0.1" + listen`, so a `listen`
+  with a host read `127.0.0.1127.0.0.1:8080` in `opod node ls`; it is now the listen host (127.0.0.1 for an empty or
+  wildcard one) and its port.
+
 - **`opod node drain` and `undrain` on a managed leader's host go through the leader (T24.102).** Their "already
   draining" check read the store before the call, and on a managed host that read stopped at the new store guard; it now
   reads the running leader's row first.
