@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -85,13 +86,16 @@ func (r imageRef) pull() string {
 	return r.Repository + ":" + r.Tag
 }
 
-func imageFilterFlags(name string, args []string, withEngine bool) (images.Filter, []string) {
+// imageFilterFlags parses --vendor (and --engine) and refuses a value the
+// manifest has no image for, in every view alike: a filter that matches
+// nothing because it is misspelled is a mistake, not an empty answer.
+func imageFilterFlags(m images.Manifest, name string, args []string, withEngine bool) (images.Filter, []string) {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
-	vendor := fs.String("vendor", "", "accelerator vendor: nvidia | amd | intel | tt | cpu")
+	vendor := fs.String("vendor", "", "accelerator vendor: "+strings.Join(m.Vendors(), " | "))
 	engine := new(string)
 	valueFlags := map[string]bool{"--vendor": true, "-vendor": true}
 	if withEngine {
-		engine = fs.String("engine", "", "engine: "+strings.Join(engines.Names(), " | "))
+		engine = fs.String("engine", "", "engine with an image: "+strings.Join(m.Engines(), " | "))
 		valueFlags["--engine"], valueFlags["-engine"] = true, true
 	}
 	ordered, err := reorderFlagsFirst(args, valueFlags)
@@ -99,22 +103,45 @@ func imageFilterFlags(name string, args []string, withEngine bool) (images.Filte
 		dieUsageOf("image", "%v", err)
 	}
 	parseFlags(fs, "image", ordered)
-	return images.Filter{Engine: engines.Canonical(strings.ToLower(*engine)), Vendor: *vendor}, fs.Args()
+	f := images.Filter{Engine: engines.Canonical(strings.ToLower(*engine)), Vendor: *vendor}
+	if f.Vendor != "" && !containsStr(m.Vendors(), images.CanonicalVendor(f.Vendor)) {
+		dieUsageOf("image", "no image is built for vendor %q (vendors: %s)", f.Vendor, strings.Join(m.Vendors(), ", "))
+	}
+	if f.Engine != "" && !containsStr(m.Engines(), f.Engine) {
+		dieUsageOf("image", "no image is built for engine %q (engines with an image: %s)", *engine, strings.Join(m.Engines(), ", "))
+	}
+	return f, fs.Args()
+}
+
+func containsStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 func imageLs(m images.Manifest, args []string, asJSON bool) {
-	filter, _ := imageFilterFlags("image ls", args, true)
+	filter, extra := imageFilterFlags(m, "image ls", args, true)
+	if len(extra) > 0 {
+		dieUsageOf("image", "image ls takes only flags (got %q) — opod image show <image> for one", extra[0])
+	}
 	rows := m.Select(filter)
+	// The same answer in both views: no match exits 1 with [] as with the table.
 	if asJSON {
 		refs := make([]imageRef, len(rows))
 		for i, img := range rows {
 			refs[i] = refOf(img)
 		}
 		emitJSON(refs)
+		if len(rows) == 0 {
+			os.Exit(1)
+		}
 		return
 	}
 	if len(rows) == 0 {
-		die("no image matches (vendors: %s; engines with an image: %s)", strings.Join(m.Vendors(), ", "), strings.Join(m.Engines(), ", "))
+		die("no image is built for that vendor and engine together (vendors: %s; engines with an image: %s)", strings.Join(m.Vendors(), ", "), strings.Join(m.Engines(), ", "))
 	}
 	printImageTable(rows, nil)
 	fmt.Println()
@@ -167,7 +194,17 @@ func imageShow(m images.Manifest, args []string, asJSON bool) {
 			names[i] = x.Name
 		}
 		if g := suggest(args[0], names); g != "" {
-			die("no image %q\n\nDid you mean %s?", args[0], cyan(g))
+			die("no image %q — did you mean %s?", args[0], cyan(g))
+		}
+		// A short name ("vllm-nvidia") is part of the full one.
+		var near []string
+		for _, n := range names {
+			if strings.Contains(n, args[0]) {
+				near = append(near, n)
+			}
+		}
+		if len(near) > 0 && len(near) <= 3 {
+			die("no image %q — did you mean %s?", args[0], cyan(strings.Join(near, " or ")))
 		}
 		die("no image %q (run `opod image ls`)", args[0])
 	}
@@ -219,12 +256,9 @@ func imageShow(m images.Manifest, args []string, asJSON bool) {
 }
 
 func imageRecommend(m images.Manifest, args []string, asJSON bool) {
-	filter, pos := imageFilterFlags("image recommend", args, false)
+	filter, pos := imageFilterFlags(m, "image recommend", args, false)
 	if len(pos) != 1 {
 		dieUsageOf("image", "image recommend is missing an argument: opod image recommend <model> [--vendor V] [--json]")
-	}
-	if v := images.CanonicalVendor(filter.Vendor); v != "" && len(m.Select(images.Filter{Vendor: v})) == 0 {
-		die("no image is built for vendor %q (vendors: %s)", filter.Vendor, strings.Join(m.Vendors(), ", "))
 	}
 	entry := resolveModelForImages(m, pos[0])
 	rec := m.Recommend(*entry, filter.Vendor)

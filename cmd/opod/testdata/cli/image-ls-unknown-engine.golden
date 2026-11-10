@@ -1,0 +1,6 @@
+$ opod image ls --engine mlx
+--- exit 2
+--- stdout
+--- stderr
+opod: no image is built for engine "mlx" (engines with an image: llamacpp, vllm, sglang, trtllm)
+  opod image --help for every flag

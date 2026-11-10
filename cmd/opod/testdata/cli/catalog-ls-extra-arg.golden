@@ -1,0 +1,8 @@
+$ opod catalog ls x
+--- exit 2
+--- stdout
+--- stderr
+opod: catalog ls takes only --json (got "x")
+  usage: opod catalog ls
+  opod catalog export <dir>
+  opod catalog --help for every flag

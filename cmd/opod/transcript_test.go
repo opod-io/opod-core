@@ -123,6 +123,15 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.86 — image and catalog: the same answer in JSON and table, a line on success.
+	{name: "image-ls-unknown-vendor", args: []string{"image", "ls", "--vendor", "foo"}},
+	{name: "image-ls-unknown-vendor-json", args: []string{"image", "ls", "--vendor", "foo", "--json"}},
+	{name: "image-ls-unknown-engine", args: []string{"image", "ls", "--engine", "mlx"}},
+	{name: "image-ls-extra-arg", args: []string{"image", "ls", "vllm"}},
+	{name: "image-show-short-name", args: []string{"image", "show", "vllm-nvidi"}},
+	{name: "catalog-export", args: []string{"catalog", "export", "{{DATA}}/catalog"}},
+	{name: "catalog-export-no-dir", args: []string{"catalog", "export"}},
+	{name: "catalog-ls-extra-arg", args: []string{"catalog", "ls", "x"}},
 	// T24.85 — token: an unknown flag never becomes a key, the key alone on stdout.
 	{name: "token-create-typo-flag", args: []string{"token", "create", "--admn"}},
 	{name: "token-create-key-alone-on-stdout", args: []string{"token", "create", "ci"}},
@@ -330,7 +339,7 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLITranscripts$")
 	args := make([]string, len(c.args))
 	for i, a := range c.args {
-		args[i] = strings.ReplaceAll(a, "{{STUB}}", stubURL)
+		args[i] = strings.ReplaceAll(strings.ReplaceAll(a, "{{STUB}}", stubURL), "{{DATA}}", data)
 	}
 	cmd.Env = append(cleanEnv(), "OPOD_TRANSCRIPT=1", "OPOD_TRANSCRIPT_ARGS="+strings.Join(args, "\x1f"),
 		"OPOD_DATA_DIR="+data, "HOME="+data, "OPOD_LISTEN="+listen, "NO_COLOR=1",

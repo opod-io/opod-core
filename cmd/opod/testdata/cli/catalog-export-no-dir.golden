@@ -1,0 +1,8 @@
+$ opod catalog export
+--- exit 2
+--- stdout
+--- stderr
+opod: catalog export needs a directory: opod catalog export <dir>
+  usage: opod catalog ls
+  opod catalog export <dir>
+  opod catalog --help for every flag

@@ -1,0 +1,6 @@
+$ opod image ls vllm
+--- exit 2
+--- stdout
+--- stderr
+opod: image ls takes only flags (got "vllm") — opod image show <image> for one
+  opod image --help for every flag

@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`opod image` and `opod catalog`: the same answer in both views, a line on success.** A `--vendor` or `--engine`
+  no image is built for is a usage error in the table and under `--json` alike (JSON answered `[]`, exit 0); a filter with
+  no match exits 1 in both; `--engine` lists only engines with an image; `image show` takes part of a name; `catalog
+  export` says what it wrote; `catalog ls --json`; extra arguments are refused.
+
 - **`opod token *`: an unknown flag never becomes a key, and the key is alone on stdout.** `token create --admn` minted a
   user key named `--admn`; an unknown flag is now a usage error with a did-you-mean. The banner goes to stderr so
   `key=$(opod token create …)` captures the key alone; a past expiry is refused; a `--node` key prints the `opod join` line;

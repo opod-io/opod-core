@@ -1,0 +1,5 @@
+$ opod image show vllm-nvidi
+--- exit 1
+--- stdout
+--- stderr
+opod: no image "vllm-nvidi" — did you mean opod-worker-vllm-nvidia?

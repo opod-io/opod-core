@@ -1,0 +1,6 @@
+$ opod image ls --vendor foo --json
+--- exit 2
+--- stdout
+--- stderr
+opod: no image is built for vendor "foo" (vendors: nvidia, amd, intel, cpu, tt)
+  opod image --help for every flag

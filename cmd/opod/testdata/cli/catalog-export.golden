@@ -1,0 +1,5 @@
+$ opod catalog export {{DATA}}/catalog
+--- exit 0
+--- stdout
+✔ wrote 48 catalog entries to $DATA/catalog — overrides go beside them (OPOD_CATALOG_DIR=$DATA/catalog)
+--- stderr
