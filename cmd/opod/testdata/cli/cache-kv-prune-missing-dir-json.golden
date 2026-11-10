@@ -1,0 +1,6 @@
+$ opod cache kv-prune --dir {{DATA}}/nosuch --max-gb 1 --apply --json
+--- exit 0
+--- stdout
+{"dir":"$DATA/nosuch","dryRun":false,"usedBytes":0,"removed":0,"freedBytes":0,"walkMs":0,"removeMs":0}
+--- stderr
+⚠ $DATA/nosuch does not exist — nothing to prune (check --dir if you expected a tier there)

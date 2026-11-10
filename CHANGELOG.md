@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod cache *`: a missing directory is said, empty says empty, one unit.** `kv-prune` on a directory that does not
+  exist warns (a mistyped `--dir` read as an empty tier and guarded nothing); with `--every` it prints a start line,
+  waits for the directory and says so every 10 minutes, and shows an idle pass once a minute. `ls` says when the cache is
+  empty; sizes are labelled GiB; a failed sweep of crashed pulls is a warning and the dry run says it does not sweep;
+  kv-prune names the missing flag; extra arguments are refused. JSON stays one object per line.
+
 - **`opod image` and `opod catalog`: the same answer in both views, a line on success.** A `--vendor` or `--engine`
   no image is built for is a usage error in the table and under `--json` alike (JSON answered `[]`, exit 0); a filter with
   no match exits 1 in both; `--engine` lists only engines with an image; `image show` takes part of a name; `catalog

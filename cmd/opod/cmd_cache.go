@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -63,12 +64,20 @@ func cacheLs(args []string) {
 	dir := fs.String("dir", os.Getenv("OPOD_MODELS_DIR"), "models directory (default $OPOD_MODELS_DIR)")
 	asJSON := fs.Bool("json", false, "JSON output")
 	parseFlags(fs, "cache", args)
-	entries, err := fetch.List(needDir(*dir))
+	if fs.NArg() > 0 {
+		dieUsageOf("cache", "cache ls takes only flags (got %q)", fs.Arg(0))
+	}
+	d := needDir(*dir)
+	entries, err := fetch.List(d)
 	if err != nil {
 		die("cache ls: %v", err)
 	}
 	if *asJSON {
-		_ = json.NewEncoder(os.Stdout).Encode(entries)
+		_ = json.NewEncoder(os.Stdout).Encode(entries) // one line: a control plane reads it as a line
+		return
+	}
+	if len(entries) == 0 {
+		fmt.Printf("(no weights cached in %s)\n", d)
 		return
 	}
 	for _, e := range entries {
@@ -76,7 +85,7 @@ func cacheLs(args []string) {
 		if e.Ours {
 			owner = "opod"
 		}
-		fmt.Printf("%-40s %8.1f GB  %-8s  last used %s\n", cacheName(e), float64(e.Size)/(1<<30), owner, since(e.LastUsedAt))
+		fmt.Printf("%-40s %8.1f GiB  %-8s  last used %s\n", cacheName(e), float64(e.Size)/(1<<30), owner, since(e.LastUsedAt))
 	}
 }
 
@@ -97,8 +106,11 @@ func cachePrune(args []string) {
 	targetFree := fs.Int("target-free", 0, "stop once this many GB are free (0 = remove every prunable file)")
 	apply := fs.Bool("apply", false, "actually delete; without it this is a dry run")
 	asJSON := fs.Bool("json", false, "JSON output")
-	sweep := fs.Duration("sweep", 24*time.Hour, "also clear crashed pulls older than this (0 = off)")
+	sweep := fs.Duration("sweep", 24*time.Hour, "also clear crashed pulls older than this (0 = off; only with --apply)")
 	parseFlags(fs, "cache", args)
+	if fs.NArg() > 0 {
+		dieUsageOf("cache", "cache prune takes only flags (got %q)", fs.Arg(0))
+	}
 
 	d := needDir(*dir)
 	var keepList []string
@@ -110,9 +122,12 @@ func cachePrune(args []string) {
 		die("cache prune: %v", err)
 	}
 	if *sweep > 0 && *apply {
-		if n, err := fetch.SweepPartials(d, *sweep); err == nil && n > 0 {
+		n, err := fetch.SweepPartials(d, *sweep)
+		switch {
+		case err != nil:
+			warn("could not sweep crashed pulls in %s: %v", d, err)
+		case n > 0:
 			res.Swept = n
-			fmt.Fprintf(os.Stderr, "swept %d leftover(s) of crashed pulls\n", n)
 		}
 	}
 	if *asJSON {
@@ -124,9 +139,15 @@ func cachePrune(args []string) {
 		verb = "removed"
 	}
 	for _, e := range res.Removed {
-		fmt.Printf("%s %-40s %8.1f GB (last used %s)\n", verb, cacheName(e), float64(e.Size)/(1<<30), since(e.LastUsedAt))
+		fmt.Printf("%s %-40s %8.1f GiB (last used %s)\n", verb, cacheName(e), float64(e.Size)/(1<<30), since(e.LastUsedAt))
 	}
-	fmt.Printf("%s %d item(s), %.1f GB; kept %d referenced or recent", verb, len(res.Removed), float64(res.FreedBytes)/(1<<30), res.Kept)
+	switch {
+	case res.Swept > 0:
+		fmt.Printf("swept %d leftover(s) of crashed pulls\n", res.Swept)
+	case !*apply && *sweep > 0:
+		fmt.Printf("(a dry run does not sweep crashed pulls; --apply also clears those older than %s)\n", *sweep)
+	}
+	fmt.Printf("%s %d item(s), %.1f GiB; kept %d referenced or recent", verb, len(res.Removed), float64(res.FreedBytes)/(1<<30), res.Kept)
 	if len(res.Skipped) > 0 {
 		fmt.Printf("; left %d file(s) this cache did not write (%s)", len(res.Skipped), strings.Join(res.Skipped, ", "))
 	}
@@ -148,8 +169,24 @@ func cacheKVPrune(args []string) {
 	apply := fs.Bool("apply", false, "actually delete; without it this is a dry run")
 	asJSON := fs.Bool("json", false, "JSON output, one object per pass")
 	parseFlags(fs, "cache", args)
-	if *dir == "" || *maxGb < 0 {
-		dieUsageOf("cache", "cache kv-prune needs --dir and --max-gb")
+	switch {
+	case *dir == "" && *maxGb < 0:
+		dieUsageOf("cache", "cache kv-prune needs --dir (the tier directory) and --max-gb (its cap, GiB)")
+	case *dir == "":
+		dieUsageOf("cache", "cache kv-prune needs --dir, the tier directory")
+	case *maxGb < 0:
+		dieUsageOf("cache", "cache kv-prune needs --max-gb, the tier's cap in GiB (0 removes everything but --keep)")
+	}
+	if fs.NArg() > 0 {
+		dieUsageOf("cache", "cache kv-prune takes only flags (got %q)", fs.Arg(0))
+	}
+	// A missing directory reads as an empty tier. Say so: a mistyped --dir
+	// would otherwise guard nothing, for ever. It is not an error — the
+	// engine creates the directory when it starts, and a sweep may find it
+	// already gone.
+	missing := func() bool {
+		_, err := os.Stat(*dir)
+		return errors.Is(err, os.ErrNotExist)
 	}
 	var keepList []string
 	if *keep != "" {
@@ -169,6 +206,9 @@ func cacheKVPrune(args []string) {
 		}
 	}
 	if *every <= 0 {
+		if missing() {
+			warn("%s does not exist — nothing to prune (check --dir if you expected a tier there)", *dir)
+		}
 		res, err := fetch.PruneKVTier(req)
 		if err != nil {
 			die("cache kv-prune: %v", err)
@@ -176,13 +216,35 @@ func cacheKVPrune(args []string) {
 		show(res)
 		return
 	}
+	mode := "a dry run"
+	if *apply {
+		mode = "removing"
+	}
+	fmt.Fprintf(os.Stderr, "pruning %s to ≤%g GiB every %s (%s); Ctrl-C stops\n", *dir, *maxGb, *every, mode)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var saidMissing, saidIdle time.Time
 	// A failed pass is said and the next one tries again; a pass that found
 	// the tier growing is followed within a second, not a whole --every.
 	fetch.RunKVTierPruner(ctx, req, *every, fetch.KVTierHotDelay, func(res fetch.KVTierPruneResult, err error) {
 		if err != nil {
 			warn("cache kv-prune: this pass failed, the next one tries again: %v", err)
+			return
+		}
+		if missing() {
+			if time.Since(saidMissing) >= 10*time.Minute {
+				warn("%s does not exist yet — waiting for the engine to create it (check --dir if it never does)", *dir)
+				saidMissing = time.Now()
+			}
+			return
+		}
+		// An idle pass is said at most once a minute, so the log shows the
+		// pruner alive without a line per second.
+		if !*asJSON && res.Removed == 0 {
+			if time.Since(saidIdle) >= time.Minute {
+				fmt.Printf("%s: %.2f GiB in the tier, under the cap — nothing to remove\n", res.Dir, float64(res.UsedBytes)/(1<<30))
+				saidIdle = time.Now()
+			}
 			return
 		}
 		show(res)

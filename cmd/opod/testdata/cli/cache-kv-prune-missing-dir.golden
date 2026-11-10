@@ -1,0 +1,6 @@
+$ opod cache kv-prune --dir {{DATA}}/nosuch --max-gb 1 --apply
+--- exit 0
+--- stdout
+$DATA/nosuch: 0.00 GiB in the tier; removed 0 file(s), 0.00 GiB (walk 0 ms, remove 0 ms)
+--- stderr
+⚠ $DATA/nosuch does not exist — nothing to prune (check --dir if you expected a tier there)

@@ -1,0 +1,6 @@
+$ opod cache kv-prune --dir {{DATA}}/nosuch --max-gb 1 --every 1s
+--- exit 0
+--- stdout
+--- stderr
+pruning $DATA/nosuch to ≤1 GiB every 1s (a dry run); Ctrl-C stops
+⚠ $DATA/nosuch does not exist yet — waiting for the engine to create it (check --dir if it never does)

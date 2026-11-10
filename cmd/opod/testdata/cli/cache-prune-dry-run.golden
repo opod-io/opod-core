@@ -1,0 +1,7 @@
+$ opod cache prune --dir {{DATA}}
+--- exit 0
+--- stdout
+(a dry run does not sweep crashed pulls; --apply also clears those older than 24h0m0s)
+would remove 0 item(s), 0.0 GiB; kept 0 referenced or recent
+dry run: pass --apply to delete
+--- stderr

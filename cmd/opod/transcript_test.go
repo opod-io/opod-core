@@ -123,6 +123,15 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.87 — cache: a wrong directory is said, empty says empty, one unit.
+	{name: "cache-ls-empty", args: []string{"cache", "ls", "--dir", "{{DATA}}"}},
+	{name: "cache-ls-extra-arg", args: []string{"cache", "ls", "--dir", "{{DATA}}", "x"}},
+	{name: "cache-prune-dry-run", args: []string{"cache", "prune", "--dir", "{{DATA}}"}},
+	{name: "cache-kv-prune-no-dir", args: []string{"cache", "kv-prune", "--max-gb", "1"}},
+	{name: "cache-kv-prune-no-cap", args: []string{"cache", "kv-prune", "--dir", "{{DATA}}"}},
+	{name: "cache-kv-prune-missing-dir", args: []string{"cache", "kv-prune", "--dir", "{{DATA}}/nosuch", "--max-gb", "1", "--apply"}},
+	{name: "cache-kv-prune-missing-dir-json", args: []string{"cache", "kv-prune", "--dir", "{{DATA}}/nosuch", "--max-gb", "1", "--apply", "--json"}},
+	{name: "cache-kv-prune-every-missing-dir", args: []string{"cache", "kv-prune", "--dir", "{{DATA}}/nosuch", "--max-gb", "1", "--every", "1s"}, stopAfter: 1500 * time.Millisecond},
 	// T24.86 — image and catalog: the same answer in JSON and table, a line on success.
 	{name: "image-ls-unknown-vendor", args: []string{"image", "ls", "--vendor", "foo"}},
 	{name: "image-ls-unknown-vendor-json", args: []string{"image", "ls", "--vendor", "foo", "--json"}},

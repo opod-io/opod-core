@@ -1,0 +1,6 @@
+$ opod cache ls --dir {{DATA}} x
+--- exit 2
+--- stdout
+--- stderr
+opod: cache ls takes only flags (got "x")
+  opod cache --help for every flag

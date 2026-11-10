@@ -1,0 +1,5 @@
+$ opod cache ls --dir {{DATA}}
+--- exit 0
+--- stdout
+(no weights cached in $DATA)
+--- stderr

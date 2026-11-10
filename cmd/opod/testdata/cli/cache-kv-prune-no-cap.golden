@@ -1,0 +1,6 @@
+$ opod cache kv-prune --dir {{DATA}}
+--- exit 2
+--- stdout
+--- stderr
+opod: cache kv-prune needs --max-gb, the tier's cap in GiB (0 removes everything but --keep)
+  opod cache --help for every flag
