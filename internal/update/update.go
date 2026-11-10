@@ -34,7 +34,12 @@ const userAgent = "opod-update/" + Repo
 
 // LatestVersion returns the latest release's tag (e.g. "v0.1.0").
 func LatestVersion() (string, error) {
-	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+Repo+"/releases/latest", nil)
+	return latestFrom("https://api.github.com")
+}
+
+// latestFrom is LatestVersion against an API base (tests serve a fake one).
+func latestFrom(api string) (string, error) {
+	req, _ := http.NewRequest(http.MethodGet, api+"/repos/"+Repo+"/releases/latest", nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", userAgent)
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -44,8 +49,7 @@ func LatestVersion() (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("%s: %s", resp.Status, string(b))
+		return "", githubError(resp)
 	}
 	var body struct {
 		TagName string `json:"tag_name"`
@@ -323,12 +327,83 @@ func CompareVersions(a, b string) int {
 	return 0
 }
 
-// NormalizeVersion strips a leading "v" and any "-dev" / "+meta" suffix so
-// "v0.1.0", "0.1.0" and "0.1.0-dev" compare loosely equal.
-func NormalizeVersion(s string) string {
-	s = strings.TrimPrefix(s, "v")
-	if idx := strings.IndexAny(s, "-+"); idx >= 0 {
-		s = s[:idx]
+// Version is a parsed release version: vMAJOR.MINOR.PATCH with an optional
+// -prerelease, which sorts before the release it precedes.
+type Version struct {
+	Major, Minor, Patch int
+	Pre                 string
+}
+
+// ParseVersion reads "v0.4.5", "0.4.5" or "0.4.5-rc1". ok is false for
+// anything else — a build named by a commit, such as "dev-1a2b3c".
+func ParseVersion(s string) (v Version, ok bool) {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+	if i := strings.IndexByte(s, '+'); i >= 0 {
+		s = s[:i] // build metadata never orders
 	}
-	return "v" + s
+	core := s
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		core, v.Pre = s[:i], s[i+1:]
+	}
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return Version{}, false
+	}
+	nums := [3]int{}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return Version{}, false
+		}
+		nums[i] = n
+	}
+	v.Major, v.Minor, v.Patch = nums[0], nums[1], nums[2]
+	return v, true
+}
+
+// Compare is -1, 0 or 1 as a is older than, the same as or newer than b. A
+// prerelease is older than its release; two prereleases compare as text.
+func Compare(a, b Version) int {
+	for _, d := range [3]int{a.Major - b.Major, a.Minor - b.Minor, a.Patch - b.Patch} {
+		if d != 0 {
+			if d < 0 {
+				return -1
+			}
+			return 1
+		}
+	}
+	switch {
+	case a.Pre == b.Pre:
+		return 0
+	case a.Pre == "":
+		return 1
+	case b.Pre == "":
+		return -1
+	case a.Pre < b.Pre:
+		return -1
+	}
+	return 1
+}
+
+// githubError reads GitHub's {"message"} and says what to do about a rate
+// limit, rather than a status line and the raw JSON.
+func githubError(resp *http.Response) error {
+	var body struct {
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body)
+	msg := body.Message
+	if msg == "" {
+		msg = resp.Status
+	}
+	if resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		wait := "a while"
+		if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+			if d := time.Until(time.Unix(reset, 0)).Round(time.Minute); d > 0 {
+				wait = d.String()
+			}
+		}
+		return fmt.Errorf("GitHub rate-limited this address (%s) — try again in %s, or name the version: opod update --version vX.Y.Z", msg, wait)
+	}
+	return fmt.Errorf("GitHub answered %s: %s", resp.Status, msg)
 }

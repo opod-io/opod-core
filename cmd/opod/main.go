@@ -17,7 +17,7 @@ import (
 )
 
 // version is overwritten at link time via -ldflags.
-var version = "0.21.0-dev"
+var version = "0.0.0-dev" // a build without -ldflags is a development build, never a release
 
 func main() {
 	if len(os.Args) < 2 {

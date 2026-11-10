@@ -7,6 +7,11 @@ the last section.
 
 ## Unreleased
 
+- **`opod update` never downgrades by accident.** Versions are compared as semver, not text (a `0.21.0-dev` build took
+  `v0.4.5` as an update and installed it); an older target needs `--force`; a development build says so; `--check` exits
+  10 when an update exists; replacing the binary asks first or takes `--yes`; a GitHub refusal is its message, and a rate
+  limit says when to retry. A build without release flags reads `0.0.0-dev`.
+
 - **`opod doctor` finishes the report and sets an exit code.** Every check is a row with its fix, the report ends with
   `all checks passed` or `N problem(s) found` (exit 1; it always exited 0), an unknown engine is a failed row instead of
   the end of the report, and it checks the config file, a leader on this host, the admin key and whether the port is

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/opod-io/opod-core/internal/update"
 )
@@ -26,11 +27,12 @@ func cmdUpdate(args []string) {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	check := fs.Bool("check", false, "only check for an update, don't install")
 	pinned := fs.String("version", "", "install a specific version (e.g. v0.1.1) instead of latest")
-	force := fs.Bool("force", false, "install even if already on the latest version")
+	force := fs.Bool("force", false, "install even when the target is this version or older than this build (a deliberate downgrade)")
+	yes := fs.Bool("yes", false, "replace this binary without asking (needed without a terminal)")
 	help := helpSpec{
 		name:    "update",
 		summary: "check for and install the latest Opod release",
-		usage:   "opod update [--check] [--version <vX.Y.Z>] [--force]",
+		usage:   "opod update [--check] [--version <vX.Y.Z>] [--force] [--yes]",
 		flags:   fs,
 		examples: []string{
 			"opod update                    # upgrade to latest",
@@ -39,6 +41,8 @@ func cmdUpdate(args []string) {
 			"opod upgrade                   # alias of `update`",
 		},
 		notes: []string{
+			"--check exits 10 when an update is available, 0 when there is none — a script can branch on it.",
+			"A target older than this build is refused unless --force: a downgrade is never an accident.",
 			"After installing, restart with `opod down && opod up` if it was running.",
 			"If the install path needs sudo (e.g. /usr/local/bin), you'll be told the exact command to run.",
 		},
@@ -71,25 +75,48 @@ func cmdUpdate(args []string) {
 		target = latest
 	}
 
-	current := update.NormalizeVersion("v" + version)
-	wanted := update.NormalizeVersion(target)
-	upToDate := current == wanted
-
-	// 3. Decide what to do based on --check / --force / version compare.
-	switch {
-	case upToDate && *check && *force:
-		note(os.Stdout, "would force-reinstall %s (already on latest)", target)
-		return
-	case upToDate && *check:
-		ok(os.Stdout, "already on the latest version (%s)", target)
-		return
-	case upToDate && !*force:
-		ok(os.Stdout, "already on the latest version (%s)", target)
-		return
-	case *check:
-		note(os.Stdout, "update available: %s → %s", current, target)
-		note(os.Stdout, "run: opod update")
-		return
+	current := "v" + strings.TrimPrefix(version, "v")
+	switch compareBuild(version, target) {
+	case buildDev:
+		switch {
+		case *check && *pinned != "":
+			note(os.Stdout, "this is a development build (%s); opod update --version %s would install that release over it", version, target)
+			return
+		case *check:
+			note(os.Stdout, "this is a development build (%s); the latest release is %s", version, target)
+			return
+		case *pinned == "" && !*force:
+			die("this is a development build (%s), not a release — replace it with %s: opod update --force", version, target)
+		}
+	case buildSame:
+		if !*force {
+			ok(os.Stdout, "already on %s — nothing to install", target)
+			return
+		}
+		if *check {
+			note(os.Stdout, "already on %s; --force would reinstall it", target)
+			return
+		}
+	case buildOlder:
+		if !*force {
+			die("%s is older than this build (%s) — to downgrade on purpose: opod update --version %s --force", target, current, target)
+		}
+		if *check {
+			note(os.Stdout, "%s is older than this build (%s); --force would downgrade", target, current)
+			return
+		}
+	case buildNewer:
+		if *check {
+			note(os.Stdout, "update available: %s → %s — install it with: opod update", current, target)
+			os.Exit(updateAvailableExit)
+		}
+	}
+	if !*yes {
+		verb := "update"
+		if *pinned != "" {
+			verb += " --version " + *pinned
+		}
+		confirmOrExit(fmt.Sprintf("Replace %s (%s) with %s? (y/N) ", exe, current, target), verb)
 	}
 
 	// 4. Download + verify + install.
@@ -104,4 +131,35 @@ func cmdUpdate(args []string) {
 	fmt.Println("  To use the new version, restart opod:")
 	fmt.Println("    opod down")
 	fmt.Println("    opod up")
+}
+
+// updateAvailableExit is `opod update --check`'s exit code when a newer
+// release exists, so a script can tell "update" from "none" (0).
+const updateAvailableExit = 10
+
+type buildCompare int
+
+const (
+	buildSame  buildCompare = iota
+	buildNewer              // the target is newer than this build
+	buildOlder              // the target is older: a downgrade
+	buildDev                // this build is not a release (a -dev version, or a commit)
+)
+
+// compareBuild orders the release target against this binary's version by
+// semver, never as text: "v0.21.0-dev" and "v0.4.5" compared as strings read
+// the older release as an update and installed it without a word.
+func compareBuild(current, target string) buildCompare {
+	cur, okCur := update.ParseVersion(current)
+	want, okWant := update.ParseVersion(target)
+	if !okCur || strings.Contains(cur.Pre, "dev") || !okWant {
+		return buildDev
+	}
+	switch update.Compare(want, cur) {
+	case 1:
+		return buildNewer
+	case -1:
+		return buildOlder
+	}
+	return buildSame
 }

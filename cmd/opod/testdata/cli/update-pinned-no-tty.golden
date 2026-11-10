@@ -1,0 +1,6 @@
+$ opod update --version v0.4.5
+--- exit 2
+--- stdout
+--- stderr
+opod: no terminal to confirm `opod update --version v0.4.5` on — run `opod update --version v0.4.5 --yes`
+  opod update --help for every flag

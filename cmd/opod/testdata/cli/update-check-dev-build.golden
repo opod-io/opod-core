@@ -1,0 +1,5 @@
+$ opod update --check --version v0.4.5
+--- exit 0
+--- stdout
+▶ this is a development build (0.0.0-dev); opod update --version v0.4.5 would install that release over it
+--- stderr

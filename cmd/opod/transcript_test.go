@@ -109,6 +109,10 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.80 — update says what this build is, and replacing it asks first.
+	// (A test binary is a development build; neither case reaches the network.)
+	{name: "update-check-dev-build", args: []string{"update", "--check", "--version", "v0.4.5"}},
+	{name: "update-pinned-no-tty", args: []string{"update", "--version", "v0.4.5"}},
 	// T24.79 — doctor finishes the report and sets an exit code. PATH holds
 	// only the system's own tools, so what this machine has installed does
 	// not change the answer.
