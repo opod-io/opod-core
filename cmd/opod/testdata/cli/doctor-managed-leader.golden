@@ -1,0 +1,20 @@
+$ opod doctor
+--- exit 0
+--- stdout
+Opod doctor
+============
+✔ hardware: HW
+▶ config: no config file at $DATA/.opod/config.yaml — the defaults are used
+    → opod up writes one on its first run; edit it with opod config edit
+✔ leader: answering at STUB
+✔ listen port: STUB is this host's opod leader
+✔ admin key: the leader's admin token (OPOD_ADMIN_TOKEN or auth.admin_token)
+▶ engine: a managed leader (OPOD_MANAGED=1) runs no engine itself — its workers do
+    → opod node ls lists them and what each has loaded
+▶ llama.cpp: not installed — needed only for sharded models or engine.preferred=llamacpp
+    → install: OS-HINT
+✔ data dir: $DATA
+✔ catalog: 48 entries
+
+all checks passed
+--- stderr

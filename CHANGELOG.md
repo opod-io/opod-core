@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod doctor` on a managed leader's host reads it right (T24.103).** The admin key row takes the leader's admin
+  token (`OPOD_ADMIN_TOKEN` or `auth.admin_token`), and the engine row is a note on a managed leader, which runs no engine
+  itself. With the pinned certificate (T24.102) the leader and port rows find the running leader. On such a host doctor
+  used to report three false problems: no leader answering, the leader's own port "in use by another program" and no
+  admin key.
+
 - **The CLI on a managed leader's host answers from the running leader (T24.102).** On a host whose leader runs with
   `OPOD_MANAGED=1` and no key file, `opod node ls` printed "no nodes registered yet" beside a serving worker and
   `node show`, `model ls` and `token ls` read an empty store of their own, while `shard ls` and `model ps` said "no admin

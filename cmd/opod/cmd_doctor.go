@@ -127,9 +127,10 @@ func runDoctor() []doctorCheck {
 	}
 
 	keyPath := localAdminKeyPath(cfg)
+	key, keySource := adminKey(cfg) // the key an admin command sends: OPOD_TOKEN, the leader's admin token, the file (T24.103)
 	switch {
-	case readLocalAdminKey(cfg) != "":
-		add("admin key", "ok", keyPath, "")
+	case key != "":
+		add("admin key", "ok", keySource, "")
 	case leaderUp:
 		add("admin key", "problem", "a leader answers but there is no admin key at "+keyPath, "run admin commands on the host where opod up wrote it, or set OPOD_TOKEN to an admin key")
 	default:
@@ -137,9 +138,15 @@ func runDoctor() []doctorCheck {
 	}
 
 	eng, err := engineFromConfig(cfg)
-	if err != nil {
+	switch {
+	case cfg.Surfaces.Managed:
+		// A managed leader runs no engine of its own: its workers do, each
+		// in its own host or pod (T24.103 — this row read "unreachable" on
+		// every managed leader).
+		add("engine", "note", "a managed leader (OPOD_MANAGED=1) runs no engine itself — its workers do", "opod node ls lists them and what each has loaded")
+	case err != nil:
 		add("engine", "problem", err.Error(), "set engine.preferred in "+path+" (or OPOD_ENGINE) to one of the valid names")
-	} else {
+	default:
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		herr := eng.Health(ctx)
 		cancel()

@@ -277,6 +277,9 @@ var transcripts = []transcriptCase{
 	{name: "shard-ls-managed-leader", args: []string{"shard", "ls"}, stub: managedLeader(), env: managedEnv},
 	{name: "token-ls-managed-leader", args: []string{"token", "ls"}, stub: managedLeader(), env: managedEnv},
 	{name: "token-ls-managed-no-leader", args: []string{"token", "ls"}, env: managedEnv},
+	// T24.103: doctor on a managed leader's host — the admin token is a key,
+	// and no local engine is not a problem there.
+	{name: "doctor-managed-leader", args: []string{"doctor"}, stub: managedLeader(), env: map[string]string{"OPOD_MANAGED": "1", "OPOD_ADMIN_TOKEN": "transcript-admin-token", "PATH": "/usr/bin:/bin"}},
 	// shard ls asks the leader; a leader that refuses the key.
 	{name: "shard-ls-unauthorized", args: []string{"shard", "ls"}, key: true, stub: answer(http.StatusUnauthorized, `{"error":{"type":"unauthorized","message":"invalid admin key"}}`)},
 	{name: "shard-ls-forbidden", args: []string{"shard", "ls"}, key: true, stub: answer(http.StatusForbidden, `{"error":{"type":"forbidden","message":"admin scope required"}}`)},
