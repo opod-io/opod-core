@@ -1,0 +1,6 @@
+$ opod shard create m 2 --gang g1
+--- exit 130
+--- stdout
+▶ creating sharded model m (this may take a few minutes; Ctrl-C stops waiting and may leave a partial gang)…
+--- stderr
+⚠ interrupted — the leader may hold a partial gang of m; clean it up with: opod shard remove m --gang g1

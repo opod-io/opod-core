@@ -1,0 +1,6 @@
+$ opod shard create m --bogus
+--- exit 2
+--- stdout
+--- stderr
+opod: unknown shard create flag --bogus (have: --nodes, --tp, --pp, --gang)
+  opod shard --help for every flag

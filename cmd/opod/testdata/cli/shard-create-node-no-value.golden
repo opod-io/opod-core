@@ -1,0 +1,6 @@
+$ opod shard create m --node
+--- exit 2
+--- stdout
+--- stderr
+opod: --node needs node ids (a,b,c; ids: opod node ls)
+  opod shard --help for every flag

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/config"
@@ -20,7 +22,7 @@ func cmdShard(args []string) {
 	help := helpSpec{
 		name:    "shard",
 		summary: "orchestrate sharded models (one model split across N machines)",
-		usage:   "opod shard <ls | create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID] | remove <model> [--gang ID]>",
+		usage:   "opod shard <ls [--json] | create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID] | remove <model> [--gang ID] [--yes]>",
 		flagLines: []string{
 			"N                         create: how many workers (default: picked from their free memory)",
 			"--nodes a,b               create: the workers to use, in order (default: picked)",
@@ -59,20 +61,32 @@ func cmdShard(args []string) {
 	}
 	switch args[0] {
 	case "ls", "list":
-		shardLs()
+		rest, asJSON := extractJSONFlag(args[1:])
+		if len(rest) > 0 {
+			dieUsageOf("shard", "shard ls takes only --json (got %q)", rest[0])
+		}
+		shardLs(asJSON)
 	case "create":
 		rest, nodes := extractNodesFlag(args[1:])
 		rest, tp := extractIntFlag(rest, "tp")
 		rest, pp := extractIntFlag(rest, "pp")
 		rest, gang := extractStrFlag(rest, "gang")
+		for _, a := range rest {
+			if strings.HasPrefix(a, "-") {
+				dieUsageOf("shard", "unknown shard create flag %s (have: --nodes, --tp, --pp, --gang)", a)
+			}
+		}
 		if len(rest) < 1 {
-			dieUsageOf("shard", "shard create is missing an argument: opod shard create <model> [shards] [--nodes a,b,c] [--gang ID]")
+			dieUsageOf("shard", "shard create is missing an argument: opod shard create <model> [shards] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID]")
+		}
+		if len(rest) > 2 {
+			dieUsageOf("shard", "shard create takes a model and a count (got %q)", strings.Join(rest, " "))
 		}
 		n := 0
-		if len(rest) >= 2 {
+		if len(rest) == 2 {
 			parsed, err := strconv.Atoi(rest[1])
 			if err != nil || parsed < 1 {
-				die("invalid shard count %q (must be ≥1; 1 = whole model on one host)", rest[1])
+				dieUsageOf("shard", "shard count %q must be a whole number ≥ 1 (1 = the whole model on one host)", rest[1])
 			}
 			n = parsed
 		}
@@ -96,14 +110,35 @@ func cmdShard(args []string) {
 	}
 }
 
-func shardLs() {
-	cfg := loadConfigOrExit()
+// shardRows is the leader's shard list; a body that is not one is an error,
+// never "no shards".
+func shardRows(cfg *config.Config) ([]map[string]any, []byte) {
 	body, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/shards", nil)
 	if err != nil {
 		die("list shards: %v", err)
 	}
 	var shards []map[string]any
-	_ = json.Unmarshal(body, &shards)
+	if err := json.Unmarshal(body, &shards); err != nil {
+		die("list shards: the leader's answer is not a shard list (%v) — is %s an opod leader?", err, adminTargetURL(cfg))
+	}
+	return shards, body
+}
+
+// cell prints a row's field, "-" when the leader did not send it.
+func cell(v any) string {
+	if v == nil || fmt.Sprint(v) == "" {
+		return "-"
+	}
+	return fmt.Sprint(v)
+}
+
+func shardLs(asJSON bool) {
+	cfg := loadConfigOrExit()
+	shards, body := shardRows(cfg)
+	if asJSON {
+		fmt.Println(strings.TrimSpace(string(body)))
+		return
+	}
 	if len(shards) == 0 {
 		fmt.Println("(no shards — create one with `opod shard create <model>`)")
 		return
@@ -111,12 +146,12 @@ func shardLs() {
 	fmt.Printf("%-32s %-6s %-14s %-12s %-22s %-10s\n", "MODEL", "GANG", "ROLE", "NODE", "ADDRESS", "STATUS")
 	for _, s := range shards {
 		fmt.Printf("%-32s %-6s %-14s %-12s %-22s %-10s\n",
-			fmt.Sprint(s["ModelID"]),
+			cell(s["ModelID"]),
 			gangOrDefault(s["GangID"]),
-			fmt.Sprint(s["Role"]),
-			fmt.Sprint(s["NodeID"]),
-			fmt.Sprint(s["Address"]),
-			fmt.Sprint(s["Status"]))
+			cell(s["Role"]),
+			cell(s["NodeID"]),
+			cell(s["Address"]),
+			cell(s["Status"]))
 	}
 }
 
@@ -156,13 +191,14 @@ func extractNodesFlag(args []string) (rest []string, nodes []string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--nodes" || a == "-nodes":
-			if i+1 < len(args) {
-				nodes = splitCSV(args[i+1])
-				i++
+		case a == "--nodes" || a == "-nodes" || a == "--node" || a == "-node":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				dieUsageOf("shard", "%s needs node ids (a,b,c; ids: opod node ls)", a)
 			}
-		case strings.HasPrefix(a, "--nodes="):
-			nodes = splitCSV(strings.TrimPrefix(a, "--nodes="))
+			nodes = splitCSV(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--nodes=") || strings.HasPrefix(a, "--node="):
+			nodes = splitCSV(a[strings.Index(a, "=")+1:])
 		default:
 			rest = append(rest, a)
 		}
@@ -236,6 +272,7 @@ func shardCreate(model, gang string, n int, nodes []string, tp, pp int) {
 			note(os.Stdout, "%s", why)
 		}
 	}
+	checkShardNodes(cfg, nodes)
 	body, _ := json.Marshal(map[string]any{
 		"model_id": model, "shards": n, "nodes": nodes, "tp": tp, "pp": pp, "gang": gang,
 	})
@@ -244,17 +281,84 @@ func shardCreate(model, gang string, n int, nodes []string, tp, pp int) {
 			"network — expect it to be latency-bound", tp)
 	}
 	if len(nodes) > 0 {
-		note(os.Stdout, "creating sharded model %s on %v (this may take a few minutes)…", model, nodes)
+		note(os.Stdout, "creating sharded model %s on %s (this may take a few minutes; Ctrl-C stops waiting and may leave a partial gang)…", model, strings.Join(nodes, ", "))
 	} else {
-		note(os.Stdout, "creating sharded model %s (this may take a few minutes)…", model)
+		note(os.Stdout, "creating sharded model %s (this may take a few minutes; Ctrl-C stops waiting and may leave a partial gang)…", model)
 	}
-	resp, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/shards/create", body, weightsOpTimeout)
+	// A create the CLI stops waiting for can leave a partial gang on the
+	// leader (rpc parts with no coordinator): say so, and how to clean up.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	cleanup := "opod shard remove " + model
+	if gang != "" {
+		cleanup += " --gang " + gang
+	}
+	stopTicking := tickWhile("creating " + model)
+	_, err = adminCallT(ctx, cfg, "POST", "/admin/v1/shards/create", body, weightsOpTimeout)
+	stopTicking()
+	if ctx.Err() != nil {
+		warn("interrupted — the leader may hold a partial gang of %s; clean it up with: %s", model, cleanup)
+		os.Exit(130)
+	}
 	if err != nil {
-		die("create sharded model %s: %v", model, err)
+		die("create sharded model %s: %v\n  a failed create can leave a partial gang; check opod shard ls, clean up with: %s", model, err, cleanup)
 	}
-	var out map[string]string
-	_ = json.Unmarshal(resp, &out)
-	ok(os.Stdout, "sharded model ready: %s", out["model_id"])
+	ok(os.Stdout, "%s ready: %s — see opod shard ls", model, describeGang(cfg, model, gang))
+}
+
+// describeGang names what the create built, from the leader's own rows: the
+// gang, its nodes and its head (the coordinator).
+func describeGang(cfg *config.Config, model, gang string) string {
+	shards, _ := shardRows(cfg)
+	var nodes []string
+	head, id := "", gang
+	for _, s := range shards {
+		if cell(s["ModelID"]) != model || (gang != "" && cell(s["GangID"]) != gang) {
+			continue
+		}
+		if id == "" {
+			id = gangOrDefault(s["GangID"])
+		}
+		nodes = append(nodes, cell(s["NodeID"]))
+		if strings.Contains(cell(s["Role"]), "coord") {
+			head = cell(s["NodeID"])
+		}
+	}
+	if len(nodes) == 0 {
+		return "the leader lists no part of it yet"
+	}
+	d := fmt.Sprintf("gang %s on %s", id, strings.Join(nodes, ", "))
+	if head != "" {
+		d += " (head " + head + ")"
+	}
+	return d
+}
+
+// checkShardNodes refuses --nodes names the leader does not know, before the
+// create: the leader would refuse them after minutes of setup, or not at all.
+func checkShardNodes(cfg *config.Config, nodes []string) {
+	if len(nodes) == 0 {
+		return
+	}
+	raw, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/nodes", nil)
+	if err != nil {
+		return // the create below says what is wrong with the leader
+	}
+	var rows []struct {
+		ID string `json:"ID"`
+	}
+	if json.Unmarshal(raw, &rows) != nil {
+		return
+	}
+	known := map[string]bool{}
+	for _, r := range rows {
+		known[r.ID] = true
+	}
+	for _, n := range nodes {
+		if !known[n] {
+			dieUsageOf("shard", "the leader has no node %q (ids: opod node ls)", n)
+		}
+	}
 }
 
 func shardRemove(model, gang string) {
@@ -264,6 +368,17 @@ func shardRemove(model, gang string) {
 	if gang != "" {
 		path += "/" + url.PathEscape(gang)
 		what = model + " gang " + gang
+	}
+	found := false
+	shards, _ := shardRows(cfg)
+	for _, s := range shards {
+		if cell(s["ModelID"]) == model && (gang == "" || cell(s["GangID"]) == gang) {
+			found = true
+		}
+	}
+	if !found {
+		ok(os.Stdout, "no gang of %s to remove — nothing changed", what)
+		return
 	}
 	note(os.Stdout, "removing %s…", what)
 	if _, err := adminCall(context.Background(), cfg, "DELETE", path, nil); err != nil {
@@ -285,7 +400,10 @@ func extractStrFlag(args []string, name string) (rest []string, val string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--"+name && i+1 < len(args):
+		case a == "--"+name:
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				dieUsageOf("shard", "--%s needs a value", name)
+			}
 			val = args[i+1]
 			i++
 		case strings.HasPrefix(a, "--"+name+"="):

@@ -1,0 +1,6 @@
+$ opod shard create m --gang
+--- exit 2
+--- stdout
+--- stderr
+opod: --gang needs a value
+  opod shard --help for every flag

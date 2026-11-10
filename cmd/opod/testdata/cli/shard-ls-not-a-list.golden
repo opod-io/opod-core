@@ -1,0 +1,5 @@
+$ opod shard ls
+--- exit 1
+--- stdout
+--- stderr
+opod: list shards: the leader's answer is not a shard list (invalid character '<' looking for beginning of value) — is STUB an opod leader?

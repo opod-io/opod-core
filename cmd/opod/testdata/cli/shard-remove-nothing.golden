@@ -1,0 +1,5 @@
+$ opod shard remove m --yes
+--- exit 0
+--- stdout
+✔ no gang of m to remove — nothing changed
+--- stderr

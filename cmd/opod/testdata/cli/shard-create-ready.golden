@@ -1,0 +1,6 @@
+$ opod shard create m 2 --nodes n_a,n_b --gang g1
+--- exit 0
+--- stdout
+▶ creating sharded model m on n_a, n_b (this may take a few minutes; Ctrl-C stops waiting and may leave a partial gang)…
+✔ m ready: gang g1 on n_a, n_b (head n_a) — see opod shard ls
+--- stderr

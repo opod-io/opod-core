@@ -112,6 +112,20 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.83 — shard names the gang, warns on interrupt, checks flags first.
+	{name: "shard-create-ready", args: []string{"shard", "create", "m", "2", "--nodes", "n_a,n_b", "--gang", "g1"}, key: true, stub: routes(map[string]string{
+		"/admin/v1/nodes":         `[{"ID":"n_a"},{"ID":"n_b"}]`,
+		"/admin/v1/shards/create": `{"status":"ready","model_id":"m"}`,
+		"/admin/v1/shards":        `[{"ModelID":"m","GangID":"g1","Role":"coordinator","NodeID":"n_a"},{"ModelID":"m","GangID":"g1","Role":"rpc","NodeID":"n_b"}]`})},
+	{name: "shard-create-interrupted", args: []string{"shard", "create", "m", "2", "--gang", "g1"}, key: true, stopAfter: 800 * time.Millisecond,
+		stub: func(w http.ResponseWriter, r *http.Request) { time.Sleep(3 * time.Second) }},
+	{name: "shard-create-unknown-node", args: []string{"shard", "create", "m", "--nodes", "n_zz"}, key: true, stub: routes(map[string]string{"/admin/v1/nodes": `[{"ID":"n_a"}]`})},
+	{name: "shard-create-node-no-value", args: []string{"shard", "create", "m", "--node"}},
+	{name: "shard-create-gang-no-value", args: []string{"shard", "create", "m", "--gang"}},
+	{name: "shard-create-bogus-flag", args: []string{"shard", "create", "m", "--bogus"}},
+	{name: "shard-ls-json", args: []string{"shard", "ls", "--json"}, key: true, stub: answer(http.StatusOK, `[{"ModelID":"m","GangID":"g1","Role":"coordinator","NodeID":"n_a"}]`)},
+	{name: "shard-ls-not-a-list", args: []string{"shard", "ls"}, key: true, stub: answer(http.StatusOK, `<html>proxy</html>`)},
+	{name: "shard-remove-nothing", args: []string{"shard", "remove", "m", "--yes"}, key: true, stub: answer(http.StatusOK, `[]`)},
 	// T24.82 — model verbs name the model, the node and the next step.
 	{name: "model-ps-unauthorized", args: []string{"model", "ps"}, key: true, stub: answer(http.StatusUnauthorized, `{"error":{"type":"unauthorized","message":"invalid admin key"}}`)},
 	{name: "model-ps-not-json", args: []string{"model", "ps", "--json"}, key: true, stub: answer(http.StatusOK, `<html>proxy</html>`)},

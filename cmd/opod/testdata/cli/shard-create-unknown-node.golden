@@ -1,0 +1,6 @@
+$ opod shard create m --nodes n_zz
+--- exit 2
+--- stdout
+--- stderr
+opod: the leader has no node "n_zz" (ids: opod node ls)
+  opod shard --help for every flag

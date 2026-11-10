@@ -1,0 +1,5 @@
+$ opod shard ls --json
+--- exit 0
+--- stdout
+[{"ModelID":"m","GangID":"g1","Role":"coordinator","NodeID":"n_a"}]
+--- stderr

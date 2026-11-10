@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod shard *` names the gang, warns on an interrupt and checks flags first.** `create` ends with the gang, its
+  nodes and its head, read from the leader's rows (it read `model_id` from the answer); Ctrl-C prints the cleanup command
+  for the partial gang it may leave, and exits 130; unknown `--nodes` ids, a flag with no value (a bare `--gang` became the
+  count), `--node` (now the same as `--nodes`) and unknown flags are refused up front. `ls` gets `--json`, prints `-` for a
+  missing field and refuses a body that is not a shard list; `remove` with nothing there says so and exits 0.
+
 - **`opod model *` names the model, the node and the next step.** `add` takes a catalog YAML as `--file` (`--from` is
   `move`'s source node); `add --node` says what Ctrl-C does, prints progress every 10 s and ends with the next command;
   `load` and `unload` accept ids the leader lists; `ps --json` and `move` refuse an answer that is not the leader's JSON,
