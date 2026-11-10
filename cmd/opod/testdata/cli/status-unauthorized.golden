@@ -1,0 +1,6 @@
+$ opod status
+--- exit 1
+--- stdout
+--- stderr
+⚠ the leader at STUB answered 401 Unauthorized: {"error":"unauthorized"}
+⚠ engine: ollama unreachable at http://127.0.0.1:1: Get "http://127.0.0.1:1/api/version": dial tcp 127.0.0.1:1: connect: connection refused — start it with: ollama serve

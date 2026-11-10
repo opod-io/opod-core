@@ -2,4 +2,4 @@ $ opod up --no-wizard --auto-pull=false
 --- exit 1
 --- stdout
 --- stderr
-opod: already running (pid PID, STUB) — stop it with `opod down`, or see it with `opod status`
+opod: already running (pid N, STUB) — stop it with `opod down`, or see it with `opod status`

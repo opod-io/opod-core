@@ -2,4 +2,5 @@ $ opod status
 --- exit 1
 --- stdout
 --- stderr
-⚠ control plane not reachable at http://127.0.0.1:1/healthz: Get "http://127.0.0.1:1/healthz": dial tcp 127.0.0.1:1: connect: connection refused
+⚠ no leader answering at http://127.0.0.1:1 (Get "http://127.0.0.1:1/healthz": dial tcp 127.0.0.1:1: connect: connection refused) — start one with `opod up`, or set `listen:` in $DATA/.opod/config.yaml or OPOD_LISTEN
+⚠ engine: ollama unreachable at http://127.0.0.1:1: Get "http://127.0.0.1:1/api/version": dial tcp 127.0.0.1:1: connect: connection refused — start it with: ollama serve

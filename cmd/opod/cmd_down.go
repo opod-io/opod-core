@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,7 +19,7 @@ func cmdDown(args []string) {
 	noUnload := fs.Bool("no-unload", false, "leave models resident in the engine's memory (skip the default unload)")
 	help := helpSpec{
 		name:    "down",
-		summary: "stop the local opod node and release engine memory",
+		summary: "stop this host's leader (opod up) and release engine memory",
 		usage:   "opod down [--no-unload]",
 		flags:   fs,
 		examples: []string{
@@ -26,6 +27,7 @@ func cmdDown(args []string) {
 			"opod down --no-unload  # stop only; models stay resident (Ollama TTL applies)",
 		},
 		notes: []string{
+			"`down` stops the leader `opod up` started on this host. A worker (`opod join`) is stopped with Ctrl-C or by stopping its container.",
 			"`down` is a deliberate teardown, so it unloads resident models by default.",
 			"Ctrl-C of `opod up` does NOT unload (fast dev restarts) — use --unload-on-exit there.",
 			"Engines without an unload protocol (vLLM, MLX-LM) are skipped with a note; Opod-spawned llama-server processes are killed by `opod up`'s own shutdown.",
@@ -40,33 +42,40 @@ func cmdDown(args []string) {
 	cfg := loadConfigOrExit()
 	pid, err := readPID(cfg)
 	if err != nil {
-		die("no PID file at %s (is opod running?)", pidFilePath(cfg))
+		ok(os.Stdout, "opod is not running on this host (no PID file at %s) — nothing to stop", pidFilePath(cfg))
+		return
+	}
+	if !processAlive(pid) {
+		removePID(cfg)
+		ok(os.Stdout, "pid %d is not running — removed the stale PID file %s; nothing to stop", pid, pidFilePath(cfg))
+		return
+	}
+	// A PID file outlives its process, and the number can come back as
+	// something else: signal only a process that is opod (or answers as this
+	// host's leader). `down` once stopped a `sleep` that inherited the pid.
+	if name := processName(pid); !strings.Contains(name, "opod") && !leaderAnswers(cfg) {
+		removePID(cfg)
+		warn("pid %d in %s is not opod (it is %q) — removed the stale PID file; nothing stopped", pid, pidFilePath(cfg), name)
+		return
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		die("find process %d: %v", pid, err)
+		die("stop pid %d: %v", pid, err)
 	}
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		// Process already gone (crashed, killed, rebooted) — the PID file
-		// is stale. Clean it up so the next `opod down` / `opod up`
-		// doesn't trip over it, and say so instead of a raw signal error.
-		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
-			removePID(cfg)
-			die("process %d is not running — removed stale PID file %s", pid, pidFilePath(cfg))
-		}
-		die("signal pid %d: %v", pid, err)
+		die("stop pid %d: %v", pid, err)
 	}
-	ok(os.Stdout, "sent SIGTERM to pid %d", pid)
-
-	// Wait for the server to actually exit (signal 0 probes liveness) so
-	// the unload below doesn't race its graceful shutdown.
+	note(os.Stdout, "stopping opod (pid %d)…", pid)
+	// Wait for it to exit, so the unload below does not race its shutdown.
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := proc.Signal(syscall.Signal(0)); err != nil {
-			break // process gone
-		}
+	for processAlive(pid) && time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
 	}
+	if processAlive(pid) {
+		warn("pid %d is still running after 10s — check `opod status`; force it with `kill -9 %d`", pid, pid)
+		os.Exit(1)
+	}
+	ok(os.Stdout, "opod (pid %d) stopped", pid)
 
 	if *noUnload {
 		return

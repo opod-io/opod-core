@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod down` stops only opod and says so; `opod status` tells healthy from answering.** `down` signals the PID file's
+  process only when it is opod (or answers as this host's leader) — it stopped a `sleep` that inherited the number —
+  confirms the stop or says the process still runs after 10 s, and a repeat with nothing running exits 0. `status`
+  reports healthy only on a 2xx (a 401 or 503 printed ✔), checks the engine either way, reads models and nodes from the
+  leader's admin API instead of opening this host's store, and its JSON names the leader `leader` (was `control_plane`).
+
 - **Admin verbs say what failed and what to do, and reach any leader.** `shard *`, `model ps|load|unload|move`,
   `model add --node`, `node drain|undrain|remove` and `config show` call `OPOD_BASE_URL` with `OPOD_TOKEN` when they are
   set, else this host's leader with `~/.opod/admin.key`. A refusal is decoded from the leader's JSON

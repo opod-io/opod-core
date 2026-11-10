@@ -1,0 +1,6 @@
+$ opod down --no-unload
+--- exit 0
+--- stdout
+▶ stopping opod (pid N)…
+✔ opod (pid N) stopped
+--- stderr

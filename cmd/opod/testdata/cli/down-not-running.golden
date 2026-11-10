@@ -1,0 +1,5 @@
+$ opod down --no-unload
+--- exit 0
+--- stdout
+✔ opod is not running on this host (no PID file at $DATA/opod.pid) — nothing to stop
+--- stderr

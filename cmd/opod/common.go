@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -471,6 +472,16 @@ func writePID(cfg *config.Config) error {
 func processAlive(pid int) bool {
 	proc, err := os.FindProcess(pid)
 	return err == nil && proc.Signal(syscall.Signal(0)) == nil
+}
+
+// processName is the command a pid runs, as ps names it ("" when it cannot
+// be read).
+func processName(pid int) string {
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func readPID(cfg *config.Config) (int, error) {

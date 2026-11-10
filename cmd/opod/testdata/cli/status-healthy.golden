@@ -1,0 +1,10 @@
+$ opod status
+--- exit 0
+--- stdout
+✔ leader: 200 OK (STUB)
+▶ nodes: 2 (1 ready) — opod node ls for each
+
+  Installed models:
+    llama-3.2-1b            status=ready  source=ollama:llama3.2:1b
+--- stderr
+⚠ engine: ollama unreachable at http://127.0.0.1:1: Get "http://127.0.0.1:1/api/version": dial tcp 127.0.0.1:1: connect: connection refused — start it with: ollama serve

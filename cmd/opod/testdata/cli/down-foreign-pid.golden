@@ -1,0 +1,5 @@
+$ opod down --no-unload
+--- exit 0
+--- stdout
+--- stderr
+⚠ pid N in $DATA/opod.pid is not opod (it is "sleep") — removed the stale PID file; nothing stopped
