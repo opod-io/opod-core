@@ -1,0 +1,6 @@
+$ opod node remove n_one
+--- exit 2
+--- stdout
+--- stderr
+opod: no terminal to confirm `opod node remove n_one` on — run `opod node remove n_one --yes`
+  opod node --help for every flag

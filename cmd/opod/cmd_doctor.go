@@ -26,6 +26,9 @@ func cmdDoctor(args []string) {
 			},
 		})
 	}
+	if len(args) > 0 {
+		dieUsageOf("doctor", "doctor takes no arguments (got %q)", strings.Join(args, " "))
+	}
 	cfg := loadConfigOrExit()
 	fmt.Println("Opod doctor")
 	fmt.Println("============")
@@ -46,14 +49,14 @@ func cmdDoctor(args []string) {
 	if portAvailable(addr) {
 		ok(os.Stdout, "listen port %s available", addr)
 	} else {
-		warn(os.Stdout, "listen port %s already in use", addr)
+		warn("listen port %s already in use", addr)
 	}
 
 	// Ollama
 	if path, err := exec.LookPath("ollama"); err == nil {
 		ok(os.Stdout, "ollama binary at %s", path)
 	} else {
-		warn(os.Stdout, "ollama not found in PATH — install: brew install ollama")
+		warn("ollama not found in PATH — install: brew install ollama")
 	}
 
 	// llama.cpp — only required for sharded models (rpc-server) and the
@@ -74,8 +77,8 @@ func cmdDoctor(args []string) {
 		note(os.Stdout, "  → rpc-server is not in the Homebrew bottle; only needed for sharded models")
 		note(os.Stdout, "  → if you need sharding, build from source: https://github.com/ggml-org/llama.cpp (cmake -DGGML_RPC=ON)")
 	default:
-		warn(os.Stdout, "rpc-server found at %s but llama-server missing", rpcPath)
-		warn(os.Stdout, "  → install llama.cpp: brew install llama.cpp  (macOS)")
+		warn("rpc-server found at %s but llama-server missing", rpcPath)
+		warn("  → install llama.cpp: brew install llama.cpp  (macOS)")
 	}
 
 	// Configured engine daemon
@@ -83,8 +86,8 @@ func cmdDoctor(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := eng.Health(ctx); err != nil {
-		warn(os.Stdout, "%s engine not reachable: %v", eng.Name(), err)
-		warn(os.Stdout, "  → %s", engineStartHint(eng.Name()))
+		warn("%s engine not reachable: %v", eng.Name(), err)
+		warn("  → %s", engineStartHint(eng.Name()))
 	} else {
 		ok(os.Stdout, "%s engine healthy at %s", eng.Name(), eng.Endpoint())
 	}
@@ -93,7 +96,7 @@ func cmdDoctor(args []string) {
 	if _, err := os.Stat(cfg.DataDir); err == nil {
 		ok(os.Stdout, "data dir: %s", cfg.DataDir)
 	} else {
-		warn(os.Stdout, "data dir missing: %s", cfg.DataDir)
+		warn("data dir missing: %s", cfg.DataDir)
 	}
 
 	// Catalog — `opod up` hard-fails without it, so escalate to a warning
@@ -103,14 +106,14 @@ func cmdDoctor(args []string) {
 	} else if errors.Is(err, models.ErrCatalogSignature) {
 		// Not a missing catalog: a file the signature policy refuses. The
 		// message names the file; reinstalling would not change it.
-		warn(os.Stdout, "catalog: %v", err)
-		warn(os.Stdout, "  → sign the file (`minisign -S -m <file>`), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
+		warn("catalog: %v", err)
+		warn("  → sign the file (`minisign -S -m <file>`), remove it, or review OPOD_CATALOG_PUBKEY / OPOD_CATALOG_REQUIRE_SIGNED")
 	} else {
-		warn(os.Stdout, "catalog: %v", err)
+		warn("catalog: %v", err)
 		// The catalog is embedded in the binary (pkg/catalog); what can be
 		// wrong is a file a user added beside it (T10.21: the hint named a
 		// bundled directory that no longer exists).
-		warn(os.Stdout, "  → the built-in catalog is in this binary: check the files you added in OPOD_CATALOG_DIR (default ~/.opod/catalog), or unset it")
+		warn("  → the built-in catalog is in this binary: check the files you added in OPOD_CATALOG_DIR (default ~/.opod/catalog), or unset it")
 	}
 
 	fmt.Println()

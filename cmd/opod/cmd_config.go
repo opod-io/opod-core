@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -67,17 +68,15 @@ func loadedConfigPath() string {
 func configShow(args []string) {
 	fs := flag.NewFlagSet("config show", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print as JSON instead of pretty key=value lines")
-	_ = fs.Parse(args)
+	parseFlags(fs, "config", args)
 
 	cfg := loadConfigOrExit()
 	body, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/config", nil)
 	if err != nil {
-		// adminCall returns a nil body only on a transport failure (leader
-		// unreachable); an HTTP error (auth, 5xx) returns the response body.
-		// Only fall back to the local view when the leader is genuinely
-		// unreachable — otherwise surface the server error instead of
-		// silently masking it with a CLI-loaded dump.
-		if body != nil {
+		// Only fall back to the local view when this host's leader is not
+		// running (or no key could ask it) — a leader that answered with an
+		// error is surfaced, never masked with a CLI-loaded dump.
+		if !localLeaderDown(err) && !errors.Is(err, errNoAdminKey) {
 			die("config show: %v", err)
 		}
 		fmt.Fprintln(os.Stderr, "(leader not reachable; showing config loaded by this CLI — secrets redacted)")

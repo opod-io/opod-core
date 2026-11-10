@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 
 	"github.com/mattn/go-isatty"
@@ -22,6 +23,18 @@ var colorEnabled = func() bool {
 // so callers don't have to guard every call site themselves.
 func ansi(code, s string) string {
 	if !colorEnabled {
+		return s
+	}
+	return "\033[" + code + "m" + s + "\033[0m"
+}
+
+// ansiFor is ansi for a given stream: colour only when that stream is a
+// terminal and NO_COLOR / OPOD_NO_COLOR are unset. The stdout rule above is
+// right for stdout and wrong for stderr, which is often a terminal while
+// stdout is a pipe (and the other way round).
+func ansiFor(w io.Writer, code, s string) string {
+	f, isFile := w.(*os.File)
+	if !isFile || os.Getenv("NO_COLOR") != "" || os.Getenv("OPOD_NO_COLOR") != "" || !isatty.IsTerminal(f.Fd()) {
 		return s
 	}
 	return "\033[" + code + "m" + s + "\033[0m"

@@ -36,8 +36,11 @@ func cmdCompletion(args []string) {
 			"opod completion fish | source",
 		},
 	}
-	if len(args) == 0 || wantsHelp(args) {
+	if wantsHelp(args) {
 		showHelp(help)
+	}
+	if len(args) == 0 {
+		dieUsage(help, "name the shell: bash, zsh or fish")
 	}
 	switch args[0] {
 	case "bash":
@@ -73,7 +76,7 @@ func cmdCompletion(args []string) {
 			fmt.Println(c.ID)
 		}
 	default:
-		die("unsupported shell: %s (try bash, zsh, or fish)", args[0])
+		dieUsage(help, "unsupported shell: %s (have: bash, zsh, fish)", args[0])
 	}
 }
 

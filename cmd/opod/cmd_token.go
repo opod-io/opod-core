@@ -15,6 +15,13 @@ func cmdToken(args []string) {
 		name:    "token",
 		summary: "manage API keys and node-join tokens",
 		usage:   "opod token <create [name] [--admin|--node] [--ttl D | --expires-at DATE] | ls | expire <id> [--in D] | renew <id> --ttl D | revoke <id>>",
+		flagLines: []string{
+			"--admin                   create: an admin-scope key (can call /admin/v1)",
+			"--node                    create: a one-time join token for a new worker",
+			"--ttl D                   create, renew: expire after D (30s, 5m, 2h, 7d; default: never)",
+			"--expires-at DATE         create, renew: expire on DATE (YYYY-MM-DD or RFC3339)",
+			"--in D                    expire: expire after D instead of now",
+		},
 		examples: []string{
 			"opod token create alice                            # user-scope key for dev `alice`",
 			"opod token create alice-admin --admin              # admin-scope key (can call /admin/v1/*)",
@@ -45,19 +52,19 @@ func cmdToken(args []string) {
 		tokenCreate(name, scope, expiresAt)
 	case "expire":
 		if len(args) < 2 {
-			die("usage: opod token expire <id> [--in DURATION]")
+			dieUsageOf("token", "token expire is missing an argument: opod token expire <id> [--in DURATION]")
 		}
 		tokenExpire(args[1], args[2:])
 	case "renew":
 		if len(args) < 2 {
-			die("usage: opod token renew <id> --ttl DURATION | --expires-at DATE")
+			dieUsageOf("token", "token renew is missing an argument: opod token renew <id> --ttl DURATION | --expires-at DATE")
 		}
 		tokenRenew(args[1], args[2:])
 	case "ls", "list":
 		tokenList()
 	case "revoke":
 		if len(args) < 2 {
-			die("usage: opod token revoke <id>")
+			dieUsageOf("token", "token revoke is missing an argument: opod token revoke <id>")
 		}
 		tokenRevoke(args[1])
 	default:

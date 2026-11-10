@@ -1,0 +1,7 @@
+$ opod connect nosuch
+--- exit 2
+--- stdout
+--- stderr
+opod: no client "nosuch" (opod connect --list names them)
+  usage: opod connect <client>   |   opod connect --list
+  opod connect --help for every flag

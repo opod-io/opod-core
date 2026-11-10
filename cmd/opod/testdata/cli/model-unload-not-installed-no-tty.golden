@@ -1,0 +1,5 @@
+$ opod model unload foo
+--- exit 1
+--- stdout
+--- stderr
+opod: "foo" is not installed on this host (see opod model ls)

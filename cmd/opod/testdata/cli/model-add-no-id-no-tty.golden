@@ -1,0 +1,6 @@
+$ opod model add
+--- exit 2
+--- stdout
+--- stderr
+opod: model add needs a catalog id (opod model search lists them)
+  opod model --help for every flag

@@ -36,7 +36,7 @@ func cmdDisconnect(args []string) {
 	if wantsHelp(args) {
 		showHelp(help)
 	}
-	_ = fs.Parse(args)
+	parseFlags(fs, "disconnect", args)
 
 	if *list {
 		printClientList(os.Stdout)

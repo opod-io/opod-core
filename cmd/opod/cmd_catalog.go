@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/opod-io/opod-core/internal/models"
 )
@@ -33,8 +32,7 @@ func cmdCatalog(args []string) {
 	case "ls":
 		entries, err := models.BundledCatalog()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			die("catalog ls: %v", err)
 		}
 		for _, e := range entries {
 			fmt.Println(e.ID)
@@ -44,8 +42,7 @@ func cmdCatalog(args []string) {
 			dieHelp(help)
 		}
 		if err := models.ExportBundled(args[1]); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			die("catalog export %s: %v", args[1], err)
 		}
 	default:
 		dieUnknownSubcommand("catalog", args[0], []string{"ls", "export"})

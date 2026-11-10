@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,7 +23,16 @@ import (
 	"github.com/opod-io/opod-core/internal/store"
 )
 
+// cmdUp runs the node and exits with runUp's code, after runUp's deferred
+// cleanup has run: a die() inside it would skip every defer — the pid file,
+// the store, an engine it spawned.
 func cmdUp(args []string) {
+	if code := runUp(args); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runUp(args []string) int {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.yaml (default: ~/.opod/config.yaml)")
 	autoPull := fs.Bool("auto-pull", true, "allow the first run to pull the default model; it pulls only when pull_default_model is on, which is off by default (OPOD_PULL_DEFAULT_MODEL=1)")
@@ -31,7 +41,7 @@ func cmdUp(args []string) {
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (OPOD_UNLOAD_ON_EXIT=1 sets the default)")
 	exclusive := fs.Bool("exclusive", false,
 		"one resident model per machine: loading a model evicts every other non-pinned model first (OPOD_EXCLUSIVE=1 or placement.exclusive in config also set this)")
-	role := fs.String("role", "", "leader (default), `gateway` or `door`. A gateway is an extra front door for one endpoint: it serves /v1 only — no /admin/v1, no join surface, no engine of its own — mirroring the leader's worker list and pushing its usage rows there (needs --leader / OPOD_LEADER_URL). A door is one URL for many endpoints: it forwards each request to the endpoint its model names (needs --routes / OPOD_DOOR_ROUTES)")
+	role := fs.String("role", "", "leader (default), gateway or door. A gateway is an extra front door for one endpoint: it serves /v1 only — no /admin/v1, no join surface, no engine of its own — mirroring the leader's worker list and pushing its usage rows there (needs --leader / OPOD_LEADER_URL). A door is one URL for many endpoints: it forwards each request to the endpoint its model names (needs --routes / OPOD_DOOR_ROUTES)")
 	leaderURL := fs.String("leader", "", "the leader a --role=gateway door mirrors and pushes to (http://host:8080); OPOD_LEADER_URL also sets it")
 	routes := fs.String("routes", "", "the routes file a --role=door watches: {revision, routes[{alias, upstream, model, ca}]}; OPOD_DOOR_ROUTES also sets it")
 	help := helpSpec{
@@ -50,6 +60,7 @@ func cmdUp(args []string) {
 			"opod up --role door --routes /etc/opod-door/routes.json   # one URL for many endpoints, chosen by model",
 		},
 		notes: []string{
+			"The leader listens on :8080. Change it with `listen: \":9000\"` in ~/.opod/config.yaml or OPOD_LISTEN=:9000.",
 			"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
 			"By default the leader is router-only: it loads no model of its own and serves from the workers that join it. OPOD_PULL_DEFAULT_MODEL=1 (router.pull_default_model) makes it pull and serve the default model too; the first-run prompt and --auto-pull apply only then.",
 			"--role gateway serves the OpenAI routes and the probes only: the worker registry, the join tokens and the shard calls stay with the one leader, whose store is the single writer for usage. A door polls the leader every 10s for the live door count; /gatewayz publishes that bound as spend_lag_bound_s (ADR-063).",
@@ -58,11 +69,10 @@ func cmdUp(args []string) {
 		},
 	}
 	// Bad flags: print usage to stderr and let ExitOnError exit 2.
-	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
 		showHelp(help)
 	}
-	_ = fs.Parse(args)
+	parseFlags(fs, "up", args)
 
 	// 1. Config + logger
 	cfg, err := config.Load(*configPath)
@@ -79,9 +89,7 @@ func cmdUp(args []string) {
 	if *routes != "" {
 		cfg.Env.DoorRoutes = *routes
 	}
-	if cfg.Env.Role != "" && cfg.Env.Role != "leader" && cfg.Env.Role != "gateway" && cfg.Env.Role != "door" {
-		die("--role: %q is not a role (leader | gateway | door)", cfg.Env.Role)
-	}
+	listen := checkCanStart(cfg, help)
 	log := newLogger(cfg)
 	// The leader's own records also go to an OTLP collector when one is named
 	// (OPOD_OTLP_LOGS_ENDPOINT). stderr keeps working either way, and a bad
@@ -100,7 +108,7 @@ func cmdUp(args []string) {
 		// engine, no catalog and no admin key, so it leaves before any of
 		// them is opened or minted (ADR-087).
 		runDoor(cfg, log)
-		return
+		return 0
 	}
 
 	// 2. Hardware detection
@@ -127,7 +135,7 @@ func cmdUp(args []string) {
 			cfg.Router.DefaultModel = pick.ID
 			ok(os.Stdout, "auto-selected model: %s (%s)", pick.ID, pick.DisplayName)
 		} else {
-			warn(os.Stdout, "no catalog entry fits this hardware; set router.default_model in config")
+			warn("no catalog entry fits this hardware; set router.default_model in config")
 		}
 	} else {
 		ok(os.Stdout, "default model: %s", cfg.Router.DefaultModel)
@@ -163,7 +171,7 @@ func cmdUp(args []string) {
 			_, err := scheduler.EnsureLlamaServer(spawnCtx, sup, log, spec)
 			spawnCancel()
 			if err != nil {
-				warn(os.Stdout, "auto-spawn failed: %v", err)
+				warn("auto-spawn failed: %v", err)
 			} else {
 				reprobeCtx, reprobeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				engineOK = eng.Health(reprobeCtx) == nil
@@ -183,10 +191,6 @@ func cmdUp(args []string) {
 	// Register the leader as a "local" Node row so `opod node ls` and the
 	// admin UI show this machine alongside any joined workers. Best-effort.
 	{
-		listen := cfg.Listen
-		if listen == "" {
-			listen = ":8080"
-		}
 		hwJSON, _ := json.Marshal(caps)
 		_ = st.Nodes().Upsert(context.Background(), store.Node{
 			ID:            "local",
@@ -221,9 +225,9 @@ func cmdUp(args []string) {
 		// for a fault that is the configuration working.
 		note(os.Stdout, "role: gateway — serving /v1 for %s, no engine of its own", cfg.Env.LeaderURL)
 	case !engineOK:
-		warn(os.Stdout, "engine (%s) at %s is not reachable", eng.Name(), eng.Endpoint())
-		warn(os.Stdout, "  → %s", engineStartHint(eng.Name()))
-		warn(os.Stdout, "  then check `opod status`")
+		warn("engine (%s) at %s is not reachable", eng.Name(), eng.Endpoint())
+		warn("  → %s", engineStartHint(eng.Name()))
+		warn("  then check `opod status`")
 	default:
 		ok(os.Stdout, "engine: %s at %s", eng.Name(), eng.Endpoint())
 		if *autoPull && cfg.Router.DefaultModel != "" && cfg.Router.PullDefaultModel {
@@ -236,15 +240,6 @@ func cmdUp(args []string) {
 		}
 	}
 
-	// 8. Persist PID
-	if err := writePID(cfg); err != nil {
-		warn(os.Stdout, "could not write PID file: %v", err)
-	}
-	defer removePID(cfg)
-
-	// 9. Print ready block
-	printReady(cfg, plainKey)
-
 	// 10. Sharding orchestrator (uses the supervisor created at step 6;
 	//     leader runs the coordinator llama-server for sharded models).
 	orch := scheduler.New(st, sup, log, cfg.Storage.ModelsDir)
@@ -254,6 +249,7 @@ func cmdUp(args []string) {
 	// 11. Start server with signal context
 	srv := leader.NewServer(cfg, st, eng, cat, log, orch)
 	srv.Version = version
+	defer announceOnListen(srv, cfg, plainKey)()
 
 	// 11a. Memory-lifecycle manager: admission ("does it fit?"), LRU
 	//      evict-and-swap, and desired-placement restore for the local
@@ -287,11 +283,17 @@ func cmdUp(args []string) {
 	//      leader fails loudly here instead of serving 503s that read as an
 	//      outage of the endpoint (ADR-063).
 	if err := srv.StartGatewayRole(ctx); err != nil {
-		die("gateway: %v", err)
+		fmt.Fprintf(os.Stderr, "%s gateway: %v\n", ansiFor(os.Stderr, "31", "opod:"), err)
+		return 1
 	}
 
 	if err := srv.Start(ctx); err != nil {
-		die("server: %v", err)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			fmt.Fprintf(os.Stderr, "%s port %s is in use — another opod up? stop it with `opod down`, or set `listen:` in %s or OPOD_LISTEN\n", ansiFor(os.Stderr, "31", "opod:"), listen, config.DefaultPath())
+		} else {
+			fmt.Fprintf(os.Stderr, "%s server: %v\n", ansiFor(os.Stderr, "31", "opod:"), err)
+		}
+		return 1
 	}
 
 	// Optional: ask the engine to drop every model it has resident in RAM
@@ -310,7 +312,7 @@ func cmdUp(args []string) {
 		uCtx, uCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		loaded, listErr := eng.List(uCtx)
 		if listErr != nil {
-			warn(os.Stdout, "unload-on-exit: could not list models (%v)", listErr)
+			warn("unload-on-exit: could not list models (%v)", listErr)
 			uCancel()
 		} else {
 			var unloaded, skipped int
@@ -333,7 +335,7 @@ func cmdUp(args []string) {
 			case firstErr == nil && unloaded > 0:
 				ok(os.Stdout, "unloaded %d model(s) from %s", unloaded, eng.Name())
 			case firstErr != nil:
-				warn(os.Stdout, "unload-on-exit: %v (succeeded for %d)", firstErr, unloaded)
+				warn("unload-on-exit: %v (succeeded for %d)", firstErr, unloaded)
 			case skipped > 0:
 				// All models were on a non-supporting engine — say nothing;
 				// sup.StopAll() (LIFO defer) will free Opod-owned engines.
@@ -342,12 +344,13 @@ func cmdUp(args []string) {
 	}
 
 	ok(os.Stdout, "shutdown complete")
+	return 0
 }
 
 func bootstrapAdminKey(st store.Store, cfg *config.Config) string {
 	plain, err := control.BootstrapAdminKey(context.Background(), st)
 	if err != nil {
-		warn(os.Stdout, "could not bootstrap admin key: %v — check `opod token ls`", err)
+		warn("could not bootstrap admin key: %v — check `opod token ls`", err)
 		return ""
 	}
 	if plain == "" {
@@ -358,7 +361,7 @@ func bootstrapAdminKey(st store.Store, cfg *config.Config) string {
 	// ~/.aws/credentials).
 	path := localAdminKeyPath(cfg)
 	if err := os.WriteFile(path, []byte(plain), 0o600); err != nil {
-		warn(os.Stdout, "could not save admin key to %s: %v", path, err)
+		warn("could not save admin key to %s: %v", path, err)
 	}
 	return plain
 }
@@ -369,7 +372,7 @@ func seedJoinToken(st store.Store, cfg *config.Config) {
 	out, err := control.SeedJoinToken(context.Background(), st, cfg)
 	switch {
 	case err != nil:
-		warn(os.Stdout, "%v", err)
+		warn("%v", err)
 	case out.Seeded:
 		note(os.Stdout, "seeded node-join token — workers holding the configured join token can join this leader")
 	case out.Hint != "":
@@ -382,7 +385,7 @@ func seedAdminToken(st store.Store, cfg *config.Config) {
 	out, err := control.SeedAdminToken(context.Background(), st, cfg)
 	switch {
 	case err != nil:
-		warn(os.Stdout, "%v", err)
+		warn("%v", err)
 	case out.Seeded:
 		note(os.Stdout, "seeded admin token — the configured manager token can call /admin/v1")
 	}
@@ -395,7 +398,7 @@ func ensureDefaultModel(cfg *config.Config, cat []models.Entry, st store.Store, 
 	out, err := control.EnsureDefaultModel(context.Background(), cfg, cat, st, eng, bar.update)
 	bar.done()
 	if err != nil {
-		warn(os.Stdout, "%v", err)
+		warn("%v", err)
 		return
 	}
 	if out.Pulled {
@@ -416,4 +419,63 @@ func runDoor(cfg *config.Config, log *slog.Logger) {
 		die("door: %v", err)
 	}
 	ok(os.Stdout, "shutdown complete")
+}
+
+// checkCanStart refuses, before anything is opened, spawned or minted, what
+// would fail later: a role without what it needs, a second leader from this
+// data directory, a port another program holds. It returns the listen
+// address the node will bind.
+func checkCanStart(cfg *config.Config, help helpSpec) (listen string) {
+	switch cfg.Env.Role {
+	case "", "leader":
+	case "gateway":
+		if cfg.Env.LeaderURL == "" {
+			dieUsage(help, "--role gateway needs --leader <url> (or OPOD_LEADER_URL): the leader it mirrors and pushes its usage to")
+		}
+	case "door":
+		if cfg.Env.DoorRoutes == "" {
+			dieUsage(help, "--role door needs --routes <file> (or OPOD_DOOR_ROUTES): the file that names each model's endpoint")
+		}
+		if _, err := os.Stat(cfg.Env.DoorRoutes); err != nil {
+			warn("routes file %s is not there (%v) — every model answers 404 until it appears; the door re-reads it every 10s", cfg.Env.DoorRoutes, err)
+		}
+	default:
+		dieUsage(help, "--role: %q is not a role (leader | gateway | door)", cfg.Env.Role)
+	}
+	// One leader per data directory and port: a second `opod up` used to
+	// overwrite the running one's pid and fail on the port only after it had
+	// printed a fresh "ready" and a key. A pid file naming this very process is
+	// a container restarted in place, not a second leader.
+	listen = cfg.Listen
+	if listen == "" {
+		listen = ":8080"
+	}
+	if pid, err := readPID(cfg); err == nil && pid != os.Getpid() && processAlive(pid) && leaderAnswers(cfg) {
+		die("already running (pid %d, %s) — stop it with `opod down`, or see it with `opod status`", pid, localLeaderURL(cfg))
+	}
+	if cfg.Env.Role != "door" && !portAvailable(listen) {
+		die("port %s is in use — another program listens there; stop it, or set `listen:` in %s or OPOD_LISTEN", listen, config.DefaultPath())
+	}
+	return listen
+}
+
+// announceOnListen writes the pid file and prints the ready block — the admin
+// key shown once — when srv has bound its port, never before: they used to
+// come first, so a taken port ended in a bind error after a "ready" and a key.
+// The returned func removes the pid file if it was written.
+func announceOnListen(srv *leader.Server, cfg *config.Config, plainKey string) (cleanup func()) {
+	wrote := false
+	srv.OnListen = func(string) {
+		if err := writePID(cfg); err != nil {
+			warn("could not write PID file: %v", err)
+		} else {
+			wrote = true
+		}
+		printReady(cfg, plainKey)
+	}
+	return func() {
+		if wrote {
+			removePID(cfg)
+		}
+	}
 }

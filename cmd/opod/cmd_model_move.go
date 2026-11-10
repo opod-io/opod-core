@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -82,13 +83,10 @@ func modelMove(m moveArgs) {
 		fmt.Printf("  %s  %-8s %s\n", s.At.Local().Format("15:04:05"), s.Step, moveStepText(s.Step, s.Data))
 	}
 	if err != nil {
-		if len(raw) == 0 {
-			die("%v\n  a move needs the running leader — start it with `opod up` on this host", err)
+		if errors.Is(err, errUnreachable) {
+			die("move %s: %v\n  a move needs the running leader: the router stops choosing the source", m.ID, err)
 		}
-		if ans.Error.Message != "" {
-			die("%s", ans.Error.Message)
-		}
-		die("%v: %s", err, strings.TrimSpace(string(raw)))
+		die("move %s: %v", m.ID, err)
 	}
 	ok(os.Stdout, "%s is now served by %s; %s let it go", m.ID, m.To, m.From)
 	if ans.Note != "" {

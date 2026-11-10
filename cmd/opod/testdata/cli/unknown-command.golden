@@ -1,0 +1,7 @@
+$ opod nodes
+--- exit 2
+--- stdout
+--- stderr
+opod: unknown command "nodes"
+  did you mean node?
+  opod --help for every command

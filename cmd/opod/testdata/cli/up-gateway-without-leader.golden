@@ -1,0 +1,7 @@
+$ opod up --role gateway --no-wizard
+--- exit 2
+--- stdout
+--- stderr
+opod: --role gateway needs --leader <url> (or OPOD_LEADER_URL): the leader it mirrors and pushes its usage to
+  usage: opod up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive] [--role gateway --leader <url>] [--role door --routes <file>]
+  opod up --help for every flag

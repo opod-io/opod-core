@@ -1,0 +1,5 @@
+$ opod shard ls
+--- exit 0
+--- stdout
+(no shards — create one with `opod shard create <model>`)
+--- stderr

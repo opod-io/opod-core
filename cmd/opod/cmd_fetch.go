@@ -36,11 +36,6 @@ func cmdFetch(args []string) {
 	rev := fs.String("revision", os.Getenv("OPOD_MODEL_REVISION"), "Hub revision to pin: a commit sha, tag or branch (default $OPOD_MODEL_REVISION; empty = main, which moves)")
 	sum := fs.String("sha256", os.Getenv("OPOD_MODEL_SHA256"), "the digest the file must hash to; a mismatch removes it and fails (default $OPOD_MODEL_SHA256; not with --snapshot)")
 	snap := fs.String("snapshot", "", "fetch the file set a safetensors engine loads from `<hf-repo>[@revision]` instead of one file")
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: opod fetch <hf-repo> <file> [--dir <models dir>] [--revision <sha|tag>] [--sha256 <digest>]")
-		fmt.Fprintln(os.Stderr, "       opod fetch --snapshot <hf-repo>[@<sha|tag>] [--dir <models dir>]")
-		fs.PrintDefaults()
-	}
 	// flags may follow the positionals
 	var pos []string
 	for len(args) > 0 {
@@ -49,15 +44,17 @@ func cmdFetch(args []string) {
 		}
 		pos, args = append(pos, args[0]), args[1:]
 	}
-	_ = fs.Parse(args)
+	parseFlags(fs, "fetch", args)
 	pos = append(pos, fs.Args()...)
-	if (*snap == "" && len(pos) != 2) || (*snap != "" && len(pos) != 0) {
-		fs.Usage()
-		os.Exit(2)
+	usage := helpSpec{name: "fetch", usage: "opod fetch <hf-repo> <file> [--dir D] [--revision R] [--sha256 S]  |  opod fetch --snapshot <hf-repo>[@<rev>] [--dir D]"}
+	switch {
+	case *snap == "" && len(pos) != 2:
+		dieUsage(usage, "fetch takes a repo and a file (got %d argument(s)), or --snapshot <repo>", len(pos))
+	case *snap != "" && len(pos) != 0:
+		dieUsage(usage, "--snapshot takes no other argument (got %q)", strings.Join(pos, " "))
 	}
 	if *dir == "" {
-		fmt.Fprintln(os.Stderr, "error: --dir or OPOD_MODELS_DIR required")
-		os.Exit(2)
+		dieUsage(usage, "no models directory: pass --dir or set OPOD_MODELS_DIR")
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	env := config.FromEnv()
@@ -77,16 +74,14 @@ func cmdFetch(args []string) {
 		}
 		var repo string
 		if repo, opt.Revision, err = snapshotTarget(*snap, *rev, typed["revision"]); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(2)
+			dieUsageOf("fetch", "%v", err)
 		}
 		path, err = fetch.Snapshot(ctx, repo, *dir, opt)
 	} else {
 		path, err = fetch.GGUF(ctx, pos[0], pos[1], *dir, opt)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		die("fetch: %v", err)
 	}
 	if env.FetchResult != "" {
 		var repo string

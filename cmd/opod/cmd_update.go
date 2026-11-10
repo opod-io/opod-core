@@ -44,11 +44,10 @@ func cmdUpdate(args []string) {
 		},
 	}
 	// Bad flags: print usage to stderr and let ExitOnError exit 2.
-	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
 		showHelp(help)
 	}
-	_ = fs.Parse(args)
+	parseFlags(fs, "update", args)
 
 	// 1. Find the current binary so we know where to install over.
 	exe, err := os.Executable()

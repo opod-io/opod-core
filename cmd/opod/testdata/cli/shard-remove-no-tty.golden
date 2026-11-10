@@ -1,0 +1,6 @@
+$ opod shard remove m
+--- exit 2
+--- stdout
+--- stderr
+opod: no terminal to confirm `opod shard remove m` on — run `opod shard remove m --yes`
+  opod shard --help for every flag

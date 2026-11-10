@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -280,7 +282,7 @@ const weightsOpTimeout = 45 * time.Minute
 
 // errNoAdminKey is adminCallT's answer when this host holds no admin key: the
 // call reached nobody, which says nothing about whether a leader runs.
-var errNoAdminKey = errors.New("(no admin key)")
+var errNoAdminKey = errors.New("no admin key")
 
 // leaderAnswers reports whether this host's leader answers /healthz, a call
 // that needs no key.
@@ -299,46 +301,150 @@ func leaderAnswers(cfg *config.Config) bool {
 	return true
 }
 
-// adminCall makes an authenticated HTTP request to the local leader's admin
-// API. Returns the response body bytes. If the leader isn't running this
-// returns a clear error rather than a confusing dial failure.
+// adminTarget is the leader an admin verb talks to and where that address
+// came from: OPOD_BASE_URL when it is set — so an admin verb reaches a leader
+// on another host — else this host's leader from its listen address. remote
+// is true for the first: a store on this host is not that leader's store.
+func adminTarget(cfg *config.Config) (url, source string, remote bool) {
+	if v := strings.TrimSpace(os.Getenv("OPOD_BASE_URL")); v != "" {
+		return strings.TrimRight(v, "/"), "from OPOD_BASE_URL", true
+	}
+	return localLeaderURL(cfg), "this host's listen address, from " + config.DefaultPath() + " or OPOD_LISTEN", false
+}
+
+// adminKey is the key an admin verb sends and where it came from: OPOD_TOKEN,
+// else the key `opod up` wrote on this host.
+func adminKey(cfg *config.Config) (key, source string) {
+	if v := strings.TrimSpace(os.Getenv("OPOD_TOKEN")); v != "" {
+		return v, "OPOD_TOKEN"
+	}
+	return readLocalAdminKey(cfg), localAdminKeyPath(cfg)
+}
+
+// errUnreachable: the admin call reached no leader at all — nothing refused it.
+// Only this error may send a command to its offline path (the store, the
+// engine), and only for this host's own leader (unreachableError.Remote).
+var errUnreachable = errors.New("no leader answering")
+
+type unreachableError struct {
+	URL, Source string
+	Remote      bool
+	Cause       error
+}
+
+func (e *unreachableError) Error() string {
+	return fmt.Sprintf("no leader answering at %s (%s): %v — start it with `opod up`, or set OPOD_BASE_URL to the leader's URL", e.URL, e.Source, e.Cause)
+}
+func (e *unreachableError) Is(target error) bool { return target == errUnreachable }
+func (e *unreachableError) Unwrap() error        { return e.Cause }
+
+// localLeaderDown reports whether err says this host's leader is not running,
+// the one case an offline fallback is right in.
+func localLeaderDown(err error) bool {
+	var ue *unreachableError
+	return errors.As(err, &ue) && !ue.Remote
+}
+
+// adminError is a leader's refusal of an admin call, decoded from its
+// {"error": {"type", "code", "message"}} body (or a plain string error).
+type adminError struct {
+	Method, Path, URL, KeySource string
+	Status                       int
+	Type, Code, Message          string
+}
+
+func (e *adminError) Error() string {
+	msg := e.Message
+	if msg == "" {
+		msg = http.StatusText(e.Status)
+	}
+	if e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden {
+		return fmt.Sprintf("the leader at %s refused the admin key from %s (%s) — run this on the leader's host, or set OPOD_TOKEN to an admin key (`opod token create ops --admin` on the leader)", e.URL, e.KeySource, msg)
+	}
+	code := e.Code
+	if code == "" {
+		code = e.Type
+	}
+	if code != "" {
+		msg += " [" + code + "]"
+	}
+	return fmt.Sprintf("%s %s: the leader answered HTTP %d: %s", e.Method, e.Path, e.Status, msg)
+}
+
+// decodeAdminError reads a refusal body. A body that is not the leader's JSON
+// (a proxy's HTML page, nothing at all) keeps the status and says so.
+func decodeAdminError(status int, body []byte) (typ, code, msg string) {
+	var nested struct {
+		Error struct {
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &nested) == nil && nested.Error.Message != "" {
+		return nested.Error.Type, nested.Error.Code, nested.Error.Message
+	}
+	var flat struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if json.Unmarshal(body, &flat) == nil && flat.Error != "" {
+		return "", flat.Code, flat.Error
+	}
+	if b := strings.TrimSpace(string(body)); b != "" {
+		if len(b) > 200 {
+			b = b[:200] + "…"
+		}
+		return "", "", "not the leader's JSON: " + b
+	}
+	return "", "", "an empty body"
+}
+
+// adminCall makes an authenticated call to a leader's admin API (adminTarget)
+// with the key adminKey finds, and returns the response body.
 func adminCall(ctx context.Context, cfg *config.Config, method, path string, body []byte) ([]byte, error) {
 	return adminCallT(ctx, cfg, method, path, body, 5*time.Minute)
 }
 
 // adminCallT is adminCall with an explicit client budget, for the admin ops
-// that legitimately run long.
+// that legitimately run long. Its errors are the three a caller acts on:
+// errNoAdminKey (no key to send), *unreachableError (no leader answered —
+// errUnreachable) and *adminError (a leader refused; the body is still
+// returned for a caller that reads structure from it). A client budget that
+// runs out is none of them: the leader may still be working.
 func adminCallT(ctx context.Context, cfg *config.Config, method, path string, body []byte, timeout time.Duration) ([]byte, error) {
-	key := readLocalAdminKey(cfg)
+	base, source, remote := adminTarget(cfg)
+	key, keySource := adminKey(cfg)
 	if key == "" {
-		return nil, fmt.Errorf("no admin key on disk at %s — is `opod up` running on this host? %w", localAdminKeyPath(cfg), errNoAdminKey)
+		return nil, fmt.Errorf("%w: none at %s and OPOD_TOKEN is not set — run this on the leader's host, or set OPOD_TOKEN to an admin key", errNoAdminKey, localAdminKeyPath(cfg))
 	}
-	url := localLeaderURL(cfg) + path
-	var reader *bytes.Reader
+	var reader io.Reader = http.NoBody
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	var req *http.Request
-	var err error
-	if reader != nil {
-		req, err = http.NewRequestWithContext(ctx, method, url, reader)
-	} else {
-		req, err = http.NewRequestWithContext(ctx, method, url, http.NoBody)
-	}
+	req, err := http.NewRequestWithContext(ctx, method, base+path, reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	client := localLeaderClient(cfg, timeout)
+	if remote {
+		client = &http.Client{Timeout: timeout} // another host's certificate is not this host's file
+	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("admin call: %w (is opod up running?)", err)
+		var ne net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+			return nil, fmt.Errorf("gave up after %s waiting for %s %s at %s — the leader may still be working on it; check with `opod status`", timeout, method, path, base)
+		}
+		return nil, &unreachableError{URL: base, Source: source, Remote: remote, Cause: err}
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("%s %s: %s", method, path, resp.Status)
+		typ, code, msg := decodeAdminError(resp.StatusCode, respBody)
+		return respBody, &adminError{Method: method, Path: path, URL: base, KeySource: keySource, Status: resp.StatusCode, Type: typ, Code: code, Message: msg}
 	}
 	return respBody, nil
 }
@@ -351,13 +457,20 @@ func adminCallT(ctx context.Context, cfg *config.Config, method, path string, bo
 // stdout so `key=$(opod token create ...)` automation keeps working.
 func emitSecret(secret string) {
 	if !isatty.IsTerminal(os.Stdout.Fd()) {
-		warn(os.Stderr, "secret written to a non-terminal (pipe/redirect/CI) — it may be captured in logs or shell history; rotate it if that wasn't intended.")
+		warn("secret written to a non-terminal (pipe/redirect/CI) — it may be captured in logs or shell history; rotate it if that wasn't intended.")
 	}
 	fmt.Printf("    %s\n", secret)
 }
 
 func writePID(cfg *config.Config) error {
 	return os.WriteFile(pidFilePath(cfg), []byte(strconv.Itoa(os.Getpid())), 0o644)
+}
+
+// processAlive reports whether pid names a running process (signal 0 asks
+// without sending anything).
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	return err == nil && proc.Signal(syscall.Signal(0)) == nil
 }
 
 func readPID(cfg *config.Config) (int, error) {
@@ -373,20 +486,22 @@ func removePID(cfg *config.Config) {
 }
 
 func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{red("opod:")}, args...)...)
+	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{ansiFor(os.Stderr, "31", "opod:")}, args...)...)
 	os.Exit(1)
 }
 
 func note(w io.Writer, format string, args ...any) {
-	fmt.Fprintf(w, "\033[1;34m▶\033[0m "+format+"\n", args...)
+	fmt.Fprintf(w, ansiFor(w, "1;34", "▶")+" "+format+"\n", args...)
 }
 
 func ok(w io.Writer, format string, args ...any) {
-	fmt.Fprintf(w, "\033[1;32m✔\033[0m "+format+"\n", args...)
+	fmt.Fprintf(w, ansiFor(w, "1;32", "✔")+" "+format+"\n", args...)
 }
 
-func warn(w io.Writer, format string, args ...any) {
-	fmt.Fprintf(w, "\033[1;33m⚠\033[0m "+format+"\n", args...)
+// warn always writes to stderr (CONTRIBUTING.md "CLI output", rule 6): a
+// warning on stdout ends up in a file or a pipe meant for the command's answer.
+func warn(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, ansiFor(os.Stderr, "1;33", "⚠")+" "+format+"\n", args...)
 }
 
 func truncStr(s string, n int) string {

@@ -1,0 +1,6 @@
+$ opod model load x --priority x
+--- exit 2
+--- stdout
+--- stderr
+opod: --priority "x" is not a whole number
+  opod model --help for every flag

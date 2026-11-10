@@ -1,0 +1,5 @@
+$ opod status
+--- exit 1
+--- stdout
+--- stderr
+⚠ control plane not reachable at http://127.0.0.1:1/healthz: Get "http://127.0.0.1:1/healthz": dial tcp 127.0.0.1:1: connect: connection refused

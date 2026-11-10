@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/config"
@@ -23,6 +22,9 @@ func cmdNode(args []string) {
 		name:    "node",
 		summary: "manage worker nodes in the cluster",
 		usage:   "opod node <ls | show <id> | drain <id> | undrain <id> | remove <id>>",
+		flagLines: []string{
+			"--yes / -y                remove: skip the prompt",
+		},
 		examples: []string{
 			"opod node ls",
 			"opod node show n_abc123",
@@ -48,26 +50,26 @@ func cmdNode(args []string) {
 		nodeLs()
 	case "show":
 		if len(args) < 2 {
-			die("usage: opod node show <id>")
+			dieUsageOf("node", "node show is missing an argument: opod node show <id>")
 		}
 		nodeShow(args[1])
 	case "drain":
 		if len(args) < 2 {
-			die("usage: opod node drain <id>")
+			dieUsageOf("node", "node drain is missing an argument: opod node drain <id>")
 		}
 		nodeDrain(args[1])
 	case "undrain":
 		if len(args) < 2 {
-			die("usage: opod node undrain <id>")
+			dieUsageOf("node", "node undrain is missing an argument: opod node undrain <id>")
 		}
 		nodeUndrain(args[1])
 	case "remove", "rm":
 		rest, yes := extractYesFlag(args[1:])
 		if len(rest) < 1 {
-			die("usage: opod node remove <id> [--yes]")
+			dieUsageOf("node", "node remove is missing an argument: opod node remove <id> [--yes]")
 		}
-		if !yes && !confirm(fmt.Sprintf("Remove node %q from the cluster? The worker keeps running but the leader will forget it. (y/N) ", rest[0])) {
-			die("aborted")
+		if !yes {
+			confirmOrExit(fmt.Sprintf("Remove node %q from the cluster? The worker keeps running but the leader will forget it. (y/N) ", rest[0]), "node remove "+rest[0])
 		}
 		nodeRemove(rest[0])
 	default:
@@ -167,22 +169,24 @@ const (
 )
 
 // throughLeader runs one admin call and says whether a leader took it. A
-// leader that answers with a refusal is final (its body is the error); only
-// a call that reached nobody falls back to the store.
+// leader that answers at all is final — a refusal, an error page, a 500 with
+// no body — and only THIS host's leader not running falls back to the store:
+// a store written under a leader that answered is the one thing not to do.
 func throughLeader(cfg *config.Config, method, path string) (took bool, err error) {
-	resp, adminErr := adminCall(context.Background(), cfg, method, path, nil)
-	if adminErr == nil {
+	_, adminErr := adminCall(context.Background(), cfg, method, path, nil)
+	switch {
+	case adminErr == nil:
 		return true, nil
+	case errors.Is(adminErr, errNoAdminKey):
+		// No key reached nobody — but a leader may still run (T10.21).
+		if leaderAnswers(cfg) {
+			return true, fmt.Errorf("a leader answers at %s but this host has no admin key (%s), so the change cannot go through it; run this on the host where `opod up` wrote the key, or set OPOD_TOKEN", localLeaderURL(cfg), localAdminKeyPath(cfg))
+		}
+		return false, nil
+	case localLeaderDown(adminErr):
+		return false, nil
 	}
-	// No admin key here reached nobody — but a leader may still run, and
-	// writing its store under it is the one thing not to do (T10.21).
-	if errors.Is(adminErr, errNoAdminKey) && leaderAnswers(cfg) {
-		return true, fmt.Errorf("a leader answers at %s but this host has no admin key (%s), so the change cannot go through it; run this on the host where `opod up` wrote the key", localLeaderURL(cfg), localAdminKeyPath(cfg))
-	}
-	if len(resp) > 0 {
-		return true, fmt.Errorf("%v: %s", adminErr, strings.TrimSpace(string(resp)))
-	}
-	return false, nil
+	return true, adminErr
 }
 
 // setNodeState asks the running leader (POST /admin/v1/nodes/{id}/<verb>, so

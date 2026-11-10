@@ -21,6 +21,13 @@ func cmdShard(args []string) {
 		name:    "shard",
 		summary: "orchestrate sharded models (one model split across N machines)",
 		usage:   "opod shard <ls | create <model> [N] [--nodes a,b,c] [--tp N] [--pp N] [--gang ID] | remove <model> [--gang ID]>",
+		flagLines: []string{
+			"N                         create: how many workers (default: picked from their free memory)",
+			"--nodes a,b               create: the workers to use, in order (default: picked)",
+			"--tp N / --pp N           create: tensor / pipeline parallel degree for a vLLM gang (default: pipeline)",
+			"--gang ID                 create: a named gang, served beside the others; remove: only that gang",
+			"--yes / -y                remove: skip the prompt",
+		},
 		examples: []string{
 			"opod shard create llama-3.3-70b-sharded            # no count: picked from the live workers' free memory",
 			"opod shard create llama-3.3-70b-sharded 2          # split across 2 auto-picked workers",
@@ -59,7 +66,7 @@ func cmdShard(args []string) {
 		rest, pp := extractIntFlag(rest, "pp")
 		rest, gang := extractStrFlag(rest, "gang")
 		if len(rest) < 1 {
-			die("usage: opod shard create <model> [shards] [--nodes a,b,c] [--gang ID]")
+			dieUsageOf("shard", "shard create is missing an argument: opod shard create <model> [shards] [--nodes a,b,c] [--gang ID]")
 		}
 		n := 0
 		if len(rest) >= 2 {
@@ -74,14 +81,14 @@ func cmdShard(args []string) {
 		rest, yes := extractYesFlag(args[1:])
 		rest, gang := extractStrFlag(rest, "gang")
 		if len(rest) < 1 {
-			die("usage: opod shard remove <model> [--gang ID] [--yes]")
+			dieUsageOf("shard", "shard remove is missing an argument: opod shard remove <model> [--gang ID] [--yes]")
 		}
 		what := fmt.Sprintf("Tear down sharded model %q? The coordinator + every rpc-server will be stopped.", rest[0])
 		if gang != "" {
 			what = fmt.Sprintf("Tear down gang %q of %q? Its coordinator + rpc-servers stop; the model's other gangs keep serving.", gang, rest[0])
 		}
-		if !yes && !confirm(what+" (y/N) ") {
-			die("aborted")
+		if !yes {
+			confirmOrExit(what+" (y/N) ", "shard remove "+rest[0])
 		}
 		shardRemove(rest[0], gang)
 	default:
@@ -93,7 +100,7 @@ func shardLs() {
 	cfg := loadConfigOrExit()
 	body, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/shards", nil)
 	if err != nil {
-		die("%v: %s", err, string(body))
+		die("list shards: %v", err)
 	}
 	var shards []map[string]any
 	_ = json.Unmarshal(body, &shards)
@@ -121,7 +128,7 @@ func extractIntFlag(args []string, name string) (rest []string, val int) {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
 			// Read as 0 it meant "no split" and the command went on (T10.21).
-			die("--%s %q is not a whole number", name, v)
+			dieUsageOf("shard", "--%s %q is not a whole number", name, v)
 		}
 		return n
 	}
@@ -130,7 +137,7 @@ func extractIntFlag(args []string, name string) (rest []string, val int) {
 		switch {
 		case a == "--"+name || a == "-"+name:
 			if i+1 >= len(args) {
-				die("--%s needs a number", name)
+				dieUsageOf("shard", "--%s needs a number", name)
 			}
 			val = num(args[i+1])
 			i++
@@ -243,7 +250,7 @@ func shardCreate(model, gang string, n int, nodes []string, tp, pp int) {
 	}
 	resp, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/shards/create", body, weightsOpTimeout)
 	if err != nil {
-		die("%v: %s", err, string(resp))
+		die("create sharded model %s: %v", model, err)
 	}
 	var out map[string]string
 	_ = json.Unmarshal(resp, &out)
@@ -259,9 +266,8 @@ func shardRemove(model, gang string) {
 		what = model + " gang " + gang
 	}
 	note(os.Stdout, "removing %s…", what)
-	resp, err := adminCall(context.Background(), cfg, "DELETE", path, nil)
-	if err != nil {
-		die("%v: %s", err, string(resp))
+	if _, err := adminCall(context.Background(), cfg, "DELETE", path, nil); err != nil {
+		die("remove %s: %v", what, err)
 	}
 	ok(os.Stdout, "removed %s", what)
 }

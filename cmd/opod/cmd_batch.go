@@ -85,14 +85,16 @@ func cmdBatchRun(args []string) {
 	outputURL := fs.String("output-url", os.Getenv("OPOD_BATCH_OUTPUT_URL"), "PUT output.jsonl here when the run ends: a URL that carries its own authorization, such as a presigned PUT (default $OPOD_BATCH_OUTPUT_URL)")
 	errorURL := fs.String("error-url", os.Getenv("OPOD_BATCH_ERROR_URL"), "PUT errors.jsonl here when the run ends, as --output-url (default $OPOD_BATCH_ERROR_URL)")
 	every := fs.Duration("progress-every", 5*time.Second, "how often a progress line is printed (0 = never)")
-	fs.Usage = func() { batchUsage(); fs.PrintDefaults() }
-	_ = fs.Parse(args)
-	if (*input == "") == (*inputURL == "") || *dir == "" || *base == "" {
-		if *input != "" && *inputURL != "" {
-			fmt.Fprintln(os.Stderr, "error: give --input or --input-url, not both")
-		}
-		fs.Usage()
-		os.Exit(2)
+	parseFlags(fs, "batch", args)
+	switch {
+	case *input != "" && *inputURL != "":
+		dieUsageOf("batch", "give --input or --input-url, not both")
+	case *input == "" && *inputURL == "":
+		dieUsageOf("batch", "batch run needs --input FILE|URL or --input-url URL")
+	case *dir == "":
+		dieUsageOf("batch", "batch run needs --dir, the work directory it resumes from")
+	case *base == "":
+		dieUsageOf("batch", "batch run needs --base-url, the OpenAI URL it sends to")
 	}
 	in, presigned := *input, false
 	if *inputURL != "" {
@@ -104,14 +106,12 @@ func cmdBatchRun(args []string) {
 	}
 	mm, err := parseModelMap(*models)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(2)
+		dieUsageOf("batch", "--model-map: %v", err)
 	}
 	var ca []byte
 	if *caFile != "" {
 		if ca, err = os.ReadFile(*caFile); err != nil {
-			fmt.Fprintln(os.Stderr, "error: --ca:", err)
-			os.Exit(2)
+			dieUsageOf("batch", "--ca: %v", err)
 		}
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -127,8 +127,7 @@ func cmdBatchRun(args []string) {
 		ProgressEvery: *every,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		die("batch run: %v", err)
 	}
 	state := "completed"
 	switch {
@@ -149,8 +148,7 @@ func cmdBatchRun(args []string) {
 		cancel()
 		if err != nil {
 			_ = enc.Encode(map[string]any{"batch": out})
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			die("batch run: upload the result files: %v", err)
 		}
 		out["written"] = written
 	}

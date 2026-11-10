@@ -272,3 +272,58 @@ func maxInt(a, b int) int {
 	}
 	return b
 }
+
+// interactive reports whether a person can answer: the picker and confirm
+// need a terminal on stdin and stderr.
+func interactive() bool {
+	return isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stderr.Fd())
+}
+
+// catalogIDOrExit is the catalog model `opod model <verb>` acts on. A known id
+// is used as typed; with a terminal the picker opens; without one the command
+// says what was wrong and what to type, never a bare "no model selected".
+func catalogIDOrExit(id, verb, prompt string) string {
+	if id != "" && catalogHasID(id) {
+		return id
+	}
+	if !interactive() {
+		if id == "" {
+			dieUsageOf("model", "model %s needs a catalog id (opod model search lists them)", verb)
+		}
+		die("no catalog entry %q (try: opod model search %s)", id, id)
+	}
+	if picked := pickCatalogID(prompt, id); picked != "" {
+		return picked
+	}
+	die("no model picked — nothing done")
+	return ""
+}
+
+// installedIDOrExit is catalogIDOrExit for a model installed on this host.
+func installedIDOrExit(id, verb, prompt string) string {
+	if id != "" && installedHasID(id) {
+		return id
+	}
+	if !interactive() {
+		if id == "" {
+			dieUsageOf("model", "model %s needs an installed model id (opod model ls lists them)", verb)
+		}
+		die("%q is not installed on this host (see opod model ls)", id)
+	}
+	if picked := pickInstalledID(prompt, id); picked != "" {
+		return picked
+	}
+	die("no model picked — nothing done")
+	return ""
+}
+
+// confirmOrExit asks prompt and goes on only on a yes. Without a terminal to
+// ask on it refuses and names --yes, rather than printing "aborted".
+func confirmOrExit(prompt, verb string) {
+	if !isatty.IsTerminal(os.Stdin.Fd()) {
+		dieUsageOf(strings.Fields(verb)[0], "no terminal to confirm `opod %s` on — run `opod %s --yes`", verb, verb)
+	}
+	if !confirm(prompt) {
+		die("not confirmed — nothing done")
+	}
+}

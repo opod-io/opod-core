@@ -26,7 +26,7 @@ func cmdVersion(args []string) {
 			},
 		})
 	}
-	_ = fs.Parse(args)
+	parseFlags(fs, "version", args)
 	if *features {
 		printFeatures(os.Stdout)
 		return

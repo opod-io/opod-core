@@ -62,11 +62,10 @@ func cacheLs(args []string) {
 	fs := flag.NewFlagSet("cache ls", flag.ExitOnError)
 	dir := fs.String("dir", os.Getenv("OPOD_MODELS_DIR"), "models directory (default $OPOD_MODELS_DIR)")
 	asJSON := fs.Bool("json", false, "JSON output")
-	_ = fs.Parse(args)
+	parseFlags(fs, "cache", args)
 	entries, err := fetch.List(needDir(*dir))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		die("cache ls: %v", err)
 	}
 	if *asJSON {
 		_ = json.NewEncoder(os.Stdout).Encode(entries)
@@ -99,7 +98,7 @@ func cachePrune(args []string) {
 	apply := fs.Bool("apply", false, "actually delete; without it this is a dry run")
 	asJSON := fs.Bool("json", false, "JSON output")
 	sweep := fs.Duration("sweep", 24*time.Hour, "also clear crashed pulls older than this (0 = off)")
-	_ = fs.Parse(args)
+	parseFlags(fs, "cache", args)
 
 	d := needDir(*dir)
 	var keepList []string
@@ -108,8 +107,7 @@ func cachePrune(args []string) {
 	}
 	res, err := fetch.Prune(fetch.PruneRequest{Dir: d, Keep: keepList, MinAge: *minAge, TargetFreeGb: *targetFree, DryRun: !*apply})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		die("cache prune: %v", err)
 	}
 	if *sweep > 0 && *apply {
 		if n, err := fetch.SweepPartials(d, *sweep); err == nil && n > 0 {
@@ -149,10 +147,9 @@ func cacheKVPrune(args []string) {
 	every := fs.Duration("every", 0, "repeat the pass at this idle interval until stopped (0 = once); while the tier grows or is trimmed the next pass follows within 1s")
 	apply := fs.Bool("apply", false, "actually delete; without it this is a dry run")
 	asJSON := fs.Bool("json", false, "JSON output, one object per pass")
-	_ = fs.Parse(args)
+	parseFlags(fs, "cache", args)
 	if *dir == "" || *maxGb < 0 {
-		fmt.Fprintln(os.Stderr, "error: --dir and --max-gb are required")
-		os.Exit(2)
+		dieUsageOf("cache", "cache kv-prune needs --dir and --max-gb")
 	}
 	var keepList []string
 	if *keep != "" {
@@ -174,8 +171,7 @@ func cacheKVPrune(args []string) {
 	if *every <= 0 {
 		res, err := fetch.PruneKVTier(req)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			die("cache kv-prune: %v", err)
 		}
 		show(res)
 		return
@@ -186,7 +182,7 @@ func cacheKVPrune(args []string) {
 	// the tier growing is followed within a second, not a whole --every.
 	fetch.RunKVTierPruner(ctx, req, *every, fetch.KVTierHotDelay, func(res fetch.KVTierPruneResult, err error) {
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			warn("cache kv-prune: this pass failed, the next one tries again: %v", err)
 			return
 		}
 		show(res)
@@ -195,8 +191,7 @@ func cacheKVPrune(args []string) {
 
 func needDir(dir string) string {
 	if dir == "" {
-		fmt.Fprintln(os.Stderr, "error: --dir or OPOD_MODELS_DIR required")
-		os.Exit(2)
+		dieUsageOf("cache", "no models directory: pass --dir or set OPOD_MODELS_DIR")
 	}
 	return dir
 }

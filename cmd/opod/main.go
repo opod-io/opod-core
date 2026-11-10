@@ -68,15 +68,22 @@ func main() {
 	case "completion":
 		cmdCompletion(args)
 	case "help", "--help", "-h":
+		// `opod help up` is `opod up --help`; a bare `opod help` is the list.
+		if len(args) > 0 && args[0] != "help" && isTopLevel(args[0]) {
+			os.Args = []string{os.Args[0], args[0], "--help"}
+			main()
+			return
+		}
 		printUsage(os.Stdout)
 	default:
-		fmt.Fprintf(os.Stderr, "%s unknown command %q\n", red("opod:"), cmd)
+		// One line, the hint, where the list is — not sixty lines of usage
+		// burying the one that matters.
+		fmt.Fprintf(os.Stderr, "%s unknown command %q\n", ansiFor(os.Stderr, "31", "opod:"), cmd)
 		if guess := suggestSubcommand(cmd); guess != "" {
-			fmt.Fprintf(os.Stderr, "\nDid you mean %s?\n", cyan(guess))
+			fmt.Fprintf(os.Stderr, "  did you mean %s?\n", cyan(guess))
 		}
-		fmt.Fprintln(os.Stderr)
-		printUsage(os.Stderr)
-		os.Exit(2)
+		fmt.Fprintln(os.Stderr, "  opod --help for every command")
+		os.Exit(usageExit)
 	}
 }
 
@@ -84,7 +91,7 @@ func main() {
 // the typo helper and any future introspection share one source of truth.
 var topLevelCommands = []string{
 	"version", "up", "down", "status", "join", "node", "model", "shard", "catalog", "fetch", "batch", "image",
-	"token", "config", "doctor", "update", "upgrade",
+	"cache", "token", "config", "doctor", "update", "upgrade",
 	"connect", "disconnect", "completion", "help",
 }
 
@@ -120,12 +127,11 @@ func suggest(input string, candidates []string) string {
 // same way. group is e.g. "model"; valid lists the real sub-verbs.
 func dieUnknownSubcommand(group, input string, valid []string) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "unknown subcommand: %s %s", group, input)
+	fmt.Fprintf(&b, "unknown subcommand: %s %s (have: %s)", group, input, strings.Join(valid, ", "))
 	if g := suggest(input, valid); g != "" {
-		fmt.Fprintf(&b, "\n\nDid you mean %s?", cyan(group+" "+g))
+		fmt.Fprintf(&b, " — did you mean %s?", cyan(group+" "+g))
 	}
-	fmt.Fprintf(&b, "\nRun %s for usage.", cyan("opod "+group+" --help"))
-	die("%s", b.String())
+	dieUsageOf(group, "%s", b.String())
 }
 
 // levenshtein computes Damerau-Levenshtein edit distance — a single
@@ -235,4 +241,14 @@ Every command supports --help:
   opod up --help, opod shard --help, opod token --help, etc.
 
 Docs: `+update.RepoURL)
+}
+
+// isTopLevel reports whether name is a command main() dispatches.
+func isTopLevel(name string) bool {
+	for _, c := range topLevelCommands {
+		if c == name {
+			return true
+		}
+	}
+	return false
 }

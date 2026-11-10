@@ -7,6 +7,32 @@ the last section.
 
 ## Unreleased
 
+- **Admin verbs say what failed and what to do, and reach any leader.** `shard *`, `model ps|load|unload|move`,
+  `model add --node`, `node drain|undrain|remove` and `config show` call `OPOD_BASE_URL` with `OPOD_TOKEN` when they are
+  set, else this host's leader with `~/.opod/admin.key`. A refusal is decoded from the leader's JSON
+  (`the leader at … refused the admin key from … — set OPOD_TOKEN …`, `… the leader answered HTTP 500: an empty body`)
+  instead of the raw body pasted after a status line; a dead address names where it came from and the fix; a client
+  budget that runs out says the leader may still be working. The offline paths (writing the store, driving the engine)
+  run only when this host's own leader does not answer: a leader answering 500 with no body read as "no leader", and
+  `node remove` then wrote the store under it. The CLI output rules are in CONTRIBUTING.md, pinned by golden
+  transcripts (`cmd/opod/testdata/cli`).
+- **Warnings go to stderr, and colour follows each stream.** `warn` writes to stderr only (44 warnings in `status`,
+  `doctor`, `up`, `join`, `model add|rm|unload` and `down` were on stdout), and the `▶ ✔ ⚠` markers and the `opod:` prefix
+  are coloured only when their own stream is a terminal and `NO_COLOR` / `OPOD_NO_COLOR` are unset — they kept their
+  escape codes in a pipe.
+- **One usage error, exit 2.** A bad flag, a missing argument, an unknown command or subcommand is three lines on
+  stderr — `opod: <what is wrong>`, the usage line, `opod <command> --help for every flag` — and exit 2, never Go's
+  `Usage of …` and a flag dump; `cache`, `fetch`, `catalog` and `batch` say `opod:` instead of `error:`; an unknown command
+  is one line and a did-you-mean (it was ~60 lines of usage); `opod help <command>` shows that command's help; `model`,
+  `shard`, `node`, `token` and `join` list their flags; `status` and `doctor` refuse an unknown argument.
+- **No terminal, no dead end.** With no terminal to pick or confirm on, `model add|info|remove|load|unload` and
+  `connect` say what was wrong and what to type (`no catalog entry "X" (try: opod model search X)`) instead of `no model
+  selected`, and `model|node|shard remove` say `run … --yes` instead of `aborted`; `model load` checks its flags first.
+- **`opod up` says ready only once the port is its own.** The PID file and the ready block with the one-time admin key
+  come after the bind (a new `leader.Server.OnListen` hook); a second leader from the same data directory, a taken port, and
+  `--role gateway` without `--leader` or `--role door` without `--routes` are refused before anything starts; a door whose
+  routes file is missing warns. `opod up` returns through its cleanup instead of exiting past it.
+
 ## v0.4.5 — 2026-11-09
 
 Speculative decoding: a worker renders the plan's n-gram (or draft) setting in its engine's own flags on vLLM, SGLang and

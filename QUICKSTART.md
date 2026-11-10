@@ -284,7 +284,7 @@ Most common failures:
 | `engine (ollama) at http://127.0.0.1:11434 is not reachable` | Start Ollama: `ollama serve &` (Linux: `sudo systemctl start ollama`) |
 | `502 Bad Gateway` with `llama-server binary not found` | The Homebrew `ollama` formula on Apple Silicon is broken. Fix: `brew uninstall ollama && brew install --cask ollama` |
 | `address already in use` on `:8080` (`opod doctor`: `listen port :8080 already in use`) | Another process is on it. Use a different port: `OPOD_LISTEN=:8090 opod up` (avoid `:8081` — that's the default worker port) |
-| `no admin key on disk` (running CLI) | `opod up` isn't running on this host. Start it first, then re-run the CLI command |
+| `no admin key: none at ~/.opod/admin.key and OPOD_TOKEN is not set` (running CLI) | `opod up` has not run on this host. Run the command on the leader's host, or set `OPOD_BASE_URL` to the leader and `OPOD_TOKEN` to an admin key |
 
 More fixes in the [main README's troubleshooting table](README.md#troubleshooting-installation).
 

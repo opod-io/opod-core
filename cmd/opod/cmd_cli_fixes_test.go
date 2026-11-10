@@ -105,7 +105,7 @@ func TestNonNumericIntFlagsAreRefused(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestNonNumericIntFlagsAreRefused$")
 	cmd.Env = append(os.Environ(), "OPOD_TEST_INTFLAG=two")
 	out, err := cmd.CombinedOutput()
-	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 || !strings.Contains(string(out), `--tp "two" is not a whole number`) {
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != usageExit || !strings.Contains(string(out), `--tp "two" is not a whole number`) {
 		t.Fatalf("exit %v:\n%s", err, out)
 	}
 }

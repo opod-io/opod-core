@@ -32,11 +32,10 @@ func cmdDown(args []string) {
 		},
 	}
 	// Bad flags: print usage to stderr and let ExitOnError exit 2.
-	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
 		showHelp(help)
 	}
-	_ = fs.Parse(args)
+	parseFlags(fs, "down", args)
 
 	cfg := loadConfigOrExit()
 	pid, err := readPID(cfg)
@@ -88,7 +87,7 @@ func cmdDown(args []string) {
 	case errors.Is(err, engines.ErrUnloadNotSupported):
 		note(os.Stdout, "%s has no unload protocol — restart it to free RAM (Opod-spawned engines are already stopped)", eng.Name())
 	case err != nil:
-		warn(os.Stdout, "unload: %v (unloaded %d)", err, n)
+		warn("unload: %v (unloaded %d)", err, n)
 	case n > 0:
 		ok(os.Stdout, "unloaded %d model(s) from %s", n, eng.Name())
 	}

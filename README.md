@@ -955,7 +955,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 
 A few more are read outside that contract, by the CLI rather than by a serving process:
 `OPOD_MODELS_DIR` (the default `--dir` for `opod fetch` and `opod cache`), `OPOD_TOKEN` and `OPOD_BASE_URL`
-(which key and leader the CLI talks to), `OPOD_API_KEY` and `OPOD_BATCH_INPUT_URL` / `OPOD_BATCH_OUTPUT_URL` /
+(which key and leader the CLI talks to — the admin verbs too: `shard *`, `model ps|load|move`, `model add --node`, `node drain|undrain|remove`, `config show`), `OPOD_API_KEY` and `OPOD_BATCH_INPUT_URL` / `OPOD_BATCH_OUTPUT_URL` /
 `OPOD_BATCH_ERROR_URL` (for `opod batch run`), `OPOD_UNLOAD_ON_EXIT`, `OPOD_NO_COLOR` / `NO_COLOR`, and `EDITOR`
 (for `opod config edit`).
 

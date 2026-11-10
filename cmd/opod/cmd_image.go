@@ -94,7 +94,7 @@ func imageFilterFlags(name string, args []string, withEngine bool) (images.Filte
 		engine = fs.String("engine", "", "engine: "+strings.Join(engines.Names(), " | "))
 		valueFlags["--engine"], valueFlags["-engine"] = true, true
 	}
-	_ = fs.Parse(reorderFlagsFirst(args, valueFlags))
+	parseFlags(fs, "image", reorderFlagsFirst(args, valueFlags))
 	return images.Filter{Engine: engines.Canonical(strings.ToLower(*engine)), Vendor: *vendor}, fs.Args()
 }
 
@@ -154,7 +154,7 @@ func dash(s string) string {
 
 func imageShow(m images.Manifest, args []string, asJSON bool) {
 	if len(args) != 1 {
-		die("usage: opod image show <image> [--json]")
+		dieUsageOf("image", "image show is missing an argument: opod image show <image> [--json]")
 	}
 	img, ok := m.Find(args[0])
 	if !ok {
@@ -217,7 +217,7 @@ func imageShow(m images.Manifest, args []string, asJSON bool) {
 func imageRecommend(m images.Manifest, args []string, asJSON bool) {
 	filter, pos := imageFilterFlags("image recommend", args, false)
 	if len(pos) != 1 {
-		die("usage: opod image recommend <model> [--vendor V] [--json]")
+		dieUsageOf("image", "image recommend is missing an argument: opod image recommend <model> [--vendor V] [--json]")
 	}
 	if v := images.CanonicalVendor(filter.Vendor); v != "" && len(m.Select(images.Filter{Vendor: v})) == 0 {
 		die("no image is built for vendor %q (vendors: %s)", filter.Vendor, strings.Join(m.Vendors(), ", "))

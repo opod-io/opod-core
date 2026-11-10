@@ -1,0 +1,5 @@
+$ opod shard ls
+--- exit 1
+--- stdout
+--- stderr
+opod: list shards: no leader answering at http://127.0.0.1:1 (this host's listen address, from $DATA/.opod/config.yaml or OPOD_LISTEN): Get "http://127.0.0.1:1/admin/v1/shards": dial tcp 127.0.0.1:1: connect: connection refused — start it with `opod up`, or set OPOD_BASE_URL to the leader's URL

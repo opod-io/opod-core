@@ -20,6 +20,19 @@ func cmdModel(args []string) {
 		name:    "model",
 		summary: "install, list, search, inspect, load/unload, or uninstall LLM models",
 		usage:   "opod model <add <id> [--force] [--node a,b,c] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] [--priority N] | unload <id> | move <id> --from <node> --to <node> | remove <id>>",
+		flagLines: []string{
+			"--node a,b / --nodes a,b  add: the workers that pull and load it (default: this host's engine)",
+			"--force                   add: skip the hardware floor check; with --node, replace what a worker serves",
+			"--dry-run                 add: print the download size, memory and engine, pull nothing",
+			"--from FILE               add: install from a catalog YAML file",
+			"--swap                    load: evict least-recently-used models to make room (default: refuse)",
+			"--pin                     load: exempt from eviction and the engine's idle timeout",
+			"--priority N              load: eviction order, higher stays longer (default 0)",
+			"--from NODE --to NODE     move: the worker that serves it now, and the one that takes it over",
+			"--sort released|name      search: order (default name); --since DATE: released on or after",
+			"--json                    ls, ps, search, info: machine output",
+			"--yes / -y                remove: skip the prompt",
+		},
 		examples: []string{
 			"opod model search                # browse the full catalog",
 			"opod model search coder          # filter to coding models",
@@ -83,12 +96,7 @@ func cmdModel(args []string) {
 				die("--dry-run is not supported with --node")
 			}
 			if _, ok := models.ParseSchemeID(id); !ok {
-				if id == "" || !catalogHasID(id) {
-					id = pickCatalogID("Pick a model to place:", id)
-					if id == "" {
-						die("no model selected")
-					}
-				}
+				id = catalogIDOrExit(id, "add", "Pick a model to place:")
 			}
 			modelAddOnNodes(id, nodes, force)
 			return
@@ -105,12 +113,7 @@ func cmdModel(args []string) {
 			modelAddEntry(entry, force)
 			return
 		}
-		if id == "" || !catalogHasID(id) {
-			id = pickCatalogID("Pick a model to install:", id)
-			if id == "" {
-				die("no model selected")
-			}
-		}
+		id = catalogIDOrExit(id, "add", "Pick a model to install:")
 		if dryRun {
 			modelAddDryRun(id)
 			return
@@ -125,14 +128,9 @@ func cmdModel(args []string) {
 		if len(rest) >= 1 {
 			id = rest[0]
 		}
-		if id == "" || !installedHasID(id) {
-			id = pickInstalledID("Pick an installed model to remove:", id)
-			if id == "" {
-				die("no model selected")
-			}
-		}
-		if !yes && !confirm(fmt.Sprintf("Remove installed model %q? Weights will be deleted from disk. (y/N) ", id)) {
-			die("aborted")
+		id = installedIDOrExit(id, "remove", "Pick an installed model to remove:")
+		if !yes {
+			confirmOrExit(fmt.Sprintf("Remove installed model %q? Weights will be deleted from disk. (y/N) ", id), "model remove "+id)
 		}
 		modelRemove(id)
 	case "search":
@@ -145,24 +143,14 @@ func cmdModel(args []string) {
 		if len(rest) >= 1 {
 			id = rest[0]
 		}
-		if id == "" || !catalogHasID(id) {
-			id = pickCatalogID("Pick a model to inspect:", id)
-			if id == "" {
-				die("no model selected")
-			}
-		}
+		id = catalogIDOrExit(id, "info", "Pick a model to inspect:")
 		modelInfo(id, asJSON)
 	case "unload":
 		id := ""
 		if len(args) >= 2 {
 			id = args[1]
 		}
-		if id == "" || !installedHasID(id) {
-			id = pickInstalledID("Pick an installed model to unload:", id)
-			if id == "" {
-				die("no model selected")
-			}
-		}
+		id = installedIDOrExit(id, "unload", "Pick an installed model to unload:")
 		modelUnload(id)
 	case "move":
 		m, err := parseModelMove(args[1:])
@@ -189,12 +177,8 @@ func cmdModel(args []string) {
 				i++
 			}
 		}
-		if id == "" || !installedHasID(id) {
-			id = pickInstalledID("Pick an installed model to load:", id)
-			if id == "" {
-				die("no model selected")
-			}
-		}
+		parseLoadFlags(loadArgs) // a bad flag is said before the picker asks anything
+		id = installedIDOrExit(id, "load", "Pick an installed model to load:")
 		modelLoad(id, loadArgs)
 	case "ps":
 		_, asJSON := extractJSONFlag(args[1:])
@@ -344,7 +328,7 @@ func modelRemove(id string) {
 		engineName = m.Source[idx+1:]
 	}
 	if err := eng.Delete(context.Background(), engineName); err != nil {
-		warn(os.Stdout, "engine delete failed (continuing): %v", err)
+		warn("engine delete failed (continuing): %v", err)
 	}
 	if err := st.Models().Delete(context.Background(), id); err != nil {
 		die("store delete: %v", err)

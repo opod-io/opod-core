@@ -1,0 +1,5 @@
+$ opod shard ls
+--- exit 1
+--- stdout
+--- stderr
+opod: list shards: the leader at STUB refused the admin key from $DATA/admin.key (admin scope required) — run this on the leader's host, or set OPOD_TOKEN to an admin key (`opod token create ops --admin` on the leader)

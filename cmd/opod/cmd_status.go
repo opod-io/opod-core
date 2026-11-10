@@ -20,7 +20,10 @@ func cmdStatus(args []string) {
 			},
 		})
 	}
-	_, asJSON := extractJSONFlag(args)
+	rest, asJSON := extractJSONFlag(args)
+	if len(rest) > 0 {
+		dieUsageOf("status", "unknown argument %q (status takes only --json)", rest[0])
+	}
 	cfg := loadConfigOrExit()
 	url := localLeaderURL(cfg) + "/healthz"
 
@@ -63,7 +66,7 @@ func cmdStatus(args []string) {
 			emitJSON(out)
 			os.Exit(1)
 		}
-		warn(os.Stdout, "control plane not reachable at %s: %v", url, err)
+		warn("control plane not reachable at %s: %v", url, err)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
@@ -102,7 +105,7 @@ func cmdStatus(args []string) {
 	if out.Engine.Reachable {
 		ok(os.Stdout, "engine: %s ok at %s", eng.Name(), eng.Endpoint())
 	} else {
-		warn(os.Stdout, "engine: not reachable: %s", out.Engine.Error)
+		warn("engine: not reachable: %s", out.Engine.Error)
 	}
 	if len(ms) == 0 {
 		note(os.Stdout, "no models installed yet — try `opod model add llama-3.2-3b`")

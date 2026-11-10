@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,12 +24,15 @@ import (
 //	Examples:
 //	  <each example on its own line>
 type helpSpec struct {
-	name     string
-	summary  string
-	usage    string
-	flags    *flag.FlagSet
-	examples []string
-	notes    []string
+	name    string
+	summary string
+	usage   string
+	flags   *flag.FlagSet
+	// flagLines describe the flags of a command that parses its arguments by
+	// hand (no FlagSet): one line each, "--name VALUE  what it does (default)".
+	flagLines []string
+	examples  []string
+	notes     []string
 }
 
 func (h helpSpec) print(w io.Writer) {
@@ -47,6 +51,13 @@ func (h helpSpec) print(w io.Writer) {
 			h.flags.PrintDefaults()
 			fmt.Fprintln(w)
 		}
+	}
+	if h.flags == nil && len(h.flagLines) > 0 {
+		fmt.Fprintln(w, "Flags:")
+		for _, l := range h.flagLines {
+			fmt.Fprintf(w, "  %s\n", l)
+		}
+		fmt.Fprintln(w)
 	}
 	if len(h.examples) > 0 {
 		fmt.Fprintln(w, "Examples:")
@@ -75,11 +86,10 @@ func wantsHelp(args []string) bool {
 	return false
 }
 
-// dieHelp prints help to stderr and exits with code 2 (standard for "you used
-// this wrong, here's how to use it right").
+// dieHelp is a command called with too little to act on (no subcommand, no
+// argument): the usage error, not the whole help screen.
 func dieHelp(h helpSpec) {
-	h.print(os.Stderr)
-	os.Exit(2)
+	dieUsage(h, "opod %s is missing a subcommand or an argument", h.name)
 }
 
 // showHelp prints help to stdout and exits 0.
@@ -88,10 +98,43 @@ func showHelp(h helpSpec) {
 	os.Exit(0)
 }
 
-// showUsageErr prints help to stderr WITHOUT exiting. This is the right
-// shape for fs.Usage on a flag.ExitOnError FlagSet: on a bad flag, the
-// flag package calls Usage and then exits 2 itself — exiting 0 from the
-// Usage hook (as showHelp would) would mask the error.
-func showUsageErr(h helpSpec) {
-	h.print(os.Stderr)
+// usageExit is the exit code of a command used wrongly: a bad flag, a missing
+// or extra argument, an unknown verb (CONTRIBUTING.md "CLI output").
+const usageExit = 2
+
+// dieUsage says why the command was used wrongly, its usage line, and where
+// every flag is described — three lines, never the whole help — and exits 2.
+func dieUsage(h helpSpec, format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", ansiFor(os.Stderr, "31", "opod:"), fmt.Sprintf(format, args...))
+	if h.usage != "" {
+		fmt.Fprintf(os.Stderr, "  usage: %s\n", h.usage)
+	}
+	fmt.Fprintf(os.Stderr, "  opod %s --help for every flag\n", h.name)
+	os.Exit(usageExit)
+}
+
+// dieUsageOf is dieUsage for code that knows only the command's name.
+func dieUsageOf(name, format string, args ...any) {
+	dieUsage(helpSpec{name: name}, format, args...)
+}
+
+// parseFlags parses fs the one way every command does: a bad flag or value is
+// one `opod:` line and exit 2 — never Go's "Usage of …" and a flag dump —
+// and -h/--help prints the flags to stdout and exits 0. name is the command
+// whose --help describes them ("cache", "image").
+func parseFlags(fs *flag.FlagSet, name string, args []string) {
+	fs.Init(fs.Name(), flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {} // ContinueOnError still calls Usage; the line below is the message
+	err := fs.Parse(args)
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, flag.ErrHelp):
+		fmt.Fprintf(os.Stdout, "opod %s — flags:\n", fs.Name())
+		fs.SetOutput(os.Stdout)
+		fs.PrintDefaults()
+		os.Exit(0)
+	}
+	dieUsageOf(name, "%v", err)
 }

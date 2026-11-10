@@ -1,0 +1,5 @@
+$ opod node ls
+--- exit 0
+--- stdout
+(no nodes registered yet — issue a join token: `opod token create --node`)
+--- stderr

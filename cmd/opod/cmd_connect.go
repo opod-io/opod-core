@@ -50,12 +50,12 @@ func cmdConnect(args []string) {
 		"-model": true, "--model": true,
 		"-retries": true, "--retries": true,
 	})
-	_ = fs.Parse(args)
+	parseFlags(fs, "connect", args)
 
 	// 0 = unset (header omitted). The gateway accepts 1-5; reject anything
 	// else here so the snippet never embeds a value the server will refuse.
 	if *retries != 0 && (*retries < 1 || *retries > 5) {
-		die("--retries must be between 1 and 5 (got %d)", *retries)
+		dieUsageOf("connect", "--retries must be between 1 and 5 (got %d)", *retries)
 	}
 
 	if *list {
@@ -65,16 +65,21 @@ func cmdConnect(args []string) {
 
 	rest := fs.Args()
 	if len(rest) > 1 {
-		die("connect takes exactly one client name (got: %s)", strings.Join(rest, " "))
+		dieUsageOf("connect", "connect takes one client name (got: %s); opod connect --list names them", strings.Join(rest, " "))
 	}
 	clientID := ""
 	if len(rest) == 1 {
 		clientID = rest[0]
 	}
 	if clientID == "" || !connectHasClient(clientID) {
-		clientID = pickConnectClient("Pick a client to print a snippet for:", clientID)
-		if clientID == "" {
-			dieHelp(help)
+		if !interactive() {
+			if clientID == "" {
+				dieUsage(help, "name the client (opod connect --list names them)")
+			}
+			dieUsage(help, "no client %q (opod connect --list names them)", clientID)
+		}
+		if clientID = pickConnectClient("Pick a client to print a snippet for:", clientID); clientID == "" {
+			die("no client picked — nothing done")
 		}
 	}
 

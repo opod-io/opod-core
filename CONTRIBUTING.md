@@ -62,6 +62,34 @@ Quick map. Deeper explanation in [ARCHITECTURE.md](ARCHITECTURE.md).
 | Add a container image | a row in **four** places, held together by `cmd/opod/images_drift_test.go`: `images/build.sh`, `.github/workflows/images.yml`, `images/images.yaml` and the table in `images/README.md` |
 | Add a metric | declare in `internal/metrics/metrics.go`, increment at the call site |
 
+## CLI output
+
+What `opod` prints is part of its interface: a person reads it to learn what happened and what to do next, and a
+script reads its exit code and its JSON. Every command follows these rules.
+
+1. **Success names what changed, with its ids, and the next command, filled in.** `token created: tok_3f… (admin)`,
+   then `next: opod token ls`. A query with no result says so — `no nodes registered yet — issue a join token:
+   opod token create --node` — never an empty table.
+2. **A repeat says it changed nothing.** `already drained — nothing changed`, exit 0.
+3. **An error goes to stderr with a non-zero exit, in three parts:** *what* failed (the verb and the object), *why*
+   (the leader's message and code, or the wrapped cause — never a raw JSON body, a bare HTTP status or a bare Go
+   error), and *what to do* — a command or a flag to type, already filled in, and where its value comes from
+   (`--base-url`, `OPOD_BASE_URL`, `~/.opod/admin.key`). Where a docs page explains more, its URL.
+4. **A long operation** prints a start line and progress at least every 10 s (the step, or the bytes). A timeout says
+   what it waited for, for how long, and whether the work goes on in the leader. Ctrl-C says what state it left and how
+   to clean up.
+5. **A destructive operation** asks first or needs `--yes`, refuses without a terminal by naming `--yes`, and prints
+   what it removed.
+6. **Machine output:** every list and show verb has `--json`; JSON on stdout carries no human line; colour obeys
+   `NO_COLOR` and a non-terminal; human warnings go to stderr.
+7. **Help:** every flag has a sentence, its default and an example, and no internal ids (task numbers, ADR numbers,
+   section signs).
+
+**Every message is pinned by a transcript.** `cmd/opod/transcript_test.go` runs the real `main()` against a stub
+leader and compares the exit code, stdout and stderr with `cmd/opod/testdata/cli/<case>.golden`. Add a case for each
+message you add or change — success, repeat and each error class — then run
+`go test ./cmd/opod -run TestCLITranscripts -update` and review the diff of the golden files like any other code.
+
 ## PR checklist
 
 1. Open a discussion or issue first if the change is non-trivial.
@@ -70,7 +98,7 @@ Quick map. Deeper explanation in [ARCHITECTURE.md](ARCHITECTURE.md).
 4. Add or update tests and docs in the **same** PR — no "I'll fix docs later" follow-ups.
 5. `make check` passes locally.
 5b. Every commit is signed off (`git commit -s`, the DCO — see below).
-6. If the change adds or modifies a CLI verb, README's CLI reference is updated.
+6. If the change adds or modifies a CLI verb, README's CLI reference is updated, its output follows [CLI output](#cli-output), and a transcript case pins it.
 7. If the change adds a config field, README's "Full reference" includes it.
 8. PR title follows the commit convention (`feat:`, `fix:`, `docs:`, `catalog:` …) — that is what cuts the next release tag.
 

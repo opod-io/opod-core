@@ -66,6 +66,10 @@ func cmdJoin(args []string) {
 			name:    "join",
 			summary: "join this machine to an existing opod cluster as a worker",
 			usage:   "opod join \"<leader-url>[?token=<token>]\" [--gpu <index>] [--vram-budget <GB>]",
+			flagLines: []string{
+				"--gpu I                 pin this worker's engine to device I (default: every device)",
+				"--vram-budget GB        cap the engine's memory to GB (default: the whole device)",
+			},
 			examples: []string{
 				"opod join \"http://leader.local:8080?token=sk-orc-...\"",
 				"opod join \"https://opod.example.com?token=sk-orc-...\"",
@@ -84,7 +88,7 @@ func cmdJoin(args []string) {
 		})
 	}
 	if len(args) == 0 {
-		die("usage: opod join \"<leader-url>?token=<token>\"  (run `opod join --help` for details)")
+		dieUsageOf("join", "name the leader: opod join \"<leader-url>?token=<token>\" (quoted: ? is a glob in zsh)")
 	}
 	leader, token, err := parseJoinTarget(args[0])
 	if err != nil {
@@ -99,21 +103,21 @@ func cmdJoin(args []string) {
 		switch args[i] {
 		case "--gpu":
 			if i+1 >= len(args) {
-				die("--gpu needs a device index")
+				dieUsageOf("join", "--gpu needs a device index")
 			}
 			i++
 			gpuIndex = args[i]
 		case "--vram-budget":
 			if i+1 >= len(args) {
-				die("--vram-budget needs a size in GB")
+				dieUsageOf("join", "--vram-budget needs a size in GB")
 			}
 			i++
 			if _, err := strconv.Atoi(args[i]); err != nil {
-				die("--vram-budget must be an integer number of GB, got %q", args[i])
+				dieUsageOf("join", "--vram-budget must be an integer number of GB, got %q", args[i])
 			}
 			vramBudget = args[i]
 		default:
-			die("unknown join argument %q (see `opod join --help`)", args[i])
+			dieUsageOf("join", "unknown join argument %q", args[i])
 		}
 	}
 
@@ -176,12 +180,12 @@ func cmdJoin(args []string) {
 		if n, err := strconv.Atoi(rev); err == nil && n > 0 {
 			caps.PlanRevision = n
 		} else {
-			warn(os.Stdout, "OPOD_PLAN_REVISION %q is not a positive number — this worker joins the unversioned group", rev)
+			warn("OPOD_PLAN_REVISION %q is not a positive number — this worker joins the unversioned group", rev)
 		}
 	}
 	addr, err := mesh.NewLAN().Address(8081) // workers default to :8081
 	if err != nil {
-		warn(os.Stdout, "could not determine local address: %v", err)
+		warn("could not determine local address: %v", err)
 		addr = "0.0.0.0:8081"
 	}
 	// Honor an explicit advertise address. The auto-detected LAN IP is the
@@ -200,7 +204,7 @@ func cmdJoin(args []string) {
 		die("%v", err)
 	}
 	if bindHost == "0.0.0.0" || bindHost == "::" {
-		warn(os.Stdout, "OPOD_BIND_ADDR %s listens on every interface: gang processes bind it too, and llama.cpp's rpc-server has no authentication — firewall its ports", env.BindAddr)
+		warn("OPOD_BIND_ADDR %s listens on every interface: gang processes bind it too, and llama.cpp's rpc-server has no authentication — firewall its ports", env.BindAddr)
 	}
 	if bindHost != "" {
 		caps.BindHost = bindHost
@@ -227,7 +231,7 @@ func cmdJoin(args []string) {
 		JoinedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := nodeCfg.Save(filepath.Join(cfg.DataDir, "node.yaml")); err != nil {
-		warn(os.Stdout, "could not persist node config: %v", err)
+		warn("could not persist node config: %v", err)
 	}
 
 	// Local engine — the worker proxies its inference requests to this.
@@ -322,7 +326,7 @@ func cmdJoin(args []string) {
 	if entries, err := loadCatalog(cfg); err == nil {
 		srv.ToolParser = func(id, engine string) string { return models.ToolParser(models.FindByID(entries, id), engine) }
 	} else {
-		warn(os.Stdout, "catalog unreadable (%v) — vLLM and SGLang start with no tool-call parser", err)
+		warn("catalog unreadable (%v) — vLLM and SGLang start with no tool-call parser", err)
 	}
 	// The heartbeat's slot count falls back to what this server put on the
 	// engine's launch line (ADR-091) when the engine cannot state its own.
@@ -392,7 +396,7 @@ func selfLoadRequest(cfg *config.Config, srv *agent.Server) (agent.LoadRequest, 
 	if repo == "" {
 		entries, err := loadCatalog(cfg)
 		if err != nil {
-			warn(os.Stdout, "OPOD_LOAD_MODEL=%s: catalog unreadable (%v) — loading by id alone", id, err)
+			warn("OPOD_LOAD_MODEL=%s: catalog unreadable (%v) — loading by id alone", id, err)
 		}
 		for _, e := range entries {
 			if e.ID == id {
@@ -444,7 +448,7 @@ func warnCleartextJoin(leader, token string) {
 		return
 	}
 	if host := u.Hostname(); host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		warn(os.Stderr, "joining %s over cleartext http — the join token will be sent unencrypted; prefer https for non-local leaders", host)
+		warn("joining %s over cleartext http — the join token will be sent unencrypted; prefer https for non-local leaders", host)
 	}
 }
 

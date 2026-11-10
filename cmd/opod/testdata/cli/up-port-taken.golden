@@ -1,0 +1,5 @@
+$ opod up --no-wizard --auto-pull=false
+--- exit 1
+--- stdout
+--- stderr
+opod: port STUB is in use — another program listens there; stop it, or set `listen:` in $DATA/.opod/config.yaml or OPOD_LISTEN

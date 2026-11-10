@@ -34,18 +34,23 @@ func modelUnload(id string) {
 		}
 		_ = json.Unmarshal(resp, &out)
 		if out.Status == "noop" {
-			warn(os.Stdout, "%s — restart the engine to free RAM", out.Reason)
+			warn("%s — restart the engine to free RAM", out.Reason)
 			return
 		}
 		ok(os.Stdout, "unloaded %s (drained, weights still on disk; stays unloaded across restarts)", id)
 		return
 	}
-	// A non-empty body means the leader IS running and refused — surface
-	// its error instead of side-stepping it via the engine.
-	if len(resp) > 0 {
-		die("unload %s: %v: %s", id, adminErr, strings.TrimSpace(string(resp)))
+	// Only this host's leader not running sends the unload to the engine
+	// itself: a leader that answered refused (or failed), and a host with no
+	// key may still run one — driving its engine behind it would undo what
+	// the leader holds.
+	if errors.Is(adminErr, errNoAdminKey) && leaderAnswers(cfg) {
+		die("unload %s: a leader answers at %s but this host has no admin key (%s); run this on the host where `opod up` wrote the key, or set OPOD_TOKEN", id, localLeaderURL(cfg), localAdminKeyPath(cfg))
 	}
-	// Leader not reachable — drive the engine directly.
+	if !errors.Is(adminErr, errNoAdminKey) && !localLeaderDown(adminErr) {
+		die("unload %s: %v", id, adminErr)
+	}
+	// This host's leader is not running — drive the engine directly.
 	cat, err := loadCatalog(cfg)
 	if err != nil {
 		die("load catalog: %v", err)
@@ -68,7 +73,7 @@ func modelUnload(id string) {
 	}
 	if err := eng.Unload(ctx, name); err != nil {
 		if errors.Is(err, engines.ErrUnloadNotSupported) {
-			warn(os.Stdout, "%s does not support online unload — restart the engine to free RAM", eng.Name())
+			warn("%s does not support online unload — restart the engine to free RAM", eng.Name())
 			return
 		}
 		die("unload failed: %v", err)
@@ -80,9 +85,9 @@ func modelUnload(id string) {
 // with admission control (POST /admin/v1/models/{id}/load). The leader
 // owns the router and the eviction/drain machinery, so unlike `unload`
 // this command requires `opod up` to be running.
-func modelLoad(id string, args []string) {
-	var pin, swap bool
-	priority := 0
+// parseLoadFlags reads `model load`'s flags. It runs before the model is
+// picked, so a bad flag is said before anything asks a question.
+func parseLoadFlags(args []string) (pin, swap bool, priority int) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--pin", "-pin":
@@ -91,11 +96,11 @@ func modelLoad(id string, args []string) {
 			swap = true
 		case "--priority", "-priority":
 			if i+1 >= len(args) {
-				die("--priority requires a value (usage: opod model load <id> [--swap] [--pin] [--priority N])")
+				dieUsageOf("model", "--priority needs a number")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil {
-				die("--priority %q is not a whole number", args[i+1]) // it used to read as 0 (T10.21)
+				dieUsageOf("model", "--priority %q is not a whole number", args[i+1]) // it used to read as 0 (T10.21)
 			}
 			priority = n
 			i++
@@ -104,14 +109,19 @@ func modelLoad(id string, args []string) {
 				v := strings.TrimPrefix(args[i], "--priority=")
 				n, err := strconv.Atoi(v)
 				if err != nil {
-					die("--priority %q is not a whole number", v)
+					dieUsageOf("model", "--priority %q is not a whole number", v)
 				}
 				priority = n
 				continue
 			}
-			die("unknown flag: %s (usage: opod model load <id> [--swap] [--pin] [--priority N])", args[i])
+			dieUsageOf("model", "unknown model load flag %s (have: --swap, --pin, --priority N)", args[i])
 		}
 	}
+	return pin, swap, priority
+}
+
+func modelLoad(id string, args []string) {
+	pin, swap, priority := parseLoadFlags(args)
 	cfg := loadConfigOrExit()
 	body, _ := json.Marshal(map[string]any{"swap": swap, "pin": pin, "priority": priority})
 	resp, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/models/"+id+"/load", body, weightsOpTimeout)
@@ -170,7 +180,7 @@ func renderLoadRefusal(id string, resp []byte, callErr error) {
 	}
 	switch body.Error.Type {
 	case "needs_swap":
-		warn(os.Stdout, "%s", body.Error.Message)
+		warn("%s", body.Error.Message)
 		for _, v := range body.Plan.Victims {
 			note(os.Stdout, "  would evict %s (%.1f GB)", v.CatalogID, float64(v.SizeBytes)/1e9)
 		}

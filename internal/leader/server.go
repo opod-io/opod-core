@@ -51,6 +51,10 @@ type Server struct {
 
 	router *router.Router
 	orch   *scheduler.Orchestrator
+	// OnListen, when set, runs once every listener of Start has bound and
+	// before any request is served: what `opod up` says "ready" from — never
+	// before the port is known to be ours. addr is the main listener's.
+	OnListen func(addr string)
 	// listener is the bound socket (Start); Addr reads it for tests and for
 	// a Listen of ":0".
 	listenMu  sync.Mutex
@@ -403,6 +407,9 @@ func (s *Server) Start(ctx context.Context) error {
 	defer stopPlain()
 	stopProbe := s.serveProbes(ctx)
 	defer stopProbe()
+	if s.OnListen != nil {
+		s.OnListen(ln.Addr().String())
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		if scheme == "https" {

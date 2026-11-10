@@ -1,0 +1,5 @@
+$ opod node drain n_one
+--- exit 1
+--- stdout
+--- stderr
+opod: drain n_one: POST /admin/v1/nodes/n_one/drain: the leader answered HTTP 502: not the leader's JSON: <html><body>502 Bad Gateway</body></html>

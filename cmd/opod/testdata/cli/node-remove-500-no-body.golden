@@ -1,0 +1,5 @@
+$ opod node remove n_one --yes
+--- exit 1
+--- stdout
+--- stderr
+opod: remove n_one: DELETE /admin/v1/nodes/n_one: the leader answered HTTP 500: an empty body

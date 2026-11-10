@@ -166,16 +166,16 @@ func modelAddOnNodes(id string, nodes []string, force bool) {
 	resp, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/models", body, weightsOpTimeout)
 	if err != nil {
 		if !force && strings.Contains(string(resp)+err.Error(), "would stop it") {
-			die("%v: %s\n  (replace it on purpose with `opod model add %s --node %s --force`)", err, string(resp), id, strings.Join(nodes, ","))
+			die("place %s: %v\n  replace it on purpose with `opod model add %s --node %s --force`", id, err, id, strings.Join(nodes, ","))
 		}
-		die("%v: %s", err, string(resp))
+		die("place %s on %s: %v", id, strings.Join(nodes, ", "), err)
 	}
 	ok(os.Stdout, "placed %s on %s", id, strings.Join(nodes, ", "))
 }
 
 func modelAdd(id string, force bool) {
 	if id == "" {
-		die("usage: opod model add <id> [--force]")
+		dieUsageOf("model", "model add is missing an argument: opod model add <id> [--force]")
 	}
 	cat := loadCatalogOrExit(loadConfigOrExit())
 	entry := models.FindByID(cat, id)
@@ -206,13 +206,13 @@ func modelAddEntry(entry *models.Entry, force bool) {
 		if entry.Hardware.MinRAMGB > 0 {
 			if msg := checkHardwareForModel(entry); msg != "" {
 				if force {
-					warn(os.Stdout, "%s — proceeding because --force was set", msg)
+					warn("%s — proceeding because --force was set", msg)
 				} else {
 					die("%s\n  (override with `opod model add %s --force` if you know what you're doing)", msg, entry.ID)
 				}
 			}
 		} else {
-			warn(os.Stdout, "no hardware floor known for %s — proceeding without check (use a catalog model for pre-flight checks)", entry.ID)
+			warn("no hardware floor known for %s — proceeding without check (use a catalog model for pre-flight checks)", entry.ID)
 		}
 	}
 
@@ -230,7 +230,7 @@ func modelAddEntry(entry *models.Entry, force bool) {
 		case models.ProbeNotFound:
 			die("source for %s does not exist: %s", entry.ID, reason)
 		case models.ProbeIndeterminate:
-			warn(os.Stdout, "could not verify source for %s (%s) — proceeding anyway", entry.ID, reason)
+			warn("could not verify source for %s (%s) — proceeding anyway", entry.ID, reason)
 		}
 	}
 
@@ -259,7 +259,7 @@ func modelAddEntry(entry *models.Entry, force bool) {
 	case errors.Is(err, models.ErrNoNativeName):
 		die("catalog entry %s has no source name compatible with engine %s", entry.ID, eng.Name())
 	case errors.As(err, &regErr):
-		warn(os.Stdout, "the weights for %s are installed, but recording the %s failed: %v", entry.ID, regErr.What, regErr.Err)
+		warn("the weights for %s are installed, but recording the %s failed: %v", entry.ID, regErr.What, regErr.Err)
 		die("rerun `opod model add %s` once the store is healthy to register it", entry.ID)
 	default:
 		die("%v", err)
@@ -343,7 +343,7 @@ func modelAddFromYAML(path string, force, dryRun bool) {
 	// OPOD_CATALOG_DIR when set; otherwise default to ~/.opod/catalog.
 	dest, err := models.PersistUserCatalogEntry(cfg.CatalogDir, entry.ID, data, sig)
 	if err != nil {
-		warn(os.Stdout, "could not persist %s into the user catalog (%v) — proceeding with one-shot install", entry.ID, err)
+		warn("could not persist %s into the user catalog (%v) — proceeding with one-shot install", entry.ID, err)
 	} else if dest != "" {
 		note(os.Stdout, "saved %s to %s — visible to `opod model search` / `info` next run", entry.ID, dest)
 	}

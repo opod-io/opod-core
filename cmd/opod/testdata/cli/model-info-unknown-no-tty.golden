@@ -1,0 +1,5 @@
+$ opod model info nosuch
+--- exit 1
+--- stdout
+--- stderr
+opod: no catalog entry "nosuch" (try: opod model search nosuch)
