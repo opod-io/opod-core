@@ -1,0 +1,10 @@
+$ opod node show n_a
+--- exit 0
+--- stdout
+n_a  host-n_a
+  state      lost (last heartbeat 2026-01-01T00:00:00Z)
+  platform   linux/amd64 · 64 GB RAM
+  address    192.0.2.10:8081
+  loaded     (nothing)
+  (opod node show n_a --json for every field)
+--- stderr

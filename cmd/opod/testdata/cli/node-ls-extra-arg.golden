@@ -1,0 +1,6 @@
+$ opod node ls extra
+--- exit 2
+--- stdout
+--- stderr
+opod: node ls takes only --json (got "extra")
+  opod node --help for every flag

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/config"
@@ -47,12 +48,20 @@ func cmdNode(args []string) {
 	}
 	switch args[0] {
 	case "ls", "list":
-		nodeLs()
-	case "show":
-		if len(args) < 2 {
-			dieUsageOf("node", "node show is missing an argument: opod node show <id>")
+		rest, asJSON := extractJSONFlag(args[1:])
+		if len(rest) > 0 {
+			dieUsageOf("node", "node ls takes only --json (got %q)", rest[0])
 		}
-		nodeShow(args[1])
+		nodeLs(asJSON)
+	case "show":
+		rest, asJSON := extractJSONFlag(args[1:])
+		switch {
+		case len(rest) == 0:
+			dieUsageOf("node", "node show is missing an argument: opod node show <id> [--json]")
+		case len(rest) > 1:
+			dieUsageOf("node", "node show takes one node id (got %q)", strings.Join(rest, " "))
+		}
+		nodeShow(rest[0], asJSON)
 	case "drain":
 		if len(args) < 2 {
 			dieUsageOf("node", "node drain is missing an argument: opod node drain <id>")
@@ -77,13 +86,22 @@ func cmdNode(args []string) {
 	}
 }
 
-func nodeLs() {
+func nodeLs(asJSON bool) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	nodes, err := st.Nodes().List(context.Background())
 	if err != nil {
 		die("list nodes: %v", err)
+	}
+	if asJSON {
+		rows := nodeRows(cfg, nodes, time.Now())
+		out := make([]map[string]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, map[string]string{"id": r.ID, "hostname": r.Hostname, "platform": r.Platform, "address": r.Address, "state": r.State, "last_heartbeat": r.LastHB})
+		}
+		emitJSON(out)
+		return
 	}
 	if len(nodes) == 0 {
 		fmt.Println("(no nodes registered yet — issue a join token: `opod token create --node`)")
@@ -115,7 +133,7 @@ func nodeRows(cfg *config.Config, nodes []store.Node, now time.Time) []nodeRow {
 	return out
 }
 
-func nodeShow(id string) {
+func nodeShow(id string, asJSON bool) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
@@ -124,7 +142,7 @@ func nodeShow(id string) {
 		die("get node: %v", err)
 	}
 	if n == nil {
-		die("no such node: %s", id)
+		die("no node %s (see opod node ls)", id)
 	}
 	// Include the models currently resident on this node, from the heartbeat-
 	// reconciled placements — so callers (and any UI over this API) can see what's
@@ -135,7 +153,21 @@ func nodeShow(id string) {
 			loaded = append(loaded, p.ModelID)
 		}
 	}
-	fmt.Println(nodeShowJSON(*n, loaded))
+	if asJSON {
+		fmt.Println(nodeShowJSON(*n, loaded))
+		return
+	}
+	maxAge := store.HeartbeatBound(cfg.Router.HeartbeatMaxAgeSeconds)
+	fmt.Printf("%s  %s\n", bold(n.ID), n.Hostname)
+	fmt.Printf("  state      %s (last heartbeat %s)\n", n.LiveState(maxAge, time.Now()), n.LastHeartbeat.Format(time.RFC3339))
+	fmt.Printf("  platform   %s/%s · %d GB RAM\n", n.OS, n.Arch, n.RAMGB)
+	fmt.Printf("  address    %s\n", n.Address)
+	if len(loaded) == 0 {
+		fmt.Println("  loaded     (nothing)")
+	} else {
+		fmt.Printf("  loaded     %s\n", strings.Join(loaded, ", "))
+	}
+	fmt.Println(dim("  (opod node show " + n.ID + " --json for every field)"))
 }
 
 // nodeDrain takes a worker out of rotation; nodeUndrain puts it back.
@@ -144,6 +176,10 @@ func nodeDrain(id string) {
 		die("the leader's own node cannot be drained — unload its models (`opod model unload <id>`) or stop the leader (`opod down`)")
 	}
 	cfg := loadConfigOrExit()
+	if storedNodeState(cfg, id) == store.NodeStateDraining {
+		ok(os.Stdout, "%s is already draining — nothing changed (undo with `opod node undrain %s`)", id, id)
+		return
+	}
 	via, err := setNodeState(cfg, id, "drain", store.NodeStateDraining)
 	if err != nil {
 		die("drain %s: %v", id, err)
@@ -154,6 +190,10 @@ func nodeDrain(id string) {
 
 func nodeUndrain(id string) {
 	cfg := loadConfigOrExit()
+	if s := storedNodeState(cfg, id); s != "" && s != store.NodeStateDraining {
+		ok(os.Stdout, "%s is not drained — nothing changed", id)
+		return
+	}
 	via, err := setNodeState(cfg, id, "undrain", store.NodeStateReady)
 	if err != nil {
 		die("undrain %s: %v", id, err)
@@ -265,4 +305,17 @@ func nodeShowJSON(n store.Node, loaded []string) string {
 		die("node show: %v", err)
 	}
 	return string(b)
+}
+
+// storedNodeState is the node's stored state column — what drain and
+// undrain set — or "" when this host's store does not hold the row (a node
+// command run on another host goes through the leader without the check).
+func storedNodeState(cfg *config.Config, id string) string {
+	st := openStoreOrExit(cfg)
+	defer st.Close()
+	n, err := st.Nodes().Get(context.Background(), id)
+	if err != nil || n == nil {
+		return ""
+	}
+	return n.State
 }

@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"net"
@@ -27,6 +28,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 var updateTranscripts = flag.Bool("update", false, "rewrite testdata/cli/*.golden from the current output")
@@ -50,6 +53,9 @@ type transcriptCase struct {
 	// stopAfter sends SIGTERM this long after the start, for a command that
 	// runs until stopped (opod join).
 	stopAfter time.Duration
+	// nodes are written into the case's store before the run (state.db in
+	// its data directory), as a leader that has heard from workers holds them.
+	nodes []store.Node
 }
 
 // answer is a stub that replies status and body to every request.
@@ -112,6 +118,13 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.84 — node: a list for scripts, hints on not-found, "already" on repeats.
+	{name: "node-ls-json-empty", args: []string{"node", "ls", "--json"}},
+	{name: "node-ls-extra-arg", args: []string{"node", "ls", "extra"}},
+	{name: "node-show-not-found", args: []string{"node", "show", "n_x"}},
+	{name: "node-show-human", args: []string{"node", "show", "n_a"}, nodes: []store.Node{transcriptNode("n_a", store.NodeStateReady)}},
+	{name: "node-drain-already", args: []string{"node", "drain", "n_a"}, nodes: []store.Node{transcriptNode("n_a", store.NodeStateDraining)}},
+	{name: "node-undrain-not-drained", args: []string{"node", "undrain", "n_a"}, nodes: []store.Node{transcriptNode("n_a", store.NodeStateReady)}},
 	// T24.83 — shard names the gang, warns on interrupt, checks flags first.
 	{name: "shard-create-ready", args: []string{"shard", "create", "m", "2", "--nodes", "n_a,n_b", "--gang", "g1"}, key: true, stub: routes(map[string]string{
 		"/admin/v1/nodes":         `[{"ID":"n_a"},{"ID":"n_b"}]`,
@@ -256,6 +269,18 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 		}
 	}
 	foreign := 0 // a `sleep` the command must leave running
+	if len(c.nodes) > 0 {
+		st, err := store.OpenSQLite(filepath.Join(data, "state.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range c.nodes {
+			if err := st.Nodes().Upsert(context.Background(), n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = st.Close()
+	}
 	if c.pidOf != "" {
 		pid := os.Getpid()
 		if c.pidOf != "live" {
@@ -288,7 +313,8 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 	}
 	cmd.Env = append(cleanEnv(), "OPOD_TRANSCRIPT=1", "OPOD_TRANSCRIPT_ARGS="+strings.Join(args, "\x1f"),
 		"OPOD_DATA_DIR="+data, "HOME="+data, "OPOD_LISTEN="+listen, "NO_COLOR=1",
-		"OPOD_OLLAMA_ENDPOINT=http://127.0.0.1:1") // no engine answers, the same on every machine
+		"OPOD_OLLAMA_ENDPOINT=http://127.0.0.1:1", // no engine answers, the same on every machine
+		"TZ=UTC") // times print the same on every runner
 	// {{TAKEN}} is an address something already listens on for the whole
 	// run; {{FREE}} one nothing listens on.
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
@@ -363,4 +389,11 @@ func cleanEnv() []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// transcriptNode is a worker row with fixed facts, heard from long ago (so
+// its live state is stable: lost unless drained).
+func transcriptNode(id, state string) store.Node {
+	return store.Node{ID: id, Hostname: "host-" + id, OS: "linux", Arch: "amd64", RAMGB: 64, Address: "192.0.2.10:8081",
+		State: state, LastHeartbeat: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 }

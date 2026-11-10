@@ -1,0 +1,5 @@
+$ opod node show n_x
+--- exit 1
+--- stdout
+--- stderr
+opod: no node n_x (see opod node ls)

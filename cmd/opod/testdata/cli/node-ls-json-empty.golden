@@ -1,0 +1,5 @@
+$ opod node ls --json
+--- exit 0
+--- stdout
+[]
+--- stderr

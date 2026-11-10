@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **`opod node *`: a list for scripts, a hint on not-found, "already" on a repeat.** `ls --json`; `show` prints a short
+  human summary and `--json` the record; `no node X (see opod node ls)`; a repeat drain or an undrain of a node that is
+  not drained says nothing changed, exit 0; extra arguments are usage errors.
+
 - **`opod shard *` names the gang, warns on an interrupt and checks flags first.** `create` ends with the gang, its
   nodes and its head, read from the leader's rows (it read `model_id` from the answer); Ctrl-C prints the cleanup command
   for the partial gang it may leave, and exits 130; unknown `--nodes` ids, a flag with no value (a bare `--gang` became the

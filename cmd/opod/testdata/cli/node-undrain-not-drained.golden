@@ -1,0 +1,5 @@
+$ opod node undrain n_a
+--- exit 0
+--- stdout
+✔ n_a is not drained — nothing changed
+--- stderr
