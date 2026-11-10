@@ -1,0 +1,8 @@
+$ opod join {{STUB}}?token=join-token
+--- exit 1
+--- stdout
+▶ joining STUB as n_test
+▶ address: TAKEN (set OPOD_ADVERTISE_ADDR if the leader cannot reach this address)
+▶ hardware: darwin/arm64 · 24 GB RAM
+--- stderr
+opod: worker stopped: port TAKEN is in use — another opod join on this host? stop it, or give this worker another port with OPOD_ADVERTISE_ADDR (and OPOD_BIND_ADDR)

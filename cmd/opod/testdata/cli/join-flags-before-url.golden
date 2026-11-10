@@ -1,0 +1,9 @@
+$ opod join --gpu=1 --vram-budget 8 {{STUB}}?token=join-token
+--- exit 0
+--- stdout
+▶ joining STUB as n_test
+▶ address: FREE (set OPOD_ADVERTISE_ADDR if the leader cannot reach this address)
+▶ hardware: darwin/arm64 · 24 GB RAM
+✔ registered with leader STUB as n_test — it is placeable after its first heartbeat (≤5 s)
+✔ worker shutdown complete
+--- stderr

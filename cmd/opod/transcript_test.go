@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,6 +47,9 @@ type transcriptCase struct {
 	// leader that runs), "foreign" a `sleep` that inherited the number, "opod"
 	// a child of this test binary that waits for SIGTERM as opod does.
 	pidOf string
+	// stopAfter sends SIGTERM this long after the start, for a command that
+	// runs until stopped (opod join).
+	stopAfter time.Duration
 }
 
 // answer is a stub that replies status and body to every request.
@@ -69,6 +73,14 @@ func routes(bodies map[string]string) http.HandlerFunc {
 	}
 }
 
+// hardwareLine is this machine's own facts; goldens say HW.
+var hardwareLine = regexp.MustCompile(`(?m)^(. (?:hardware|detected) ).*$`)
+
+// jsonLogLine is the structured log on stderr: timestamps and goroutine
+// order make it differ on every run, and it is for machines. A golden pins
+// the lines a person reads; the log keeps its own tests.
+var jsonLogLine = regexp.MustCompile(`(?m)^\{"time":.*\n`)
+
 // pidNumber is a pid in a message; goldens say "pid N".
 var pidNumber = regexp.MustCompile(`pid [0-9]+`)
 
@@ -79,6 +91,19 @@ var transcripts = []transcriptCase{
 	// T24.76 — `opod up` says ready only once the port is its own.
 	{name: "up-port-taken", args: []string{"up", "--no-wizard", "--auto-pull=false"}, stub: answer(http.StatusNotFound, ``)},
 	{name: "up-already-running", args: []string{"up", "--no-wizard", "--auto-pull=false"}, pidOf: "live", stub: answer(http.StatusOK, `{"status":"ok"}`)},
+	// T24.78 — join says when it registered, and a stop it chose fails.
+	{name: "join-registered", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 1500 * time.Millisecond,
+		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
+		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{FREE}}", "OPOD_NODE_ID": "n_test"}},
+	{name: "join-flags-before-url", args: []string{"join", "--gpu=1", "--vram-budget", "8", "{{STUB}}?token=join-token"}, stopAfter: 1500 * time.Millisecond,
+		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
+		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{FREE}}", "OPOD_NODE_ID": "n_test"}},
+	{name: "join-token-refused", args: []string{"join", "{{STUB}}?token=dead"}, stopAfter: 1500 * time.Millisecond,
+		stub: answer(http.StatusUnauthorized, `{"error":{"type":"unauthorized","message":"invalid join token"}}`), noLocal: true,
+		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{FREE}}", "OPOD_NODE_ID": "n_test"}},
+	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
+		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
+		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
 	// T24.77 — down stops only opod, says so, and a repeat is fine.
 	{name: "down-not-running", args: []string{"down", "--no-unload"}},
 	{name: "down-foreign-pid", args: []string{"down", "--no-unload"}, pidOf: "foreign"},
@@ -205,16 +230,43 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 		}
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLITranscripts$")
-	cmd.Env = append(cleanEnv(), "OPOD_TRANSCRIPT=1", "OPOD_TRANSCRIPT_ARGS="+strings.Join(c.args, "\x1f"),
+	args := make([]string, len(c.args))
+	for i, a := range c.args {
+		args[i] = strings.ReplaceAll(a, "{{STUB}}", stubURL)
+	}
+	cmd.Env = append(cleanEnv(), "OPOD_TRANSCRIPT=1", "OPOD_TRANSCRIPT_ARGS="+strings.Join(args, "\x1f"),
 		"OPOD_DATA_DIR="+data, "HOME="+data, "OPOD_LISTEN="+listen, "NO_COLOR=1",
 		"OPOD_OLLAMA_ENDPOINT=http://127.0.0.1:1") // no engine answers, the same on every machine
+	// {{TAKEN}} is an address something already listens on for the whole
+	// run; {{FREE}} one nothing listens on.
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = taken.Close() })
+	freeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	free := freeLn.Addr().String()
+	_ = freeLn.Close()
 	for k, v := range c.env {
-		cmd.Env = append(cmd.Env, k+"="+strings.ReplaceAll(v, "{{STUB}}", stubURL))
+		v = strings.ReplaceAll(v, "{{STUB}}", stubURL)
+		v = strings.ReplaceAll(v, "{{TAKEN}}", taken.Addr().String())
+		v = strings.ReplaceAll(v, "{{FREE}}", free)
+		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	code := 0
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if c.stopAfter > 0 {
+		stop := time.AfterFunc(c.stopAfter, func() { _ = cmd.Process.Signal(syscall.SIGTERM) })
+		defer stop.Stop()
+	}
+	if err := cmd.Wait(); err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
 			t.Fatalf("run %v: %v", c.args, err)
@@ -230,6 +282,10 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 			s = strings.ReplaceAll(s, strings.TrimPrefix(stubURL, "http://"), "STUB")
 		}
 		s = pidNumber.ReplaceAllString(s, "pid N")
+		s = hardwareLine.ReplaceAllString(s, "${1}HW")
+		s = jsonLogLine.ReplaceAllString(s, "")
+		s = strings.ReplaceAll(s, taken.Addr().String(), "TAKEN")
+		s = strings.ReplaceAll(s, free, "FREE")
 		s = strings.ReplaceAll(s, "kill -9 "+strconv.Itoa(os.Getpid()), "kill -9 N")
 		return strings.ReplaceAll(s, data, "$DATA")
 	}

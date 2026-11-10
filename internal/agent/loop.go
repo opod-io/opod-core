@@ -29,6 +29,12 @@ type Agent struct {
 	LeaderURL string
 	Token     string
 	Address   string
+	// OnRegister, when set, hears every register attempt — the first one and
+	// each re-register: code 0 with a nil err is "registered", code 0 with an
+	// err is a call that reached no leader, any other code is the leader's
+	// answer. `opod join` turns it into the lines a person reads; the JSON log
+	// stays as it is.
+	OnRegister func(code int, err error)
 	// BootID names THIS process (R10.1): minted once per agent start and sent
 	// on register and every heartbeat, so the leader tells a recreated pod
 	// or a restarted container from the incarnation it recorded work on —
@@ -128,7 +134,17 @@ func (a *Agent) Register(ctx context.Context) error {
 	return err
 }
 
+// register is one attempt, initial or a re-register, and the one place every
+// outcome passes: OnRegister hears each.
 func (a *Agent) register(ctx context.Context) (int, error) {
+	code, err := a.registerOnce(ctx)
+	if a.OnRegister != nil {
+		a.OnRegister(code, err)
+	}
+	return code, err
+}
+
+func (a *Agent) registerOnce(ctx context.Context) (int, error) {
 	body, _ := json.Marshal(map[string]any{
 		"id":            a.NodeID,
 		"hostname":      a.Capabilities.Hostname,

@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod join` says when it registered, and a stop it chose fails.** `registered with leader … as …` once it is in, and
+  one line per kind of failure (`refused the join token — mint one: opod token create --node`, `cannot reach the leader …`)
+  beside the JSON log, through a new `agent.Agent.OnRegister` hook; 6 refused re-registers or a taken worker port end with
+  `opod: worker stopped: …` and exit 1 (it printed `worker shutdown complete`, exit 0). Flags may come before the URL and
+  take `--gpu=1`; `node.yaml` no longer records the join token.
+
 - **`opod down` stops only opod and says so; `opod status` tells healthy from answering.** `down` signals the PID file's
   process only when it is opod (or answers as this host's leader) — it stopped a `sleep` that inherited the number —
   confirms the stop or says the process still runs after 10 s, and a repeat with nothing running exits 0. `status`

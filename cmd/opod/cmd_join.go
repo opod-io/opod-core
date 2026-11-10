@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
+	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -87,38 +90,29 @@ func cmdJoin(args []string) {
 			},
 		})
 	}
-	if len(args) == 0 {
+	// Flags may come before or after the URL, as --gpu 1 or --gpu=1.
+	fs := flag.NewFlagSet("join", flag.ContinueOnError)
+	gpuFlag := fs.String("gpu", "", "pin this worker's engine to one device index (default: every device)")
+	vramFlag := fs.Int("vram-budget", 0, "cap the engine's memory, in GB (default: the whole device)")
+	parseFlags(fs, "join", reorderFlagsFirst(args, map[string]bool{"--gpu": true, "-gpu": true, "--vram-budget": true, "-vram-budget": true}))
+	switch fs.NArg() {
+	case 0:
 		dieUsageOf("join", "name the leader: opod join \"<leader-url>?token=<token>\" (quoted: ? is a glob in zsh)")
+	case 1:
+	default:
+		dieUsageOf("join", "join takes one leader URL (got %q)", strings.Join(fs.Args(), " "))
 	}
-	leader, token, err := parseJoinTarget(args[0])
+	leader, token, err := parseJoinTarget(fs.Arg(0))
 	if err != nil {
-		die("%v", err)
+		dieUsageOf("join", "%v", err)
 	}
 	// Placement hints for the engines this worker will supervise. They reach
 	// every engine launcher (vLLM, llama.cpp, …) through the supervisor's base
 	// environment — one contract; a manager sets the same variables on the
 	// pod instead, and the flags win over them.
-	var gpuIndex, vramBudget string
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--gpu":
-			if i+1 >= len(args) {
-				dieUsageOf("join", "--gpu needs a device index")
-			}
-			i++
-			gpuIndex = args[i]
-		case "--vram-budget":
-			if i+1 >= len(args) {
-				dieUsageOf("join", "--vram-budget needs a size in GB")
-			}
-			i++
-			if _, err := strconv.Atoi(args[i]); err != nil {
-				dieUsageOf("join", "--vram-budget must be an integer number of GB, got %q", args[i])
-			}
-			vramBudget = args[i]
-		default:
-			dieUsageOf("join", "unknown join argument %q", args[i])
-		}
+	gpuIndex, vramBudget := *gpuFlag, ""
+	if *vramFlag > 0 {
+		vramBudget = strconv.Itoa(*vramFlag)
 	}
 
 	cfg := loadConfigOrExit()
@@ -223,10 +217,11 @@ func cmdJoin(args []string) {
 
 	// Record this join. Only node_id is read back (readPersistedNodeID, the
 	// next `opod join`); the other fields are a record for the operator.
+	// The join token is not written: it is a credential, and only node_id is
+	// ever read back.
 	nodeCfg := NodeConfig{
 		NodeID:    nodeID,
 		LeaderURL: leader,
-		Token:     token,
 		Address:   addr,
 		JoinedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
@@ -333,8 +328,9 @@ func cmdJoin(args []string) {
 	a.LaunchedSlots = srv.LaunchedSlots
 	defer sup.StopAll()
 
-	ok(os.Stdout, "joining cluster at %s as %s", leader, nodeID)
-	note(os.Stdout, "address: %s", addr)
+	note(os.Stdout, "joining %s as %s", leader, nodeID)
+	note(os.Stdout, "address: %s (set OPOD_ADVERTISE_ADDR if the leader cannot reach this address)", addr)
+	a.OnRegister = announceRegister(leader, nodeID)
 	note(os.Stdout, "hardware: %s/%s · %d GB RAM", caps.OS, caps.Arch, caps.RAMGB)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -359,12 +355,22 @@ func cmdJoin(args []string) {
 	// caller, the one error class a client cannot act on. The goodbye goes at
 	// once; the server below then drains (T31.6), and the engine stops only
 	// after both (the deferred StopAll).
+	var fatalMu sync.Mutex
+	var fatal error // the first reason the worker stopped on its own
+	stopWith := func(err error) {
+		fatalMu.Lock()
+		if fatal == nil {
+			fatal = err
+		}
+		fatalMu.Unlock()
+		cancel()
+	}
 	go func() {
 		defer wg.Done()
 		defer a.Goodbye(ctx)
 		if err := a.Loop(ctx); err != nil && err != context.Canceled {
 			log.Error("agent loop exited", "err", err)
-			cancel()
+			stopWith(err)
 		}
 	}()
 
@@ -373,12 +379,52 @@ func cmdJoin(args []string) {
 		defer wg.Done()
 		if err := srv.Start(ctx, listen); err != nil && err != context.Canceled {
 			log.Error("worker server exited", "err", err)
-			cancel()
+			if errors.Is(err, syscall.EADDRINUSE) {
+				err = fmt.Errorf("port %s is in use — another opod join on this host? stop it, or give this worker another port with OPOD_ADVERTISE_ADDR (and OPOD_BIND_ADDR)", listen)
+			}
+			stopWith(err)
 		}
 	}()
 
 	wg.Wait()
+	if fatal != nil {
+		// A stop the worker chose is a failure, never "shutdown complete" and
+		// exit 0. die skips the deferred StopAll, so the engines stop here.
+		sup.StopAll()
+		die("worker stopped: %v", fatal)
+	}
 	ok(os.Stdout, "worker shutdown complete")
+}
+
+// announceRegister turns each register outcome into the line a person reads:
+// "registered" once per success after a failure (or the first time), and one
+// line per kind of failure rather than one per attempt.
+func announceRegister(leader, nodeID string) func(int, error) {
+	registered, last := false, ""
+	return func(code int, err error) {
+		if errors.Is(err, context.Canceled) {
+			return // the worker is stopping: not a fact about the leader
+		}
+		if err == nil {
+			if !registered {
+				ok(os.Stdout, "registered with leader %s as %s — it is placeable after its first heartbeat (≤5 s)", leader, nodeID)
+			}
+			registered, last = true, ""
+			return
+		}
+		registered = false
+		kind, line := "other", fmt.Sprintf("the leader at %s answered %d: %v", leader, code, err)
+		switch code {
+		case 0:
+			kind, line = "unreachable", fmt.Sprintf("cannot reach the leader at %s (%v) — check the URL and the firewall", leader, err)
+		case http.StatusUnauthorized, http.StatusForbidden:
+			kind, line = "refused", fmt.Sprintf("the leader at %s refused the join token — mint one on the leader: opod token create --node", leader)
+		}
+		if kind != last {
+			warn("%s", line)
+			last = kind
+		}
+	}
 }
 
 // selfLoadRequest is the load OPOD_LOAD_MODEL asks for: the catalog entry's
@@ -499,7 +545,6 @@ func readPersistedNodeID(path string) string {
 type NodeConfig struct {
 	NodeID    string `yaml:"node_id"`
 	LeaderURL string `yaml:"leader_url"`
-	Token     string `yaml:"token"`
 	Address   string `yaml:"address"`
 	JoinedAt  string `yaml:"joined_at"`
 }

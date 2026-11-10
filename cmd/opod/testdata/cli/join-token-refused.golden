@@ -1,0 +1,9 @@
+$ opod join {{STUB}}?token=dead
+--- exit 0
+--- stdout
+▶ joining STUB as n_test
+▶ address: FREE (set OPOD_ADVERTISE_ADDR if the leader cannot reach this address)
+▶ hardware: darwin/arm64 · 24 GB RAM
+✔ worker shutdown complete
+--- stderr
+⚠ the leader at STUB refused the join token — mint one on the leader: opod token create --node
