@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -326,4 +328,33 @@ func confirmOrExit(prompt, verb string) {
 	if !confirm(prompt) {
 		die("not confirmed — nothing done")
 	}
+}
+
+// leaderModelIDOrExit is installedIDOrExit for a verb the leader carries out
+// (load, unload): an id the leader lists is accepted too, so a model placed
+// only on workers can be named — this host's store does not hold it.
+func leaderModelIDOrExit(id, verb, prompt string) string {
+	if id != "" && (installedHasID(id) || leaderHasModel(id)) {
+		return id
+	}
+	return installedIDOrExit(id, verb, prompt)
+}
+
+// leaderHasModel reports whether the leader's model list names id; false when
+// the leader cannot be asked.
+func leaderHasModel(id string) bool {
+	raw, err := adminCall(context.Background(), loadConfigOrExit(), "GET", "/admin/v1/models", nil)
+	if err != nil {
+		return false
+	}
+	var ms []struct{ CatalogID string }
+	if json.Unmarshal(raw, &ms) != nil {
+		return false
+	}
+	for _, m := range ms {
+		if m.CatalogID == id {
+			return true
+		}
+	}
+	return false
 }

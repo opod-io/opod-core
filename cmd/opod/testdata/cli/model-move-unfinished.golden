@@ -1,0 +1,7 @@
+$ opod model move m --from n_a --to n_b
+--- exit 1
+--- stdout
+▶ moving m from n_a to n_b: the target loads it while n_a keeps serving (a cold target downloads the weights first — this can take a while)…
+  HH:MM:SS  started  admitted; loading on the target, the source keeps serving
+--- stderr
+opod: move m: the leader answered without a finished step — check where it is served: opod node show n_a, opod node show n_b

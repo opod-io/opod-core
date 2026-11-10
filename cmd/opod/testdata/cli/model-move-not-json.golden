@@ -1,0 +1,6 @@
+$ opod model move m --from n_a --to n_b
+--- exit 1
+--- stdout
+▶ moving m from n_a to n_b: the target loads it while n_a keeps serving (a cold target downloads the weights first — this can take a while)…
+--- stderr
+opod: move m: the leader answered with something that is not its JSON (invalid character '<' looking for beginning of value) — is STUB an opod leader?

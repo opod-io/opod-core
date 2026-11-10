@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod model *` names the model, the node and the next step.** `add` takes a catalog YAML as `--file` (`--from` is
+  `move`'s source node); `add --node` says what Ctrl-C does, prints progress every 10 s and ends with the next command;
+  `load` and `unload` accept ids the leader lists; `ps --json` and `move` refuse an answer that is not the leader's JSON,
+  and `move` one with no finished step (a proxy's 200 printed "now served by"); `search` says when nothing matches and
+  refuses a bad `--since` or `--sort`; `info` snippets use the real base URL; `remove` says when the engine kept the weights.
+
 - **`connect`, `disconnect`, `config`, `completion` and `batch` say what they need and what they did.** A value flag with
   no value is a usage error (it took the next word as its value); `connect` warns when the snippet carries the admin key;
   `disconnect` takes flags after the client and its list ends with its own verb; `config path|edit|show` say when the file

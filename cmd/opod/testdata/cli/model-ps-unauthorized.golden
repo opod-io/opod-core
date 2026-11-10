@@ -1,0 +1,5 @@
+$ opod model ps
+--- exit 1
+--- stdout
+--- stderr
+opod: model ps: the leader at STUB refused the admin key from $DATA/admin.key (invalid admin key) — run this on the leader's host, or set OPOD_TOKEN to an admin key (`opod token create ops --admin` on the leader)

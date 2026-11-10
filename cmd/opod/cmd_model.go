@@ -19,12 +19,12 @@ func cmdModel(args []string) {
 	help := helpSpec{
 		name:    "model",
 		summary: "install, list, search, inspect, load/unload, or uninstall LLM models",
-		usage:   "opod model <add <id> [--force] [--node a,b,c] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] [--priority N] | unload <id> | move <id> --from <node> --to <node> | remove <id>>",
+		usage:   "opod model <add <id> [--force] [--dry-run] [--node a,b,c] | add --file FILE | ls | ps | search [query] [--sort released] [--since DATE] | info <id> | load <id> [--swap] [--pin] [--priority N] | unload <id> | move <id> --from <node> --to <node> | remove <id> [--yes]> [--json]",
 		flagLines: []string{
 			"--node a,b / --nodes a,b  add: the workers that pull and load it (default: this host's engine)",
 			"--force                   add: skip the hardware floor check; with --node, replace what a worker serves",
 			"--dry-run                 add: print the download size, memory and engine, pull nothing",
-			"--from FILE               add: install from a catalog YAML file",
+			"--file FILE               add: install from a catalog YAML file",
 			"--swap                    load: evict least-recently-used models to make room (default: refuse)",
 			"--pin                     load: exempt from eviction and the engine's idle timeout",
 			"--priority N              load: eviction order, higher stays longer (default 0)",
@@ -46,7 +46,7 @@ func cmdModel(args []string) {
 			"opod model add hf:bartowski/Phi-3-mini-GGUF   # any HuggingFace repo (skips catalog)",
 			"opod model add ollama:phi3:mini  # any Ollama tag (must be using ollama engine)",
 			"opod model add file:/tmp/my.gguf # a pre-downloaded GGUF on disk",
-			"opod model add --from ./my-model.yaml   # install from a user-supplied catalog YAML",
+			"opod model add --file ./my-model.yaml   # install from a user-supplied catalog YAML",
 			"opod model add llama-3.2-3b --node gpu-a         # pin to one worker (it pulls + loads)",
 			"opod model add llama-3.2-3b --nodes gpu-a,gpu-b # pin to several workers",
 			"opod model ls                    # list installed models",
@@ -67,8 +67,8 @@ func cmdModel(args []string) {
 			"`move <id> --from <node> --to <node>` has another worker serve a whole model instead of the one that does, by overlap: the target loads it while the source keeps serving, the router flips only once the target serves, requests in flight on the source finish, then the source unloads. It is refused up front when it cannot work (the target cannot hold the model beside what it has, runs a one-model engine that serves something else, or takes no new work; the source does not hold it, or serves adapters of it; a sharded model). A target that never serves leaves the source serving. No KV cache moves — conversations recompute their prompt on the target. Needs the running leader (`opod up`); steps are events `model.move_*`.",
 			"For sharded models (split across multiple machines) see `opod shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
-			"Adding a model not in the catalog: use a scheme prefix (`hf:owner/repo`, `ollama:tag`, `file:/abs/path.gguf`) for a one-liner, `--from <my.yaml>` to install from your own catalog entry, or drop a YAML file into `~/.opod/catalog/` and run `opod model add <id>`.",
-			"Signed catalog files: with OPOD_CATALOG_PUBKEY set (a minisign public key, or a file holding one), a catalog file that has `<file>.minisig` beside it must verify — in `--from <my.yaml>` and in every catalog directory — and one that does not is refused. OPOD_CATALOG_REQUIRE_SIGNED=1 refuses unsigned files too. The embedded catalog is never checked.",
+			"Adding a model not in the catalog: use a scheme prefix (`hf:owner/repo`, `ollama:tag`, `file:/abs/path.gguf`) for a one-liner, `--file <my.yaml>` to install from your own catalog entry, or drop a YAML file into `~/.opod/catalog/` and run `opod model add <id>`.",
+			"Signed catalog files: with OPOD_CATALOG_PUBKEY set (a minisign public key, or a file holding one), a catalog file that has `<file>.minisig` beside it must verify — in `--file <my.yaml>` and in every catalog directory — and one that does not is refused. OPOD_CATALOG_REQUIRE_SIGNED=1 refuses unsigned files too. The embedded catalog is never checked.",
 		},
 	}
 	if len(args) == 0 {
@@ -80,7 +80,7 @@ func cmdModel(args []string) {
 	switch args[0] {
 	case "add":
 		id, force, dryRun, fromPath, nodes := parseModelAddArgs(args[1:])
-		// `--from <my.yaml>` installs a model from a user-supplied catalog
+		// `--file <my.yaml>` installs a model from a user-supplied catalog
 		// YAML, copying it into `~/.opod/catalog/` so it persists and
 		// shows up in `opod model search` / `info` next time.
 		if fromPath != "" {
@@ -150,7 +150,7 @@ func cmdModel(args []string) {
 		if len(args) >= 2 {
 			id = args[1]
 		}
-		id = installedIDOrExit(id, "unload", "Pick an installed model to unload:")
+		id = leaderModelIDOrExit(id, "unload", "Pick an installed model to unload:")
 		modelUnload(id)
 	case "move":
 		m, err := parseModelMove(args[1:])
@@ -178,7 +178,7 @@ func cmdModel(args []string) {
 			}
 		}
 		parseLoadFlags(loadArgs) // a bad flag is said before the picker asks anything
-		id = installedIDOrExit(id, "load", "Pick an installed model to load:")
+		id = leaderModelIDOrExit(id, "load", "Pick an installed model to load:")
 		modelLoad(id, loadArgs)
 	case "ps":
 		_, asJSON := extractJSONFlag(args[1:])
@@ -327,14 +327,18 @@ func modelRemove(id string) {
 	if idx := strings.Index(m.Source, ":"); idx >= 0 && idx < len(m.Source)-1 {
 		engineName = m.Source[idx+1:]
 	}
-	if err := eng.Delete(context.Background(), engineName); err != nil {
-		warn("engine delete failed (continuing): %v", err)
-	}
+	engErr := eng.Delete(context.Background(), engineName)
 	if err := st.Models().Delete(context.Background(), id); err != nil {
-		die("store delete: %v", err)
+		die("remove %s: store delete: %v", id, err)
 	}
 	// Forget any desired placement so the next `opod up` doesn't try to
 	// restore a model whose weights are gone.
-	_ = st.DesiredPlacements().Delete(context.Background(), "local", id)
-	ok(os.Stdout, "removed: %s", id)
+	if err := st.DesiredPlacements().Delete(context.Background(), "local", id); err != nil {
+		warn("removed %s, but its restore-on-start row stayed: %v — the next opod up may try to load it", id, err)
+	}
+	if engErr != nil {
+		warn("removed %s from the store, but %s did not delete its weights (%v) — delete them with the engine (for Ollama: ollama rm %s)", id, eng.Name(), engErr, engineName)
+		return
+	}
+	ok(os.Stdout, "removed %s", id)
 }

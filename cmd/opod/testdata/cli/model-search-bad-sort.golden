@@ -1,0 +1,6 @@
+$ opod model search --sort size
+--- exit 2
+--- stdout
+--- stderr
+opod: --sort "size": the one sort key is released
+  opod model --help for every flag

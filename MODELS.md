@@ -107,10 +107,10 @@ opod model add ollama:phi3:mini                # ollama engine only
 opod model add file:/abs/path/my-finetune.gguf # llama-server / MLX, pre-downloaded
 ```
 
-**2. `--from <my.yaml>`** — install from your own catalog YAML; copied into `~/.opod/catalog/` so it persists:
+**2. `--file <my.yaml>`** — install from your own catalog YAML; copied into `~/.opod/catalog/` so it persists:
 
 ```bash
-opod model add --from ./my-model.yaml
+opod model add --file ./my-model.yaml
 ```
 
 **3. Drop-in dir** — write a YAML to `~/.opod/catalog/<id>.yaml` directly, then install by id:

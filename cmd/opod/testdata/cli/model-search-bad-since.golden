@@ -1,0 +1,6 @@
+$ opod model search --since notadate
+--- exit 2
+--- stdout
+--- stderr
+opod: --since "notadate": want a date as YYYY-MM-DD
+  opod model --help for every flag

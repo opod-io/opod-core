@@ -1,0 +1,5 @@
+$ opod model search zzzz-nothing
+--- exit 0
+--- stdout
+▶ no catalog model matches "zzzz-nothing" — opod model search with no query lists them all
+--- stderr

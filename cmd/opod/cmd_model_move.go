@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/opod-io/opod-core/internal/scheduler"
 )
 
 // moveArgs is `opod model move <id> --from <node> --to <node>` parsed.
@@ -78,7 +80,7 @@ func modelMove(m moveArgs) {
 	note(os.Stdout, "moving %s from %s to %s: the target loads it while %s keeps serving (a cold target downloads the weights first — this can take a while)…", m.ID, m.From, m.To, m.From)
 	raw, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/models/"+m.ID+"/move", body, weightsOpTimeout)
 	var ans moveAnswer
-	_ = json.Unmarshal(raw, &ans)
+	decodeErr := json.Unmarshal(raw, &ans)
 	for _, s := range ans.Steps {
 		fmt.Printf("  %s  %-8s %s\n", s.At.Local().Format("15:04:05"), s.Step, moveStepText(s.Step, s.Data))
 	}
@@ -87,6 +89,14 @@ func modelMove(m moveArgs) {
 			die("move %s: %v\n  a move needs the running leader: the router stops choosing the source", m.ID, err)
 		}
 		die("move %s: %v", m.ID, err)
+	}
+	// A 200 that is not the leader's answer, or one with no finished step,
+	// is not a move: it once printed "now served by" over a proxy's page.
+	if decodeErr != nil {
+		die("move %s: the leader answered with something that is not its JSON (%v) — is %s an opod leader?", m.ID, decodeErr, adminTargetURL(cfg))
+	}
+	if !moveFinished(ans) {
+		die("move %s: the leader answered without a finished step — check where it is served: opod node show %s, opod node show %s", m.ID, m.From, m.To)
 	}
 	ok(os.Stdout, "%s is now served by %s; %s let it go", m.ID, m.To, m.From)
 	if ans.Note != "" {
@@ -118,4 +128,15 @@ func moveStepText(step string, data map[string]any) string {
 		return fmt.Sprintf("%v — %v", data["reason"], data["state"])
 	}
 	return ""
+}
+
+// moveFinished reports whether the leader's steps include the one that ends
+// a move (scheduler.MoveFinished: the source let the model go).
+func moveFinished(ans moveAnswer) bool {
+	for _, s := range ans.Steps {
+		if s.Step == scheduler.MoveFinished {
+			return true
+		}
+	}
+	return false
 }

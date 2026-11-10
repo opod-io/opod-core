@@ -32,23 +32,26 @@ func parseModelAddArgs(args []string) (id string, force bool, dryRun bool, fromP
 		case "--dry-run", "-dry-run", "--dryrun":
 			dryRun = true
 			continue
-		case "--from", "-from":
+		case "--file", "-file":
 			if i+1 >= len(args) {
-				die("--from requires a path to a catalog YAML (usage: opod model add --from ./my-model.yaml)")
+				dieUsageOf("model", "--file needs a catalog YAML path (opod model add --file ./my-model.yaml)")
 			}
 			fromPath = args[i+1]
 			i++
 			continue
+		case "--from", "-from":
+			// --from names a node in `move`; one flag, one meaning.
+			dieUsageOf("model", "model add takes a catalog YAML as --file FILE (--from is model move's source node)")
 		case "--node", "-node", "--nodes", "-nodes":
 			if i+1 >= len(args) {
-				die("--node requires a node id (usage: opod model add <id> --node a,b,c)")
+				dieUsageOf("model", "--node needs node ids (opod model add <id> --node a,b,c; ids: opod node ls)")
 			}
 			nodes = append(nodes, splitCSV(args[i+1])...)
 			i++
 			continue
 		}
-		if strings.HasPrefix(a, "--from=") {
-			fromPath = strings.TrimPrefix(a, "--from=")
+		if strings.HasPrefix(a, "--file=") {
+			fromPath = strings.TrimPrefix(a, "--file=")
 			continue
 		}
 		if strings.HasPrefix(a, "--node=") {
@@ -162,15 +165,17 @@ func modelAddDryRunEntry(cfg *config.Config, entry *models.Entry) {
 func modelAddOnNodes(id string, nodes []string, force bool) {
 	cfg := loadConfigOrExit()
 	body, _ := json.Marshal(map[string]any{"id": id, "nodes": nodes, "force": force})
-	note(os.Stdout, "placing %s on %s (workers pull + load; this may take a few minutes)…", id, strings.Join(nodes, ", "))
+	note(os.Stdout, "placing %s on %s — the workers pull and load it; this can take minutes. Ctrl-C stops waiting, not the pull (check: opod node show <id>)", id, strings.Join(nodes, ", "))
+	stopTicking := tickWhile("placing " + id)
 	resp, err := adminCallT(context.Background(), cfg, "POST", "/admin/v1/models", body, weightsOpTimeout)
+	stopTicking()
 	if err != nil {
 		if !force && strings.Contains(string(resp)+err.Error(), "would stop it") {
 			die("place %s: %v\n  replace it on purpose with `opod model add %s --node %s --force`", id, err, id, strings.Join(nodes, ","))
 		}
 		die("place %s on %s: %v", id, strings.Join(nodes, ", "), err)
 	}
-	ok(os.Stdout, "placed %s on %s", id, strings.Join(nodes, ", "))
+	ok(os.Stdout, "placed %s on %s — next: opod node show %s", id, strings.Join(nodes, ", "), nodes[0])
 }
 
 func modelAdd(id string, force bool) {

@@ -1,0 +1,6 @@
+$ opod model add llama-3.2-1b --node n_a
+--- exit 0
+--- stdout
+▶ placing llama-3.2-1b on n_a — the workers pull and load it; this can take minutes. Ctrl-C stops waiting, not the pull (check: opod node show <id>)
+✔ placed llama-3.2-1b on n_a — next: opod node show n_a
+--- stderr

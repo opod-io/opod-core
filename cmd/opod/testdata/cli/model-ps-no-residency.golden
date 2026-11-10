@@ -1,0 +1,5 @@
+$ opod model ps
+--- exit 0
+--- stdout
+(engine cannot report residency — memory view requires Ollama)
+--- stderr

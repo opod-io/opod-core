@@ -1,0 +1,5 @@
+$ opod model ps --json
+--- exit 1
+--- stdout
+--- stderr
+opod: model ps: the leader answered GET /admin/v1/memory with something that is not JSON — is STUB an opod leader? (<html>proxy</html>)

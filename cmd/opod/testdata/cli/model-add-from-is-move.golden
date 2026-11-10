@@ -1,0 +1,6 @@
+$ opod model add --from x.yaml
+--- exit 2
+--- stdout
+--- stderr
+opod: model add takes a catalog YAML as --file FILE (--from is model move's source node)
+  opod model --help for every flag

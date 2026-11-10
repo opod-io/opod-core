@@ -330,6 +330,12 @@ func adminTarget(cfg *config.Config) (url, source string, remote bool) {
 	return localLeaderURL(cfg), "this host's listen address, from " + config.DefaultPath() + " or OPOD_LISTEN", false
 }
 
+// adminTargetURL is adminTarget's URL alone, for a message.
+func adminTargetURL(cfg *config.Config) string {
+	u, _, _ := adminTarget(cfg)
+	return u
+}
+
 // adminKey is the key an admin verb sends and where it came from: OPOD_TOKEN,
 // else the key `opod up` wrote on this host.
 func adminKey(cfg *config.Config) (key, source string) {
@@ -543,4 +549,24 @@ func truncStr(s string, n int) string {
 		return s
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// tickWhile says, every 10 s on stderr, that what started is still running
+// and for how long (CONTRIBUTING.md "CLI output", rule 4). Call the returned
+// func when it ends.
+func tickWhile(what string) (stop func()) {
+	start := time.Now()
+	t := time.NewTicker(10 * time.Second)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "  … still %s (%s)\n", what, time.Since(start).Round(time.Second))
+			}
+		}
+	}()
+	return func() { t.Stop(); close(done) }
 }

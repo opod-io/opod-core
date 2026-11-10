@@ -200,7 +200,10 @@ func modelPs(asJSON bool) {
 	cfg := loadConfigOrExit()
 	resp, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/memory", nil)
 	if err != nil {
-		die("memory status: %v", err)
+		die("model ps: %v", err)
+	}
+	if !json.Valid(resp) {
+		die("model ps: the leader answered GET /admin/v1/memory with something that is not JSON — is %s an opod leader? (%s)", adminTargetURL(cfg), truncStr(strings.TrimSpace(string(resp)), 80))
 	}
 	if asJSON {
 		fmt.Println(string(resp))
@@ -223,7 +226,7 @@ func modelPs(asJSON bool) {
 		} `json:"resident"`
 	}
 	if err := json.Unmarshal(resp, &st); err != nil {
-		die("decode memory status: %v", err)
+		die("model ps: read the leader's memory answer: %v", err)
 	}
 	if !st.Supported {
 		fmt.Println(dim("(engine cannot report residency — memory view requires Ollama)"))

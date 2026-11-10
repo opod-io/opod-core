@@ -86,6 +86,9 @@ var installHint = regexp.MustCompile(`(→ install: ).*`)
 // the lines a person reads; the log keeps its own tests.
 var jsonLogLine = regexp.MustCompile(`(?m)^(\{"time":|time=).*\n`)
 
+// clockTime is a step printed in local time; the zone differs per runner.
+var clockTime = regexp.MustCompile(`(?m)^(  )[0-9]{2}:[0-9]{2}:[0-9]{2}`)
+
 // pidNumber is a pid in a message; goldens say "pid N".
 var pidNumber = regexp.MustCompile(`pid [0-9]+`)
 
@@ -109,6 +112,17 @@ var transcripts = []transcriptCase{
 	{name: "join-port-in-use", args: []string{"join", "{{STUB}}?token=join-token"}, stopAfter: 10 * time.Second,
 		stub: routes(map[string]string{"/admin/v1/nodes/register": `{}`, "/admin/v1/nodes/heartbeat": `{}`}), noLocal: true,
 		env: map[string]string{"OPOD_ADVERTISE_ADDR": "{{TAKEN}}", "OPOD_NODE_ID": "n_test"}},
+	// T24.82 — model verbs name the model, the node and the next step.
+	{name: "model-ps-unauthorized", args: []string{"model", "ps"}, key: true, stub: answer(http.StatusUnauthorized, `{"error":{"type":"unauthorized","message":"invalid admin key"}}`)},
+	{name: "model-ps-not-json", args: []string{"model", "ps", "--json"}, key: true, stub: answer(http.StatusOK, `<html>proxy</html>`)},
+	{name: "model-ps-no-residency", args: []string{"model", "ps"}, key: true, stub: answer(http.StatusOK, `{"supported":false}`)},
+	{name: "model-move-not-json", args: []string{"model", "move", "m", "--from", "n_a", "--to", "n_b"}, key: true, stub: answer(http.StatusOK, `<html>proxy</html>`)},
+	{name: "model-move-unfinished", args: []string{"model", "move", "m", "--from", "n_a", "--to", "n_b"}, key: true, stub: answer(http.StatusOK, `{"steps":[{"step":"started","at":"2026-11-09T00:00:00Z"}]}`)},
+	{name: "model-add-node-placed", args: []string{"model", "add", "llama-3.2-1b", "--node", "n_a"}, key: true, stub: answer(http.StatusOK, `{"status":"placed"}`)},
+	{name: "model-add-from-is-move", args: []string{"model", "add", "--from", "x.yaml"}},
+	{name: "model-search-no-match", args: []string{"model", "search", "zzzz-nothing"}},
+	{name: "model-search-bad-since", args: []string{"model", "search", "--since", "notadate"}},
+	{name: "model-search-bad-sort", args: []string{"model", "search", "--sort", "size"}},
 	// T24.81 — connect, disconnect, config, batch say what they need and did.
 	{name: "connect-trailing-flag", args: []string{"connect", "curl", "--retries"}},
 	{name: "connect-admin-key-warning", args: []string{"connect", "curl"}, key: true},
@@ -307,6 +321,7 @@ func runTranscript(t *testing.T, c transcriptCase) string {
 		}
 		s = pidNumber.ReplaceAllString(s, "pid N")
 		s = hardwareLine.ReplaceAllString(s, "${1}: HW")
+		s = clockTime.ReplaceAllString(s, "${1}HH:MM:SS")
 		s = gpuLine.ReplaceAllString(s, "")
 		s = installHint.ReplaceAllString(s, "${1}OS-HINT")
 		s = jsonLogLine.ReplaceAllString(s, "")

@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/opod-io/opod-core/internal/models"
 	"github.com/opod-io/opod-core/internal/store"
@@ -43,6 +45,10 @@ func modelSearch(query string, sortReleased bool, since string, asJSON bool) {
 		return
 	}
 
+	if len(rows) == 0 {
+		note(os.Stdout, "no catalog model matches %q — opod model search with no query lists them all", query)
+		return
+	}
 	fmt.Printf("%s %s %s %s %s %s %s\n",
 		bold(fmt.Sprintf("%-26s", "ID")),
 		bold(fmt.Sprintf("%-32s", "NAME")),
@@ -104,24 +110,37 @@ func parseModelSearchArgs(args []string) (query string, sortReleased bool, since
 		switch {
 		case a == "--sort=released" || a == "--sort-released":
 			sortReleased = true
-		case a == "--sort":
-			if i+1 < len(args) && args[i+1] == "released" {
-				sortReleased = true
-				i++
+		case a == "--sort" || strings.HasPrefix(a, "--sort="):
+			key := strings.TrimPrefix(a, "--sort=")
+			if a == "--sort" {
+				if i+1 >= len(args) {
+					dieUsageOf("model", "--sort needs a key: released")
+				}
+				key, i = args[i+1], i+1
 			}
+			if key != "released" {
+				dieUsageOf("model", "--sort %q: the one sort key is released", key)
+			}
+			sortReleased = true
 		case strings.HasPrefix(a, "--since="):
 			since = strings.TrimPrefix(a, "--since=")
 		case a == "--since":
-			if i+1 < len(args) {
-				since = args[i+1]
-				i++
+			if i+1 >= len(args) {
+				dieUsageOf("model", "--since needs a date, YYYY-MM-DD")
 			}
+			since = args[i+1]
+			i++
 		case strings.HasPrefix(a, "-"):
-			die("unknown flag: %s (run `opod model --help`)", a)
+			dieUsageOf("model", "unknown model search flag %s (have: --sort released, --since DATE, --json)", a)
 		default:
 			if query == "" {
 				query = a
 			}
+		}
+	}
+	if since != "" {
+		if _, err := time.Parse("2006-01-02", since); err != nil {
+			dieUsageOf("model", "--since %q: want a date as YYYY-MM-DD", since)
 		}
 	}
 	return
@@ -245,10 +264,14 @@ func modelInfo(id string, asJSON bool) {
 	isEmbedding := hasCap("embedding")
 	isVision := hasCap("vision")
 
+	// The snippets name this host's leader as every other command reaches
+	// it (OPOD_BASE_URL, external_url, the listen address), never a fixed
+	// localhost:8080.
+	base := resolveBaseURL(loadConfigOrExit(), "")
 	fmt.Println()
 	fmt.Printf("%sInstall%s\n", bold, reset)
 	if entry.Sharding.Required {
-		fmt.Printf("  opod shard create %s %d\n", entry.ID, max2(entry.Sharding.DefaultShards))
+		fmt.Printf("  opod shard create %s   # it picks the part count from the workers' free memory\n", entry.ID)
 	} else {
 		fmt.Printf("  opod model add %s\n", entry.ID)
 	}
@@ -256,14 +279,14 @@ func modelInfo(id string, asJSON bool) {
 	fmt.Println()
 	if isEmbedding {
 		fmt.Printf("%sUse via API (OpenAI embeddings shape)%s\n", bold, reset)
-		fmt.Printf("  curl http://localhost:8080/v1/embeddings \\\n")
+		fmt.Printf("  curl %s/v1/embeddings \\\n", base)
 		fmt.Printf("    -H 'Authorization: Bearer sk-orc-...' \\\n")
 		fmt.Printf("    -d '{\"model\":\"%s\",\"input\":\"hello world\"}'\n", entry.ID)
 		fmt.Println()
 		fmt.Printf("%sDrop-in for OpenAI text-embedding-* in any RAG library.%s\n", dim, reset)
 	} else {
 		fmt.Printf("%sUse via API (OpenAI shape)%s\n", bold, reset)
-		fmt.Printf("  curl http://localhost:8080/v1/chat/completions \\\n")
+		fmt.Printf("  curl %s/v1/chat/completions \\\n", base)
 		fmt.Printf("    -H 'Authorization: Bearer sk-orc-...' \\\n")
 		fmt.Printf("    -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n", entry.ID)
 		if isVision {
@@ -275,20 +298,13 @@ func modelInfo(id string, asJSON bool) {
 		}
 		fmt.Println()
 		fmt.Printf("%sUse from an OpenAI-shape tool%s (Codex CLI, Aider, Cursor, the OpenAI SDK — `opod connect <tool>` prints the exact lines)\n", bold, reset)
-		fmt.Printf("  export OPENAI_BASE_URL=http://localhost:8080/v1\n")
+		fmt.Printf("  export OPENAI_BASE_URL=%s/v1\n", base)
 		fmt.Printf("  export OPENAI_API_KEY=sk-orc-...\n")
 		fmt.Printf("  codex --model %s\n", entry.ID)
 	}
 	fmt.Println()
 	fmt.Printf("%sFull walkthrough%s   %s/blob/main/MODELS.md#%s\n",
 		bold, reset, update.RepoURL, strings.ReplaceAll(entry.ID, ".", "-"))
-}
-
-func max2(n int) int {
-	if n < 2 {
-		return 2
-	}
-	return n
 }
 
 // sourceURL is the upstream page for a catalog entry's weights, or "" for a
