@@ -59,8 +59,9 @@ type Load struct {
 	Workers      int     `json:"workers"`
 	Reporting    int     `json:"reporting"`
 	// KVBusyWorkers is the KV pressure as a PROPORTIONAL figure: the mean
-	// KV-cache use across the reporting workers, times the worker count —
-	// "how many workers' worth of KV cache is in use". A horizontal scaler
+	// KV-cache use across the reporting workers, times the units a scaler
+	// adds — each worker, and each gang ONCE however many parts it has —
+	// "how many workers' (or gangs') worth of KV cache is in use". A horizontal scaler
 	// computes replicas as ceil(metric ÷ target), which only means anything
 	// for a metric that grows with the replica count; KVUsedPct is a maximum
 	// over workers and can never ask for more than two. Always on the wire —

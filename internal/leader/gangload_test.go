@@ -90,6 +90,13 @@ func TestLoadzReadsGangPressureFromTheCoordinator(t *testing.T) {
 	if out.QueueDepth != 4 {
 		t.Errorf("queue_depth = %d, want the coordinator's 4 — the parts have no queue", out.QueueDepth)
 	}
+	// kv_busy_workers counts the gang ONCE: a scaler of gangs computes
+	// ceil(metric ÷ line) gangs, and two parts at 62 % read as 1.24 asked for a
+	// second gang at 62 % of one (design-partner cell, 2026-11-11: one 2-part
+	// gang at 100 % read 2).
+	if out.KVBusyWorkers < 0.619 || out.KVBusyWorkers > 0.621 {
+		t.Errorf("kv_busy_workers = %v, want 0.62 — one gang's worth, not one per part", out.KVBusyWorkers)
+	}
 	if out.TokensPerSec < 0 {
 		t.Errorf("tokens_per_s must not be negative: %v", out.TokensPerSec)
 	}

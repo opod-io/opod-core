@@ -287,6 +287,9 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	maxAge := s.heartbeatMaxAge()
 	var prefixSum, kvSum float64
 	var prefixSamples int
+	// units are what a scaler adds one of: a worker, or a whole gang — never a
+	// gang's part. kv_busy_workers is counted in them.
+	var units int
 	var specPctSum float64 // the engines' own acceptance rates (SGLang), averaged below
 	var specPctN int
 	var engineTTFT []int64 // the samples' own TTFT medians, for theirs (T24.25)
@@ -345,6 +348,9 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 			continue
 		}
 		out.Workers++
+		if !gangNodes[n.ID] {
+			units++ // a worker is a unit a scaler adds; a gang's parts are one, counted below
+		}
 		v, ok := s.nodeLoad.Load(n.ID)
 		if !ok {
 			continue
@@ -369,7 +375,9 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 	// an autoscaler reads for a gang could not fire, and the endpoint could
 	// only ever scale on in-flight, RPM and unavailability (measured on the
 	// design-partner cell, 2026-09-20).
-	for _, c := range s.gangCoordinators(ctx, out.PlanModel) {
+	coords := s.gangCoordinators(ctx, out.PlanModel)
+	units += len(coords)
+	for _, c := range coords {
 		ld, ok := s.gangSample(ctx, c)
 		if !ok {
 			continue
@@ -407,13 +415,16 @@ func (s *Server) aggregateWorkerLoad(ctx context.Context, out *adminapi.Load, no
 			}
 		}
 		// KV pressure as a PROPORTIONAL figure (PLAN T11.20): the mean use
-		// across the samples, times the workers it speaks for — "how many
-		// workers' worth of cache is in use". A horizontal scaler computes
-		// replicas as ceil(metric ÷ target), which only means anything for a
-		// metric that grows with the replica count; the maximum above can never
-		// ask for more than two. Always published, 0 with no sample.
+		// across the samples, times the units they speak for — "how many
+		// workers' (or gangs') worth of cache is in use". A horizontal scaler
+		// computes replicas as ceil(metric ÷ target), which only means anything
+		// for a metric that grows with the replica count; the maximum above can
+		// never ask for more than two. A gang is ONE unit, as it is one replica
+		// to the scaler of gangs: counted per part, one 2-part gang at half its
+		// cache read 1.0 and asked for a second gang. Always published, 0 with
+		// no sample.
 		kvMeanFrac = kvSum / float64(prefixSamples)
-		out.KVBusyWorkers = kvMeanFrac * float64(out.Workers)
+		out.KVBusyWorkers = kvMeanFrac * float64(units)
 	}
 	return kvMeanFrac
 }

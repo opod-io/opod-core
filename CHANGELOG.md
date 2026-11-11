@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **`kv_busy_workers` counts a gang once.** It is the mean KV-cache use times the units a scaler adds; a gang's
+  parts each counted, so one 2-part gang at half its cache read 1.0 and a scaler of gangs asked for a second gang. A
+  gang is now one unit, whatever its part count; `workers` still counts the parts.
+
 - **SGLang that will not start for a small memory share says the value to set.** When SGLang exits asking to raise
   `--mem-fraction-static` above a figure, the worker's error now begins "set the engine flag mem_fraction_static to
   <figure> or more", before the engine's log tail.
