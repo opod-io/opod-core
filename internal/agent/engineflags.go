@@ -369,6 +369,15 @@ func (f EngineFlags) VLLMShellOverrides() (overrides string, extraArgs string) {
 	return f.vllmShellOverrides()
 }
 
+// SGLangShellOverrides is sglangShellOverrides for a caller outside the agent:
+// the scheduler's SGLang gang, whose ranks are launch_server processes the
+// leader starts — so a gang's context length, KV cache type, memory share and
+// extra args reach every rank the way a worker's do. The `TP=` assignment it
+// may carry is inert there: the gang writes --tp-size itself.
+func (f EngineFlags) SGLangShellOverrides() (overrides string, extraArgs string) {
+	return f.sglangShellOverrides()
+}
+
 // LlamaServerArgs is llamaArgs for a caller outside the agent: the
 // scheduler's gang coordinator, which is a llama-server too and took no flags
 // at all until PLAN T14.26 — so `-c` and `--tensor-split` could never reach a

@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **An SGLang gang takes the plan's engine flags.** Its ranks were launched with none of them: no context length, KV
+  cache type, memory share or extra args, so a plan's `max_model_len`, `kv_cache_dtype` and `mem_fraction_static` never
+  reached a gang. Every rank now gets them by the rule a worker's take.
+
 - **`kv_busy_workers` counts a gang once.** It is the mean KV-cache use times the units a scaler adds; a gang's
   parts each counted, so one 2-part gang at half its cache read 1.0 and a scaler of gangs asked for a second gang. A
   gang is now one unit, whatever its part count; `workers` still counts the parts.

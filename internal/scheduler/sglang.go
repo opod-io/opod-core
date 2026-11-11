@@ -65,6 +65,7 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 		return fmt.Errorf("sglang sharding needs at least one worker")
 	}
 	split, err := par.resolve(len(workers))
+	overrides, extra := agent.EngineFlags(par.Flags).SGLangShellOverrides()
 	if err != nil {
 		return fmt.Errorf("parallelism: %w", err)
 	}
@@ -114,6 +115,7 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 				TP:        split.TP,
 				PP:        split.PP,
 				ToolArgs:  agent.ToolParserArgs("sglang", models.ToolParser(&entry, "sglang"), par.Flags["extra"]),
+				Overrides: overrides, Extra: extra,
 			})},
 			// No HealthPort: SGLang binds its HTTP port only after the weights are
 			// loaded and the group has formed, which is minutes on a model worth
@@ -176,6 +178,12 @@ type sglangGang struct {
 	TP        int
 	PP        int
 	ToolArgs  []string // the model's tool-call parser flags (agent.ToolParserArgs); none = no parser known
+	// Overrides and Extra are the gang's flags by the rule a worker's take
+	// (agent.EngineFlags.SGLangShellOverrides): the memory share as a shell
+	// assignment, and context length, KV cache type and extra as arguments.
+	// An SGLang gang read none of them until 2026-11-11.
+	Overrides string
+	Extra     string
 }
 
 // sglangGangCommand is the shell line one rank runs.
@@ -217,12 +225,20 @@ func sglangGangCommand(g sglangGang) string {
 		"--nnodes "+strconv.Itoa(g.NNodes),
 		"--node-rank "+strconv.Itoa(g.NodeRank),
 	)
+	if g.Extra != "" {
+		args = append(args, g.Extra)
+	}
 	for _, t := range g.ToolArgs {
 		args = append(args, "'"+shellQuote(t)+"'")
 	}
 	// The budget line runs BEFORE the exec: it writes $U, which the fraction
-	// flag above reads — empty when the part has no budget.
-	return agent.MemFractionShell("sglang") + strings.Join(args, " ")
+	// flag above reads — empty when the part has no budget. The plan's own
+	// share (mem_fraction_static) comes after it, so it is the one read.
+	pre := agent.MemFractionShell("sglang")
+	if g.Overrides != "" {
+		pre += g.Overrides + " "
+	}
+	return pre + strings.Join(args, " ")
 }
 
 // shellQuote escapes a value for the single quotes it is placed inside.

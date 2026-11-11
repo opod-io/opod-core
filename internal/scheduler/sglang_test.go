@@ -336,3 +336,29 @@ func TestEveryGangBackendStopsWhatAPreviousLeaderLeft(t *testing.T) {
 		t.Fatalf("a sibling gang's process was stopped: %v", w0.stopped)
 	}
 }
+
+// An SGLang gang takes the plan's engine flags, as a worker does: its context
+// length, KV cache type, memory share and extra args. It took none of them
+// (design-partner cell, 2026-11-11: max_model_len 4096 on a tensor-2 gang
+// launched with no --context-length) — the gap the vLLM gang had until
+// TestVLLMRayGangCarriesThePlansFlags.
+func TestSGLangGangCarriesThePlansFlags(t *testing.T) {
+	overrides, extra := agent.EngineFlags{"max_model_len": "4096", "kv_cache_dtype": "fp8_e5m2",
+		"mem_fraction_static": "0.6", "extra": "--chunked-prefill-size 2048"}.SGLangShellOverrides()
+	for rank := 0; rank < 2; rank++ {
+		got := sglangGangCommand(sglangGang{Model: "m", ServedAs: "m", ServePort: 30000,
+			DistAddr: "10.0.0.1:29500", NNodes: 2, NodeRank: rank, TP: 2, Overrides: overrides, Extra: extra})
+		for _, want := range []string{"'--context-length' '4096'", "'--kv-cache-dtype' 'fp8_e5m2'", "U=0.60;", "'--chunked-prefill-size' '2048'"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("rank %d: missing %q in:\n%s", rank, want, got)
+			}
+		}
+		// The plan's share is set after the budget line, so it is the one the flag reads.
+		if strings.Index(got, "U=0.60;") < strings.Index(got, agent.MemFractionShell("sglang")) || strings.Index(got, "U=0.60;") > strings.Index(got, "exec python3") {
+			t.Errorf("rank %d: the plan's share must follow the budget line and precede the exec:\n%s", rank, got)
+		}
+		if strings.Count(got, "--tp-size") != 1 {
+			t.Errorf("rank %d: the gang writes its tensor width once:\n%s", rank, got)
+		}
+	}
+}
