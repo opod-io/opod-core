@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -1127,8 +1128,38 @@ func (s *Server) launchSGLang(model, servedName string) error {
 		Args:        []string{"-lc", cmdline},
 		Restart:     true,
 		MaxRestarts: 3,
+		Explain:     sglangMemFractionExplain,
 	})
 	return err
+}
+
+// sglangMemFractionHint is SGLang's own refusal when its static memory share
+// is too small, most often with a speculative draft on a small card:
+// "… Raise --mem-fraction-static above 0.532 (minimum viable = …)".
+var sglangMemFractionHint = regexp.MustCompile(`Raise --mem-fraction-static above ([0-9]*\.?[0-9]+)`)
+
+// sglangMemFractionExplain turns that refusal into the setting an operator
+// changes: the worker's engine flag mem_fraction_static, at the next
+// hundredth above SGLang's minimum. The share is not raised by itself (Hadi,
+// 2026-11-10, PLAN T29.19): more for the static share is less for requests'
+// KV cache on that card, so it is the operator's call.
+func sglangMemFractionExplain(tail []string) string {
+	for i := len(tail) - 1; i >= 0; i-- {
+		m := sglangMemFractionHint.FindStringSubmatch(tail[i])
+		if m == nil {
+			continue
+		}
+		floor, err := strconv.ParseFloat(m[1], 64)
+		if err != nil || floor <= 0 || floor >= 1 {
+			return ""
+		}
+		want := math.Floor(floor*100)/100 + 0.01 // strictly above, on a hundredth
+		if want >= 1 {
+			return ""
+		}
+		return fmt.Sprintf("SGLang needs a larger static memory share than it was given: set the engine flag mem_fraction_static to %.2f or more (SGLang asks for more than %s; a speculative draft model takes part of the card), or give the worker a larger card", want, m[1])
+	}
+	return ""
 }
 
 // sglangCmdline is the shell line launchSGLang runs; `--revision` follows the

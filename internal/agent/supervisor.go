@@ -85,6 +85,12 @@ type ProcessSpec struct {
 	// length is N" when a VRAM budget cannot hold the model's full context).
 	// Returning false restarts unchanged.
 	Adapt func(tail []string) ([]string, bool) `json:"-"` // never on the wire: a leader ships a ProcessSpec to a worker as JSON
+	// Explain, when set, reads the process's own output after an abnormal
+	// exit and returns one sentence for the operator — what to change — or ""
+	// when it has nothing to say. It leads the ExitErr, before the output
+	// tail, for an engine whose refusal names its own flag and not the one an
+	// operator sets (SGLang: "Raise --mem-fraction-static above 0.532").
+	Explain func(tail []string) string `json:"-"`
 }
 
 // ProcessInfo is the observable state of a managed process.
@@ -625,7 +631,15 @@ func (s *Supervisor) superviseExit(p *Process, gen int, exited <-chan struct{}) 
 		// backends: "signal: aborted (core dumped)") tells you only that it died
 		// — the assertion that killed it is in the ring buffer, and the container
 		// teardown is about to destroy it. Attach it while it still exists.
-		p.Info.ExitErr = exitErr.Error() + logTail(p.logBuf.tail(20))
+		why := ""
+		if p.spec.Explain != nil {
+			// The whole ring, as Adapt reads it: an engine prints its refusal
+			// and then long tracebacks.
+			if w := p.spec.Explain(p.logBuf.tail(p.logBuf.cap)); w != "" {
+				why = " — " + w
+			}
+		}
+		p.Info.ExitErr = exitErr.Error() + why + logTail(p.logBuf.tail(20))
 	} else {
 		p.Info.Status = "stopped"
 	}

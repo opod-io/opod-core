@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **SGLang that will not start for a small memory share says the value to set.** When SGLang exits asking to raise
+  `--mem-fraction-static` above a figure, the worker's error now begins "set the engine flag mem_fraction_static to
+  <figure> or more", before the engine's log tail.
+
 - **The leader's own node row has its real address (T24.105).** `opod up` wrote `"127.0.0.1" + listen`, so a `listen`
   with a host read `127.0.0.1127.0.0.1:8080` in `opod node ls`; it is now the listen host (127.0.0.1 for an empty or
   wildcard one) and its port.
