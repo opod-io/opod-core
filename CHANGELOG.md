@@ -7,6 +7,19 @@ the last section.
 
 ## Unreleased
 
+## v0.4.6 — 2026-11-11
+
+A gang counts once in `kv_busy_workers`, so a scaler of gangs no longer asks for a second gang at half load; the draft
+model of speculative decoding is fetched like the served one; an SGLang gang takes the plan's engine flags; and every
+CLI command says what failed and what to do next. The gang count and the draft fetch are proven on the design-partner
+cell.
+
+- **The speculative draft model is fetched like the served one (T29.19, ADR-120).** `spec_draft` names the draft as the
+  plan wrote it: `<repo>[@rev]` for vLLM and SGLang, `<repo>:<file>.gguf` for llama.cpp, or an absolute path already on
+  the node. Before each launch the worker fetches it with the same exclusive, atomic fetch as the model, into the node's
+  model cache, and hands the engine the local path. A draft that cannot be fetched fails the launch with the reason,
+  rather than starting an engine that would not speculate.
+
 - **An SGLang gang takes the plan's engine flags.** Its ranks were launched with none of them: no context length, KV
   cache type, memory share or extra args, so a plan's `max_model_len`, `kv_cache_dtype` and `mem_fraction_static` never
   reached a gang. Every rank now gets them by the rule a worker's take.
