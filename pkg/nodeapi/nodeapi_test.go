@@ -62,6 +62,8 @@ func wireCases(t *testing.T) []wireCase {
 		{"capabilities_minimal", capsMinimal, &Capabilities{}},
 		{"capabilities_kv_peer", Capabilities{Hostname: "node-c", OS: "linux", Arch: "amd64", CPUCores: 16, RAMGB: 64,
 			GPUs: []GPU{{Name: "NVIDIA RTX A6000", VRAMGB: 47}}, Engine: "vllm", KVTier: KVTierPeer}, &Capabilities{}},
+		{"capabilities_kv_events", Capabilities{Hostname: "node-e", OS: "linux", Arch: "amd64", CPUCores: 16, RAMGB: 64,
+			GPUs: []GPU{{Name: "NVIDIA RTX A6000", VRAMGB: 47}}, Engine: "vllm", KVEvents: true}, &Capabilities{}},
 		{"capabilities_bind_host", Capabilities{Hostname: "node-d", OS: "linux", Arch: "amd64", CPUCores: 8, RAMGB: 32,
 			GPUs: []GPU{{Name: "NVIDIA RTX A6000", VRAMGB: 47}}, Engine: "llamacpp", BindHost: "10.0.0.5"}, &Capabilities{}},
 		{"capabilities_given_devices", Capabilities{Hostname: "opod-ep-chat-0", OS: "linux", Arch: "amd64", CPUCores: 32, RAMGB: 128,

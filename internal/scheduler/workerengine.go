@@ -21,6 +21,18 @@ func WorkerEngine(n store.Node) string {
 	return caps.Engine
 }
 
+// kvEventsOn reports whether a worker registered that it subscribes to its
+// engine's KV events (agent.Capabilities.KVEvents, OPOD_KV_EVENTS=1): a gang it
+// heads is launched with the publisher flag (T26.22). False for a worker that
+// predates the field.
+func kvEventsOn(n store.Node) bool {
+	var caps agent.Capabilities
+	if n.HardwareJSON == "" || json.Unmarshal([]byte(n.HardwareJSON), &caps) != nil {
+		return false
+	}
+	return caps.KVEvents
+}
+
 // LoadWouldReplace answers "what would /v1/model/load of model do to what
 // this worker already serves?" — nil when nothing is lost, else a refusal
 // that names both models.

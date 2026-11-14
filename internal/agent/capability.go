@@ -45,6 +45,12 @@ type Capabilities struct {
 	// engine's own connector is started by the manager's engine flags; this
 	// field only tells the leader it is there.
 	KVTier string `json:"KVTier,omitempty"`
+	// KVEvents (feature gang_kv_events, PLAN T26.22) is OPOD_KV_EVENTS=1: this
+	// worker subscribes to its engine's prefix-cache events and reports the
+	// blocks on its heartbeat. A leader that launches a gang headed here starts
+	// the gang's engine with the publisher flag; without it a gang's engine
+	// published nothing, whatever the worker was told.
+	KVEvents bool `json:"KVEvents,omitempty"`
 	// GivenDevices (feature worker_devices) is the accelerators this worker
 	// PROCESS was given, read from inside its own sandbox (givendevices.go):
 	// under a device plugin, the subset handed to the container, which is

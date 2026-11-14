@@ -168,11 +168,18 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 			"model", entry.ID, "tp", split.TP)
 	}
 	overrides, extra := agent.EngineFlags(par.Flags).VLLMShellOverrides()
+	// The head's engine publishes its prefix-cache events to the head's
+	// worker when that worker subscribes (T26.22); vLLM's scheduler, and so
+	// its cache, lives on the head alone.
+	kvArgs := ""
+	if kvEventsOn(head) {
+		kvArgs = agent.KVEventsArgs("vllm", extra)
+	}
 	vllmCmd := vllmGangCommand(vllmGang{
 		Model: model, ServedAs: entry.ID, Host: headHost, Port: vllmPort,
 		TP: gpusPerNode, PP: pp, Eager: eager,
 		ToolArgs:  agent.ToolParserArgs("vllm", models.ToolParser(&entry, "vllm"), par.Flags["extra"]),
-		Overrides: overrides, Extra: extra,
+		Overrides: overrides, Extra: extra, KVEvents: kvArgs,
 	})
 	vllmSpec := agent.ProcessSpec{
 		ID:      gangShardID(entry.ID, gangID, "vllm-ray"),
@@ -187,7 +194,8 @@ func (o *Orchestrator) createShardedVLLMRay(ctx context.Context, entry models.En
 		// No auto-restart: a crashed vLLM leaves stale Ray actors that poison the
 		// next attempt (ActorHandleNotFound across sessions). One clean try; the
 		// operator recreates the Ray cluster to retry.
-		Restart: false,
+		Restart:  false,
+		KVEvents: kvArgs != "", // the head's worker subscribes
 	}
 	if _, err := o.callWorkerStart(ctx, head, vllmSpec); err != nil {
 		o.rollback(ctx, created)
@@ -266,6 +274,9 @@ type vllmGang struct {
 	// context, KV cache type and tier never reached its engine.
 	Overrides string
 	Extra     string
+	// KVEvents is the publisher flags (agent.KVEventsArgs) when the head's
+	// worker subscribes to the engine's KV events; "" = it does not.
+	KVEvents string
 }
 
 // vllmGangCommand is the `vllm serve` line the Ray head runs under a login
@@ -295,6 +306,9 @@ func vllmGangCommand(g vllmGang) string {
 	extra := ""
 	if g.Extra != "" {
 		extra = " " + g.Extra
+	}
+	if g.KVEvents != "" {
+		extra += " " + g.KVEvents
 	}
 	return pre + fmt.Sprintf(
 		// Served under the catalog id AND the repo name, like agent.launchVLLM:

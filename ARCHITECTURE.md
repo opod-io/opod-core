@@ -1680,6 +1680,13 @@ Mechanisms a manager drives through this surface:
   block hashes) and `internal/agent/kvblocks.go` (the engine flag, the tokenize route); leader
   `internal/leader/prefixindex.go` (the per-worker sets, the resolver) and `internal/router/prefixblocks.go` (the
   score). Off until a worker is started with `OPOD_KV_EVENTS=1` and the policy gives `routing.prefixBlockWeight`.
+  **Gangs** (`gang_kv_events`, T26.22): a worker started with `OPOD_KV_EVENTS=1` registers `KVEvents`; a vLLM Ray
+  gang headed by it starts the head's `vllm serve` with the publisher (`agent.KVEventsArgs`, the worker's own rule:
+  the self-describing transfer config with a CPU tier), and an SGLang gang gives every rank the same flags (the page
+  size must agree across ranks) while only rank 0's worker is told to subscribe (`ProcessSpec.KVEvents`). The head
+  reports the blocks on its heartbeat; the leader tokenizes the gang's prompts at its coordinator (`gangReporter`),
+  since the head worker's own engine is not the gang's; and the router scores the head's blocks for the gang in the
+  ranking a worker gets (`rank.go`). A vLLM expert (data-parallel) gang and a llama.cpp RPC gang publish nothing.
   **Peer hits** (`kv_peer_hits`): a worker started with `OPOD_KV_TIER=peer` is credited, beyond its own leading
   blocks, for the further ones the best other `peer` candidate holds, at half a block's weight
   (`router.peerBlockShare`) — local > peer > none, so load can outweigh affinity when a sibling can lend the prefix.

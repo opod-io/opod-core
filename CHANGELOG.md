@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **A vLLM or SGLang gang publishes its prefix-cache events (T26.22).** A gang with `OPOD_KV_EVENTS=1` on its parts
+  was launched with no `--kv-events-config`, so it served with no blocks in the index and was routed by load alone. A
+  worker now registers that it subscribes (`KVEvents`, feature `gang_kv_events`); a vLLM Ray gang headed by it starts
+  the head's engine with the publisher, by the same rule a worker's own launch uses, and an SGLang gang gives every
+  rank the same flags (`--page-size 16` unless the plan sets one) with only rank 0's worker subscribing. The leader
+  tokenizes a gang's prompt at its coordinator, and the router scores the head's blocks for the gang. A vLLM expert
+  (data-parallel) gang and a llama.cpp RPC gang still publish nothing.
+
 - **A gang keeps a conversation (T28.8).** With two or more gangs of one model, the gang pick read only load: the
   session pin, the sticky pin, the prefix pin and the signed route token were written after a gang answered and never
   read, so a later turn went to the least loaded gang and recomputed its prompt. Workers and gangs now pass one ranking

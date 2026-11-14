@@ -379,6 +379,7 @@ func contractFeatures() map[string]bool {
 		"engines":               true, // /admin/v1/capabilities lists the engine drivers linked into this binary: id, accepted aliases, native naming
 		"fetch_snapshot":        true, // `opod fetch --snapshot <repo>[@rev]`: a safetensors file set under <models dir>/<repo>@<rev>/, same lock, marker and digest check as a GGUF; a vLLM or SGLang worker serves from a complete one
 		"otlp_logs":             true, // OPOD_OTLP_LOGS_ENDPOINT: the leader's own log records over OTLP/HTTP, teed beside stderr; bounded queue, never blocks
+		"gang_kv_events":        true, // a vLLM or SGLang gang headed by a worker that registered KVEvents (OPOD_KV_EVENTS=1) is launched with the publisher flag; the head reports the blocks and the router scores them for the gang (T26.22)
 		"otlp_headers":          true, // OPOD_OTLP_HEADERS ("k=v,k=v") on every trace and log export; OPOD_OTLP_ENDPOINT / OPOD_OTLP_LOGS_ENDPOINT keep their URL path as a prefix (/v1/traces, /v1/logs added unless it ends in them)
 		"trace_sample_ratio":    true, // OPOD_TRACE_SAMPLE_RATIO: the share of root traces recorded (0–1, unset = 1); a request with a traceparent follows its caller's decision (parent-based)
 		"cache_prune":           true, // `opod cache ls|prune`: the node cache is reclaimable, and only files this platform fetched (ADR-046)

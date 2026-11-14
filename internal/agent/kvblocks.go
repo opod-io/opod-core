@@ -25,6 +25,10 @@ func (s *Server) kvEventsArgs() string {
 	if !s.KVEvents || s.Blocks == nil {
 		return ""
 	}
+	return kvEventsConfigArg()
+}
+
+func kvEventsConfigArg() string {
 	return "--kv-events-config '" + kvevents.EngineConfig("") + "'"
 }
 
@@ -35,17 +39,6 @@ func (s *Server) kvEventsArgs() string {
 // offloading its own --kv-offloading-size sets up (config/vllm.py, 0.33).
 const vllmSelfDescribing = `{"kv_role":"kv_both","kv_connector_extra_config":{"self_describing_kv_events":true}}`
 
-// vllmKVEventsArgs is kvEventsArgs for vLLM: the publisher, plus the
-// self-describing transfer config when the plan gives the engine a CPU tier
-// (--kv-offloading-size) and states no transfer config of its own.
-func (s *Server) vllmKVEventsArgs(flagArgs string) string {
-	args := s.kvEventsArgs()
-	if args == "" || !strings.Contains(flagArgs, "--kv-offloading-size") || strings.Contains(flagArgs, "--kv-transfer-config") {
-		return args
-	}
-	return args + " --kv-transfer-config '" + vllmSelfDescribing + "'"
-}
-
 // sglangKVPageSize is the page SGLang is started with when it publishes KV
 // events and the plan names none: SGLang's default page is one token, so each
 // event would name one block per token and the leader's per-worker index would
@@ -53,19 +46,55 @@ func (s *Server) vllmKVEventsArgs(flagArgs string) string {
 // designed around (T19.21).
 const sglangKVPageSize = 16
 
-// sglangKVEventsArgs is kvEventsArgs for SGLang: the same publisher config
-// (SGLang reads it with pydantic, which ignores the vLLM-only key), plus a page
-// size unless the plan's own flags set one.
-func (s *Server) sglangKVEventsArgs(flagArgs string) string {
-	args := s.kvEventsArgs()
-	if args == "" || strings.Contains(flagArgs, "--page-size") {
-		return args
+// KVEventsArgs is the flags that make engine ("vllm" or "sglang") publish its
+// prefix-cache events to this worker's subscriber on localhost, given the
+// plan's own flags; "" for an engine that publishes none. One rule for a
+// worker's own launch and a gang's (the leader's scheduler builds a gang
+// head's command with it, PLAN T26.22):
+//
+//   - vLLM: the publisher, plus the self-describing transfer config when the
+//     plan gives the engine a CPU tier (--kv-offloading-size) and states no
+//     transfer config of its own;
+//   - SGLang: the same publisher config (SGLang reads it with pydantic, which
+//     ignores the vLLM-only key), plus a page size unless the plan sets one.
+func KVEventsArgs(engine, flagArgs string) string {
+	args := kvEventsConfigArg()
+	switch engine {
+	case "vllm":
+		if strings.Contains(flagArgs, "--kv-offloading-size") && !strings.Contains(flagArgs, "--kv-transfer-config") {
+			args += " --kv-transfer-config '" + vllmSelfDescribing + "'"
+		}
+	case "sglang":
+		if !strings.Contains(flagArgs, "--page-size") {
+			args += fmt.Sprintf(" --page-size %d", sglangKVPageSize)
+		}
+	default:
+		return ""
 	}
-	return args + fmt.Sprintf(" --page-size %d", sglangKVPageSize)
+	return args
+}
+
+// vllmKVEventsArgs is KVEventsArgs for this worker's own vLLM launch: nothing
+// when the feature is off.
+func (s *Server) vllmKVEventsArgs(flagArgs string) string {
+	if s.kvEventsArgs() == "" {
+		return ""
+	}
+	return KVEventsArgs("vllm", flagArgs)
+}
+
+// sglangKVEventsArgs is KVEventsArgs for this worker's own SGLang launch.
+func (s *Server) sglangKVEventsArgs(flagArgs string) string {
+	if s.kvEventsArgs() == "" {
+		return ""
+	}
+	return KVEventsArgs("sglang", flagArgs)
 }
 
 // startKVEvents starts the subscriber once per worker process. It outlives
 // every engine restart: the subscriber reconnects, and a reconnect is a reset.
+// Called where this worker launches its own engine, and where its leader
+// starts a gang's engine here that publishes to it (ProcessSpec.KVEvents).
 func (s *Server) startKVEvents() {
 	if !s.KVEvents || s.Blocks == nil {
 		return

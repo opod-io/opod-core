@@ -114,3 +114,23 @@ func TestVLLMSelfDescribingCPUTier(t *testing.T) {
 		}
 	}
 }
+
+// KVEventsArgs is the one publisher rule for a worker's own launch and a
+// gang's (PLAN T26.22): the same flags the worker's launch writes, and none
+// for an engine that publishes no events.
+func TestKVEventsArgsIsTheWorkersRuleForEveryLaunch(t *testing.T) {
+	on := &Server{KVEvents: true, Blocks: kvevents.NewTranslator()}
+	for _, flags := range []string{"", "--page-size 32", "--kv-offloading-size 8"} {
+		if got, want := KVEventsArgs("vllm", flags), on.vllmKVEventsArgs(flags); got != want {
+			t.Errorf("vllm %q: %q, the worker's launch writes %q", flags, got, want)
+		}
+		if got, want := KVEventsArgs("sglang", flags), on.sglangKVEventsArgs(flags); got != want {
+			t.Errorf("sglang %q: %q, the worker's launch writes %q", flags, got, want)
+		}
+	}
+	for _, e := range []string{"llamacpp", "ollama", ""} {
+		if got := KVEventsArgs(e, ""); got != "" {
+			t.Errorf("%q publishes no KV events, got %q", e, got)
+		}
+	}
+}

@@ -170,6 +170,9 @@ func cmdJoin(args []string) {
 	default:
 		die("OPOD_KV_TIER %q: use cpu or peer, or leave it unset", tier)
 	}
+	// T26.22: the leader starts a gang headed here with the engine's KV-events
+	// publisher only when this worker subscribes.
+	caps.KVEvents = env.KVEvents
 	// R15.17: the plan revision this process serves. A manager that splits
 	// traffic between revisions sets it; a bad value is ignored rather than
 	// fatal, because a worker that will not start is worse than one the leader

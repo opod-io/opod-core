@@ -1288,6 +1288,9 @@ func (s *Server) processStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.gang.Store(true) // a part (or a gang's head) — its stop waits for peers (drain.go)
+	if spec.KVEvents {
+		s.startKVEvents() // a gang's head engine publishes here (no-op unless OPOD_KV_EVENTS=1)
+	}
 	info, err := s.Supervisor.StartAsync(spec)
 	if err != nil {
 		// Registration errors only (bad spec, duplicate id). A spawn/readiness

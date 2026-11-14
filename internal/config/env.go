@@ -54,7 +54,7 @@ type Env struct {
 	EngineFlags   string `env:"OPOD_ENGINE_FLAGS" side:"worker" doc:"JSON map of engine flags from the plan (tp, max_model_len, ctx, ngl, …)"`
 	Adapters      string `env:"OPOD_ADAPTERS" side:"worker" doc:"JSON list of LoRA adapters [{name, source, rank}] served as <model>:<name>"`
 	RejectBearer  bool   `env:"OPOD_REJECT_BEARER" side:"worker" doc:"1 = the worker's API accepts HMAC only, never a bearer token"`
-	KVEvents      bool   `env:"OPOD_KV_EVENTS" side:"worker" doc:"1 = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds"`
+	KVEvents      bool   `env:"OPOD_KV_EVENTS" side:"worker" doc:"1 = vLLM or SGLang publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds. On the head worker of a vLLM Ray or SGLang gang the leader starts the gang's engine with the publisher, and the head's blocks are scored for the gang"`
 	SleepMode     bool   `env:"OPOD_SLEEP_MODE" side:"worker" doc:"1 = vLLM starts with sleep mode on (the sleep autoscale tier)"`
 	WorkerRole    string `env:"OPOD_WORKER_ROLE" side:"worker" doc:"prefill | decode for disaggregated serving; unset = a whole worker"`
 	DrainSeconds  string `env:"OPOD_DRAIN_SECONDS" side:"worker" doc:"how many seconds a stopping worker lets the requests already running on it finish: it says goodbye at once (no new requests), and its engine stops when nothing is in flight or the bound passes, whichever is first. 0 = stop at once. Unset = 10. A manager gives the pod a grace period longer than this"`

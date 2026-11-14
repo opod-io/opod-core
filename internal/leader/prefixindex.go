@@ -326,13 +326,68 @@ func (s *Server) liveReporter(ctx context.Context) (string, int) {
 	return "", 0
 }
 
+// blockSizeOf is the block size nodeID reports its blocks in; 0 = it reports
+// none.
+func (p *prefixIndex) blockSizeOf(nodeID string) int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if w := p.workers[nodeID]; w != nil {
+		return w.blockSize
+	}
+	return 0
+}
+
+// gangReporter is a ready coordinator of model whose head worker reports
+// blocks, with the head's block size (PLAN T26.22). A gang's engine is not the
+// head worker's own engine — the leader dials the coordinator directly — so its
+// prompt is tokenized there, never through the head's /v1/tokenize.
+func (s *Server) gangReporter(ctx context.Context, model string) (store.Shard, int, bool) {
+	shards, err := s.store.Shards().GetByModel(ctx, model)
+	if err != nil {
+		return store.Shard{}, 0, false
+	}
+	for _, sh := range shards {
+		if sh.Role != "coordinator" || sh.Status != "ready" || sh.Address == "" {
+			continue
+		}
+		if size := s.prefix.blockSizeOf(sh.NodeID); size > 0 {
+			return sh, size, true
+		}
+	}
+	return store.Shard{}, 0, false
+}
+
+// tokenizeOnGang asks a gang's coordinator engine for the prompt's leading
+// token ids, through the driver the leader samples it with.
+func (s *Server) tokenizeOnGang(ctx context.Context, coord store.Shard, req engines.ChatRequest) ([]int, bool) {
+	eng, _ := s.gangEngine(coord)
+	tk, ok := eng.(engines.Tokenizer)
+	if !ok {
+		return nil, false
+	}
+	msgs := make([]engines.Message, 0, len(req.Messages)+1)
+	if req.System != "" {
+		msgs = append(msgs, engines.Message{Role: "system", Content: req.System})
+	}
+	for _, m := range req.Messages {
+		msgs = append(msgs, engines.Message{Role: m.Role, Content: m.Content})
+	}
+	tokens, err := tk.Tokenize(ctx, req.Model, msgs, "", prefixTokenizeMax)
+	return tokens, err == nil && len(tokens) > 0
+}
+
 // resolveBlocks is the router's BlockResolver: the request's prompt as a chain
-// of block hashes. The leader has no tokenizer, so it asks a reporting
-// worker's engine (nodeapi.PathTokenize) — once per distinct prefix, then from
-// the cache — inside a budget: a tokenize that is slow costs the request more
-// than a cold cache would.
+// of block hashes. The leader has no tokenizer, so it asks an engine that
+// reports blocks — a gang's coordinator for a model a reporting gang serves,
+// else a reporting worker's engine (nodeapi.PathTokenize) — once per distinct
+// prefix, then from the cache — inside a budget: a tokenize that is slow costs
+// the request more than a cold cache would.
 func (s *Server) resolveBlocks(ctx context.Context, req engines.ChatRequest) []string {
-	nodeID, blockSize := s.liveReporter(ctx)
+	coord, blockSize, gang := s.gangReporter(ctx, req.Model)
+	nodeID := coord.NodeID
+	if !gang {
+		nodeID, blockSize = s.liveReporter(ctx)
+	}
 	if nodeID == "" {
 		return nil
 	}
@@ -348,13 +403,19 @@ func (s *Server) resolveBlocks(ctx context.Context, req engines.ChatRequest) []s
 	}
 	s.prefix.chainMu.Unlock()
 
-	n, err := s.store.Nodes().Get(ctx, nodeID)
-	if err != nil || n == nil || n.Address == "" {
-		return nil
-	}
 	tctx, cancel := context.WithTimeout(ctx, prefixTokenizeBudget)
 	defer cancel()
-	tokens, ok := s.tokenizeOn(tctx, n, req)
+	var tokens []int
+	var ok bool
+	if gang {
+		tokens, ok = s.tokenizeOnGang(tctx, coord, req)
+	} else {
+		n, err := s.store.Nodes().Get(ctx, nodeID)
+		if err != nil || n == nil || n.Address == "" {
+			return nil
+		}
+		tokens, ok = s.tokenizeOn(tctx, n, req)
+	}
 	if !ok {
 		return nil
 	}

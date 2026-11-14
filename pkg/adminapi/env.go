@@ -140,7 +140,7 @@ var envTable = []EnvVar{
 	{Name: EnvEngineFlags, Side: SideWorker, Doc: `JSON map of engine flags from the plan (tp, max_model_len, ctx, ngl, …)`},
 	{Name: EnvAdapters, Side: SideWorker, Since: "lora", Doc: `JSON list of LoRA adapters [{name, source, rank}] served as <model>:<name>`},
 	{Name: EnvRejectBearer, Side: SideWorker, Doc: `1 = the worker's API accepts HMAC only, never a bearer token`},
-	{Name: EnvKVEvents, Side: SideWorker, Since: "kv_block_events", Doc: `1 = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds`},
+	{Name: EnvKVEvents, Side: SideWorker, Since: "kv_block_events", Doc: `1 = vLLM or SGLang publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds. On the head worker of a vLLM Ray or SGLang gang the leader starts the gang's engine with the publisher, and the head's blocks are scored for the gang`},
 	{Name: EnvSleepMode, Side: SideWorker, Since: "worker_sleep", Doc: `1 = vLLM starts with sleep mode on (the sleep autoscale tier)`},
 	{Name: EnvWorkerRole, Side: SideWorker, Since: "pd_roles", Doc: `prefill | decode for disaggregated serving; unset = a whole worker`},
 	{Name: EnvDrainSeconds, Side: SideWorker, Since: "worker_drain", Doc: `how many seconds a stopping worker lets the requests already running on it finish: it says goodbye at once (no new requests), and its engine stops when nothing is in flight or the bound passes, whichever is first. 0 = stop at once. Unset = 10. A manager gives the pod a grace period longer than this`},

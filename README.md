@@ -928,7 +928,7 @@ or a worker and have **no YAML equivalent** — this is the surface a control pl
 | `OPOD_ENGINE_FLAGS` | worker | JSON map of engine flags from the plan (`tp`, `max_model_len`, `ctx`, `ngl`, …) |
 | `OPOD_ADAPTERS` | worker | JSON list of LoRA adapters `[{name, source, rank}]`, served as `<model>:<name>` |
 | `OPOD_REJECT_BEARER` | worker | `1` = this worker's API accepts HMAC only, never a bearer token |
-| `OPOD_KV_EVENTS` | worker | `1` = vLLM publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds |
+| `OPOD_KV_EVENTS` | worker | `1` = vLLM or SGLang publishes its prefix-cache events on localhost and the worker reports block hashes on its heartbeat, so the leader can route by what a worker holds. On the head worker of a vLLM Ray or SGLang gang the leader starts the gang's engine with the publisher, and the head's blocks are scored for the gang |
 | `OPOD_SLEEP_MODE` | worker | `1` = vLLM starts with sleep mode on (the sleep autoscale tier) |
 | `OPOD_WORKER_ROLE` | worker | `prefill` \| `decode` for disaggregated serving; unset = a whole worker |
 | `OPOD_DRAIN_SECONDS` | worker | how long a stopping worker lets the requests already running on it finish (it says goodbye at once; the engine stops when nothing is in flight or the bound passes). `0` = stop at once; unset = `10`. Give the pod a longer grace period |

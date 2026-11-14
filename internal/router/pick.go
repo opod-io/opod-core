@@ -322,12 +322,13 @@ type gangCandidate struct {
 }
 
 // candidate is the gang as the shared ranking sees it: counted under its gang
-// key, its load read from its head's node. A head on the leader itself
-// ("local") reports no sample.
+// key, its load and its KV blocks read from its head's node — the head's
+// worker is where a gang's engine publishes its cache events (T26.22). A head
+// on the leader itself ("local") reports neither.
 func (g gangCandidate) candidate(modelID string) candidate {
 	c := candidate{key: gangKey(modelID, g.gang)}
 	if g.coord.NodeID != "" && g.coord.NodeID != "local" {
-		c.signal = g.coord.NodeID
+		c.signal, c.blocks = g.coord.NodeID, g.coord.NodeID
 	}
 	return c
 }

@@ -85,6 +85,12 @@ type ProcessSpec struct {
 	// length is N" when a VRAM budget cannot hold the model's full context).
 	// Returning false restarts unchanged.
 	Adapt func(tail []string) ([]string, bool) `json:"-"` // never on the wire: a leader ships a ProcessSpec to a worker as JSON
+	// KVEvents marks a gang's engine launched with the KV-events publisher
+	// (KVEventsArgs, PLAN T26.22): the worker it runs on starts its subscriber
+	// when it was itself started with OPOD_KV_EVENTS=1, and reports the
+	// engine's blocks on its heartbeat. Only the gang's head is marked, so the
+	// leader indexes one node per gang. A worker older than the field ignores it.
+	KVEvents bool `json:",omitempty"`
 	// Explain, when set, reads the process's own output after an abnormal
 	// exit and returns one sentence for the operator — what to change — or ""
 	// when it has nothing to say. It leads the ExitErr, before the output

@@ -178,6 +178,12 @@ type Capabilities struct {
 	// that states KVTierPeer — weaker than a block of its own, stronger than
 	// none. Empty = a worker that predates the field, or one with no tier.
 	KVTier string `json:"KVTier,omitempty"`
+	// KVEvents (feature "gang_kv_events") is a worker started with
+	// OPOD_KV_EVENTS=1: it subscribes to its engine's prefix-cache events and
+	// reports their blocks on its heartbeat. A leader launching a vLLM or SGLang
+	// gang headed by this worker adds the engine's publisher flag. False = off,
+	// or a worker that predates the field.
+	KVEvents bool `json:"KVEvents,omitempty"`
 	// GivenDevices (feature "worker_devices") is the accelerators THIS worker
 	// process was given, read from inside its own sandbox — the device nodes
 	// it can open and the devices its vendor runtime enumerates — never the

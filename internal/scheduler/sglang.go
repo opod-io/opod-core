@@ -77,6 +77,14 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 	// The rendezvous port is rank 0's; every other rank only dials it, so it is
 	// taken on rank 0's node alone.
 	distPort := ports.take(rank0.ID, sglangDistPortBase)
+	// Rank 0 serves the API and holds the cache the router reads: its engine
+	// publishes the KV events to its worker when that worker subscribes
+	// (T26.22). Every rank gets the same flags — the page size they carry
+	// must agree across the group — and only rank 0's worker subscribes.
+	kvArgs := ""
+	if kvEventsOn(rank0) {
+		kvArgs = agent.KVEventsArgs("sglang", extra)
+	}
 
 	model := entry.Source.Repo
 	if model == "" {
@@ -115,13 +123,14 @@ func (o *Orchestrator) createShardedSGLang(ctx context.Context, entry models.Ent
 				TP:        split.TP,
 				PP:        split.PP,
 				ToolArgs:  agent.ToolParserArgs("sglang", models.ToolParser(&entry, "sglang"), par.Flags["extra"]),
-				Overrides: overrides, Extra: extra,
+				Overrides: overrides, Extra: extra, KVEvents: kvArgs,
 			})},
 			// No HealthPort: SGLang binds its HTTP port only after the weights are
 			// loaded and the group has formed, which is minutes on a model worth
 			// splitting. Gating the launch on it would time out — the same call
 			// the vLLM backend makes.
-			Restart: false,
+			Restart:  false,
+			KVEvents: rank == 0 && kvArgs != "", // rank 0's worker subscribes
 		}
 		if _, err := o.callWorkerStart(ctx, w, spec); err != nil {
 			o.rollback(ctx, created)
@@ -184,6 +193,9 @@ type sglangGang struct {
 	// An SGLang gang read none of them until 2026-11-11.
 	Overrides string
 	Extra     string
+	// KVEvents is the publisher flags (agent.KVEventsArgs) when rank 0's
+	// worker subscribes to the engine's KV events; "" = it does not.
+	KVEvents string
 }
 
 // sglangGangCommand is the shell line one rank runs.
@@ -227,6 +239,9 @@ func sglangGangCommand(g sglangGang) string {
 	)
 	if g.Extra != "" {
 		args = append(args, g.Extra)
+	}
+	if g.KVEvents != "" {
+		args = append(args, g.KVEvents)
 	}
 	for _, t := range g.ToolArgs {
 		args = append(args, "'"+shellQuote(t)+"'")
