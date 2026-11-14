@@ -129,13 +129,18 @@ func (s *Server) sessionLoad(now time.Time) *adminapi.SessionLoad {
 	}
 }
 
-// routeToken is what a route token says.
+// routeToken is what a route token says. For a gang (T28.8) Node and Boot
+// are its head worker's, and GangModel + Gang name the gang: the key is
+// rebuilt from them (router.GangKey), never parsed, since a model id may hold
+// a ':'.
 type routeToken struct {
-	Node    string `json:"n"`
-	Boot    string `json:"b"`
-	Model   string `json:"m"`
-	Session string `json:"s"` // the hashed session it was minted for
-	Expiry  int64  `json:"e"` // unix seconds
+	Node      string `json:"n"`
+	Boot      string `json:"b"`
+	Model     string `json:"m"`
+	Session   string `json:"s"`            // the hashed session it was minted for
+	Expiry    int64  `json:"e"`            // unix seconds
+	GangModel string `json:"gm,omitempty"` // the model the gang serves (a fallback may differ from Model)
+	Gang      string `json:"g,omitempty"`  // the gang id; "" = Node is a worker
 }
 
 func (s *Server) signRoute(payload []byte) []byte {
@@ -151,9 +156,13 @@ func (s *Server) mintRoute(t routeToken) string {
 	return enc.EncodeToString(payload) + "." + enc.EncodeToString(s.signRoute(payload))
 }
 
-// verifyRoute returns the worker a route token names, or "" when it does not
-// verify: a bad signature, past its expiry, another model or session, or a
-// worker whose process changed since (boot id, ADR-042).
+// verifyRoute returns the worker a route token names — or, for a gang, the
+// gang's router key — or "" when it does not verify: a bad signature, past
+// its expiry, another model or session, or a worker whose process changed
+// since (boot id, ADR-042). A gang's token holds only while that gang still
+// has its head on the named worker AND that worker's process is the one the
+// token was minted against: a re-formed gang, or a head that restarted, is a
+// miss.
 func (s *Server) verifyRoute(ctx context.Context, token, session, model string, now time.Time) string {
 	if token == "" {
 		return ""
@@ -176,7 +185,30 @@ func (s *Server) verifyRoute(ctx context.Context, token, session, model string, 
 	if err != nil || n == nil || n.BootID != t.Boot {
 		return ""
 	}
-	return t.Node
+	if t.Gang == "" {
+		return t.Node
+	}
+	if !s.gangHeadedBy(ctx, t.GangModel, t.Gang, t.Node) {
+		return ""
+	}
+	return router.GangKey(t.GangModel, t.Gang)
+}
+
+// gangHeadedBy reports whether gang of model has its coordinator on node now.
+func (s *Server) gangHeadedBy(ctx context.Context, model, gang, node string) bool {
+	if model == "" {
+		return false
+	}
+	shards, err := s.store.Shards().GetByModel(ctx, model)
+	if err != nil {
+		return false
+	}
+	for _, sh := range shards {
+		if sh.GangID == gang && sh.Role == "coordinator" {
+			return sh.NodeID == node
+		}
+	}
+	return false
 }
 
 // routeWriter sets the route token on a 200 answer to a request with a
@@ -219,10 +251,21 @@ func (w *routeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (s *Server) setRoute(h http.Header, ctx context.Context, model string) {
 	session := router.SessionFrom(ctx)
 	node := router.NodeFrom(ctx)
-	if session == "" || node == "" || strings.Contains(node, ":") {
-		return // no session, no worker, or a gang (its key is not a node)
+	if session == "" || node == "" {
+		return
 	}
-	n, err := s.store.Nodes().Get(ctx, node)
+	t := routeToken{Node: node, Model: model, Session: session}
+	if gm, gang, head := router.GangFrom(ctx); gm != "" && node == router.GangKey(gm, gang) {
+		// A gang: the token names it and its head worker, whose boot id
+		// makes a re-formed gang or a restarted head a miss (T28.8).
+		if head == "" || head == "local" {
+			return // a head on the leader itself has no boot id of its own
+		}
+		t.Node, t.GangModel, t.Gang = head, gm, gang
+	} else if strings.Contains(node, ":") {
+		return // a router key that is neither a worker nor the gang just noted
+	}
+	n, err := s.store.Nodes().Get(ctx, t.Node)
 	if err != nil || n == nil {
 		return
 	}
@@ -230,7 +273,8 @@ func (s *Server) setRoute(h http.Header, ctx context.Context, model string) {
 	if ttl <= 0 {
 		ttl = sessionRouteDefaultTTL
 	}
-	h.Set(SessionRouteHeader, s.mintRoute(routeToken{Node: node, Boot: n.BootID, Model: model, Session: session, Expiry: time.Now().Add(ttl).Unix()}))
+	t.Boot, t.Expiry = n.BootID, time.Now().Add(ttl).Unix()
+	h.Set(SessionRouteHeader, s.mintRoute(t))
 }
 
 // wrapRoute is w with the route token set on its answer, when the policy asks

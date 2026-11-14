@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **A gang keeps a conversation (T28.8).** With two or more gangs of one model, the gang pick read only load: the
+  session pin, the sticky pin, the prefix pin and the signed route token were written after a gang answered and never
+  read, so a later turn went to the least loaded gang and recomputed its prompt. Workers and gangs now pass one ranking
+  (`internal/router/rank.go`): load with the block credit, saturated last, then the prefix pin, then the conversation's
+  pin, which never lands on a saturated or full candidate. A gang's `X-Opod-Session-Route` token names the gang and its
+  head's boot id, so a head that restarted, or a gang re-formed on another head, is a miss. The single-worker order is
+  unchanged.
+
 - **Leaders send their traces and logs to a collector that wants a token or sits behind a path (T21.18).**
   `OPOD_OTLP_HEADERS` (`k=v,k=v`, e.g. `Authorization=Bearer <token>`; feature `otlp_headers`) is sent on every trace
   and log export, and `OPOD_OTLP_ENDPOINT` / `OPOD_OTLP_LOGS_ENDPOINT` keep their URL path as a prefix: `/v1/traces`

@@ -142,31 +142,11 @@ func (r *Router) LoadAware() (kvWeight float64, saturationPct int, prefixAffinit
 	return r.kvWeight, r.kvSaturationPct, r.prefixAffinity
 }
 
-// loadRank is one worker's place in the pick order: saturated workers sort
-// after every unsaturated one, then by score. Caller holds r.mu (read).
+// loadRank is one worker's place in the pick order (candRank on the worker):
+// saturated workers sort after every unsaturated one, then by score. Caller
+// holds r.mu (read).
 func (r *Router) loadRank(nodeID string) (saturated bool, score float64) {
-	score = float64(r.inflight[nodeID])
-	if r.slotsFull(nodeID) {
-		return true, score // every slot busy: a request here waits in the engine's queue
-	}
-	if r.loadSource == nil {
-		return false, score
-	}
-	sig, ok := r.loadSource(nodeID)
-	if !ok {
-		return false, score
-	}
-	score += float64(sig.QueueDepth)
-	if !sig.SampledAt.IsZero() {
-		// Sent after the sample: not in its queue figure yet (ADR-109), so a
-		// burst between two pulls spreads instead of herding on one worker.
-		score += float64(r.sentSinceLocked(nodeID, sig.SampledAt))
-	}
-	if r.kvWeight > 0 {
-		score += r.kvWeight * sig.KVUsedPct / 100
-	}
-	saturated = r.kvSaturationPct > 0 && sig.KVUsedPct >= float64(r.kvSaturationPct)
-	return saturated, score
+	return r.candRank(workerCandidate(nodeID, false))
 }
 
 // ---- prefix affinity -------------------------------------------------------

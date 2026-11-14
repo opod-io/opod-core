@@ -26,8 +26,9 @@ type routeTrace struct {
 	// head is the worker that heads the gang the last pick chose (its
 	// coordinator's node), noted by shardCoordinator: the attempt span names
 	// it as opod.node_id, where the router key is the gang's pseudo node
-	// (T32.42). Spans only; the usage row keeps the gang key.
-	head string
+	// (T32.42). The usage row keeps the gang key. gangModel and gang name
+	// that gang, for the leader's route token (GangFrom, T28.8).
+	head, gangModel, gang string
 	// pin is what the conversation's pin did on the last pick (PinHit,
 	// PinMoved; "" = there was no pin), for the leader's /loadz session
 	// counts (ADR-109).
@@ -152,14 +153,27 @@ func ClassFrom(ctx context.Context) string {
 	return ""
 }
 
-// noteGangHead records the worker heading the gang a pick chose. A no-op
-// when no trace is installed.
-func noteGangHead(ctx context.Context, nodeID string) {
+// NoteGang records the gang a pick chose — its model, its id and the worker
+// heading it. A no-op when no trace is installed.
+func NoteGang(ctx context.Context, model, gang, head string) {
 	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
 		t.mu.Lock()
-		t.head = nodeID
+		t.gangModel, t.gang, t.head = model, gang, head
 		t.mu.Unlock()
 	}
+}
+
+// GangFrom is the gang the request's last gang pick chose: the model it
+// serves, its id and its head worker; all "" when no gang was picked. The
+// leader mints a gang's route token from it (T28.8) — when NodeFrom is that
+// gang's key, so a later dispatch to a worker is not mistaken for the gang.
+func GangFrom(ctx context.Context) (model, gang, head string) {
+	if t, ok := ctx.Value(traceKey{}).(*routeTrace); ok && t != nil {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.gangModel, t.gang, t.head
+	}
+	return "", "", ""
 }
 
 func gangHeadFrom(ctx context.Context) string {

@@ -3,7 +3,6 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -107,98 +106,21 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	//    Load-aware (load.go): the engine's own KV use and queue join the
 	//    in-flight count, and a saturated worker goes to the back of the
 	//    line — it stops receiving new requests before it errors.
-	r.mu.RLock()
-	type ranked struct {
-		saturated bool
-		score     float64
-	}
-	rank := make(map[string]ranked, len(workers))
-	warm := false // some candidate holds blocks of this request's prefix, or can fetch them from a peer
-	ids := make([]string, len(workers))
+	cands := make([]candidate, len(workers))
 	for i, w := range workers {
-		ids[i] = w.NodeID
+		cands[i] = workerCandidate(w.NodeID, caps[w.NodeID].kvPeer)
 	}
-	// Blocks the workers' engines actually hold for this prompt, their own
-	// and — for a worker with a peer tier — a sibling's (prefixblocks.go): a
-	// warm cache outweighs a little load, a peer-warm one less of it.
-	hits := r.blockCredits(ctx, ids, func(id string) bool { return caps[id].kvPeer })
-	if r.log != nil && hits != nil {
-		// What the block index credited each candidate with (debug: one line
-		// per pick that had a chain), so an operator can see why a worker
-		// that holds the prompt did or did not win.
-		per := make([]string, 0, len(hits))
-		for _, id := range ids {
-			h := hits[id]
-			per = append(per, fmt.Sprintf("%s:card=%d,cpu=%d,peer=%d,credit=%.2f", id, h.blocks, h.cpu, h.peer, h.credit))
-		}
-		r.log.Debug("prefix block credits", "model", model, "chain", len(prefixBlocksFrom(ctx)), "candidates", strings.Join(per, " "))
-	}
-	for _, w := range workers {
-		sat, sc := r.loadRank(w.NodeID)
-		hit := hits[w.NodeID]
-		if hit.kind != "" {
-			warm = true
-		}
-		rank[w.NodeID] = ranked{sat, sc - hit.credit}
-	}
-	sort.SliceStable(workers, func(i, j int) bool {
-		a, b := rank[workers[i].NodeID], rank[workers[j].NodeID]
-		if a.saturated != b.saturated {
-			return !a.saturated
-		}
-		return a.score < b.score
-	})
-	r.mu.RUnlock()
-
-	// 3b. Prefix affinity: the worker that last served the longest part of
-	// this prompt's lead likely still holds it in its prefix cache — prefer
-	// it unless it is saturated or its slots are all in flight (a cache hit is
-	// not worth a queue; T10.15, the same guard as the sticky pin below).
-	// When the block index found the prefix warm somewhere, the score above
-	// already decided from what the engines hold; the pin is a guess and is
-	// consulted only when nobody reports holding anything.
-	if !warm {
-		if pin := r.prefixPick(ctx, model, func(id string) bool {
-			rk, ok := rank[id]
-			return ok && !rk.saturated && !r.slotsFullLocked(id)
-		}); pin != "" {
-			workers = preferNode(workers, pin)
-		}
-	}
-
-	// 3a. Sticky pin: if there's a fresh (user_id, model) entry whose
-	// node is still in the workers list AND not in cooldown, surface
-	// it to the front of the sorted slice so it's tried before the
-	// least-loaded candidate. KV-cache locality outweighs a small
-	// inflight delta on the alternative.
-	// A pin never lands a request on a worker whose slots are all in flight
-	// while another has one free: it would queue in that engine, where no
-	// request class ranks it (ADR-091).
-	stickyNode := r.stickyPick(ctx, model)
-	if stickyNode != "" && r.pinHonoured(stickyNode) {
-		workers = preferNode(workers, stickyNode)
-	}
+	// The shared ranking (rank.go): load with the block credit, saturated
+	// last, then the prefix pin, then the conversation's pin — the same order
+	// a gang is ranked by. Equal workers keep their placement order.
+	order, sticky := r.rankCandidates(ctx, model, cands, nil)
 
 	// The list holds only workers that take requests (takingRequests above)
 	// and is never empty here (every step after it keeps at least one), in
 	// order: the first is the pick.
-	node := nodes[workers[0].NodeID]
+	node := nodes[order[0].key]
 	eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken, r.capsOf(node).engine)
-	// Record the sticky outcome only when a pin was actually consulted —
-	// stickyPick already emitted "miss"/"expired" for the no-pin and
-	// expired cases, so emitting again here (the old default "miss")
-	// double-counted every non-sticky request. When a pin existed we
-	// landed on it ("hit") or had to route elsewhere ("miss").
-	switch {
-	case stickyNode == "":
-		notePin(ctx, "")
-	case node.ID == stickyNode:
-		metrics.ObserveStickyOutcome("hit")
-		notePin(ctx, PinHit)
-	default:
-		metrics.ObserveStickyOutcome("miss")
-		notePin(ctx, PinMoved)
-	}
+	notePinOutcome(ctx, sticky, node.ID)
 	// NB: the pin is refreshed on the caller's *success* path
 	// (Chat/Embed), not here at pick time — a node that's picked but then
 	// fails the engine call shouldn't be pinned for the next turn.
@@ -318,11 +240,7 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	}
 	sort.Strings(ids) // a stable order, so an unloaded fleet does not pick at random
 
-	type candidate struct {
-		gang  string
-		coord store.Shard
-	}
-	var ready []candidate
+	var ready []gangCandidate
 	for _, id := range ids {
 		parts := gangs[store.GangKey{Model: modelID, Gang: id}]
 		// One lost part takes ITS gang out: llama-server does not survive a
@@ -342,7 +260,7 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 		}
 		for _, s := range parts {
 			if s.Role == "coordinator" && s.Status == "ready" {
-				ready = append(ready, candidate{gang: id, coord: s})
+				ready = append(ready, gangCandidate{gang: id, coord: s})
 				break
 			}
 		}
@@ -351,8 +269,9 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 		return nil, "", false
 	}
 
-	// Least loaded gang wins. A gang's load is what we have sent to it plus
-	// what its coordinator's node reports — the coordinator is where a
+	// The gangs are ranked by the order a worker is (rank.go): load, saturated
+	// last, the prefix pin, the conversation's pin. A gang's load is what we
+	// have sent to it plus what its head's node reports — the head is where a
 	// request queues, so its node's signal is the gang's signal.
 	//
 	// A TIE goes round the gangs in turn, never to the first by name. With the
@@ -360,29 +279,18 @@ func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.
 	// life — was all served by one gang: a second gang held its cards and
 	// carried nothing, and a canary gang was never sent the requests it is
 	// judged on (run on a cluster, 2026-09-29: 209 of 209 to `g0`).
-	best := ready[0]
-	if len(ready) > 1 {
-		r.mu.RLock()
-		bestSat, bestScore := r.gangRank(best.gang, modelID, best.coord)
-		tied := []candidate{best}
-		for _, c := range ready[1:] {
-			sat, score := r.gangRank(c.gang, modelID, c.coord)
-			switch {
-			case (bestSat && !sat) || (sat == bestSat && score < bestScore):
-				best, bestSat, bestScore = c, sat, score
-				tied = []candidate{c}
-			case sat == bestSat && score == bestScore:
-				tied = append(tied, c)
-			}
-		}
-		r.mu.RUnlock()
-		if len(tied) > 1 {
-			best = tied[int(r.gangTurn.Add(1)-1)%len(tied)]
-		}
+	cands := make([]candidate, len(ready))
+	byKey := make(map[string]gangCandidate, len(ready))
+	for i, c := range ready {
+		cands[i] = c.candidate(modelID)
+		byKey[cands[i].key] = c
 	}
+	order, sticky := r.rankCandidates(ctx, modelID, cands, &r.gangTurn)
+	best := byKey[order[0].key]
+	notePinOutcome(ctx, sticky, order[0].key)
 
 	key := gangKey(modelID, best.gang)
-	noteGangHead(ctx, best.coord.NodeID) // the attempt span names the head worker, not the key (T32.42)
+	NoteGang(ctx, modelID, best.gang, best.coord.NodeID) // the attempt span names the head worker, not the key (T32.42); the route token names the gang (T28.8)
 	r.mu.RLock()
 	eng, cached := r.remotes[key]
 	r.mu.RUnlock()
@@ -407,30 +315,27 @@ func gangKey(modelID, gangID string) string { return "shard:" + modelID + ":" + 
 // under the key the picker counts the gang's requests by (ADR-091).
 func GangKey(modelID, gangID string) string { return gangKey(modelID, gangID) }
 
-// gangRank scores one gang for the pick. Caller holds r.mu.
+// gangCandidate is a ready gang: its id and its head (coordinator) row.
+type gangCandidate struct {
+	gang  string
+	coord store.Shard
+}
+
+// candidate is the gang as the shared ranking sees it: counted under its gang
+// key, its load read from its head's node. A head on the leader itself
+// ("local") reports no sample.
+func (g gangCandidate) candidate(modelID string) candidate {
+	c := candidate{key: gangKey(modelID, g.gang)}
+	if g.coord.NodeID != "" && g.coord.NodeID != "local" {
+		c.signal = g.coord.NodeID
+	}
+	return c
+}
+
+// gangRank scores one gang for the pick (candRank on its candidate). Caller
+// holds r.mu.
 func (r *Router) gangRank(gangID, modelID string, coord store.Shard) (saturated bool, score float64) {
-	score = float64(r.inflight[gangKey(modelID, gangID)])
-	if r.slotsFull(gangKey(modelID, gangID)) {
-		return true, score // the head's slots are all in flight (ADR-091)
-	}
-	if r.loadSource == nil || coord.NodeID == "" || coord.NodeID == "local" {
-		return false, score
-	}
-	sig, ok := r.loadSource(coord.NodeID)
-	if !ok {
-		return false, score
-	}
-	score += float64(sig.QueueDepth)
-	if !sig.SampledAt.IsZero() {
-		// The head's sample is pulled like a worker's (ADR-109): what was sent
-		// to the gang after it counts too.
-		score += float64(r.sentSinceLocked(gangKey(modelID, gangID), sig.SampledAt))
-	}
-	if r.kvWeight > 0 {
-		score += r.kvWeight * sig.KVUsedPct / 100
-	}
-	saturated = r.kvSaturationPct > 0 && sig.KVUsedPct >= float64(r.kvSaturationPct)
-	return saturated, score
+	return r.candRank(gangCandidate{gang: gangID, coord: coord}.candidate(modelID))
 }
 
 // shardGroupRoutable reports whether every part of a gang sits on a worker
