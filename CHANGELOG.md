@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **Leaders send their traces and logs to a collector that wants a token or sits behind a path (T21.18).**
+  `OPOD_OTLP_HEADERS` (`k=v,k=v`, e.g. `Authorization=Bearer <token>`; feature `otlp_headers`) is sent on every trace
+  and log export, and `OPOD_OTLP_ENDPOINT` / `OPOD_OTLP_LOGS_ENDPOINT` keep their URL path as a prefix: `/v1/traces`
+  and `/v1/logs` are added after it unless it already ends in them (`…/otel` → `…/otel/v1/logs`) — the control plane's
+  own rule. Before, the leader sent no header and dropped the path, so a collector that needed either got nothing from
+  leaders. A header value that is not `k=v`, or an
+  endpoint that is not a usable URL, turns that export off with a warning and never stops the leader; the startup line
+  names the headers, never their values.
+
 ## v0.4.6 — 2026-11-11
 
 A gang counts once in `kv_busy_workers`, so a scaler of gangs no longer asks for a second gang at half load; the draft

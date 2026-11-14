@@ -81,7 +81,7 @@ func TestExportLogsTeesToTheCollectorAndKeepsTheLocalHandler(t *testing.T) {
 	var local bytes.Buffer
 	base := slog.New(slog.NewJSONHandler(&local, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	log, shutdown, err := ExportLogs(context.Background(), sink.URL, "v-test", base)
+	log, shutdown, err := ExportLogs(context.Background(), sink.URL, "", "v-test", base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestExportLogsTeesToTheCollectorAndKeepsTheLocalHandler(t *testing.T) {
 
 func TestExportLogsOffIsTheSameLogger(t *testing.T) {
 	base := slog.New(slog.NewTextHandler(io.Discard, nil))
-	log, shutdown, err := ExportLogs(context.Background(), "", "v", base)
+	log, shutdown, err := ExportLogs(context.Background(), "", "", "v", base)
 	if err != nil || log != base {
 		t.Fatalf("no endpoint must change nothing: log=%p base=%p err=%v", log, base, err)
 	}
@@ -133,7 +133,7 @@ func TestExportLogsNeverBlocksOnADeadCollector(t *testing.T) {
 
 	var local bytes.Buffer
 	base := slog.New(slog.NewJSONHandler(&local, nil))
-	log, shutdown, err := ExportLogs(context.Background(), dead, "v", base)
+	log, shutdown, err := ExportLogs(context.Background(), dead, "", "v", base)
 	if err != nil {
 		t.Fatal(err)
 	}

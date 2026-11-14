@@ -49,6 +49,7 @@ const (
 	EnvPolicyFile         = "OPOD_POLICY_FILE"
 	EnvCoordinatorNode    = "OPOD_COORDINATOR_NODE"
 	EnvOTLPLogsEndpoint   = "OPOD_OTLP_LOGS_ENDPOINT"
+	EnvOTLPHeaders        = "OPOD_OTLP_HEADERS"
 	EnvTraceSampleRatio   = "OPOD_TRACE_SAMPLE_RATIO"
 	EnvUsageOTLPEndpoint  = "OPOD_USAGE_OTLP_ENDPOINT"
 	EnvUsageOTLPHeaders   = "OPOD_USAGE_OTLP_HEADERS"
@@ -126,6 +127,7 @@ var envTable = []EnvVar{
 	{Name: EnvPolicyFile, Side: SideLeader, Since: "policy_file", Doc: `the mounted policy snapshot: routing, logging, auth bounds, admission, wake (default /etc/opod-auth/policy.json; "off" = no watcher)`},
 	{Name: EnvCoordinatorNode, Side: SideLeader, Since: "shards", Doc: `pin the llama.cpp RPC coordinator to a node id ("local" = the leader itself)`},
 	{Name: EnvOTLPLogsEndpoint, Side: SideLeader, Since: "otlp_logs", Doc: `OTLP/HTTP collector for the leader's own log records (URL or host:port); stderr keeps working, the queue is bounded and never blocks. Empty = off`},
+	{Name: EnvOTLPHeaders, Side: SideLeader, Since: "otlp_headers", Doc: `headers for the leader's trace and log exports (OPOD_OTLP_ENDPOINT, OPOD_OTLP_LOGS_ENDPOINT), "k=v,k=v" (the OTEL_EXPORTER_OTLP_HEADERS form), e.g. Authorization=Bearer <token>; a value may hold "=" but not ",", and is sent as written. Unset = none. A value that is not k=v turns that export off with a warning; the leader still starts`},
 	{Name: EnvTraceSampleRatio, Side: SideLeader, Since: "trace_sample_ratio", Doc: `the share of the traces the leader starts that it records, from 0 to 1, when OPOD_OTLP_ENDPOINT is set; unset = 1 (every request). A request that arrives with a traceparent follows its caller's sampling decision whatever the ratio. Anything else is an error at start`},
 	{Name: EnvUsageOTLPEndpoint, Side: SideLeader, Since: "usage_push", Doc: `OTLP/HTTP logs URL the leader pushes one usage record per request to (e.g. http://collector:4318/v1/logs); a record leaves the leader's queue only on a 2xx. Empty = records are held in the bounded queue and nothing is sent`},
 	{Name: EnvUsageOTLPHeaders, Side: SideLeader, Since: "usage_push", Doc: `headers for that push, "k=v,k=v" (the OTEL_EXPORTER_OTLP_HEADERS form), e.g. Authorization=Bearer <token>`},

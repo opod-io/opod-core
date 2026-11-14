@@ -1155,7 +1155,7 @@ Cache and hooks:
 
 ### Traces
 
-OpenTelemetry/OTLP-HTTP. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to a collector URL — empty disables tracing with zero overhead (NoopTracerProvider).
+OpenTelemetry/OTLP-HTTP. Set `observability.otlp_endpoint` (or `OPOD_OTLP_ENDPOINT`) to a collector URL — empty disables tracing with zero overhead (NoopTracerProvider). A URL path is kept as a prefix: `/v1/traces` is added after it unless it already ends in it (`…/otel` → `…/otel/v1/traces`, none or `/` → `/v1/traces`) — the rule the control plane's own OTLP exporters and Verify follow, so one saved URL reaches the same collector from both. `OPOD_OTLP_HEADERS` (`k=v,k=v`, feature `otlp_headers`) is sent on every trace and log export — a collector's token (`internal/leader/tracing.go` `otlpTarget`); the startup line names the headers, never their values.
 
 Span hierarchy today:
 
@@ -1189,7 +1189,7 @@ vLLM / SGLang / MLX / llamacpp / TensorRT-LLM drivers all carry the same `<drive
 
 `slog` to stderr in JSON. Levels: debug, info, warn, error. Request IDs propagated through context.
 
-**OTLP export (feature `otlp_logs`).** With `OPOD_OTLP_LOGS_ENDPOINT` set (a URL or bare `host:port`, the same forms as the trace endpoint) the leader also sends its own records to a collector over OTLP/HTTP, on the upstream SDK (`otel/sdk/log` + `otlploghttp`, bridged from `slog` by `contrib/bridges/otelslog`) — `internal/leader/logexport.go`. It is a tee, not a redirect: stderr keeps every record it had. `log_level` governs both sides, so a collector never receives what the operator did not ask for. Records carry the same `service.name=opod` / `service.version` resource as the spans. The batch queue holds 2,048 records and emit never waits on the network: a slow or absent collector costs the oldest queued records, never a request, and a bad endpoint is a startup warning rather than a failure. Only the leader process's own records are exported — what an engine writes to its stdout belongs to whatever collects the host's or the pod's logs.
+**OTLP export (feature `otlp_logs`).** With `OPOD_OTLP_LOGS_ENDPOINT` set (a URL or bare `host:port`, the same forms and path rule as the trace endpoint — `/v1/logs` added unless the path ends in it — and the same `OPOD_OTLP_HEADERS`) the leader also sends its own records to a collector over OTLP/HTTP, on the upstream SDK (`otel/sdk/log` + `otlploghttp`, bridged from `slog` by `contrib/bridges/otelslog`) — `internal/leader/logexport.go`. It is a tee, not a redirect: stderr keeps every record it had. `log_level` governs both sides, so a collector never receives what the operator did not ask for. Records carry the same `service.name=opod` / `service.version` resource as the spans. The batch queue holds 2,048 records and emit never waits on the network: a slow or absent collector costs the oldest queued records, never a request, and a bad endpoint is a startup warning rather than a failure. Only the leader process's own records are exported — what an engine writes to its stdout belongs to whatever collects the host's or the pod's logs.
 
 ### Dashboards
 

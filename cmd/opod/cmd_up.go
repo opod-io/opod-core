@@ -94,7 +94,7 @@ func runUp(args []string) int {
 	// The leader's own records also go to an OTLP collector when one is named
 	// (OPOD_OTLP_LOGS_ENDPOINT). stderr keeps working either way, and a bad
 	// endpoint is a warning: telemetry never decides whether the gateway starts.
-	log, stopLogExport, err := leader.ExportLogs(context.Background(), cfg.Env.OTLPLogsEndpoint, version, log)
+	log, stopLogExport, err := leader.ExportLogs(context.Background(), cfg.Env.OTLPLogsEndpoint, cfg.Env.OTLPHeaders, version, log)
 	if err != nil {
 		log.Warn("log export disabled", "err", err)
 	}

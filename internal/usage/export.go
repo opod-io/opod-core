@@ -49,7 +49,7 @@ type Exporter struct {
 func NewExporter(q *Queue, url, headers string) (*Exporter, error) {
 	h, err := ParseHeaders(headers)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("usage export headers: %w", err)
 	}
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return nil, fmt.Errorf("usage export: %q is not an http(s) URL", url)
@@ -58,7 +58,9 @@ func NewExporter(q *Queue, url, headers string) (*Exporter, error) {
 		minBackoff: time.Second, maxBackoff: 30 * time.Second}, nil
 }
 
-// ParseHeaders reads "k=v,k=v". Values may contain '=' (a base64 token).
+// ParseHeaders reads "k=v,k=v". Values may contain '=' (a base64 token) but
+// not ',', and are taken as written (no percent-decoding). The leader's trace
+// and log exporters read OPOD_OTLP_HEADERS with it too.
 func ParseHeaders(s string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, part := range strings.Split(s, ",") {
@@ -68,7 +70,7 @@ func ParseHeaders(s string) (map[string]string, error) {
 		}
 		k, v, ok := strings.Cut(part, "=")
 		if !ok || strings.TrimSpace(k) == "" {
-			return nil, fmt.Errorf("usage export headers: %q is not k=v", part)
+			return nil, fmt.Errorf("%q is not k=v", part)
 		}
 		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}

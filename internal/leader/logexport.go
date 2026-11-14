@@ -16,7 +16,8 @@ import (
 )
 
 // Log export: the leader's own records over OTLP/HTTP, the way its spans
-// already go (tracing.go). Same endpoint forms, same resource, same rule that
+// already go (tracing.go). Same endpoint forms (otlpTarget, "/v1/logs" added
+// unless the URL's path ends in it), the same OPOD_OTLP_HEADERS, same resource, same rule that
 // telemetry is never on anyone's critical path:
 //
 //   - the local handler keeps working — export is a tee, not a redirect, so
@@ -35,24 +36,29 @@ const (
 )
 
 // ExportLogs returns a logger that writes to base's handler AND exports every
-// record to the OTLP/HTTP collector at endpoint, plus the shutdown that flushes
-// what is queued. An empty endpoint returns base unchanged and a no-op
-// shutdown: export off means no provider, no goroutine, no overhead.
-func ExportLogs(ctx context.Context, endpoint, version string, base *slog.Logger) (*slog.Logger, func(context.Context) error, error) {
+// record to the OTLP/HTTP collector at endpoint, with headers (OPOD_OTLP_HEADERS,
+// "k=v,k=v") on every export, plus the shutdown that flushes what is queued.
+// An empty endpoint returns base unchanged and a no-op shutdown: export off
+// means no provider, no goroutine, no overhead.
+func ExportLogs(ctx context.Context, endpoint, headers, version string, base *slog.Logger) (*slog.Logger, func(context.Context) error, error) {
 	noop := func(context.Context) error { return nil }
 	if endpoint == "" {
 		return base, noop, nil
 	}
-	host, scheme, err := parseOTLPEndpoint(endpoint)
+	t, err := otlpTarget(endpoint, headers, "/v1/logs")
 	if err != nil {
-		return base, noop, fmt.Errorf("parse otlp logs endpoint: %w", err)
+		return base, noop, fmt.Errorf("otlp logs endpoint: %w", err)
 	}
 	opts := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(host),
+		otlploghttp.WithEndpoint(t.host),
+		otlploghttp.WithURLPath(t.path),
 		otlploghttp.WithTimeout(logExportTimeout),
 	}
-	if scheme == "http" {
+	if t.scheme == "http" {
 		opts = append(opts, otlploghttp.WithInsecure())
+	}
+	if len(t.headers) > 0 {
+		opts = append(opts, otlploghttp.WithHeaders(t.headers))
 	}
 	exporter, err := otlploghttp.New(ctx, opts...)
 	if err != nil {
@@ -75,7 +81,7 @@ func ExportLogs(ctx context.Context, endpoint, version string, base *slog.Logger
 	)
 	exported := otelslog.NewHandler("github.com/opod-io/opod-core", otelslog.WithLoggerProvider(provider))
 	log := slog.New(teeHandler{local: base.Handler(), export: exported})
-	log.Info("log export enabled", "endpoint", endpoint, "scheme", scheme)
+	log.Info("log export enabled", "endpoint", endpoint, "scheme", t.scheme, "path", t.path, "headers", t.headerNames()) // names only: a value is a credential
 	return log, provider.Shutdown, nil
 }
 

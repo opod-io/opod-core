@@ -123,7 +123,7 @@ var contractFeatureFloor = []string{
 	"events_stream", "usage_push", "loadz", "shards", "plan_file", "auth_file", "router_only_ready",
 	"routing_weights", "model_revision", "adapters_runtime", "vram_budget", "stream_boot", "load_signals",
 	"lora", "boot_id", "registry_rebuilding", "tls_listener", "pd_roles", "routing_load_aware", "worker_sleep", "policy_file",
-	"shard_head", "ttft", "engines", "fetch_snapshot", "otlp_logs", "cache_prune", "gang_devices_per_rank",
+	"shard_head", "ttft", "engines", "fetch_snapshot", "otlp_logs", "otlp_headers", "cache_prune", "gang_devices_per_rank",
 	"node_drain",      // POST /admin/v1/nodes/{id}/drain|undrain, honoured by every picker
 	"placement_drain", // a draining placement survives the worker's heartbeats
 	"worker_unload",   // POST /v1/model/unload on a worker

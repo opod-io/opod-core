@@ -101,7 +101,7 @@ func TestTraceSampleRatioRefusesWhatIsNotARatio(t *testing.T) {
 			t.Errorf("traceSampler(%q) = %v, want an error naming OPOD_TRACE_SAMPLE_RATIO", v, err)
 		}
 	}
-	if _, err := initTracing(context.Background(), "", "2", "dev", slog.Default()); err == nil {
+	if _, err := initTracing(context.Background(), "", "", "2", "dev", slog.Default()); err == nil {
 		t.Error("initTracing took an invalid ratio with tracing off; a typo must fail where it was made")
 	}
 }
@@ -109,7 +109,7 @@ func TestTraceSampleRatioRefusesWhatIsNotARatio(t *testing.T) {
 // The ratio is the one the leader's provider runs with: with ratio 0 a root
 // span the leader starts does not record, and a sampled caller's does.
 func TestInitTracingRunsWithTheRatio(t *testing.T) {
-	shutdown, err := initTracing(context.Background(), "127.0.0.1:1", "0", "dev", slog.Default())
+	shutdown, err := initTracing(context.Background(), "127.0.0.1:1", "", "0", "dev", slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
