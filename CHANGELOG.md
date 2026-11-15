@@ -7,7 +7,19 @@ the last section.
 
 ## Unreleased
 
-- **`opod cache kv-prune` holds its cap on a network filesystem (T26.24).** On NFS a pass costs a round trip per directory and per block, and vLLM's fs tier puts almost every block in its own hash-named directory: a sequential pass took 3.7 s for 3,362 blocks, two writers outran it, and a 1 GiB tier reached 2.28 GiB. A pass now lists up to 32 directories at once, and trims ahead of the growth it measured since the previous pass (held to half the cap), so a tier that a burst is filling is trimmed before it crosses the cap, not after. A local disk sees no change.
+## v0.4.7 — 2026-11-15
+
+A gang keeps a conversation and publishes its prefix-cache events, leaders send traces and logs to a collector that
+wants a token or a path, and `opod cache kv-prune` holds its cap on a network filesystem. Each is proven on the
+design-partner cell: the gang changes with two vLLM pipeline-parallel gangs on NVIDIA (an SGLang gang's events, a move
+off a full gang and a pin that expires on a head restart are unit-tested only), the OTLP headers against a collector
+that refused requests without them, and the pruner with two hosts writing one NFS tier at once.
+
+- **`opod cache kv-prune` holds its cap on a network filesystem (T26.24).** On NFS a pass costs a round trip per
+  directory and per block, and vLLM's fs tier puts almost every block in its own hash-named directory: a sequential pass
+  took 3.7 s for 3,362 blocks, two writers outran it, and a 1 GiB tier reached 2.28 GiB. A pass now lists up to 32
+  directories at once, and trims ahead of the growth it measured since the previous pass (held to half the cap), so a
+  tier that a burst is filling is trimmed before it crosses the cap, not after. A local disk sees no change.
 
 - **A vLLM or SGLang gang publishes its prefix-cache events (T26.22).** A gang with `OPOD_KV_EVENTS=1` on its parts
   was launched with no `--kv-events-config`, so it served with no blocks in the index and was routed by load alone. A
