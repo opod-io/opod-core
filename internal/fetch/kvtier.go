@@ -54,6 +54,13 @@ const kvTierLowWatermark = 0.9
 // T26.20). One second of writes is a few percent of any sensible cap.
 const KVTierHotDelay = time.Second
 
+// kvTierVolumeFree is the free space of the volume holding dir, read between
+// passes; a test replaces it.
+var kvTierVolumeFree = func(dir string) (int64, error) {
+	_, free, err := volumeBytes(dir)
+	return int64(free), err
+}
+
 // KVTierPruneRequest is one pass over a disk tier directory.
 type KVTierPruneRequest struct {
 	Dir string
@@ -333,12 +340,44 @@ func RunKVTierPruner(ctx context.Context, req KVTierPruneRequest, every, hot tim
 			}
 			left = now
 		}
-		t := time.NewTimer(delay)
+		if !kvTierWait(ctx, req, delay, hot) {
+			return
+		}
+	}
+}
+
+// kvTierWait waits delay before the next pass, or less. While the loop is idle
+// it reads the volume's free space every hot delay (one statfs, where a pass
+// lists every directory), and a drop of a twentieth of the cap since the wait
+// began ends the wait at once: a burst that starts right after an idle pass
+// is otherwise unguarded for a whole period — on the design-partner cell two
+// hosts took a 0.85 GiB tier to 1.07 GiB in the 10 s before the next pass
+// (PLAN T26.24). A drop the tier did not cause (another writer on a shared
+// volume) only brings a pass forward. A volume whose free space cannot be
+// read waits the full delay, as before. False when ctx ends.
+func kvTierWait(ctx context.Context, req KVTierPruneRequest, delay, hot time.Duration) bool {
+	step, trigger := delay, req.MaxBytes/20
+	base, err := kvTierVolumeFree(req.Dir)
+	if delay > hot && trigger > 0 && !req.DryRun && err == nil {
+		step = hot
+	}
+	end := time.Now().Add(delay)
+	for {
+		left := time.Until(end)
+		if left <= 0 {
+			return true
+		}
+		t := time.NewTimer(min(step, left))
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return
+			return false
 		case <-t.C:
+		}
+		if step < delay {
+			if free, err := kvTierVolumeFree(req.Dir); err == nil && base-free >= trigger {
+				return true
+			}
 		}
 	}
 }

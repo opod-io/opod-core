@@ -7,6 +7,14 @@ the last section.
 
 ## Unreleased
 
+- **`opod cache kv-prune --every` catches a burst that starts while it is idle (T26.24).** v0.4.7 trims ahead of the
+  growth it measured between two passes, so a burst that started right after an idle pass was unguarded until the
+  next one: on the design-partner cell two hosts writing at once took a 0.85 GiB NFS tier to 1.07 GiB (1.26 × the cap)
+  in those 10 s. While idle the loop now reads the volume's free space every second (one `statfs`) and passes at once
+  when it has dropped by a twentieth of the cap; another writer on the same volume only brings a pass forward. **This
+  corrects v0.4.7's entry**, which said a burst "is trimmed before it crosses the cap": in v0.4.7 that holds only for a
+  burst the pruner has already seen.
+
 ## v0.4.7 — 2026-11-15
 
 A gang keeps a conversation and publishes its prefix-cache events, leaders send traces and logs to a collector that

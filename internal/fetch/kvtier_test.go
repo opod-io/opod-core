@@ -318,6 +318,75 @@ func TestKVTierPrunerHoldsTheBoundOnASlowFilesystem(t *testing.T) {
 	t.Logf("peak %.2f × the cap", float64(peak)/capBytes)
 }
 
+// A burst that starts right after an idle pass is trimmed before the idle
+// period ends (PLAN T26.24, cell 2026-11-15: an idle pass, then two hosts
+// writing for 10 s with no pass, took a 0.85 GiB tier to 1.07 GiB). While
+// idle the loop reads the volume's free space every hot delay, and a drop
+// of a twentieth of the cap starts the next pass at once.
+func TestKVTierPrunerCatchesABurstThatStartsWhileIdle(t *testing.T) {
+	dir := t.TempDir()
+	const (
+		capBytes = 4 << 20
+		fileSize = 32 << 10
+		every    = time.Second
+		hot      = 10 * time.Millisecond
+	)
+	// The volume's free space as the tier's own bytes take it: deterministic,
+	// where a real statfs of the test machine moves with everything else on it.
+	free := kvTierVolumeFree
+	kvTierVolumeFree = func(string) (int64, error) { return 1<<40 - kvTierBytes(dir), nil }
+	defer func() { kvTierVolumeFree = free }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	idle := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunKVTierPruner(ctx, KVTierPruneRequest{Dir: dir, MaxBytes: capBytes}, every, hot, func(r KVTierPruneResult, err error) {
+			if err != nil {
+				t.Errorf("pass: %v", err)
+			}
+			if r.Removed == 0 {
+				select {
+				case idle <- struct{}{}:
+				default:
+				}
+			}
+		})
+	}()
+	<-idle // the burst starts right after an idle pass, as on the cell
+	var peak int64
+	blob := make([]byte, fileSize)
+	start := time.Now()
+	// Three caps of writes, as fast as the disk takes them, all inside the
+	// first three quarters of one idle period.
+	for i := 0; i < 3*capBytes/fileSize && time.Since(start) < every*3/4; i++ {
+		sub := filepath.Join(dir, "x_r0", fmt.Sprintf("%03x", i%64))
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, fmt.Sprintf("%08d.bin", i)), blob, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if i%8 == 0 {
+			if n := kvTierBytes(dir); n > peak {
+				peak = n
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if n := kvTierBytes(dir); n > peak {
+		peak = n
+	}
+	cancel()
+	<-done
+	if limit := int64(capBytes) * 3 / 2; peak >= limit {
+		t.Fatalf("a burst from idle peaked at %.2f × the cap before the idle period ended", float64(peak)/capBytes)
+	}
+	t.Logf("peak %.2f × the cap", float64(peak)/capBytes)
+}
+
 // A pass trims ahead of the growth it is told to expect: the reserve counts as
 // already written, so a tier under its cap but within the reserve of it is
 // trimmed, down to the low watermark less the reserve.
@@ -358,12 +427,24 @@ func TestKVTierPrunerCadence(t *testing.T) {
 	dir := t.TempDir()
 	writeAged(t, dir, "a.bin", 100, time.Hour)
 	const every = 300 * time.Millisecond
+	// A volume nothing else writes to: the test machine's own disk activity
+	// would cross this small cap's probe trigger and bring passes forward.
+	free := kvTierVolumeFree
+	kvTierVolumeFree = func(string) (int64, error) { return 1 << 40, nil }
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	passes := make(chan time.Time, 16)
-	go RunKVTierPruner(ctx, KVTierPruneRequest{Dir: dir, MaxBytes: 1 << 20}, every, time.Millisecond, func(KVTierPruneResult, error) {
-		passes <- time.Now()
-	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunKVTierPruner(ctx, KVTierPruneRequest{Dir: dir, MaxBytes: 1 << 20}, every, time.Millisecond, func(KVTierPruneResult, error) {
+			select {
+			case passes <- time.Now():
+			default:
+			}
+		})
+	}()
+	// The loop has stopped before the hook is put back.
+	defer func() { cancel(); <-done; kvTierVolumeFree = free }()
 	first := <-passes
 	second := <-passes // nothing to compare the first against: the idle period
 	if gap := second.Sub(first); gap < every*2/3 {
