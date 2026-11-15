@@ -238,6 +238,120 @@ func TestKVTierPrunerBoundsABurst(t *testing.T) {
 	t.Logf("peak %.2f × the cap", float64(peak)/capBytes)
 }
 
+// On a network filesystem a pass is slow, and its cost is per directory: on the
+// design-partner cell's NFS a walk of 3,362 block files (each in its own
+// hash-named directory) took 3.7 s, two writers outran it, and a 1 GiB tier
+// reached 2.28 GiB (PLAN T26.24). Each directory listing here costs 2 ms; the
+// writers spread over 448 directories, so one sequential pass costs about a
+// second while they write 8 MiB/s into a 4 MiB tier. The bound holds when the
+// pass reads directories concurrently and trims ahead of the growth it measured.
+func TestKVTierPrunerHoldsTheBoundOnASlowFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	const (
+		capBytes = 4 << 20
+		fileSize = 32 << 10
+		every    = 200 * time.Millisecond
+		hot      = 10 * time.Millisecond
+	)
+	slow := kvTierReadDir
+	kvTierReadDir = func(name string) ([]os.DirEntry, error) {
+		time.Sleep(2 * time.Millisecond)
+		return slow(name)
+	}
+	defer func() { kvTierReadDir = slow }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunKVTierPruner(ctx, KVTierPruneRequest{Dir: dir, MaxBytes: capBytes}, every, hot, func(_ KVTierPruneResult, err error) {
+			if err != nil {
+				t.Errorf("pass: %v", err)
+			}
+		})
+	}()
+	var peak int64
+	stopSample := make(chan struct{})
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		for {
+			if n := kvTierBytes(dir); n > peak {
+				peak = n
+			}
+			select {
+			case <-stopSample:
+				return
+			case <-time.After(2 * time.Millisecond):
+			}
+		}
+	}()
+	blob := make([]byte, fileSize)
+	for i := 0; i < 6*capBytes/fileSize; i++ {
+		sub := filepath.Join(dir, "x_r0", fmt.Sprintf("%03x", i%64), fmt.Sprintf("%02x_g0", i%6))
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(sub, fmt.Sprintf("%08d.bin", i))
+		if err := os.WriteFile(p+".tmp", blob, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(p+".tmp", p); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(4 * time.Millisecond)
+	}
+	time.Sleep(every + 100*time.Millisecond)
+	close(stopSample)
+	<-sampled
+	cancel()
+	<-done
+	// The row's bound is 1.25 × the cap, proven on the cell; here 1.5 leaves room
+	// for a CPU-starved test machine, and a sequential pass lands near 2.
+	if limit := int64(capBytes) * 3 / 2; peak >= limit {
+		t.Fatalf("the tier peaked at %.2f × its cap on a slow filesystem", float64(peak)/capBytes)
+	}
+	if end := kvTierBytes(dir); end > capBytes {
+		t.Fatalf("the tier settled at %d bytes, over its %d-byte cap", end, capBytes)
+	}
+	t.Logf("peak %.2f × the cap", float64(peak)/capBytes)
+}
+
+// A pass trims ahead of the growth it is told to expect: the reserve counts as
+// already written, so a tier under its cap but within the reserve of it is
+// trimmed, down to the low watermark less the reserve.
+func TestKVTierPruneTrimsAheadOfTheReserve(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 10; i++ {
+		writeAged(t, dir, fmt.Sprintf("b%02d.bin", i), 100, time.Duration(10-i)*time.Minute)
+	}
+	// 1,000 bytes under a 1,200 cap: nothing goes without a reserve.
+	res, err := PruneKVTier(KVTierPruneRequest{Dir: dir, MaxBytes: 1200})
+	if err != nil || res.Removed != 0 {
+		t.Fatalf("no reserve: removed %d (%v), want 0", res.Removed, err)
+	}
+	// With 400 bytes expected, 1,400 > 1,200: trim to 0.9 × 1,200 − 400 = 680.
+	res, err = PruneKVTier(KVTierPruneRequest{Dir: dir, MaxBytes: 1200, Reserve: 400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left := res.UsedBytes - res.FreedBytes; res.Removed != 4 || left != 600 {
+		t.Fatalf("reserve 400: removed %d, %d bytes left; want 4 removed, 600 left", res.Removed, left)
+	}
+	if exists(filepath.Join(dir, "b00.bin")) || !exists(filepath.Join(dir, "b09.bin")) {
+		t.Fatal("the reserve trim did not take the oldest blocks first")
+	}
+	// A reserve at or above the cap is held to half of it, never an empty tier.
+	res, err = PruneKVTier(KVTierPruneRequest{Dir: dir, MaxBytes: 1200, Reserve: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left := res.UsedBytes - res.FreedBytes; left == 0 {
+		t.Fatal("a reserve larger than the cap emptied the tier")
+	}
+}
+
 // An idle tier is read at the idle period; a tier that grew since the last
 // pass is read again after the hot delay.
 func TestKVTierPrunerCadence(t *testing.T) {

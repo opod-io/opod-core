@@ -38,7 +38,7 @@ func cmdCache(args []string) {
 		},
 		notes: []string{
 			"--dir defaults to $OPOD_MODELS_DIR. prune never removes a file opod did not fetch, and is a dry run without --apply.",
-			"kv-prune bounds a disk KV tier (an engine's kv_tier_fs directory), which the engine never deletes from: oldest blocks first, down to 90% of --max-gb, re-read every second while the tier grows; --max-gb 0 empties it but for the --keep entries. It touches only the tier's own files (*.bin, *.tmp, config.json).",
+			"kv-prune bounds a disk KV tier (an engine's kv_tier_fs directory), which the engine never deletes from: oldest blocks first, down to 90% of --max-gb (less the growth seen since the last pass, so a burst is trimmed before it crosses the cap), re-read every second while the tier grows; --max-gb 0 empties it but for the --keep entries. It touches only the tier's own files (*.bin, *.tmp, config.json).",
 		},
 	}
 	if len(args) == 0 {

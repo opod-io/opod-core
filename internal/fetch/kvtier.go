@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,8 +60,14 @@ type KVTierPruneRequest struct {
 	// MaxBytes caps the tier's files; 0 removes all of them.
 	MaxBytes int64
 	// Keep names top-level entries of Dir that are never touched.
-	Keep   []string
-	DryRun bool
+	Keep []string
+	// Reserve is how much the tier is expected to grow before the next pass
+	// reads it (the loop measures it as the growth between its last two
+	// passes). A pass counts it as already written, so it trims before a burst
+	// crosses the cap rather than after; it is held to half the cap, so a
+	// burst larger than the tier never empties it.
+	Reserve int64
+	DryRun  bool
 }
 
 // KVTierPruneResult is what one pass found and did.
@@ -125,38 +132,13 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 			keep[filepath.Base(k)] = true
 		}
 	}
-	var files []kvTierFile
 	walkStart := time.Now()
-	err := filepath.WalkDir(req.Dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil // removed under us (the engine renamed a write)
-			}
-			return err
-		}
-		if filepath.Dir(p) == req.Dir && keep[d.Name()] {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		kind := kvTierKind(d.Name())
-		if kind == "" {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil // gone between the listing and the stat
-		}
-		files = append(files, kvTierFile{path: p, size: info.Size(), mod: info.ModTime(), kind: kind})
-		res.UsedBytes += info.Size()
-		return nil
-	})
+	files, err := walkKVTier(req.Dir, keep, kvTierWalkers)
 	if err != nil {
 		return res, fmt.Errorf("kv tier prune: walk %s: %w", req.Dir, err)
+	}
+	for _, f := range files {
+		res.UsedBytes += f.size
 	}
 	res.WalkMs = time.Since(walkStart).Milliseconds()
 	var drop []kvTierFile
@@ -165,6 +147,7 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 	} else {
 		now := time.Now()
 		used := res.UsedBytes
+		reserve := min(max(req.Reserve, 0), req.MaxBytes/2)
 		var blocks []kvTierFile
 		for _, f := range files {
 			switch {
@@ -175,8 +158,8 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 				blocks = append(blocks, f)
 			}
 		}
-		if used > req.MaxBytes {
-			target := int64(float64(req.MaxBytes) * kvTierLowWatermark)
+		if used+reserve > req.MaxBytes {
+			target := int64(float64(req.MaxBytes)*kvTierLowWatermark) - reserve
 			sort.Slice(blocks, func(i, j int) bool { return blocks[i].mod.Before(blocks[j].mod) })
 			for _, b := range blocks {
 				if used <= target {
@@ -203,6 +186,99 @@ func PruneKVTier(req KVTierPruneRequest) (KVTierPruneResult, error) {
 		removeEmptyDirs(req.Dir, keep)
 	}
 	return res, nil
+}
+
+// kvTierWalkers is how many directories a pass lists at once. A network
+// filesystem answers each listing and each stat in a round trip, and vLLM puts
+// almost every block in a hash-named directory of its own, so a sequential
+// walk costs about a millisecond per block (3,362 blocks in 3.7 s on the
+// design-partner cell's NFS) and a burst outruns it. Concurrent listings hide
+// the round trips; on a local disk they cost nothing.
+const kvTierWalkers = 32
+
+// kvTierReadDir lists one directory; a test slows it to stand in for a network
+// filesystem.
+var kvTierReadDir = os.ReadDir
+
+// walkKVTier lists the tier's own files under root with up to workers
+// directory listings in flight, skipping the kept top-level entries. A
+// directory or file removed under the walk is skipped (the engine renames its
+// writes, and a pruner removes); any other error ends the walk. The queue is a
+// slice, not a goroutine per directory, so a tier of a million directories
+// holds a fixed number of goroutines.
+func walkKVTier(root string, keep map[string]bool, workers int) ([]kvTierFile, error) {
+	var (
+		mu       sync.Mutex
+		wake     = sync.NewCond(&mu)
+		queue    = []string{root}
+		busy     int
+		files    []kvTierFile
+		firstErr error
+		wg       sync.WaitGroup
+	)
+	list := func(dir string) ([]string, []kvTierFile, error) {
+		entries, err := kvTierReadDir(dir)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, nil, nil
+			}
+			return nil, nil, err
+		}
+		var subdirs []string
+		var found []kvTierFile
+		for _, d := range entries {
+			if dir == root && keep[d.Name()] {
+				continue
+			}
+			p := filepath.Join(dir, d.Name())
+			if d.IsDir() {
+				subdirs = append(subdirs, p)
+				continue
+			}
+			kind := kvTierKind(d.Name())
+			if !d.Type().IsRegular() || kind == "" {
+				continue
+			}
+			info, err := d.Info()
+			if err != nil {
+				continue // gone between the listing and the stat
+			}
+			found = append(found, kvTierFile{path: p, size: info.Size(), mod: info.ModTime(), kind: kind})
+		}
+		return subdirs, found, nil
+	}
+	for range max(workers, 1) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			defer mu.Unlock()
+			for {
+				for len(queue) == 0 && busy > 0 && firstErr == nil {
+					wake.Wait()
+				}
+				if firstErr != nil || len(queue) == 0 {
+					wake.Broadcast()
+					return
+				}
+				dir := queue[len(queue)-1]
+				queue = queue[:len(queue)-1]
+				busy++
+				mu.Unlock()
+				subdirs, found, err := list(dir)
+				mu.Lock()
+				busy--
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+				queue = append(queue, subdirs...)
+				files = append(files, found...)
+				wake.Broadcast()
+			}
+		}()
+	}
+	wg.Wait()
+	return files, firstErr
 }
 
 // removeEmptyDirs removes every directory under dir (and dir itself) left
@@ -245,6 +321,15 @@ func RunKVTierPruner(ctx context.Context, req KVTierPruneRequest, every, hot tim
 			now := res.UsedBytes - res.FreedBytes
 			if (res.Removed > 0 && !req.DryRun) || (left >= 0 && now > left) {
 				delay = hot
+			}
+			// What the engine wrote between the previous pass and this one is
+			// what it will likely write before the next: the next pass trims
+			// that much ahead. A slow pass (a network filesystem) measures a
+			// larger growth, so it trims further ahead — the bound holds
+			// while one pass's growth is under the cap's headroom.
+			req.Reserve = 0
+			if left >= 0 && res.UsedBytes > left {
+				req.Reserve = res.UsedBytes - left
 			}
 			left = now
 		}

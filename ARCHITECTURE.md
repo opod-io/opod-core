@@ -1640,7 +1640,7 @@ Mechanisms a manager drives through this surface:
   the `--keep` entries. Whoever names the directory runs it, beside the engine (`--every`) and after the engine is gone.
   `--every` is the idle period only: a pass that trimmed the tier or found it grown is followed after 1 s, because the
   fs tier has no backpressure and a burst outruns any fixed period (T26.20: ≈120 MB/s took a 4 GiB tier to 2× its cap
-  under a 10 s one). Each pass reports `walkMs` and `removeMs`.
+  under a 10 s one). A pass also trims ahead of the growth it measured since the previous one (held to half the cap), and lists up to 32 directories at once: on a network filesystem every listing and stat is a round trip, and vLLM puts almost every block in a hash-named directory of its own, so a sequential walk took 3.7 s for 3,362 blocks on NFS and two writers took a 1 GiB tier to 2.28 GiB (T26.24). Each pass reports `walkMs` and `removeMs`.
 - **TensorRT-LLM structured output** (T27.8, `internal/agent/launchers.go`): guided decoding has no flag on
   trtllm-serve 1.2.1, only the options file, so every TensorRT-LLM launch names one `--config` that sets
   `guided_decoding_backend: xgrammar`, merged with the file the plan's `extra` names (the control plane's KV tier)
