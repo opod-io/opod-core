@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+## v0.4.8 — 2026-11-16
+
+`opod cache kv-prune --every` catches a burst that starts while it is idle, so a shared network tier stays near its cap.
+Proven on the design-partner cell: two hosts writing one NFS tier at once peaked at 1.00 × and 1.02 × the cap, where
+v0.4.7 reached 1.26 ×.
+
 - **`opod cache kv-prune --every` catches a burst that starts while it is idle (T26.24).** v0.4.7 trims ahead of the
   growth it measured between two passes, so a burst that started right after an idle pass was unguarded until the
   next one: on the design-partner cell two hosts writing at once took a 0.85 GiB NFS tier to 1.07 GiB (1.26 × the cap)
