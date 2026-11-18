@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -338,6 +339,35 @@ func TestCLITranscripts(t *testing.T) {
 				t.Errorf("transcript %s changed — review the output, then -update:\n--- want\n%s\n--- got\n%s", c.name, want, got)
 			}
 		})
+	}
+}
+
+// T24.160 · a worker whose port is taken stops before it registers: the
+// leader must never hold a node that could not serve. The golden says what
+// the worker prints; this says what the leader saw.
+func TestJoinOnATakenPortNeverRegisters(t *testing.T) {
+	var c transcriptCase
+	for _, tc := range transcripts {
+		if tc.name == "join-port-in-use" {
+			c = tc
+		}
+	}
+	if c.name == "" {
+		t.Fatal("the join-port-in-use transcript is gone")
+	}
+	var registers atomic.Int32
+	inner := c.stub
+	c.stub = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/v1/nodes/register" {
+			registers.Add(1)
+		}
+		inner(w, r)
+	}
+	if got := runTranscript(t, c); !strings.Contains(got, "port TAKEN is in use") {
+		t.Fatalf("the join did not stop on the taken port:\n%s", got)
+	}
+	if n := registers.Load(); n != 0 {
+		t.Errorf("the leader got %d register call(s) from a worker that never listened", n)
 	}
 }
 

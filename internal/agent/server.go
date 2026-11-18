@@ -127,9 +127,11 @@ type Server struct {
 	http *http.Server
 }
 
-// Start runs the server until ctx is done. Returns the listen error or nil
-// on graceful shutdown.
-func (s *Server) Start(ctx context.Context, listen string) error {
+// Start serves on ln until ctx is done, then drains. The caller binds ln
+// first, so a taken port fails before anything else starts (T24.160: opod
+// join registered with its leader and then died on EADDRINUSE). Returns the
+// serve error or nil on graceful shutdown.
+func (s *Server) Start(ctx context.Context, ln net.Listener) error {
 	if s.Supervisor == nil {
 		s.Supervisor = NewSupervisor(nil)
 	}
@@ -160,25 +162,24 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	// The leader's traceparent becomes the parent of the request's context, so
 	// this worker's call to its engine carries the same trace on (T32.7). The
 	// worker exports no spans itself.
-	return s.serve(ctx, listen, engines.ContinueTrace(mux))
+	return s.serve(ctx, ln, engines.ContinueTrace(mux))
 }
 
-// serve listens until ctx is done, then drains (drain.go).
-func (s *Server) serve(ctx context.Context, listen string, h http.Handler) error {
+// serve serves on ln until ctx is done, then drains (drain.go).
+func (s *Server) serve(ctx context.Context, ln net.Listener, h http.Handler) error {
 	s.http = &http.Server{
-		Addr:              listen,
 		Handler:           h,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.http.ListenAndServe() }()
+	go func() { errCh <- s.http.Serve(ln) }()
 	select {
 	case <-ctx.Done():
-		s.drain(listen)
+		s.drain(ln.Addr().String())
 		return nil
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("worker listen: %w", err)
+			return fmt.Errorf("worker serve on %s: %w", ln.Addr(), err)
 		}
 		return nil
 	}

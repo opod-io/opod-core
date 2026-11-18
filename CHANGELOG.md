@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **`opod join` binds its port before it registers (T24.160).** The agent loop and the worker server started at once,
+  so on a taken port the register could win: the leader held a node that then died on `EADDRINUSE` without serving,
+  and the worker printed "registered with leader" before it stopped. The worker now listens first, and a taken port
+  stops the join unregistered with `opod: port … is in use — …` and exit `1` (the line no longer starts with
+  `worker stopped:`, because the worker never started).
+
 ## v0.4.8 — 2026-11-16
 
 `opod cache kv-prune --every` catches a burst that starts while it is idle, so a shared network tier stays near its cap.

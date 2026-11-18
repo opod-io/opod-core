@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/opod-io/opod-core/internal/engines"
 	"go.opentelemetry.io/otel/trace"
@@ -38,21 +37,10 @@ func TestTheLeadersTraceReachesTheEngineThroughTheWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := l.Addr().String()
-	_ = l.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	worker := &Server{Engine: engines.MustNew("vllm", eng.URL, ""), Token: "tok"}
-	go func() { _ = worker.Start(ctx, addr) }()
-	for i := 0; ; i++ {
-		if c, err := net.Dial("tcp", addr); err == nil {
-			_ = c.Close()
-			break
-		}
-		if i == 200 {
-			t.Fatal("the worker never listened")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	go func() { _ = worker.Start(ctx, l) }()
 
 	tid, _ := trace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
 	sid, _ := trace.SpanIDFromHex("00f067aa0ba902b7")

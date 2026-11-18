@@ -97,23 +97,11 @@ func startDraining(t *testing.T, drain time.Duration, handler http.HandlerFunc) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
 	s := &Server{Drain: drain}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.serve(ctx, addr, handler) }()
-	for i := 0; ; i++ {
-		if c, err := net.Dial("tcp", addr); err == nil {
-			_ = c.Close()
-			break
-		}
-		if i > 200 {
-			t.Fatal("server never listened")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return addr, cancel, done
+	go func() { done <- s.serve(ctx, ln, handler) }()
+	return ln.Addr().String(), cancel, done
 }
 
 // streamOf answers a stream of n lines, one every gap.

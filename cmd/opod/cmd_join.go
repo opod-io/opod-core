@@ -340,6 +340,21 @@ func cmdJoin(args []string) {
 	a.OnRegister = announceRegister(leader, nodeID)
 	note(os.Stdout, "hardware: %s/%s · %d GB RAM", caps.OS, caps.Arch, caps.RAMGB)
 
+	// Bind before anything else starts (T24.160). The agent loop below
+	// registers at once, and a server that bound in its own goroutine could
+	// lose that race: the leader then held a node that died on EADDRINUSE
+	// without ever serving. A taken port now stops the join here, unregistered.
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		if errors.Is(err, syscall.EADDRINUSE) {
+			die("port %s is in use — another opod join on this host? stop it, or give this worker another port with OPOD_ADVERTISE_ADDR (and OPOD_BIND_ADDR)", listen)
+		}
+		if errors.Is(err, syscall.EADDRNOTAVAIL) {
+			die("cannot listen on %s: this host does not own that address — set OPOD_BIND_ADDR to one it owns, or 0.0.0.0", listen)
+		}
+		die("cannot listen on %s: %v", listen, err)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -381,14 +396,11 @@ func cmdJoin(args []string) {
 		}
 	}()
 
-	// Worker HTTP server (binds to the tailnet/LAN address from mesh)
+	// Worker HTTP server, on the listener bound above.
 	go func() {
 		defer wg.Done()
-		if err := srv.Start(ctx, listen); err != nil && err != context.Canceled {
+		if err := srv.Start(ctx, ln); err != nil && err != context.Canceled {
 			log.Error("worker server exited", "err", err)
-			if errors.Is(err, syscall.EADDRINUSE) {
-				err = fmt.Errorf("port %s is in use — another opod join on this host? stop it, or give this worker another port with OPOD_ADVERTISE_ADDR (and OPOD_BIND_ADDR)", listen)
-			}
 			stopWith(err)
 		}
 	}()
