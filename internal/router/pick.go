@@ -378,7 +378,8 @@ func (r *Router) shardGroupRoutable(ctx context.Context, shards []store.Shard) b
 	return true
 }
 
-// InvalidateModel drops any cached engine for the given model. Called by
+// InvalidateModel drops any cached engine for the given model's gangs, and
+// their prefill tokens and latency verdicts. Called by
 // the orchestrator when shards are torn down so the next request rebuilds.
 func (r *Router) InvalidateModel(modelID string) {
 	prefix := "shard:" + modelID + ":"
@@ -392,7 +393,17 @@ func (r *Router) InvalidateModel(modelID string) {
 			releaseEngine(eng)
 		}
 	}
+	// Its gangs' prefill tokens and latency verdicts too: a gang that is gone
+	// must not stay listed as slow, nor keep an alert open (slow.go).
+	for key := range r.prefill {
+		if strings.HasPrefix(key, prefix) {
+			delete(r.prefill, key)
+		}
+	}
+	cleared := r.slow.forgetSlowLocked(func(key string) bool { return strings.HasPrefix(key, prefix) })
+	slowHook := r.slow.hook
 	r.mu.Unlock()
+	notifySlow(slowHook, cleared)
 }
 
 // ForgetRemote drops only the cached client for a node, so the next request
@@ -418,8 +429,8 @@ func (r *Router) ForgetRemote(nodeID string) {
 }
 
 // InvalidateNode drops all per-node router state for a deleted node: the
-// cached remote engine plus cooldown, failure, inflight, and sticky-pin
-// entries keyed by it. Called by the control plane when a node is removed
+// cached remote engine plus cooldown, failure, inflight, prefill-token,
+// latency-window and sticky-pin entries keyed by it. Called by the control plane when a node is removed
 // so a re-registered node (possibly at a new address / token) gets a
 // fresh engine instead of the stale cached one.
 func (r *Router) InvalidateNode(nodeID string) {
@@ -436,6 +447,9 @@ func (r *Router) InvalidateNode(nodeID string) {
 	delete(r.cooldowns, nodeID)
 	delete(r.failures, nodeID)
 	delete(r.inflight, nodeID)
+	delete(r.prefill, nodeID) // a hold still out releases into nothing (tokenweight.go)
+	cleared := r.slow.forgetSlowLocked(func(key string) bool { return key == nodeID })
+	slowHook := r.slow.hook
 	prefix := nodeID + "|"
 	for k := range r.inflightDim {
 		if strings.HasPrefix(k, prefix) {
@@ -449,6 +463,7 @@ func (r *Router) InvalidateNode(nodeID string) {
 	}
 	cooldowns := len(r.cooldowns)
 	r.mu.Unlock()
+	notifySlow(slowHook, cleared)
 	metrics.SetRouterCooldownsActive(cooldowns)
 	metrics.SetRouterInflight(nodeID, 0)
 }

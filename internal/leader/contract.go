@@ -294,6 +294,17 @@ func contractFeatures() map[string]bool {
 		// session's turns, capped (ADR-109, PLAN T28.3). A pin never lands a
 		// request on a saturated worker or one with no free slot.
 		"session_routing": true,
+		// routing.tokenWeight: a request in flight also weighs its estimated
+		// uncached prompt tokens until its first streamed event, or until it
+		// fails or is cancelled (ADR-122 §2, PLAN T28.10). Without this key a
+		// leader ignores the field and counts requests.
+		"routing_token_weight": true,
+		// routing.slowFactor: a worker whose median TTFT per 1,000 uncached
+		// tokens or inter-token gap is more than slowFactor × its siblings'
+		// over 20 answers ranks down — never refused — and /loadz names it
+		// (slow_workers); the event stream records worker.slow and
+		// worker.slow_cleared (ADR-122 §4, PLAN T28.12).
+		"worker_slow": true,
 		// A worker renders the plan's speculative decoding (spec_method,
 		// spec_tokens, spec_draft) in its engine's own flags, and /loadz sums
 		// the engines' draft and accepted token counters (ADR-120, PLAN T29.19).

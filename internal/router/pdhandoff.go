@@ -217,7 +217,11 @@ func (r *Router) prefillHandoff(ctx context.Context, model, decodeNode string, r
 			continue
 		}
 		r.incInflight(n.ID, model)
+		// The prefill worker computes the whole uncached prompt: held for the
+		// one-token step, released when it answers or fails (tokenweight.go).
+		hold := r.holdPrefill(n.ID, r.dispatchTokens(ctx, n.ID, req))
 		ans, err := once.ChatOnce(ctx, step)
+		hold.Release()
 		r.decInflight(n.ID, model)
 		if err == nil && engines.HasJSON(ans.KVTransfer) {
 			metrics.ObservePDHandoff("split")

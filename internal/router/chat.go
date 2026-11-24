@@ -136,6 +136,10 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		var first *engines.StreamEvent // the stream's first event, read before it is handed on
 		var streamCancel context.CancelFunc
 		var lastErr error
+		// The served start's time to first event and the uncached prompt
+		// tokens it covered (-1 = no TTFT sample), for slow.go.
+		var ttft time.Duration
+		ttftTokens := -1
 		for retry := 0; retry <= ov.NumRetries; retry++ {
 			if retry > 0 {
 				if err := waitBackoff(attemptCtx, retry, ov.RetryBackoffMS); err != nil {
@@ -147,6 +151,14 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			r.incInflight(nodeID, candidate)
 			thisCtx, thisCancel := context.WithCancel(attemptCtx)
 			start := func(call engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+				// The prefill window (tokenweight.go): this dispatch's uncached
+				// prompt tokens are held from here until start returns —
+				// at the first event, a failure, a broken start or a cancel
+				// alike — so no path keeps them.
+				tokens := r.dispatchTokens(attemptCtx, nodeID, call)
+				hold := r.holdPrefill(nodeID, tokens)
+				defer hold.Release()
+				t0 := time.Now()
 				s, err := eng.Chat(thisCtx, call)
 				if err == nil {
 					// The engine answered; nothing has gone to the caller yet.
@@ -157,6 +169,10 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 						go drainWithTimeout(s, 30*time.Second)
 					} else {
 						first = ev
+						ttft, ttftTokens = time.Since(t0), tokens
+						if engines.HasJSON(call.KVTransfer) {
+							ttftTokens = -1 // its prefill ran on another worker
+						}
 					}
 				}
 				return s, err
@@ -249,9 +265,18 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			defer close(out)
 			defer span.End() // duration covers full streamed response
 			var tokenCount, completionTokens int
+			var firstText, lastText time.Time // the answer's first and last text events (slow.go's gap)
+			broken := false
 			forward := func(ev engines.StreamEvent) bool {
 				if ev.Delta != "" {
+					lastText = time.Now()
+					if tokenCount == 0 {
+						firstText = lastText
+					}
 					tokenCount++
+				}
+				if ev.Err != nil {
+					broken = true
 				}
 				if ev.Usage != nil {
 					completionTokens = ev.Usage.CompletionTokens
@@ -284,6 +309,15 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 				completionTokens = tokenCount
 			}
 			r.latency.record(servedModel, time.Since(attemptStart), completionTokens)
+			// This worker's own latency against its siblings' (slow.go):
+			// only an answer that ended whole is a sample.
+			if !broken {
+				var gap time.Duration
+				if tokenCount >= 2 {
+					gap = lastText.Sub(firstText) / time.Duration(tokenCount-1)
+				}
+				r.noteServed(servedModel, nodeID, ttft, ttftTokens, gap, time.Now())
+			}
 		}()
 		return out, nil
 	}

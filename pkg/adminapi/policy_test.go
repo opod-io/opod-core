@@ -57,3 +57,30 @@ func TestPolicyRoutingPrefixBlockTierWire(t *testing.T) {
 		t.Fatalf("an unset tier must be omitted, got %s", empty)
 	}
 }
+
+// The token weight and the slow factor travel under these keys (ADR-122), and
+// 0 — off — is omitted, so a manager that never sets them sends what it sent.
+func TestPolicyRoutingTokenWeightAndSlowFactorWire(t *testing.T) {
+	raw, _ := json.Marshal(PolicyRouting{TokenWeight: 0.5, SlowFactor: 2})
+	for _, want := range []string{`"tokenWeight":0.5`, `"slowFactor":2`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("wire form %s lacks %s", raw, want)
+		}
+	}
+	empty, _ := json.Marshal(PolicyRouting{})
+	if strings.Contains(string(empty), "tokenWeight") || strings.Contains(string(empty), "slowFactor") {
+		t.Fatalf("unset fields must be omitted, got %s", empty)
+	}
+}
+
+// /loadz names a slow worker under slow_workers, and none is omitted.
+func TestLoadSlowWorkersWire(t *testing.T) {
+	raw, _ := json.Marshal(Load{SlowWorkers: []SlowWorker{{Worker: "w1", Model: "m", Factor: 3, Metric: "ttft_per_1k_tokens", Samples: 20}}})
+	want := `"slow_workers":[{"worker":"w1","model":"m","factor":3,"metric":"ttft_per_1k_tokens","samples":20}]`
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("wire form %s lacks %s", raw, want)
+	}
+	if empty, _ := json.Marshal(Load{}); strings.Contains(string(empty), "slow_workers") {
+		t.Fatalf("no slow worker must be omitted, got %s", empty)
+	}
+}

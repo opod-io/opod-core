@@ -242,6 +242,9 @@ func (s *Server) loadz(w http.ResponseWriter, r *http.Request) {
 	// router process.
 	out.LoadSamples = s.loadSampleAges(now)
 	out.Sessions = s.sessionLoad(now)
+	// The workers this process's picker ranks down for latency (feature
+	// "worker_slow", T28.12).
+	out.SlowWorkers = s.slowWorkers()
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -153,6 +153,10 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 		s.router.SetPrefixDepth(r.PrefixDepthKiB)
 		s.router.SetStickyTTL(s.stickyTTLFor(r.StickyTTLSeconds))
 		s.loadRefreshMs.Store(int64(r.LoadRefreshMs))
+		// Token-weighted in flight (T28.10): the block sizes let the estimate
+		// take off the leading blocks a worker already holds.
+		s.router.SetTokenWeight(r.TokenWeight, s.prefix.blockSizeOf)
+		s.router.SetSlowFactor(r.SlowFactor) // per-worker latency outliers (T28.12)
 		s.applySessionPolicy(r.Session)
 		if strings.EqualFold(strings.TrimSpace(r.PrefixBlockTier), adminapi.PrefixBlockTierCPULower) {
 			s.router.SetPrefixBlockCPU(s.prefix.leadingAny)

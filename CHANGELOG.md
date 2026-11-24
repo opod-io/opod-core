@@ -23,6 +23,18 @@ the last section.
   index tokenizes as deep (65,536 tokens at the default, never fewer than 2,048). New policy field
   `routing.prefixDepthKiB` (`PolicyRouting.PrefixDepthKiB`): 0 = 256, 4 = the old chain byte for byte, at most 1024.
   Keying a 256 KiB prompt costs about 22 µs.
+- **A request in prefill can weigh its prompt (T28.10, ADR-122 §2, feature `routing_token_weight`).** A 100 000-token
+  prefill and a 50-token chat counted as one request each, so a burst of long prompts could land on one worker. The new
+  policy field `routing.tokenWeight` puts each dispatch's estimated uncached prompt tokens (prompt bytes ÷ 4, or the
+  block index's count when that is more, less the leading blocks the worker holds) on that worker's rank until its first
+  streamed event, or until it fails or is cancelled: the score gains `tokenWeight × tokens / 1000`. `0`, the default,
+  ranks exactly as before.
+- **A worker slower than its siblings ranks down (T28.12, ADR-122 §4, feature `worker_slow`).** With the new policy
+  field `routing.slowFactor`, a worker whose median time to first token per 1,000 uncached tokens, or whose median gap
+  between tokens, is more than `slowFactor` × its siblings' over its last 20 answers counts as that many extra
+  requests in flight — never refused — until normal answers bring it back. A model with one worker is never judged.
+  `/loadz` names it under `slow_workers`, and the event stream records `worker.slow` and `worker.slow_cleared`. `0`,
+  the default, is off.
 - **`opod join` binds its port before it registers (T24.160).** The agent loop and the worker server started at once,
   so on a taken port the register could win: the leader held a node that then died on `EADDRINUSE` without serving,
   and the worker printed "registered with leader" before it stopped. The worker now listens first, and a taken port

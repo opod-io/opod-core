@@ -7,8 +7,10 @@ package router
 // pick, and both pass the same order:
 //
 //  1. load: in flight + the engine's queue + what was sent after its sample +
-//     kvWeight × KV use, minus the block credit (the leading blocks of this
-//     prompt its engine holds, prefixblocks.go). A saturated candidate — its
+//     kvWeight × KV use + tokenWeight × uncached prompt tokens still in
+//     prefill / 1000 (tokenweight.go) + the slow factor of a worker slower
+//     than its siblings (slow.go), minus the block credit (the leading blocks
+//     of this prompt its engine holds, prefixblocks.go). A saturated candidate — its
 //     slots all in flight, or its KV at the saturation line — sorts after
 //     every candidate with headroom. Equal candidates keep their order, or
 //     take turns (gangs, so a second gang carries requests too).
@@ -53,7 +55,9 @@ func workerCandidate(nodeID string, peer bool) candidate {
 // candRank is one candidate's place in the order: saturated after every
 // unsaturated candidate, then by score, lowest first. Caller holds r.mu (read).
 func (r *Router) candRank(c candidate) (saturated bool, score float64) {
-	score = float64(r.inflight[c.key])
+	// Requests in flight, and — with routing.tokenWeight — the uncached prompt
+	// tokens of those still in prefill (tokenweight.go).
+	score = float64(r.inflight[c.key]) + r.prefillScoreLocked(c.key)
 	if r.slotsFull(c.key) {
 		return true, score // every slot busy: a request here waits in the engine's queue (ADR-091)
 	}
@@ -124,7 +128,9 @@ func (r *Router) rankCandidates(ctx context.Context, model string, cands []candi
 		if hit.kind != "" {
 			warm = true
 		}
-		rank[c.key] = candidateRank{sat, sc - hit.credit}
+		// A worker slower than its siblings (slow.go) ranks as that many more
+		// requests in flight: a penalty, never saturation.
+		rank[c.key] = candidateRank{sat, sc - hit.credit + r.slowPenaltyLocked(model, c.key)}
 	}
 	r.mu.RUnlock()
 

@@ -32,6 +32,7 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 		stream <-chan engines.StreamEvent
 		cancel context.CancelFunc
 		nodeID string
+		hold   *prefillHold // this replica's prefill tokens (tokenweight.go)
 		err    error
 	}
 	resultCh := make(chan result, len(candidates))
@@ -45,12 +46,16 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 		cancels[i] = thisCancel
 		go func() {
 			r.incInflight(w.nodeID, req.Model)
+			// Held until the winner's first event, or until this replica fails
+			// or loses (tokenweight.go).
+			hold := r.holdPrefill(w.nodeID, r.dispatchTokens(ctx, w.nodeID, req))
 			s, err := w.engine.Chat(thisCtx, req)
 			if err != nil {
 				thisCancel()
+				hold.Release()
 				r.decInflight(w.nodeID, req.Model)
 			}
-			resultCh <- result{idx: i, stream: s, cancel: thisCancel, nodeID: w.nodeID, err: err}
+			resultCh <- result{idx: i, stream: s, cancel: thisCancel, nodeID: w.nodeID, hold: hold, err: err}
 		}()
 	}
 
@@ -97,6 +102,7 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 					metrics.ObserveRouterHedge("error")
 					continue
 				}
+				res.hold.Release()
 				r.decInflight(res.nodeID, req.Model)
 				metrics.ObserveRouterHedge("cancelled")
 				go drainWithTimeout(res.stream, 30*time.Second)
@@ -113,9 +119,11 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 	go func() {
 		defer winner.cancel()
 		defer r.decInflight(winner.nodeID, req.Model)
+		defer winner.hold.Release() // a stream that ends with no event
 		defer close(out)
 		defer span.End()
 		for ev := range winner.stream {
+			winner.hold.Release() // the first event ends the prefill window
 			select {
 			case out <- ev:
 			case <-ctx.Done():

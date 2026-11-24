@@ -195,6 +195,14 @@ type Router struct {
 	sampling samplingCache
 	// pdFailing: prefill/decode pairs whose last transfer failed (pdhandoff.go).
 	pdFailing failingPairs
+	// Token-weighted in-flight (tokenweight.go, T28.10): routing.tokenWeight,
+	// the block size a worker reports, and per router key the uncached prompt
+	// tokens of its requests that have not yet produced a first event.
+	tokenWeight float64
+	blockSizeOf func(nodeID string) int
+	prefill     map[string]int
+	// Per-worker latency outliers (slow.go, T28.12).
+	slow slowTracker
 }
 
 // stickySweepEvery and stickySweepThreshold tune the opportunistic
@@ -230,6 +238,7 @@ func New(local engines.Engine, st store.Store) *Router {
 		stickiness:  make(map[string]stickyEntry),
 		staleWarned: make(map[string]bool),
 		latency:     newLatencyStats(LatencyConfig{}),
+		prefill:     make(map[string]int),
 	}
 }
 

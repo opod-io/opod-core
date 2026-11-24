@@ -152,6 +152,10 @@ var contractFeatureFloor = []string{
 	"load_pull",
 	// ADR-109: a conversation keeps its worker (session pins, signed route, turn priority)
 	"session_routing",
+	// ADR-122 §2: in flight weighed by uncached prompt tokens until the first event
+	"routing_token_weight",
+	// ADR-122 §4: a worker slower than its siblings ranks down; /loadz slow_workers; worker.slow events
+	"worker_slow",
 	// ADR-120: speculative decoding rendered per engine, its counters on /loadz
 	"spec_decode",
 	// PLAN T24.56: CPU-tier blocks in the index, credited under cpu-lower

@@ -158,6 +158,22 @@ type Load struct {
 	// share of traffic that names one. Each process counts its own: the
 	// leader's does not include the doors'.
 	Sessions *SessionLoad `json:"sessions,omitempty"`
+	// SlowWorkers lists the workers this router process ranks down for
+	// latency (feature "worker_slow", PolicyRouting.SlowFactor), sorted by
+	// model then worker. Absent when none is.
+	SlowWorkers []SlowWorker `json:"slow_workers,omitempty"`
+}
+
+// SlowWorker is one entry of Load.SlowWorkers. Worker is the node id, or for
+// a gang its router key ("shard:<model>:<gang>"). Factor is its median over
+// its siblings' median for Metric — "ttft_per_1k_tokens" or
+// "inter_token_gap" — over Samples answers.
+type SlowWorker struct {
+	Worker  string  `json:"worker"`
+	Model   string  `json:"model"`
+	Factor  float64 `json:"factor"`
+	Metric  string  `json:"metric"`
+	Samples int     `json:"samples"`
 }
 
 // SessionLoad is Load.Sessions. A request is counted once its answer is done.
@@ -586,6 +602,29 @@ type PolicyRouting struct {
 	// times this leaves the rank, and the worker is scored on what is in
 	// flight alone. 0 = 500 ms; below 100 is read as 100.
 	LoadRefreshMs int `json:"loadRefreshMs,omitempty"`
+	// TokenWeight (feature "routing_token_weight", ADR-122 §2, PLAN T28.10)
+	// weighs a request in flight by its prompt, not only as one request: each
+	// dispatched request carries its estimated uncached prompt tokens (prompt
+	// bytes ÷ 4, or the block index's count when that is more, minus the
+	// leading blocks the target worker already holds) until its first
+	// streamed event — a non-streamed answer: the answer — or until it fails
+	// or is cancelled. The picker adds TokenWeight × those tokens / 1000 to a
+	// worker's score: TokenWeight is what 1,000 uncached prompt tokens in
+	// prefill weigh against one request in flight. 0 = the count of requests
+	// alone (the old order).
+	TokenWeight float64 `json:"tokenWeight,omitempty"`
+	// SlowFactor (feature "worker_slow", ADR-122 §4, PLAN T28.12) ranks down
+	// a worker slower than its siblings. Per model, each router process keeps
+	// a window of the last 20 answers per worker (none older than 2 min) of
+	// time to first token per 1,000 uncached prompt tokens and of the gap
+	// between streamed tokens. A worker whose median of either is more than
+	// SlowFactor × the median of its siblings' — it and a sibling each with
+	// 20 samples — counts as that ratio of extra requests in flight: a
+	// penalty, never a refusal. It is gone when normal answers bring the
+	// ratio back under SlowFactor. A model with one worker is never judged.
+	// /loadz names the worker under slow_workers, and the event stream
+	// records worker.slow and worker.slow_cleared. 0 = off.
+	SlowFactor float64 `json:"slowFactor,omitempty"`
 	// Session (feature "session_routing", ADR-109, PLAN T28.3) is how a
 	// conversation keeps its worker. A request names its conversation with the
 	// X-Opod-Session header, else the OpenAI `user` field; one with neither is
