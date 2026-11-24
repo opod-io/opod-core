@@ -7,6 +7,22 @@ the last section.
 
 ## Unreleased
 
+- **The prefix-cache block index is salted (T28.9, ADR-122; feature `kv_block_salt`).** With `routing.prefixBlockWeight`
+  on, a worker that held caller A's blocks won caller B's request for the same prompt and then prefilled it cold: the
+  engine keys its cache by the `cache_salt` the leader sends, but the worker re-hashed the engine's events from token
+  ids alone. The worker now seeds a prompt's first block from the keys its engine published for it (vLLM 0.27.1's
+  `extra_keys[0]`, SGLang's `cache_salt`), and the leader seeds the request's chain from the salt it sent and, for a
+  `<model>:<adapter>` variant of the plan's model, the adapter's name. A request with no salt and no adapter hashes as
+  before. **Go API:** `pkg/nodeapi.BlockHash(parent, seed, tokens)` and `BlockHashes(seed, tokens, blockSize)` take a
+  seed, and `nodeapi.BlockSeed(keys)` builds it; no JSON field changes. Leader and workers must both run this release
+  for keyed requests to earn block credit: a worker on the old release reports unseeded hashes, which a salted chain
+  never matches — a missed credit, never a wrong one.
+- **The prefix chain reads 256 KiB, not 4 KiB (T28.11, ADR-122; feature `prefix_depth`).** An agent's system prompt and
+  tool list pass 4 KiB on their own, so every worker tied on the preamble and the router could not see the history
+  behind it. The chain keeps a link every 256 bytes to 4 KiB, then one at 8, 16, 32 … KiB and at the cap; the block
+  index tokenizes as deep (65,536 tokens at the default, never fewer than 2,048). New policy field
+  `routing.prefixDepthKiB` (`PolicyRouting.PrefixDepthKiB`): 0 = 256, 4 = the old chain byte for byte, at most 1024.
+  Keying a 256 KiB prompt costs about 22 µs.
 - **`opod join` binds its port before it registers (T24.160).** The agent loop and the worker server started at once,
   so on a taken port the register could win: the leader held a node that then died on `EADDRINUSE` without serving,
   and the worker printed "registered with leader" before it stopped. The worker now listens first, and a taken port

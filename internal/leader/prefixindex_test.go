@@ -102,7 +102,7 @@ func TestResolveBlocksTokenizesOncePerPrefix(t *testing.T) {
 	if got := srv.resolveBlocks(ctx, req); got != nil || calls.Load() != 0 {
 		t.Fatalf("no reporter: %v after %d calls", got, calls.Load())
 	}
-	want := nodeapi.BlockHashes(tokens, 16)
+	want := nodeapi.BlockHashes("", tokens, 16)
 	srv.prefix.apply("w1", &nodeapi.KVBlocks{Seq: 1, BlockSize: 16, Stored: want[:1]})
 	got := srv.resolveBlocks(ctx, req)
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {

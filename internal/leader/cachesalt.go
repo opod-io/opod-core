@@ -31,10 +31,10 @@ package leader
 // `opod up`) salts under a key drawn at start: its salts change when it
 // restarts, which costs one cold prefix per caller and separates no less.
 //
-// Not salted yet: the prefix-cache block index (prefixindex.go). Workers
-// re-hash the engine's cache events from their token ids, which carry no
-// salt, so with prefixBlockWeight on a worker is credited for blocks it holds
-// under another caller's salt: a cold prefill there, never a shared one.
+// The prefix-cache block index carries the salt too (prefixindex.go,
+// blockSeedOf; PLAN T28.9): the request's block chain is seeded by it, as the
+// worker seeds its re-hash of the engine's events from the salt the engine
+// published, so a worker is credited only for blocks held under this caller's.
 
 import (
 	"context"

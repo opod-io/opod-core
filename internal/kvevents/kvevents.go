@@ -11,7 +11,9 @@
 // with seq an 8-byte big-endian counter.
 //
 // What leaves this package is OUR hash of each block (nodeapi.BlockHash over
-// the parent's hash and the block's token ids), never the engine's hash —
+// the parent's hash and the block's token ids; a prompt's first block seeded
+// by the keys the engine published for it — its cache salt, its LoRA name),
+// never the engine's hash —
 // which is internal to it and has changed between versions — and never a
 // token id. The engine's hash is kept only as the key that lets a later
 // BlockRemoved, which names blocks by the engine's hash alone, find ours.
@@ -134,6 +136,36 @@ type fields struct {
 	// medium is the cache tier the event concerns ("GPU", "CPU", …), read
 	// from the map layout only; "" (an engine that does not say) is the GPU.
 	medium string
+	// first is the keys the engine hashed the event's FIRST block with beside
+	// its tokens (firstKeys), as published. Read only for a prompt's first
+	// block — an event with no parent — whose hash they seed.
+	first []any
+}
+
+// firstKeys reads the keys an engine published for an event's first block:
+// vLLM's extra_keys[0] (0.27.1: the LoRA name, multimodal keys, the request's
+// cache_salt — on block 0 only — and prompt-embedding hashes, in that order,
+// from generate_block_hash_extra_keys), else SGLang's salt, a field of its
+// own (v0.5.21: cache_salt on every event; v0.5.19: metadata.cache_salt). nil
+// = none: the chain is unseeded, as before seeds existed.
+func firstKeys(extra, salt, meta any) []any {
+	if l, ok := extra.([]any); ok && len(l) > 0 {
+		switch k := l[0].(type) {
+		case nil:
+			return nil
+		case []any:
+			return k
+		default:
+			return []any{k} // a shape no engine sends: a seed that matches nothing
+		}
+	}
+	if m, ok := meta.(map[string]any); ok {
+		salt = m["cache_salt"]
+	}
+	if s, ok := salt.(string); ok && s != "" {
+		return []any{s}
+	}
+	return nil
 }
 
 // eventFields reads an event in either layout an engine has used: a MAP keyed
@@ -149,7 +181,8 @@ func eventFields(ev any) (fields, error) {
 			return fields{}, fmt.Errorf("kv event: a map with no type (%T)", x["type"])
 		}
 		medium, _ := x["medium"].(string)
-		return fields{tag: tag, hashes: x["block_hashes"], parent: x["parent_block_hash"], tokens: x["token_ids"], size: x["block_size"], medium: medium}, nil
+		return fields{tag: tag, hashes: x["block_hashes"], parent: x["parent_block_hash"], tokens: x["token_ids"], size: x["block_size"], medium: medium,
+			first: firstKeys(x["extra_keys"], x["cache_salt"], x["metadata"])}, nil
 	case []any:
 		if len(x) == 0 {
 			return fields{}, fmt.Errorf("kv event: an empty array")
@@ -166,6 +199,9 @@ func eventFields(ev any) (fields, error) {
 			return nil
 		}
 		f.hashes, f.parent, f.tokens, f.size = at(1), at(2), at(3), at(4)
+		// After medium: vLLM puts lora_name (7) then extra_keys (8); SGLang
+		// v0.5.19 puts its salt's metadata map at 7. Each is read by its type.
+		f.first = firstKeys(at(8), nil, at(7))
 		return f, nil
 	}
 	return fields{}, fmt.Errorf("kv event: %T is neither a map nor a tagged array", ev)
@@ -253,8 +289,14 @@ func (t *Translator) chainOf(f fields) ([]block, error) {
 		return nil, fmt.Errorf("BlockStored: block_size is %v (%T), not a positive whole number", f.size, f.size)
 	}
 	t.blockSize = size
-	ours := ""
-	if parent != "" {
+	// A prompt's first block is seeded by the keys its engine hashed it with
+	// (T28.9), so one prompt under two cache salts is two chains here, as it
+	// is two prefixes in the engine; every later block carries the seed
+	// through its parent's hash.
+	ours, seed := "", ""
+	if parent == "" {
+		seed = nodeapi.BlockSeed(f.first)
+	} else {
 		p, ok := t.known[parent]
 		if !ok {
 			p, ok = t.cpuKnown[parent]
@@ -270,7 +312,7 @@ func (t *Translator) chainOf(f fields) ([]block, error) {
 		if hi > len(tokens) {
 			break
 		}
-		ours = nodeapi.BlockHash(ours, tokens[lo:hi])
+		ours = nodeapi.BlockHash(ours, seed, tokens[lo:hi])
 		out = append(out, block{eng: h, ours: ours})
 	}
 	return out, nil

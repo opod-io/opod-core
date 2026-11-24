@@ -69,7 +69,7 @@ func TestAGangsPromptIsTokenizedAtItsCoordinator(t *testing.T) {
 		CreatedAt: time.Now(), LastSeen: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	want := nodeapi.BlockHashes(tokens, 16)
+	want := nodeapi.BlockHashes("", tokens, 16)
 	// The head reports the gang engine's blocks on its heartbeat, as any worker
 	// does — its own engine runs nothing, so it reports no load and no models.
 	if err := srv.HeartbeatNode(ctx, HeartbeatRequest{ID: "h1", KVBlocks: &nodeapi.KVBlocks{Seq: 1, BlockSize: 16, Stored: want[:2]}}, Caller{Admin: true}); err != nil {

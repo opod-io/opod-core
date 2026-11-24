@@ -150,6 +150,7 @@ func (s *Server) applyPolicySnapshot(doc *PolicySnapshot) {
 	if s.router != nil {
 		s.router.SetLoadAware(r.KVWeight, r.KVSaturationPct, r.PrefixAffinity)
 		s.router.SetPrefixBlocks(r.PrefixBlockWeight, s.resolveBlocks, s.prefix.leading)
+		s.router.SetPrefixDepth(r.PrefixDepthKiB)
 		s.router.SetStickyTTL(s.stickyTTLFor(r.StickyTTLSeconds))
 		s.loadRefreshMs.Store(int64(r.LoadRefreshMs))
 		s.applySessionPolicy(r.Session)

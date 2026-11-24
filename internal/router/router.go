@@ -187,6 +187,9 @@ type Router struct {
 	blockHeldCPU  BlockHolder
 	prefixPins    map[string]stickyEntry // prefix hash|model → pinned node + expiry
 	prefixInserts int
+	// prefixDepthKiB is how deep a prompt's prefix is matched (policy
+	// routing.prefixDepthKiB, load.go); 0 = DefaultPrefixDepthKiB.
+	prefixDepthKiB int
 	// sampling: each decode worker's model defaults, for the handoff's
 	// penalty rule (pdhandoff.go).
 	sampling samplingCache

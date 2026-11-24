@@ -82,7 +82,7 @@ func TestTheLeadersWorkerCallsCarryTheTraceOn(t *testing.T) {
 	if code, _, err := srv.callWorkerSleep(ctx, n, "resume"); err != nil || code != http.StatusOK {
 		t.Fatalf("resume: %d %v", code, err)
 	}
-	srv.tokenizeOn(ctx, n, engines.ChatRequest{Model: "m", Messages: []engines.Message{{Role: "user", Content: "hi"}}})
+	srv.tokenizeOn(ctx, n, engines.ChatRequest{Model: "m", Messages: []engines.Message{{Role: "user", Content: "hi"}}}, prefixTokenizeFloor)
 
 	for _, path := range []string{"/v1/model/resume", nodeapi.PathTokenize} {
 		if got := seen.at(path); got != want {

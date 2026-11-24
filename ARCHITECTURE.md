@@ -806,6 +806,24 @@ Recent latency is used, but not as a per-node score: it feeds the p95 check that
 - Bound to the worker that last served that tuple for `router.sticky_session_ttl_seconds` (`OPOD_STICKY_SESSION_TTL_SECONDS`). **0 — the default — disables it**; the legacy `router.sticky_sessions` boolean is parsed and superseded. A policy snapshot's `routing.stickyTtlSeconds` overrides it live, with no restart (feature `sticky_ttl_policy`): pins placed afterwards expire by it, pins already placed keep their stamped expiry, and 0 gives back the start value. Prefix-affinity pins expire by the same TTL (10 minutes when none is set).
 - Soft binding: the pin only reorders the candidates the load scorer already accepted, so a saturated or drained worker loses it and the cache miss is absorbed. `model=auto` is never pinned.
 
+### Prefix depth
+
+- Prefix affinity keys a prompt's leading text — each turn as role, a zero byte, content, a zero byte — as a chain
+  (`router/load.go`, `prefixKeysOf`): one link per 256 bytes to 4 KiB, each a SHA-256 over the link before it and its
+  chunk, then one link at each doubling distance (8, 16, 32 … KiB) and at the cap, each a 64-bit `maphash` over the
+  link before it and every byte since (feature `prefix_depth`, PLAN T28.11, ADR-122). The cap is the policy's
+  `routing.prefixDepthKiB`: 0 = 256 KiB, 4 = the 4 KiB chain from before, byte for byte, above 1024 read as 1024. A
+  match at the deepest common sparse link is within 2× of the true common prefix, which is enough to rank, and a
+  served prompt pins at most 22 links at the default, inside the pin table's bound (`prefixPinsMax`). Nothing past the
+  cap is read. Keying a 256 KiB prompt costs about 22 µs on an Apple M3 (`BenchmarkPrefixKeyOf256KiB`); SHA-256 over
+  the same tail measured 160 µs, which is why the tail uses `maphash` — its keys never leave the process.
+- The block index tokenizes as deep: `prefixDepthKiB` × 256 tokens (4 bytes a token; 65,536 at the default), never
+  fewer than the 2,048 it asked for before, inside the same 250 ms tokenize budget. Its chain cache is bounded by the
+  hashes it holds as well as by entries (`prefixChainCacheHashes`, what 4,096 chains of 2,048 tokens held), so a deep
+  chain costs entries, never memory.
+- A deeper match pulls traffic toward the worker that holds a long history; only a rank that weighs the prompt tokens
+  in flight pushes it back (ADR-122 decision 2), so the two ship together.
+
 ### Cache isolation
 
 - Any prefix cache lets one caller's request reuse a prefix another caller computed, and the time to first token shows
@@ -825,9 +843,18 @@ Recent latency is used, but not as a per-node score: it feeds the p95 check that
   salt. llama.cpp, Ollama and MLX take none and share their cache whatever the mode — a manager says so.
 - A leader whose own engine is a hosted vendor's API (the vLLM driver pointed at a vendor) needs `cacheIsolation:
   none`: the vendor refuses a `cache_salt` it does not know, and the leader cannot tell a vendor from a vLLM server.
-- Not salted yet: the block index (`kv_block_events`). Workers hash the engines' cache events from their token ids,
-  and those carry no salt, so `prefixBlockWeight` may credit a worker for blocks it holds under another salt — a cold
-  prefill there, never a shared prefix.
+- The block index (`kv_block_events`) is salted the same way (feature `kv_block_salt`, PLAN T28.9, ADR-122). An
+  engine publishes the keys it hashed a prompt's first block with beside its tokens: vLLM 0.27.1 in `extra_keys[0]`
+  of `BlockStored` (the LoRA name, multimodal keys, the request's `cache_salt` — on block 0 only — and prompt-embedding
+  hashes, in that order), SGLang v0.5.21 as its own `cache_salt` field, v0.5.19 as `metadata.cache_salt`. The worker
+  seeds its re-hash of a prompt's first block from those keys as published (`kvevents.firstKeys`, one canonical
+  encoding: `nodeapi.BlockSeed`), and every later block carries the seed through its parent. The leader seeds the
+  request's chain from the keys it can rebuild — the adapter's name for a `<model>:<adapter>` variant of the plan's
+  model, then the salt it sent (`blockSeedOf`) — and keys its chain cache by them. So under `prefixBlockWeight` a
+  worker is credited only for blocks its engine would share with this caller. A request with no salt and no adapter
+  hashes exactly as before (`pkg/nodeapi` pins the old chain). Keys the leader cannot rebuild (an image's hash) make a
+  chain it never asks for — a missed credit, never a wrong one — and so does an adapter request on a leader with no
+  plan file, which has no base to split the adapter from.
 
 ### Catalog fallback chain (failure-based retry)
 
@@ -1680,6 +1707,8 @@ Mechanisms a manager drives through this surface:
   block hashes) and `internal/agent/kvblocks.go` (the engine flag, the tokenize route); leader
   `internal/leader/prefixindex.go` (the per-worker sets, the resolver) and `internal/router/prefixblocks.go` (the
   score). Off until a worker is started with `OPOD_KV_EVENTS=1` and the policy gives `routing.prefixBlockWeight`.
+  The chain is seeded by the caller's cache salt and the LoRA adapter (`kv_block_salt`, see "Cache isolation") and
+  reaches `routing.prefixDepthKiB` in tokens (`prefix_depth`, see "Prefix depth").
   **Gangs** (`gang_kv_events`, T26.22): a worker started with `OPOD_KV_EVENTS=1` registers `KVEvents`; a vLLM Ray
   gang headed by it starts the head's `vllm serve` with the publisher (`agent.KVEventsArgs`, the worker's own rule:
   the self-describing transfer config with a CPU tier), and an SGLang gang gives every rank the same flags (the page

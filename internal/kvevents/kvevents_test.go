@@ -45,7 +45,7 @@ func TestTranslatorChainsAndTranslates(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := tr.Drain()
-	want := nodeapi.BlockHashes(append(append([]int{}, first...), next...), 16)
+	want := nodeapi.BlockHashes("", append(append([]int{}, first...), next...), 16)
 	if got == nil || got.Seq != 1 || got.BlockSize != 16 || got.Cleared || len(got.Stored) != 3 {
 		t.Fatalf("drain %+v", got)
 	}
@@ -145,7 +145,7 @@ func TestSubscribeBindsAndAPublisherConnects(t *testing.T) {
 		binary.BigEndian.PutUint64(b[:], uint64(seq))
 		_ = pub.Send(zmq4.NewMsgFrom([]byte(Topic), b[:], payload))
 		if got := tr.Drain(); got != nil && len(got.Stored) > 0 {
-			if got.Stored[0] != nodeapi.BlockHash("", toks(0, 16)) {
+			if got.Stored[0] != nodeapi.BlockHash("", "", toks(0, 16)) {
 				t.Fatalf("stored %v", got.Stored)
 			}
 			return
@@ -180,7 +180,7 @@ func TestTranslatorReadsTheMapLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := tr.Drain()
-	want := nodeapi.BlockHashes(append(append([]int{}, first...), next...), 16)
+	want := nodeapi.BlockHashes("", append(append([]int{}, first...), next...), 16)
 	if got == nil || got.Cleared || got.BlockSize != 16 || len(got.Stored) != 3 {
 		t.Fatalf("drain %+v", got)
 	}
@@ -300,5 +300,90 @@ func TestResyncStatesEverythingHeld(t *testing.T) {
 	}
 	if got.Stored[0] != first.Stored[0] || got.Stored[1] != first.Stored[1] {
 		t.Fatalf("the resync names the same blocks, oldest first: %v vs %v", got.Stored, first.Stored)
+	}
+}
+
+// A salted prompt (T28.9): each engine publishes the keys it hashed a prompt's
+// first block with, and the worker seeds our chain from them as published —
+// vLLM 0.27.1 in extra_keys[0] (LoRA name, then the salt), SGLang v0.5.21 as
+// its own cache_salt field, SGLang v0.5.19 (array layout) as metadata at 7.
+// A continued block takes the seed through its parent; the leader, building
+// the same keys from what it sent, gets the same chain.
+func TestTranslatorSeedsTheFirstBlockFromThePublishedKeys(t *testing.T) {
+	first, next := toks(100, 32), toks(200, 16)
+	prompt := append(append([]int{}, first...), next...)
+	cases := []struct {
+		name          string
+		first, second any // the two events: first block(s), then a continuation
+		leader        string
+	}{
+		{"vllm salt", map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(11), uint64(12)}, "parent_block_hash": nil,
+			"token_ids": first, "block_size": int8(16), "lora_name": nil, "medium": "GPU", "extra_keys": []any{[]any{"salt-a"}, nil}},
+			map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(13)}, "parent_block_hash": uint64(12),
+				"token_ids": next, "block_size": int8(16), "medium": "GPU", "extra_keys": []any{nil}},
+			nodeapi.BlockSeed([]any{"salt-a"})},
+		{"vllm lora and salt", map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(11), uint64(12)}, "parent_block_hash": nil,
+			"token_ids": first, "block_size": int8(16), "lora_name": "support", "medium": "GPU", "extra_keys": []any{[]any{"support", "salt-a"}, []any{"support"}}},
+			map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(13)}, "parent_block_hash": uint64(12),
+				"token_ids": next, "block_size": int8(16), "medium": "GPU", "extra_keys": []any{[]any{"support"}}},
+			nodeapi.BlockSeed([]any{"support", "salt-a"})},
+		{"sglang v0.5.21", map[string]any{"type": "BlockStored", "block_hashes": []any{int64(11), int64(12)}, "parent_block_hash": nil,
+			"token_ids": first, "block_size": int8(16), "lora_id": nil, "medium": "GPU", "cache_salt": "salt-a"},
+			map[string]any{"type": "BlockStored", "block_hashes": []any{int64(13)}, "parent_block_hash": int64(12),
+				"token_ids": next, "block_size": int8(16), "medium": "GPU", "cache_salt": "salt-a"},
+			nodeapi.BlockSeed([]any{"salt-a"})},
+		{"sglang v0.5.19 array", []any{"BlockStored", []any{int64(11), int64(12)}, nil, first, 16, nil, "GPU", map[string]any{"cache_salt": "salt-a"}},
+			[]any{"BlockStored", []any{int64(13)}, int64(12), next, 16, nil, "GPU", map[string]any{"cache_salt": "salt-a"}},
+			nodeapi.BlockSeed([]any{"salt-a"})},
+		{"vllm array, lora_name at 7 is not a salt", []any{"BlockStored", []any{int64(11), int64(12)}, nil, first, 16, nil, "GPU", "support", []any{[]any{"support"}, []any{"support"}}},
+			[]any{"BlockStored", []any{int64(13)}, int64(12), next, 16, nil, "GPU", "support", []any{[]any{"support"}}},
+			nodeapi.BlockSeed([]any{"support"})},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := NewTranslator()
+			if err := tr.Frame(0, batch(t, c.first)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tr.Frame(1, batch(t, c.second)); err != nil {
+				t.Fatal(err)
+			}
+			got := tr.Drain()
+			want := nodeapi.BlockHashes(c.leader, prompt, 16)
+			if got == nil || got.Cleared || len(got.Stored) != 3 {
+				t.Fatalf("drain %+v", got)
+			}
+			plain := nodeapi.BlockHashes("", prompt, 16)
+			for i := range want {
+				if got.Stored[i] != want[i] {
+					t.Fatalf("block %d: %s, want the leader's %s", i, got.Stored[i], want[i])
+				}
+				if got.Stored[i] == plain[i] {
+					t.Fatalf("block %d of a keyed prompt hashes like the unkeyed one", i)
+				}
+			}
+		})
+	}
+}
+
+// Keys the leader cannot rebuild (a multimodal hash beside the salt) still
+// seed the chain: the blocks are named, and match nothing a text request
+// resolves to — a missed credit, never another prompt's.
+func TestTranslatorSeedsAMultimodalFirstBlockApart(t *testing.T) {
+	tr := NewTranslator()
+	first := toks(100, 16)
+	ev := map[string]any{"type": "BlockStored", "block_hashes": []any{uint64(11)}, "parent_block_hash": nil,
+		"token_ids": first, "block_size": int8(16), "medium": "GPU", "extra_keys": []any{[]any{[]any{"img-hash", int8(0)}, "salt-a"}}}
+	if err := tr.Frame(0, batch(t, ev)); err != nil {
+		t.Fatal(err)
+	}
+	got := tr.Drain()
+	if got == nil || len(got.Stored) != 1 {
+		t.Fatalf("drain %+v", got)
+	}
+	for _, seed := range []string{"", nodeapi.BlockSeed([]any{"salt-a"})} {
+		if got.Stored[0] == nodeapi.BlockHashes(seed, first, 16)[0] {
+			t.Fatalf("an image's block matched a text chain (seed %q)", seed)
+		}
 	}
 }

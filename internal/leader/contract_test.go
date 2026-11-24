@@ -156,6 +156,8 @@ var contractFeatureFloor = []string{
 	"spec_decode",
 	// PLAN T24.56: CPU-tier blocks in the index, credited under cpu-lower
 	"kv_cpu_tier_hits",
+	// PLAN T28.9: the block index is salted; T28.11: routing.prefixDepthKiB
+	"kv_block_salt", "prefix_depth",
 	// ADR-090: expert-parallel gangs on vLLM's own launcher
 	"shard_expert",
 	// a worker states the accelerators it was given (hardware_json.GivenDevices)

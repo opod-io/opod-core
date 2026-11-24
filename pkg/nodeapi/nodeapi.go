@@ -59,6 +59,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -381,12 +384,27 @@ const blockHashSeed = "opod-kv-block-v1"
 // before it ("" for the first). 16 hex characters of SHA-256 over the parent
 // and the token ids in fixed-width big-endian form: both sides of the node
 // protocol call this one function, which is the whole reason it is here.
-func BlockHash(parent string, tokens []int) string {
+//
+// seed is the prompt's first-block keys (BlockSeed) and is read only for a
+// first block (parent ""): the engine keys a prompt's cache by more than its
+// tokens — the request's cache salt, its LoRA adapter — and puts those keys on
+// the first block, so the same tokens under two salts are two chains here as
+// they are two prefixes there (feature "cache_salt"). Every later block
+// carries them through its parent. seed "" is the hash as it was before
+// seeds existed. A seeded first block hashes 33 more bytes than an unseeded
+// one (a zero byte and the seed's SHA-256), so the two can never collide.
+func BlockHash(parent, seed string, tokens []int) string {
 	h := sha256.New()
 	if parent == "" {
-		parent = blockHashSeed
+		h.Write([]byte(blockHashSeed))
+		if seed != "" {
+			s := sha256.Sum256([]byte(seed))
+			h.Write([]byte{0})
+			h.Write(s[:])
+		}
+	} else {
+		h.Write([]byte(parent))
 	}
-	h.Write([]byte(parent))
 	var b [8]byte
 	for _, t := range tokens {
 		binary.BigEndian.PutUint64(b[:], uint64(int64(t)))
@@ -395,20 +413,105 @@ func BlockHash(parent string, tokens []int) string {
 	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
-// BlockHashes is the chain of BlockHash values for the FULL blocks of tokens:
-// a trailing partial block is not a block an engine caches. blockSize ≤ 0
-// yields nothing.
-func BlockHashes(tokens []int, blockSize int) []string {
+// BlockHashes is the chain of BlockHash values for the FULL blocks of tokens,
+// its first block seeded by seed: a trailing partial block is not a block an
+// engine caches. blockSize ≤ 0 yields nothing.
+func BlockHashes(seed string, tokens []int, blockSize int) []string {
 	if blockSize <= 0 {
 		return nil
 	}
 	out := make([]string, 0, len(tokens)/blockSize)
 	parent := ""
 	for i := 0; i+blockSize <= len(tokens); i += blockSize {
-		parent = BlockHash(parent, tokens[i:i+blockSize])
+		parent = BlockHash(parent, seed, tokens[i:i+blockSize])
 		out = append(out, parent)
 	}
 	return out
+}
+
+// BlockSeed is the one canonical encoding of a prompt's first-block keys, the
+// seed BlockHash takes. The worker passes the list its engine published for
+// block 0 (vLLM's extra_keys[0]: the LoRA name, multimodal keys, the cache
+// salt, prompt-embedding hashes, in that order; SGLang's cache_salt alone);
+// the leader passes the keys it can rebuild — the LoRA name, then the salt it
+// sent. Equal lists encode equally whatever integer width a msgpack decoder
+// chose; a key the leader cannot rebuild (an image's hash) encodes too, and
+// simply matches nothing the leader sends: a missed credit, never a wrong one.
+// An empty list is "", the unseeded chain.
+func BlockSeed(keys []any) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	return string(appendKey(nil, keys))
+}
+
+// appendKey writes one key, tagged by kind and length-prefixed, so no two
+// different keys share an encoding.
+func appendKey(b []byte, v any) []byte {
+	str := func(tag byte, s string) []byte {
+		b = append(b, tag)
+		b = binary.AppendUvarint(b, uint64(len(s)))
+		return append(b, s...)
+	}
+	switch x := v.(type) {
+	case nil:
+		return append(b, 'n')
+	case bool:
+		if x {
+			return append(b, 't')
+		}
+		return append(b, 'f')
+	case string:
+		return str('s', x)
+	case []byte:
+		return str('b', string(x))
+	case int:
+		return str('i', strconv.FormatInt(int64(x), 10))
+	case int8:
+		return str('i', strconv.FormatInt(int64(x), 10))
+	case int16:
+		return str('i', strconv.FormatInt(int64(x), 10))
+	case int32:
+		return str('i', strconv.FormatInt(int64(x), 10))
+	case int64:
+		return str('i', strconv.FormatInt(x, 10))
+	case uint:
+		return str('i', strconv.FormatUint(uint64(x), 10))
+	case uint8:
+		return str('i', strconv.FormatUint(uint64(x), 10))
+	case uint16:
+		return str('i', strconv.FormatUint(uint64(x), 10))
+	case uint32:
+		return str('i', strconv.FormatUint(uint64(x), 10))
+	case uint64:
+		return str('i', strconv.FormatUint(x, 10))
+	case float32:
+		return str('d', strconv.FormatFloat(float64(x), 'g', -1, 64))
+	case float64:
+		return str('d', strconv.FormatFloat(x, 'g', -1, 64))
+	case []any:
+		b = append(b, 'l')
+		b = binary.AppendUvarint(b, uint64(len(x)))
+		for _, e := range x {
+			b = appendKey(b, e)
+		}
+		return b
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		b = append(b, 'm')
+		b = binary.AppendUvarint(b, uint64(len(keys)))
+		for _, k := range keys {
+			b = str('s', k)
+			b = appendKey(b, x[k])
+		}
+		return b
+	}
+	// A kind no engine sends today: still one encoding per kind and value.
+	return str('x', fmt.Sprintf("%T:%v", v, v))
 }
 
 // Engine states (EngineState.State).

@@ -21,15 +21,20 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"hash/maphash"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/auth"
 	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/router"
 	"github.com/opod-io/opod-core/internal/store"
 	"github.com/opod-io/opod-core/pkg/adminapi"
 	"github.com/opod-io/opod-core/pkg/nodeapi"
@@ -38,10 +43,17 @@ import (
 const (
 	prefixIndexPerWorker = 200_000 // hashes kept per worker (≈ 3.2 M tokens at block size 16)
 	prefixChainCacheSize = 4096    // tokenized prefixes remembered
-	prefixChainTTL       = 10 * time.Minute
-	prefixTokenizeBudget = 250 * time.Millisecond // a tokenize slower than this is not worth waiting for
-	prefixTokenizeMax    = 2048                   // leading tokens that decide a match
-	tierGhostCap         = 131_072                // evicted hashes remembered per worker (≈ 2.1 M tokens at block size 16)
+	// prefixChainCacheHashes bounds the hashes those prefixes hold in all:
+	// what 4096 chains of 2,048 tokens at block size 16 held before the chain
+	// went deeper (T28.11), so a deep chain costs entries, never memory.
+	prefixChainCacheHashes = prefixChainCacheSize * 128
+	prefixChainTTL         = 10 * time.Minute
+	prefixTokenizeBudget   = 250 * time.Millisecond // a tokenize slower than this is not worth waiting for
+	// prefixTokenizeFloor is the fewest leading tokens that decide a match —
+	// the depth before T28.11; past it the policy's prefix depth decides
+	// (prefixTokenizeMax).
+	prefixTokenizeFloor = 2048
+	tierGhostCap        = 131_072 // evicted hashes remembered per worker (≈ 2.1 M tokens at block size 16)
 )
 
 // tierGhostBuckets are TierGhost's depth buckets, in blocks evicted between a
@@ -114,8 +126,9 @@ type prefixIndex struct {
 	mu      sync.RWMutex
 	workers map[string]*workerBlocks
 
-	chainMu sync.Mutex
-	chains  map[string]chainEntry // prefix key|model|block size → chain
+	chainMu     sync.Mutex
+	chains      map[string]chainEntry // prefixCacheKey → chain
+	chainHashes int                   // hashes held in chains, bounded by prefixChainCacheHashes
 }
 
 type chainEntry struct {
@@ -359,7 +372,7 @@ func (s *Server) gangReporter(ctx context.Context, model string) (store.Shard, i
 
 // tokenizeOnGang asks a gang's coordinator engine for the prompt's leading
 // token ids, through the driver the leader samples it with.
-func (s *Server) tokenizeOnGang(ctx context.Context, coord store.Shard, req engines.ChatRequest) ([]int, bool) {
+func (s *Server) tokenizeOnGang(ctx context.Context, coord store.Shard, req engines.ChatRequest, limit int) ([]int, bool) {
 	eng, _ := s.gangEngine(coord)
 	tk, ok := eng.(engines.Tokenizer)
 	if !ok {
@@ -372,16 +385,51 @@ func (s *Server) tokenizeOnGang(ctx context.Context, coord store.Shard, req engi
 	for _, m := range req.Messages {
 		msgs = append(msgs, engines.Message{Role: m.Role, Content: m.Content})
 	}
-	tokens, err := tk.Tokenize(ctx, req.Model, msgs, "", prefixTokenizeMax)
+	tokens, err := tk.Tokenize(ctx, req.Model, msgs, "", limit)
 	return tokens, err == nil && len(tokens) > 0
 }
 
+// prefixTokenizeMax is how many leading tokens decide a block match: the
+// policy's prefix depth (routing.prefixDepthKiB, router.PrefixDepthKiB) in
+// tokens at 4 bytes each — 65,536 at the default 256 KiB — and never fewer
+// than prefixTokenizeFloor, so depth 4 tokenizes what it always did.
+func (s *Server) prefixTokenizeMax() int {
+	depth := router.DefaultPrefixDepthKiB
+	if s.router != nil {
+		depth = s.router.PrefixDepth()
+	}
+	return max(prefixTokenizeFloor, depth<<10/4)
+}
+
+// blockSeedOf is the seed of the request's block chain (T28.9): the keys the
+// engine hashes a prompt's first block with that the leader can rebuild — the
+// LoRA adapter's name for a "<model>:<adapter>" variant of the plan's model,
+// then the cache salt the router puts on the request (cachesalt.go) — in the
+// order vLLM lists them (lora, multimodal, salt). A worker re-hashes from the
+// keys its engine published (kvevents), so the two chains meet exactly when
+// the engine would share the cache. Keys the leader cannot rebuild (an image)
+// make the worker's chain one the leader never asks for: a missed credit,
+// never a wrong one. With no plan file there is no base to split an adapter
+// from, so an adapter's request is seeded by its salt alone and matches
+// nothing: missed again, not wrong.
+func (s *Server) blockSeedOf(req engines.ChatRequest) string {
+	var keys []any
+	if _, base := s.plan.get(); base != "" && strings.HasPrefix(req.Model, base+":") && len(req.Model) > len(base)+1 {
+		keys = append(keys, req.Model[len(base)+1:])
+	}
+	if req.CacheSalt != "" {
+		keys = append(keys, req.CacheSalt)
+	}
+	return nodeapi.BlockSeed(keys)
+}
+
 // resolveBlocks is the router's BlockResolver: the request's prompt as a chain
-// of block hashes. The leader has no tokenizer, so it asks an engine that
-// reports blocks — a gang's coordinator for a model a reporting gang serves,
-// else a reporting worker's engine (nodeapi.PathTokenize) — once per distinct
-// prefix, then from the cache — inside a budget: a tokenize that is slow costs
-// the request more than a cold cache would.
+// of block hashes, seeded by the keys the engine keys it by (blockSeedOf). The
+// leader has no tokenizer, so it asks an engine that reports blocks — a gang's
+// coordinator for a model a reporting gang serves, else a reporting worker's
+// engine (nodeapi.PathTokenize) — once per distinct prefix, then from the
+// cache — inside a budget: a tokenize that is slow costs the request more
+// than a cold cache would.
 func (s *Server) resolveBlocks(ctx context.Context, req engines.ChatRequest) []string {
 	coord, blockSize, gang := s.gangReporter(ctx, req.Model)
 	nodeID := coord.NodeID
@@ -391,7 +439,8 @@ func (s *Server) resolveBlocks(ctx context.Context, req engines.ChatRequest) []s
 	if nodeID == "" {
 		return nil
 	}
-	key := prefixCacheKey(req, blockSize)
+	seed, limit := s.blockSeedOf(req), s.prefixTokenizeMax()
+	key := prefixCacheKey(req, seed, blockSize, limit)
 	if key == "" {
 		return nil
 	}
@@ -408,59 +457,91 @@ func (s *Server) resolveBlocks(ctx context.Context, req engines.ChatRequest) []s
 	var tokens []int
 	var ok bool
 	if gang {
-		tokens, ok = s.tokenizeOnGang(tctx, coord, req)
+		tokens, ok = s.tokenizeOnGang(tctx, coord, req, limit)
 	} else {
 		n, err := s.store.Nodes().Get(ctx, nodeID)
 		if err != nil || n == nil || n.Address == "" {
 			return nil
 		}
-		tokens, ok = s.tokenizeOn(tctx, n, req)
+		tokens, ok = s.tokenizeOn(tctx, n, req, limit)
 	}
 	if !ok {
 		return nil
 	}
-	hashes := nodeapi.BlockHashes(tokens, blockSize)
-	s.prefix.chainMu.Lock()
-	if len(s.prefix.chains) >= prefixChainCacheSize {
-		for k, e := range s.prefix.chains { // expired first, then anything: a cache, not a record
-			if now.After(e.until) || len(s.prefix.chains) >= prefixChainCacheSize {
-				delete(s.prefix.chains, k)
+	hashes := nodeapi.BlockHashes(seed, tokens, blockSize)
+	s.prefix.remember(key, hashes, now)
+	return hashes
+}
+
+// remember caches one prefix's chain, inside both bounds: entries
+// (prefixChainCacheSize) and the hashes they hold (prefixChainCacheHashes).
+// Past either, expired entries go first, then any — a cache, not a record —
+// until both are under three quarters.
+func (p *prefixIndex) remember(key string, hashes []string, now time.Time) {
+	p.chainMu.Lock()
+	defer p.chainMu.Unlock()
+	if old, ok := p.chains[key]; ok {
+		p.chainHashes -= len(old.hashes)
+		delete(p.chains, key)
+	}
+	over := func(frac int) bool {
+		return len(p.chains) >= prefixChainCacheSize*frac/4 || p.chainHashes+len(hashes) > prefixChainCacheHashes*frac/4
+	}
+	if over(4) {
+		for k, e := range p.chains {
+			if now.After(e.until) || over(4) {
+				delete(p.chains, k)
+				p.chainHashes -= len(e.hashes)
 			}
-			if len(s.prefix.chains) < prefixChainCacheSize*3/4 {
+			if !over(3) {
 				break
 			}
 		}
 	}
-	s.prefix.chains[key] = chainEntry{hashes: hashes, until: now.Add(prefixChainTTL)}
-	s.prefix.chainMu.Unlock()
-	return hashes
+	p.chains[key] = chainEntry{hashes: hashes, until: now.Add(prefixChainTTL)}
+	p.chainHashes += len(hashes)
 }
 
-// prefixCacheKey keys the chain cache by a hash of the prompt's head — the
-// text itself is never a key — the model and the block size.
-func prefixCacheKey(req engines.ChatRequest, blockSize int) string {
-	var b strings.Builder
-	b.WriteString(req.Model)
-	b.WriteByte(0)
-	b.WriteString(req.System)
-	for _, m := range req.Messages {
-		b.WriteByte(0)
-		b.WriteString(m.Role)
-		b.WriteByte(0)
-		b.WriteString(m.Content)
-		if b.Len() > 64<<10 {
-			break // the head decides; prefixTokenizeMax bounds what is compared anyway
-		}
-	}
-	if b.Len() <= len(req.Model)+1 {
+// prefixCacheKeySeed keys prefixCacheKey's hash. The chain cache lives in
+// this process only, so a seed drawn at start is enough.
+var prefixCacheKeySeed = maphash.MakeSeed()
+
+// prefixCacheKey keys the chain cache by a hash — the text itself is never a
+// key — of everything the chain depends on: the model, the chain's seed (the
+// adapter and the caller's salt: two callers with one prompt hold two
+// chains), the block size, the tokens asked for, and the prompt's head, as
+// far as limit tokens can reach at 32 bytes each. "" = no prompt to key.
+func prefixCacheKey(req engines.ChatRequest, seed string, blockSize, limit int) string {
+	if req.System == "" && len(req.Messages) == 0 {
 		return ""
 	}
-	return nodeapi.BlockHash("", []int{blockSize}) + nodeapi.BlockHash(b.String(), nil)
+	var h maphash.Hash
+	h.SetSeed(prefixCacheKeySeed)
+	room := limit * 32
+	field := func(v string) {
+		if room <= 0 {
+			return
+		}
+		v = v[:min(len(v), room)]
+		room -= len(v)
+		var n [binary.MaxVarintLen64]byte
+		_, _ = h.Write(n[:binary.PutUvarint(n[:], uint64(len(v)))])
+		_, _ = h.WriteString(v)
+	}
+	_, _ = h.WriteString(fmt.Sprintf("%s\x00%d\x00%d\x00", req.Model, blockSize, limit))
+	_, _ = h.WriteString(fmt.Sprintf("%d\x00", len(seed)))
+	_, _ = h.WriteString(seed)
+	field(req.System)
+	for _, m := range req.Messages {
+		field(m.Role)
+		field(m.Content)
+	}
+	return strconv.FormatUint(h.Sum64(), 16)
 }
 
 // tokenizeOn asks one worker's engine for the prompt's leading token ids.
-func (s *Server) tokenizeOn(ctx context.Context, n *store.Node, req engines.ChatRequest) ([]int, bool) {
-	body := nodeapi.TokenizeRequest{Model: req.Model, MaxTokens: prefixTokenizeMax}
+func (s *Server) tokenizeOn(ctx context.Context, n *store.Node, req engines.ChatRequest, limit int) ([]int, bool) {
+	body := nodeapi.TokenizeRequest{Model: req.Model, MaxTokens: limit}
 	if req.System != "" {
 		body.Messages = append(body.Messages, nodeapi.TokenizeMessage{Role: "system", Content: req.System})
 	}
@@ -486,7 +567,9 @@ func (s *Server) tokenizeOn(ctx context.Context, n *store.Node, req engines.Chat
 		return nil, false
 	}
 	var out nodeapi.TokenizeResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+	// A token id is at most 7 characters of JSON with its comma; 16 bytes
+	// each is room to spare, and never less than the 1 MiB it always had.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, max(1<<20, int64(limit)*16))).Decode(&out); err != nil {
 		return nil, false
 	}
 	return out.Tokens, len(out.Tokens) > 0

@@ -27,7 +27,10 @@ package router
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"hash"
+	"hash/maphash"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/engines"
@@ -154,75 +157,176 @@ func (r *Router) loadRank(nodeID string) (saturated bool, score float64) {
 type prefixKeyCtx struct{}
 
 const (
-	// prefixChunkChars is one link of the prefix chain: a request's leading
-	// text is hashed in chunks of this many bytes, each hash covering every
-	// chunk before it, so two prompts share keys for exactly as long as their
-	// text does — a shared system prompt matches with a different question
-	// after it. It stands in for an engine's KV block, which the router cannot
-	// see without the engine's events (prefixblocks.go).
+	// prefixChunkChars is one dense link of the prefix chain: a request's
+	// leading text is hashed in chunks of this many bytes, each hash covering
+	// every chunk before it, so two prompts share keys for exactly as long as
+	// their text does — a shared system prompt matches with a different
+	// question after it. It stands in for an engine's KV block, which the
+	// router cannot see without the engine's events (prefixblocks.go).
 	prefixChunkChars = 256
-	// prefixMaxChunks bounds the chain: the leading 4 KiB decide a match, so
-	// a long document never costs more than its head.
+	// prefixMaxChunks is the dense head: every link to 4 KiB.
 	prefixMaxChunks = 16
 	// prefixPinsMax bounds the pin table. Every served request remembers up
-	// to prefixMaxChunks keys; past the bound the expired go first, then
-	// arbitrary ones — a pin is a guess, and a lost guess routes by load.
+	// to prefixMaxChunks keys plus one per sparse link; past the bound the
+	// expired go first, then arbitrary ones — a pin is a guess, and a lost
+	// guess routes by load.
 	prefixPinsMax = 1 << 17
+
+	// DefaultPrefixDepthKiB is how much of a prompt the prefix chain matches
+	// when the policy does not say (routing.prefixDepthKiB 0, PLAN T28.11):
+	// an agent's system prompt and tool list pass 4 KiB on their own, and the
+	// conversation behind them is where prefill costs. MaxPrefixDepthKiB
+	// bounds what a policy can ask: 1 MiB of text, about 256 k tokens.
+	DefaultPrefixDepthKiB = 256
+	MaxPrefixDepthKiB     = 1024
 )
 
+// PrefixDepthKiB normalises a policy's routing.prefixDepthKiB: 0 or less is
+// DefaultPrefixDepthKiB, and more than MaxPrefixDepthKiB is that bound.
+func PrefixDepthKiB(v int) int {
+	switch {
+	case v <= 0:
+		return DefaultPrefixDepthKiB
+	case v > MaxPrefixDepthKiB:
+		return MaxPrefixDepthKiB
+	}
+	return v
+}
+
+// SetPrefixDepth applies the policy's routing.prefixDepthKiB (PrefixDepthKiB
+// normalises it).
+func (r *Router) SetPrefixDepth(kib int) {
+	r.mu.Lock()
+	r.prefixDepthKiB = PrefixDepthKiB(kib)
+	r.mu.Unlock()
+}
+
+// PrefixDepth is the depth in force, in KiB: the prefix chain's cap, and the
+// leader's block index tokenizes as deep (leader/prefixindex.go).
+func (r *Router) PrefixDepth() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return PrefixDepthKiB(r.prefixDepthKiB)
+}
+
+// prefixTailSeed keys the sparse tail's hash. The pins live in this process
+// only — nothing writes a key out or compares one with another process — so a
+// seed drawn at start is enough.
+var prefixTailSeed = maphash.MakeSeed()
+
 // prefixKeysOf hashes the request's leading text — the system prompt, then
-// every turn in order — as a chain of prefixChunkChars chunks, shortest
-// prefix first (T19.23). A final partial chunk is a link too, so a short
-// prompt still has a key. Never the prompt itself: each key is 8 bytes of a
-// SHA-256. Nil when there is nothing to key on.
+// every turn in order, each as role, a zero byte, content, a zero byte — as a
+// chain, shortest prefix first (T19.23), to depthKiB KiB (PrefixDepthKiB).
+// Never the prompt itself: each key is 8 bytes of a hash. Nil when there is
+// nothing to key on.
+//
+// The chain is dense, then sparse (T28.11). Every prefixChunkChars link to
+// 4 KiB, each a SHA-256 over the link before it and its chunk; a final
+// partial chunk is a link too, so a short prompt still has a key. Past 4 KiB,
+// one link at each doubling distance — 8, 16, 32 … KiB — and at the cap,
+// each a 64-bit maphash over the link before it and every byte since: a pin
+// per 256 bytes of a 1 MB prompt would fill the pin table (prefixPinsMax),
+// and a match at the deepest common sparse link is within 2× of the true
+// common prefix, which is enough to rank. SHA-256 over a 256 KiB tail
+// measured 160 µs on an Apple M3, maphash 31 µs, against a 50 µs budget per
+// request. Nothing past the cap is read, so a 1 MB prompt costs its cap.
+// Depth 4 is the dense head alone: the keys as they were before T28.11, byte
+// for byte.
 //
 // The request's cache salt seeds the chain (T26.8): the same text under two
 // salts is two chains, as it is two prefixes in an engine that keys its cache
 // by the salt. With no salt the chain is exactly what it was before salts.
-func prefixKeysOf(req engines.ChatRequest) []string {
-	const capChars = prefixChunkChars * prefixMaxChunks
-	var head []byte
-	add := func(role, content string) {
-		if len(head) >= capChars {
-			return
-		}
-		head = append(head, role...)
-		head = append(head, 0)
-		// Clip BEFORE appending: nothing past the cap is ever hashed, so a
-		// 1 MB prompt costs its head only.
-		if room := capChars - len(head); len(content) > room {
-			content = content[:max(room, 0)]
-		}
-		head = append(head, content...)
-		head = append(head, 0)
+func prefixKeysOf(req engines.ChatRequest, depthKiB int) []string {
+	k := prefixKeyer{limit: PrefixDepthKiB(depthKiB) << 10}
+	k.dense = min(k.limit, prefixChunkChars*prefixMaxChunks)
+	k.next = 2 * prefixChunkChars * prefixMaxChunks
+	if req.CacheSalt != "" {
+		k.prev = sha256.Sum256([]byte("opod-cache-salt\x00" + req.CacheSalt))
 	}
+	k.sha = sha256.New()
 	if req.System != "" {
-		add("system", req.System)
+		k.part("system", req.System)
 	}
 	for _, m := range req.Messages {
 		if m.Content != "" {
-			add(m.Role, m.Content)
+			k.part(m.Role, m.Content)
 		}
 	}
-	if len(head) > capChars {
-		head = head[:capChars]
+	return k.finish()
+}
+
+// prefixKeyer is prefixKeysOf's state: the stream of the prompt's bytes is
+// written through it once, and a key leaves at each link.
+type prefixKeyer struct {
+	limit, dense int // bytes the chain covers in all, and densely
+	off          int // bytes of the stream written so far
+	next         int // the next sparse link's offset
+	prev         [sha256.Size]byte
+	sha          hash.Hash
+	chunk        [prefixChunkChars]byte
+	n            int // bytes in chunk
+	tail         maphash.Hash
+	keys         []string
+}
+
+func (k *prefixKeyer) part(role, content string) {
+	k.write(role)
+	k.write("\x00")
+	k.write(content)
+	k.write("\x00")
+}
+
+func (k *prefixKeyer) write(s string) {
+	for len(s) > 0 && k.off < k.limit {
+		if k.off < k.dense {
+			c := copy(k.chunk[k.n:], s[:min(len(s), k.dense-k.off)])
+			k.n += c
+			k.off += c
+			s = s[c:]
+			if k.n == prefixChunkChars {
+				k.denseLink()
+			}
+			continue
+		}
+		if k.off == k.dense {
+			k.tail.SetSeed(prefixTailSeed)
+			_, _ = k.tail.Write(k.prev[:]) // the tail continues the dense chain
+		}
+		stop := min(k.next, k.limit)
+		c := min(len(s), stop-k.off)
+		_, _ = k.tail.WriteString(s[:c])
+		k.off += c
+		s = s[c:]
+		if k.off == stop {
+			k.sparseLink()
+		}
 	}
-	if len(head) == 0 {
-		return nil
+}
+
+// denseLink closes the chunk in hand: SHA-256 over the link before it and
+// its bytes.
+func (k *prefixKeyer) denseLink() {
+	k.sha.Reset()
+	k.sha.Write(k.prev[:])
+	k.sha.Write(k.chunk[:k.n])
+	k.sha.Sum(k.prev[:0])
+	k.keys = append(k.keys, hex.EncodeToString(k.prev[:8]))
+	k.n = 0
+}
+
+// sparseLink keys every byte to here; the next link is twice as deep.
+func (k *prefixKeyer) sparseLink() {
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], k.tail.Sum64())
+	k.keys = append(k.keys, hex.EncodeToString(b[:]))
+	k.next *= 2
+}
+
+func (k *prefixKeyer) finish() []string {
+	if k.n > 0 {
+		k.denseLink() // a short prompt's partial chunk
 	}
-	keys := make([]string, 0, (len(head)+prefixChunkChars-1)/prefixChunkChars)
-	var prev [sha256.Size]byte
-	if req.CacheSalt != "" {
-		prev = sha256.Sum256([]byte("opod-cache-salt\x00" + req.CacheSalt))
-	}
-	for off := 0; off < len(head); off += prefixChunkChars {
-		h := sha256.New()
-		h.Write(prev[:])
-		h.Write(head[off:min(off+prefixChunkChars, len(head))])
-		copy(prev[:], h.Sum(nil))
-		keys = append(keys, hex.EncodeToString(prev[:8]))
-	}
-	return keys
+	return k.keys
 }
 
 // withPrefixKeys attaches the request's prefix chain for pick() to read.

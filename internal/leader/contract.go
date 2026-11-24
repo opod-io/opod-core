@@ -439,6 +439,20 @@ func contractFeatures() map[string]bool {
 		// to vLLM, SGLang and TensorRT-LLM, and its prefix pins carry it too.
 		// Without this key every caller of an endpoint shares its cache.
 		"cache_salt": true,
+		// The prefix-cache block index is salted too (PLAN T28.9): a worker
+		// seeds its re-hash of a prompt's first block from the keys its engine
+		// published for it (vLLM's extra_keys, SGLang's cache_salt), and the
+		// leader seeds the request's chain from the salt it sent and the LoRA
+		// adapter's name, so under routing.prefixBlockWeight a worker is
+		// credited only for blocks its engine would share with the caller.
+		// Without this key the index credits blocks across salts.
+		"kv_block_salt": true,
+		// The policy snapshot's routing.prefixDepthKiB (PLAN T28.11, default
+		// 256): the prefix chain keys every 256 bytes to 4 KiB, then at each
+		// doubling distance to that depth, and the block index tokenizes as
+		// deep. Without this key the chain stops at 4 KiB and 2,048 tokens,
+		// whatever the policy says.
+		"prefix_depth": true,
 		// The policy snapshot's wake.noResumeInPlace names sleeping workers the
 		// request wake must not resume (PLAN T11.31): a request that finds only
 		// those is held by the admission hold, not served by a resume into a

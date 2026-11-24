@@ -549,6 +549,15 @@ type PolicyRouting struct {
 	// never a lot of it. 0 = off, and then — or for a worker whose engine
 	// publishes no cache events — PrefixAffinity's pin is what decides.
 	PrefixBlockWeight float64 `json:"prefixBlockWeight,omitempty"`
+	// PrefixDepthKiB (PLAN T28.11) is how much of a prompt's leading text the
+	// prefix match reads, in KiB. PrefixAffinity's chain keys every 256 bytes
+	// to 4 KiB, then once at each doubling distance (8, 16, 32 … KiB) and at
+	// this depth, so two conversations that share a long history match it to
+	// within 2×; PrefixBlockWeight's block index tokenizes as deep, at 4 bytes
+	// a token (never fewer than 2,048 tokens). 0 = 256 KiB (about 65 k
+	// tokens); 4 = the 4 KiB chain from before this field, byte for byte;
+	// above 1024 is read as 1024.
+	PrefixDepthKiB int `json:"prefixDepthKiB,omitempty"`
 	// SpeedRank is reserved and no leader implements it. A rank by measured
 	// decode speed was tried twice on a cluster — by expected time, then as a
 	// tie-break only — and gained nothing at any load, so it was not shipped.

@@ -112,7 +112,7 @@ func TestPrefixKeys(t *testing.T) {
 	sys := strings.Repeat("You are a careful assistant. ", 40) // > 1 KiB: several links
 	a := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: sys}, {Role: "user", Content: "hello"}}}
 	b := engines.ChatRequest{Messages: []engines.Message{{Role: "system", Content: sys}, {Role: "user", Content: "goodbye"}}}
-	ka, kb := prefixKeysOf(a), prefixKeysOf(b)
+	ka, kb := prefixKeysOf(a, 0), prefixKeysOf(b, 0)
 	if len(ka) < 4 || len(ka) != len(kb) {
 		t.Fatalf("a > 1 KiB lead is several links: %d %d", len(ka), len(kb))
 	}
@@ -126,16 +126,16 @@ func TestPrefixKeys(t *testing.T) {
 	if strings.Contains(strings.Join(ka, ""), "assistant") {
 		t.Fatal("a key is a hash, never the text")
 	}
-	if prefixKeysOf(engines.ChatRequest{}) != nil {
+	if prefixKeysOf(engines.ChatRequest{}, 0) != nil {
 		t.Fatal("nothing to key on → no chain")
 	}
-	if len(prefixKeysOf(engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: "hi"}}})) != 1 {
+	if len(prefixKeysOf(engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: "hi"}}}, 0)) != 1 {
 		t.Fatal("a short prompt is one partial link")
 	}
 	long := engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: strings.Repeat("y", 5000)}}}
 	long2 := engines.ChatRequest{System: "S", Messages: []engines.Message{{Role: "user", Content: strings.Repeat("y", 6000)}}}
-	if k := prefixKeysOf(long); len(k) != prefixMaxChunks || strings.Join(k, "") != strings.Join(prefixKeysOf(long2), "") {
-		t.Fatal("the chain is the capped head, not the whole document")
+	if k := prefixKeysOf(long, 4); len(k) != prefixMaxChunks || strings.Join(k, "") != strings.Join(prefixKeysOf(long2, 4), "") {
+		t.Fatal("at depth 4 the chain is the capped head, not the whole document")
 	}
 }
 
@@ -144,8 +144,8 @@ func TestPrefixKeys(t *testing.T) {
 func TestPrefixAffinity(t *testing.T) {
 	r := newLoadRouter(nil)
 	sys := strings.Repeat("Shared system prompt. ", 30)
-	served := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "first question"}}}))
-	other := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "a different question"}}}))
+	served := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "first question"}}}, 0))
+	other := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "a different question"}}}, 0))
 	r.rememberPrefix(served, "m", "w1")
 	if got := r.prefixPick(served, "m", nil); got != "" {
 		t.Fatalf("affinity off → no pin: %q", got)
@@ -191,7 +191,7 @@ func TestPrefixPinsBounded(t *testing.T) {
 	r.SetLoadAware(0, 0, true)
 	n := prefixPinsMax/prefixMaxChunks + 64 // more distinct leads than the table holds
 	for i := 0; i < n; i++ {
-		ctx := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: fmt.Sprint("prompt ", i, strings.Repeat(".", 4096))}))
+		ctx := withPrefixKeys(context.Background(), prefixKeysOf(engines.ChatRequest{System: fmt.Sprint("prompt ", i, strings.Repeat(".", 4096))}, 0))
 		r.rememberPrefix(ctx, "m", "w1")
 		if len(r.prefixPins) > prefixPinsMax {
 			t.Fatalf("insert %d left %d pins, over the bound %d", i, len(r.prefixPins), prefixPinsMax)
@@ -243,7 +243,7 @@ func TestPrefixKeysCarryTheSalt(t *testing.T) {
 	req := func(salt string) engines.ChatRequest {
 		return engines.ChatRequest{System: sys, Messages: []engines.Message{{Role: "user", Content: "q"}}, CacheSalt: salt}
 	}
-	plain, a, a2, b := prefixKeysOf(req("")), prefixKeysOf(req("salt-a")), prefixKeysOf(req("salt-a")), prefixKeysOf(req("salt-b"))
+	plain, a, a2, b := prefixKeysOf(req(""), 0), prefixKeysOf(req("salt-a"), 0), prefixKeysOf(req("salt-a"), 0), prefixKeysOf(req("salt-b"), 0)
 	if strings.Join(a, ",") != strings.Join(a2, ",") {
 		t.Fatal("one salt, one chain")
 	}
