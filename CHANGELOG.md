@@ -35,6 +35,18 @@ the last section.
   requests in flight — never refused — until normal answers bring it back. A model with one worker is never judged.
   `/loadz` names it under `slow_workers`, and the event stream records `worker.slow` and `worker.slow_cleared`. `0`,
   the default, is off.
+- **A slow KV transfer can be told from a busy decoder (T28.13).** A prefill/decode split had only an outcome counter,
+  so a degraded link between the two workers looked like decode load. The leader's `/metrics` now carries
+  `opod_pd_handoff_seconds{prefill,decode}`, a histogram per pair of worker node ids: the decode call's start to its
+  first streamed event, observed on every streamed split the decode engine served. From vLLM's NIXL connector each
+  worker also reports the KV it moved — `opod_pd_transfer_bytes_total{node}`, `opod_pd_transfer_seconds_total{node}`,
+  `opod_pd_transfers_total{node}` — and its requests waiting on a KV load by stage, `opod_pd_kv_fetch_requests{node,stage}`
+  (`waiting_to_start`, `in_progress`, `loaded`); the same figures are new optional fields of the heartbeat's `load`
+  (`kv_xfer_bytes_total`, `kv_xfer_seconds_total`, `kv_xfers_total`, `kv_fetch_waiting_to_start`,
+  `kv_fetch_in_progress`, `kv_fetch_loaded`) and so of `GET /admin/v1/nodes`. vLLM labels its transfers by engine,
+  not by peer, so the engine's figures are per worker; only the handoff time is per pair. A figure the engine does
+  not state has no series and no field — never a 0. A non-streamed split is not timed: its first event is its whole
+  answer. L1 only; not yet run on a prefill/decode pair.
 - **`opod join` binds its port before it registers (T24.160).** The agent loop and the worker server started at once,
   so on a taken port the register could win: the leader held a node that then died on `EADDRINUSE` without serving,
   and the worker printed "registered with leader" before it stopped. The worker now listens first, and a taken port

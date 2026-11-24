@@ -134,12 +134,13 @@ func (s *Server) metrics() http.Handler {
 }
 
 // metricsHandler serves /metrics on both listeners: the process-wide registry
-// (every opod_* name) and this leader's own registry carrying the aliases. The
-// aliases are per Server rather than global so a process — or a test — with
-// several leaders never registers one collector twice.
+// (every opod_* name) and this leader's own registry carrying the aliases and
+// the workers' KV transfer figures (pdtransfer.go). Both are per Server rather
+// than global so a process — or a test — with several leaders never registers
+// one collector twice.
 func (s *Server) metricsHandler() http.Handler {
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(newVLLMAliasCollector(s))
+	reg.MustRegister(newVLLMAliasCollector(s), newPDTransferCollector(s))
 	return promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer,
 		promhttp.HandlerFor(prometheus.Gatherers{prometheus.DefaultGatherer, reg}, promhttp.HandlerOpts{}))
 }

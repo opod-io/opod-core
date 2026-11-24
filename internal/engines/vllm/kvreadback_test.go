@@ -132,3 +132,61 @@ vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="m"} 250.0
 		t.Fatal("a worker that does not speculate states no counters")
 	}
 }
+
+// PLAN T28.13: a worker whose NIXL connector moved KV publishes its transfers
+// as histograms (bytes and seconds, the _sum and _count read, data-parallel
+// series summed), and a KV consumer its requests waiting on a load by stage.
+// A worker with no connector states none of them — absent, never zero.
+func TestLoadReadsTheKVTransfers(t *testing.T) {
+	body := `# TYPE vllm:nixl_bytes_transferred histogram
+vllm:nixl_bytes_transferred_bucket{engine="0",le="+Inf",model_name="m"} 3.0
+vllm:nixl_bytes_transferred_sum{engine="0",model_name="m"} 3.145728e+06
+vllm:nixl_bytes_transferred_count{engine="0",model_name="m"} 3.0
+vllm:nixl_bytes_transferred_sum{engine="1",model_name="m"} 1.048576e+06
+vllm:nixl_bytes_transferred_count{engine="1",model_name="m"} 1.0
+# TYPE vllm:nixl_xfer_time_seconds histogram
+vllm:nixl_xfer_time_seconds_sum{engine="0",model_name="m"} 0.25
+vllm:nixl_xfer_time_seconds_count{engine="0",model_name="m"} 3.0
+vllm:nixl_xfer_time_seconds_sum{engine="1",model_name="m"} 0.125
+vllm:nixl_xfer_time_seconds_count{engine="1",model_name="m"} 1.0
+# TYPE vllm:num_requests_kv_fetch_by_stage gauge
+vllm:num_requests_kv_fetch_by_stage{engine="0",model_name="m",stage="waiting_to_start"} 1.0
+vllm:num_requests_kv_fetch_by_stage{engine="0",model_name="m",stage="in_progress"} 4.0
+vllm:num_requests_kv_fetch_by_stage{engine="1",model_name="m",stage="in_progress"} 2.0
+vllm:num_requests_kv_fetch_by_stage{engine="0",model_name="m",stage="completed_waiting"} 0.0
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+	defer srv.Close()
+	ld, err := New(srv.URL, "").Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		got  *int64
+		want int64
+	}{
+		"bytes": {ld.KVXferBytesTotal, 4 << 20}, "transfers": {ld.KVXfersTotal, 4},
+		"waiting to start": {ld.KVFetchWaitingToStart, 1}, "in progress": {ld.KVFetchInProgress, 6},
+		"loaded": {ld.KVFetchLoaded, 0}, // stated by the engine: a true zero
+	} {
+		if c.got == nil || *c.got != c.want {
+			t.Errorf("%s: %v, want %d", name, c.got, c.want)
+		}
+	}
+	if ld.KVXferSecondsTotal == nil || *ld.KVXferSecondsTotal != 0.375 {
+		t.Errorf("seconds: %v, want 0.375", ld.KVXferSecondsTotal)
+	}
+
+	none := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("vllm:kv_cache_usage_perc 0.1\n"))
+	}))
+	defer none.Close()
+	ld, err = New(none.URL, "").Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ld.KVXferBytesTotal != nil || ld.KVXferSecondsTotal != nil || ld.KVXfersTotal != nil ||
+		ld.KVFetchWaitingToStart != nil || ld.KVFetchInProgress != nil || ld.KVFetchLoaded != nil {
+		t.Fatalf("no connector, nothing stated: %+v", ld)
+	}
+}

@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/opod-io/opod-core/internal/engines"
+	"github.com/opod-io/opod-core/internal/metrics"
 	"github.com/opod-io/opod-core/internal/store"
 )
 
@@ -205,5 +208,86 @@ func TestAnUnknownDefaultIsAskedAgainSoon(t *testing.T) {
 	pdChat(t, r, nil)
 	if len(p.chats()) != 1 {
 		t.Fatalf("once the window passes, the now-known default must split: %d prefill steps", len(p.chats()))
+	}
+}
+
+// handoffObserved is how many handoffs opod_pd_handoff_seconds holds for one
+// pair, and whether the pair has a series at all.
+func handoffObserved(t *testing.T, prefill, decode string) (uint64, bool) {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fams {
+		if f.GetName() != "opod_pd_handoff_seconds" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			l := map[string]string{}
+			for _, p := range m.GetLabel() {
+				l[p.GetName()] = p.GetValue()
+			}
+			if l["prefill"] == prefill && l["decode"] == decode {
+				return m.GetHistogram().GetSampleCount(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// PLAN T28.13: a streamed split is timed on its pair, labelled by the two
+// workers' node ids. A request that did not split, or whose decode step failed
+// with the KV and was served whole, is not timed — its figure would not be a
+// handoff's, so it is absent rather than a made-up one. Forgetting a worker
+// drops its pairs, so the series stay bounded by the endpoint's workers.
+func TestASplitIsTimedOnItsPair(t *testing.T) {
+	metrics.ForgetNode("wp")
+	metrics.ForgetNode("wd")
+	t.Cleanup(func() { metrics.ForgetNode("wp"); metrics.ForgetNode("wd") })
+
+	// Not split (a penalty in force): no series.
+	p, d := newPDWorker(t, `{"known":true}`), newPDWorker(t, `{"known":true,"repetition_penalty":1.1}`)
+	pdChat(t, pdPair(t, p, d), nil)
+	if _, ok := handoffObserved(t, "wp", "wd"); ok {
+		t.Fatal("a request served whole is not a handoff")
+	}
+
+	// Split and served: one observation.
+	p, d = newPDWorker(t, `{"known":true}`), newPDWorker(t, `{"known":true,"repetition_penalty":1}`)
+	pdChat(t, pdPair(t, p, d), nil)
+	if n, ok := handoffObserved(t, "wp", "wd"); !ok || n != 1 {
+		t.Fatalf("observed %d (series %v), want 1 handoff on wp→wd", n, ok)
+	}
+
+	// The decode step failed with the KV: served whole, not timed.
+	p, d = newPDWorker(t, `{"known":true}`), newPDWorker(t, `{"known":true,"repetition_penalty":1}`)
+	d.failWithKV = true
+	pdChat(t, pdPair(t, p, d), nil)
+	if n, _ := handoffObserved(t, "wp", "wd"); n != 1 {
+		t.Fatalf("observed %d, want still 1: a retried request is not a handoff", n)
+	}
+
+	// A non-streamed request splits too, but its decode call's first event is
+	// its whole answer: not a handoff time, so not timed.
+	p, d = newPDWorker(t, `{"known":true}`), newPDWorker(t, `{"known":true,"repetition_penalty":1}`)
+	stream, err := pdPair(t, p, d).Chat(context.Background(), engines.ChatRequest{Model: "m",
+		Messages: []engines.Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, evErr := drainAnswer(t, stream); evErr != nil {
+		t.Fatal(evErr)
+	}
+	if _, kv := d.chats()[0]["kv_transfer_params"]; !kv {
+		t.Fatal("the non-streamed request must still split, or this case proves nothing")
+	}
+	if n, _ := handoffObserved(t, "wp", "wd"); n != 1 {
+		t.Fatalf("observed %d, want still 1: a non-streamed decode is not timed", n)
+	}
+
+	metrics.ForgetNode("wd")
+	if _, ok := handoffObserved(t, "wp", "wd"); ok {
+		t.Fatal("a forgotten decode worker keeps no handoff series")
 	}
 }

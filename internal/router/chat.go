@@ -188,7 +188,14 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 					call.KVTransfer, prefillNode = kv, p
 				}
 			}
+			handoffAt := time.Now()
 			s, err := start(call)
+			if err == nil && prefillNode != "" && call.Stream {
+				// The pair's handoff time (T28.13): only a streamed call's first
+				// event marks the decode engine's first token; a non-streamed
+				// one's is the whole answer and is not observed.
+				metrics.ObservePDHandoffSeconds(prefillNode, nodeID, time.Since(handoffAt))
+			}
 			if err != nil && engines.HasJSON(call.KVTransfer) && thisCtx.Err() == nil {
 				// The decode step failed with the KV (its engine fails fast on a
 				// lost or incompatible transfer, kv_load_failure_policy: fail;

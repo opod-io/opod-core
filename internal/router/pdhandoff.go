@@ -20,6 +20,13 @@ package router
 // engine whose handoff is not built, a prefill step that fails — sends the
 // request to its decode worker WHOLE, which computes the prompt itself. Each
 // such outcome is counted (opod_pd_handoff_total) with its reason.
+//
+// A split that the decode engine served on a streamed call is timed on its
+// pair (opod_pd_handoff_seconds{prefill,decode}, PLAN T28.13): the decode
+// call's start to its first event, which is the KV pull plus the decode
+// engine's slot wait and first token (chat.go, around the decode call). What
+// the engine itself measured of the transfer arrives per worker in its load
+// sample (leader/pdtransfer.go).
 
 import (
 	"context"

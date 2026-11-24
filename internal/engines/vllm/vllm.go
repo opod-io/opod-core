@@ -153,6 +153,7 @@ func (v *Driver) Load(ctx context.Context) (engines.EngineLoad, error) {
 		ld.PrefixHitTokensTotal, ld.PrefixQueryTokensTotal = new(int64(hits)), new(int64(queries))
 	}
 	readTier(m, &ld)
+	readTransfer(m, string(raw), &ld)
 	// The engine's own time to first token (PLAN T24.25): the leader's
 	// ttft_p50_ms minus this is what the leader and the network add.
 	ld.EngineTTFTP50Ms = v.ttft.TTFTP50Ms(string(raw), "vllm:time_to_first_token_seconds", now)
@@ -177,6 +178,36 @@ func readTier(m map[string]float64, ld *engines.EngineLoad) {
 	if v, ok := engines.First(m, "vllm:kv_offload_cpu_cache_usage_perc"); ok {
 		pct := v * 100 // a fraction, as vllm:kv_cache_usage_perc is
 		ld.TierUsedPct = &pct
+	}
+}
+
+// readTransfer fills the prefill/decode KV transfer figures (PLAN T28.13)
+// from the same scrape, each only when vLLM publishes it. On the pinned
+// release (v0.33.0) the NIXL connector declares nixl_bytes_transferred and
+// nixl_xfer_time_seconds as histograms labelled by model and engine — no
+// peer — on the side that posts the transfer
+// (kv_connector/v1/nixl/stats.py), and a KV consumer declares
+// num_requests_kv_fetch_by_stage (v1/metrics/loggers.py). A worker with no
+// connector publishes none of them, and nothing is stated.
+func readTransfer(m map[string]float64, text string, ld *engines.EngineLoad) {
+	if v, ok := engines.First(m, "vllm:nixl_bytes_transferred_sum"); ok {
+		ld.KVXferBytesTotal = new(int64(v))
+	}
+	if v, ok := engines.First(m, "vllm:nixl_xfer_time_seconds_sum"); ok {
+		ld.KVXferSecondsTotal = new(v)
+	}
+	if v, ok := engines.First(m, "vllm:nixl_xfer_time_seconds_count"); ok {
+		ld.KVXfersTotal = new(int64(v))
+	}
+	stages := engines.PromValuesBy(text, "vllm:num_requests_kv_fetch_by_stage", "stage")
+	for stage, dst := range map[string]**int64{
+		"waiting_to_start":  &ld.KVFetchWaitingToStart,
+		"in_progress":       &ld.KVFetchInProgress,
+		"completed_waiting": &ld.KVFetchLoaded,
+	} {
+		if v, ok := stages[stage]; ok {
+			*dst = new(int64(v))
+		}
 	}
 }
 

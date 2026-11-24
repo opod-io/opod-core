@@ -1177,6 +1177,27 @@ Router subsystem:
 - `opod_router_sticky_hits_total{outcome}` — counter. `hit|miss|expired` for the `(user_id, model)` pin.
 - `opod_router_hedge_total{outcome}` — counter, for the opt-in hedged pick.
 
+Prefill/decode handoff (`internal/router/pdhandoff.go`, feature `pd_handoff`; timing T28.13, ADR-122):
+
+- `opod_pd_handoff_total{outcome}` — counter. `split`, `retried`, or why a request was served whole.
+- `opod_pd_handoff_seconds{prefill,decode}` — histogram, labelled by the two workers' node ids. The router's own
+  figure, so it exists for every engine whose handoff core conducts: the decode call's start to its first streamed
+  event — the decode engine pulling the prompt's KV, waiting for a slot and computing its first token. Only a
+  **streamed** split that the decode engine served is observed: a non-streamed call's first event is its whole
+  answer, and a `retried` request was served whole, so neither is a handoff time and neither is recorded. The series
+  are bounded by the endpoint's prefill × decode workers; `metrics.ForgetNode` drops a removed worker's pairs.
+- From the engine, per worker (`internal/leader/pdtransfer.go`, re-exported at scrape time from each worker's last
+  heartbeat sample, `nodeapi.EngineLoad`): `opod_pd_transfer_bytes_total{node}`, `opod_pd_transfer_seconds_total{node}`
+  and `opod_pd_transfers_total{node}` — counters since the engine started (vLLM v0.33.0's NIXL connector:
+  the `_sum` / `_count` of `vllm:nixl_bytes_transferred` and `vllm:nixl_xfer_time_seconds`) — and
+  `opod_pd_kv_fetch_requests{node,stage}`, a gauge of requests waiting on a remote KV load (`waiting_to_start`,
+  `in_progress` = the transfer, `loaded` = KV in place, waiting for the decoder; vLLM's
+  `vllm:num_requests_kv_fetch_by_stage`). `rate(bytes) / rate(seconds)` is the worker's transfer speed. vLLM labels
+  its transfers by engine, not by peer, so these are the worker's over all its peers — the node that posted the
+  transfer, which is the decode worker in NIXL's default pull mode — and a per-pair figure is only the router's
+  histogram. **Unknown is absent:** a worker whose engine states none of them (no KV connector, another engine) has
+  no series, never a 0. The same fields are on each worker's `load` in `GET /admin/v1/nodes`.
+
 Cache and hooks:
 
 - `opod_cache_hits_total{path}` / `opod_cache_misses_total{path}` — the response cache, per endpoint path.

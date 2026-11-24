@@ -67,6 +67,21 @@ var (
 		Help: "Prefill/decode handoffs by outcome: split (KV computed on a prefill worker and pulled by decode) | retried (the decode step failed with the KV and was served unsplit) | not split, with why (penalty | penalty-unknown | engine | prefill-failed | no-prefill | pair-failing).",
 	}, []string{"outcome"})
 
+	// The decode half of a prefill/decode handoff, per pair (PLAN T28.13,
+	// ADR-122): from the decode call's start to its first streamed event — the
+	// decode engine pulling the prompt's KV from the prefill worker, waiting
+	// for a slot and computing its first token. Only a split that the decode
+	// engine served is observed, and only on a streamed call: a non-streamed
+	// call's first event is its whole answer, so its time says nothing about
+	// the handoff and is not recorded (absent, never a made-up figure). The
+	// labels are the leader's worker node ids, so the series are bounded by the
+	// endpoint's prefill × decode workers, and ForgetNode drops a worker's.
+	pdHandoffSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "opod_pd_handoff_seconds",
+		Help:    "Prefill/decode handoff time per pair: the decode call's start to its first streamed event (KV pull + slot wait + first token), by prefill and decode worker node id. Streamed splits only; a non-streamed or retried request is not observed.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+	}, []string{"prefill", "decode"})
+
 	routerFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "opod_router_fallback_total",
 		Help: "Fallback chain activations by operation (chat|embed|rerank) and reason (primary-error|per-request|retry|next-worker|context-length|content-policy).",
@@ -150,6 +165,16 @@ func SetRouterInflight(node string, n int) {
 // ObservePDHandoff counts one request's prefill/decode outcome (PLAN T16.9).
 func ObservePDHandoff(outcome string) { pdHandoffTotal.WithLabelValues(outcome).Inc() }
 
+// ObservePDHandoffSeconds records one split's handoff time on its pair (PLAN
+// T28.13). The caller observes only a streamed decode call that succeeded with
+// the KV; d ≤ 0 is never recorded.
+func ObservePDHandoffSeconds(prefill, decode string, d time.Duration) {
+	if d <= 0 || prefill == "" || decode == "" {
+		return
+	}
+	pdHandoffSeconds.WithLabelValues(prefill, decode).Observe(d.Seconds())
+}
+
 // ObserveRouterFallback records a fallback activation. op is chat | embed |
 // rerank; reason is primary-error | per-request | retry | next-worker |
 // context-length | content-policy.
@@ -200,6 +225,9 @@ func ForgetNode(node string) {
 	nodeUp.DeletePartialMatch(l)
 	modelLoaded.DeletePartialMatch(l)
 	routerInflight.DeletePartialMatch(l)
+	// A worker is on either side of a handoff pair (T28.13).
+	pdHandoffSeconds.DeletePartialMatch(prometheus.Labels{"prefill": node})
+	pdHandoffSeconds.DeletePartialMatch(prometheus.Labels{"decode": node})
 }
 
 // SetNodeUp marks a node as up (1) or down (0).

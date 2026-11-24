@@ -640,6 +640,29 @@ type EngineLoad struct {
 	// engine that publishes a rate and no counters (SGLang:
 	// spec_accept_rate). nil = not said.
 	SpecAcceptPct *float64 `json:"spec_accept_pct,omitempty"`
+	// The engine's KV transfers of a prefill/decode handoff (PLAN T28.13,
+	// ADR-122), counters since the engine started, as the engine that MOVED
+	// the KV reports them (vLLM's NIXL connector records each transfer on the
+	// side that posts it — the decode worker in its default pull mode).
+	// KVXferBytesTotal is bytes moved, KVXferSecondsTotal the transfers' own
+	// duration summed, KVXfersTotal the transfers (vLLM: the _sum and _count of
+	// nixl_bytes_transferred and nixl_xfer_time_seconds); Δbytes ÷ Δseconds
+	// between two samples is the engine's transfer speed. The engine labels
+	// them by engine, not by peer, so they are this worker's over all its
+	// peers. nil = the engine does not say (no NIXL connector), never zero; a
+	// connector that has moved nothing yet says 0.
+	KVXferBytesTotal   *int64   `json:"kv_xfer_bytes_total,omitempty"`
+	KVXferSecondsTotal *float64 `json:"kv_xfer_seconds_total,omitempty"`
+	KVXfersTotal       *int64   `json:"kv_xfers_total,omitempty"`
+	// Requests waiting on a remote KV load right now, by stage, from an engine
+	// that consumes KV (vLLM: num_requests_kv_fetch_by_stage):
+	// KVFetchWaitingToStart has a load not yet started, KVFetchInProgress one
+	// being moved, KVFetchLoaded its KV in place and waits for the decoder to
+	// schedule it. A high InProgress is a slow transfer; a high Loaded is a busy
+	// decoder. nil = the engine does not say.
+	KVFetchWaitingToStart *int64 `json:"kv_fetch_waiting_to_start,omitempty"`
+	KVFetchInProgress     *int64 `json:"kv_fetch_in_progress,omitempty"`
+	KVFetchLoaded         *int64 `json:"kv_fetch_loaded,omitempty"`
 }
 
 // ---- leader → worker: models ----

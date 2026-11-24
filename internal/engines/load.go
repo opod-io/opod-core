@@ -130,6 +130,37 @@ func PromLabels(text, name string) []map[string]string {
 	return out
 }
 
+// PromValuesBy returns one metric's values in Prometheus text exposition keyed
+// by one label's value, summed over the series' other labels (a data-parallel
+// server publishes one series per engine). It is how a gauge split by a label —
+// vLLM's num_requests_kv_fetch_by_stage{stage} — is read, which ParsePromText
+// cannot, since it sums every series of a name. nil when the metric is absent.
+func PromValuesBy(text, name, label string) map[string]float64 {
+	var b strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, name+"{") {
+			b.WriteString(t + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	parser := expfmt.NewTextParser(model.LegacyValidation)
+	fams, err := parser.TextToMetricFamilies(strings.NewReader(b.String()))
+	if err != nil || fams[name] == nil {
+		return nil
+	}
+	out := map[string]float64{}
+	for _, m := range fams[name].GetMetric() {
+		for _, l := range m.GetLabel() {
+			if l.GetName() == label {
+				out[l.GetValue()] += m.GetUntyped().GetValue()
+			}
+		}
+	}
+	return out
+}
+
 // RateTracker turns a monotonic counter into a per-second rate between two
 // samples (the first sample yields 0).
 type RateTracker struct {
