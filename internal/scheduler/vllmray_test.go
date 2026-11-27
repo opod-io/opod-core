@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -109,5 +110,25 @@ func TestVLLMRayGangCarriesThePlansFlags(t *testing.T) {
 	// The overrides are shell assignments: they run before the exec.
 	if strings.Index(got, "VLLM_PP_LAYER_PARTITION") > strings.Index(got, "exec vllm serve") {
 		t.Errorf("the overrides must precede the exec:\n%s", got)
+	}
+}
+
+// The gang's head states the slot count the leader admits against (ADR-091):
+// --max-num-seqs is on its line like a worker's — the plan's max_num_seqs,
+// else the worker default — and an extra that carries it wins (PLAN T34.2).
+func TestVLLMRayGangStatesItsSlots(t *testing.T) {
+	for _, tc := range []struct {
+		flags agent.EngineFlags
+		want  string
+	}{
+		{agent.EngineFlags{}, fmt.Sprintf("'--max-num-seqs' '%d'", agent.DefaultVLLMMaxNumSeqs)},
+		{agent.EngineFlags{"max_num_seqs": "64"}, "'--max-num-seqs' '64'"},
+		{agent.EngineFlags{"extra": "--max-num-seqs 32"}, "'--max-num-seqs' '32'"},
+	} {
+		overrides, extra := tc.flags.VLLMShellOverrides()
+		got := vllmGangCommand(vllmGang{Model: "org/m", ServedAs: "m", Host: "h", Port: 9100, TP: 1, PP: 2, Overrides: overrides, Extra: extra})
+		if !strings.Contains(got, tc.want) || strings.Count(got, "--max-num-seqs") != 1 {
+			t.Errorf("flags %v: want exactly one %s in:\n%s", tc.flags, tc.want, got)
+		}
 	}
 }
