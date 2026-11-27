@@ -16,7 +16,7 @@ func TestUnhealthyEnginesAreCounted(t *testing.T) {
 	store := func(id, state, detail string, age time.Duration) {
 		s.nodeEngine.Store(id, nodeEngineSample{
 			EngineState: nodeapi.EngineState{State: state, Detail: detail},
-			at:          time.Now().Add(-age)})
+			at:          time.Now().Add(-age), repeated: true})
 	}
 	store("n1", nodeapi.EngineServing, "", 0)
 	store("n2", nodeapi.EngineCrashLooping, "exit 1: CUDA error", 0)
@@ -25,10 +25,12 @@ func TestUnhealthyEnginesAreCounted(t *testing.T) {
 	// Stale: the worker stopped saying anything, which liveness handles — this
 	// must not be counted twice or reported as a dead engine.
 	store("n5", nodeapi.EngineCrashLooping, "old", 5*time.Minute)
+	// A lone `stopped` is a goodbye (T11.34): the worker is releasing its card.
+	s.nodeEngine.Store("n6", nodeEngineSample{EngineState: nodeapi.EngineState{State: nodeapi.EngineStopped, Detail: "worker shutting down"}, at: time.Now()})
 
 	n, worst := s.EnginesUnhealthy()
 	if n != 2 {
-		t.Fatalf("unhealthy %d, want 2 (crash-looping + stopped; starting and stale are not)", n)
+		t.Fatalf("unhealthy %d, want 2 (crash-looping + a confirmed stopped; starting, stale and a goodbye are not)", n)
 	}
 	if worst == "" || worst[:len(nodeapi.EngineCrashLooping)] != nodeapi.EngineCrashLooping {
 		t.Errorf("the worst one speaks: %q", worst)

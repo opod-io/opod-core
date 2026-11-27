@@ -131,6 +131,10 @@ type nodeLoadSample struct {
 type nodeEngineSample struct {
 	nodeapi.EngineState
 	at time.Time
+	// repeated: the heartbeat before this one reported the same state. A
+	// worker's goodbye is a single `stopped` with nothing after it; a worker
+	// whose engine died and that stays heartbeats `stopped` again (T11.34).
+	repeated bool
 }
 
 // EnginesUnhealthy counts the workers whose engine is NOT serving — crash
@@ -148,6 +152,15 @@ func (s *Server) EnginesUnhealthy() (unhealthy int, worst string) {
 		e := v.(nodeEngineSample)
 		if time.Since(e.at) > loadSampleMaxAge {
 			return true // stale: the worker stopped saying, which liveness handles
+		}
+		// A `stopped` counts once a second heartbeat confirms it (T11.34,
+		// ADR-065 as amended 2026-11-27): a lone `stopped` is a worker's
+		// goodbye — a park or a roll is releasing its card — and counting it
+		// marked every intended scale-down degraded and raised the dead-engine
+		// alert for the 30 s the sample lived. A worker that stays and holds its
+		// card says it again within one heartbeat, and is counted then.
+		if e.State == nodeapi.EngineStopped && !e.repeated {
+			return true
 		}
 		switch e.State {
 		case nodeapi.EngineCrashLooping, nodeapi.EngineRestarting, nodeapi.EngineStopped:

@@ -194,7 +194,9 @@ those seconds the leader believed the capacity was there, picked the dead part, 
 leader sees a heartbeat and Kubernetes sees a container that is still Running. The leader acts on that ONE
 state (`Server.engineGoneWhy`): a fresh `stopped` takes the worker out of the router's pick, out of
 `modelServable`, out of `routableNodes` — so a gang's servability follows — and out of `/loadz`'s worker
-count, while `engines_unhealthy` still counts it, because the card it holds is still held. `crash-looping`
+count. `engines_unhealthy` counts it only once a second heartbeat says `stopped` again (T11.34): a lone
+`stopped` is a goodbye — a park or a roll releasing the card — while a worker whose engine died and that stays
+still holds its card and says so on its next heartbeat. `crash-looping`
 does **not** take a worker out: the process may be up again by the time the next request lands, and flapping
 an endpoint between serving and 503 on a report is worse than routing one request at a worker that then
 errors. Silence remains the heartbeat rule's alone. **A gang part is checked, not just routed around:** a report that

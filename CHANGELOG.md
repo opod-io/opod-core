@@ -7,6 +7,13 @@ the last section.
 
 ## Unreleased
 
+- **A park is not a dead engine (T11.34).** A worker on its way out says goodbye with its engine `stopped`, and
+  `/loadz` `engines_unhealthy` counted that sample for the 30 s it lived — so every intended scale-down to zero read as
+  degraded to a manager and raised "a worker holds a card with a dead engine". A `stopped` now counts only once a
+  second heartbeat repeats it: a worker whose engine died and that stays (holding its card) says it again within one
+  heartbeat; a goodbye is never followed by one. Routing is unchanged: the first `stopped` still takes the worker out
+  of rotation at once.
+
 - **llama.cpp moves to v1.1.0 (`b12774`, T34.3), so an RPC gang can pipeline.** A gang's stages ran one at a time: on
   `b9934` the RPC device reported no async compute and no events, and llama.cpp switches pipeline parallelism off for
   such a device. Upstream implemented both (ggml-org/llama.cpp#18626, RPC protocol 10.0 at this release). Every

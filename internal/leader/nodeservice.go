@@ -296,8 +296,10 @@ func (s *Server) HeartbeatNode(ctx context.Context, req HeartbeatRequest, caller
 	// check, once per change of state rather than on every heartbeat.
 	partDown := false
 	if req.Engine != nil {
-		prev, had := s.nodeEngine.Swap(req.ID, nodeEngineSample{EngineState: *req.Engine, at: time.Now()})
-		changed := !had || prev.(nodeEngineSample).State != req.Engine.State
+		prevSample, had := s.nodeEngine.Load(req.ID)
+		same := had && prevSample.(nodeEngineSample).State == req.Engine.State
+		s.nodeEngine.Store(req.ID, nodeEngineSample{EngineState: *req.Engine, at: time.Now(), repeated: same})
+		changed := !same
 		partDown = changed && partProcessDown(req.Engine.State)
 	}
 	if req.Load != nil {

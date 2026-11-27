@@ -145,9 +145,34 @@ func TestAWorkerThatSaidGoodbyeIsNotCapacity(t *testing.T) {
 	if n := loadzWorkers(t, srv); n != 0 {
 		t.Errorf("…and not capacity an autoscaler should count either: workers=%d", n)
 	}
-	// The card it still holds is not hidden: that is what this number is for.
-	if unhealthy, worst := srv.EnginesUnhealthy(); unhealthy != 1 || !strings.Contains(worst, "stopped") {
-		t.Errorf("a stopped engine still holding a card is reported: %d %q", unhealthy, worst)
+	// A goodbye alone is a worker releasing its card — a park or a roll — not a
+	// dead engine: counting it marked every intended scale-down degraded and
+	// raised the dead-engine alert (T11.34, ADR-065 as amended).
+	if unhealthy, worst := srv.EnginesUnhealthy(); unhealthy != 0 {
+		t.Errorf("a lone goodbye is not a dead engine: %d %q", unhealthy, worst)
+	}
+}
+
+// A worker whose engine stopped and that stays — still heartbeating, still
+// holding its card — says `stopped` again, and from that second heartbeat on it
+// is counted (T11.34). Driven through the real heartbeat handler.
+func TestAStoppedEngineThatStaysIsCounted(t *testing.T) {
+	srv := slottedLeader(t, 4, PolicyAdmission{})
+	hb := func() {
+		rec := httptest.NewRecorder()
+		srv.heartbeatNode(rec, httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/heartbeat",
+			strings.NewReader(`{"id":"w1","loaded_models":["m"],"engine":{"state":"stopped","detail":"exit 1: CUDA error"}}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("heartbeat: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	hb()
+	if n, _ := srv.EnginesUnhealthy(); n != 0 {
+		t.Fatalf("one stopped report could be a goodbye: %d", n)
+	}
+	hb()
+	if n, worst := srv.EnginesUnhealthy(); n != 1 || !strings.Contains(worst, "stopped") {
+		t.Fatalf("a second stopped heartbeat is a dead engine holding its card: %d %q", n, worst)
 	}
 }
 
