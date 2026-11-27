@@ -22,8 +22,8 @@
 #     crash. GGML_BACKEND_PATH is NOT set: in ggml it names one extra backend
 #     FILE, so a directory only logs "cannot read file data: Is a directory" on
 #     every start (seen again on a 3060 Ti, 2026-09-16).
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:204042f697dced0e99af35993e00c70b12386197d1bdd313f02b25f25f3118c8
-ARG LLAMA_RELEASE=b9934
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:d6dcdd0a3d39c1a3a81931cc5c61f1ee2ace5f37554ea1c580c8deb510519c88
+ARG LLAMA_RELEASE=b12774
 
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with

@@ -105,10 +105,10 @@ die() { printf '\033[1;31m✘ %s\033[0m\n' "$*" >&2; exit 1; }
 spec() {
   case "$1" in
     leader)          echo "opod-leader images/leader/Dockerfile - amd64,arm64" ;;
-    llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:204042f697dced0e99af35993e00c70b12386197d1bdd313f02b25f25f3118c8 amd64" ;;
-    llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile.rpc-rocm ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785 amd64" ;;
-    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full@sha256:a04c81bf304f8b8f6141bb8bdc384d3c3a151624ba0901fa0c8a69baf2b8ac95 amd64,arm64" ;;
-    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452 amd64" ;;
+    llamacpp-nvidia) echo "opod-worker-llamacpp-nvidia images/worker-llamacpp/Dockerfile.rpc-cuda ghcr.io/ggml-org/llama.cpp:full-cuda@sha256:d6dcdd0a3d39c1a3a81931cc5c61f1ee2ace5f37554ea1c580c8deb510519c88 amd64" ;;
+    llamacpp-amd)    echo "opod-worker-llamacpp-amd images/worker-llamacpp/Dockerfile.rpc-rocm ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:ea6085645c4d4c19222b1a85ad371bbd858f8ba40e65cf6e14bc63dd37dd6293 amd64" ;;
+    llamacpp-cpu)    echo "opod-worker-llamacpp-cpu images/worker-llamacpp/Dockerfile.rpc-cpu ghcr.io/ggml-org/llama.cpp:full@sha256:779bba28f1d17087e851bf8d3654aab51185f645997d2f4f298fcb770a6b941a amd64,arm64" ;;
+    llamacpp-intel)  echo "opod-worker-llamacpp-intel images/worker-llamacpp/Dockerfile.rpc-sycl ghcr.io/ggml-org/llama.cpp:full-intel@sha256:bc5cb9bb2615b4c31e445e9a6f2135df5dc784a78507d61f8aaf423bd6b99980 amd64" ;;
     vllm-nvidia)     echo "opod-worker-vllm-nvidia images/worker-vllm/Dockerfile vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e amd64" ;;
     vllm-amd)        echo "opod-worker-vllm-amd images/worker-vllm/Dockerfile $VLLM_AMD_BASE amd64" ;;
     vllm-intel)      echo "opod-worker-vllm-intel images/worker-vllm/Dockerfile $VLLM_INTEL_BASE amd64" ;;

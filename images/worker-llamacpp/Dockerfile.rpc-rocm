@@ -21,8 +21,8 @@
 #     and CPU recipes also export GGML_BACKEND_PATH=/opt/llama-rpc; in ggml
 #     that variable names ONE extra out-of-tree backend file, so a directory
 #     only logs "cannot read file data: Is a directory" — it is left out here.)
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:aae65a3b275c602c091e2265f865e566b342c992ca984f40df76cd3fd6669785
-ARG LLAMA_RELEASE=b9934
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-rocm@sha256:ea6085645c4d4c19222b1a85ad371bbd858f8ba40e65cf6e14bc63dd37dd6293
+ARG LLAMA_RELEASE=b12774
 # The ROCm version in the tarball's file name is upstream's CI target, not a
 # choice of ours. It moves with LLAMA_RELEASE; check the release assets when
 # bumping either.

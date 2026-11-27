@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **llama.cpp moves to v1.1.0 (`b12774`, T34.3), so an RPC gang can pipeline.** A gang's stages ran one at a time: on
+  `b9934` the RPC device reported no async compute and no events, and llama.cpp switches pipeline parallelism off for
+  such a device. Upstream implemented both (ggml-org/llama.cpp#18626, RPC protocol 10.0 at this release). Every
+  llama.cpp image moves together — the `full*` bases to their `v1.1.0` digests and the RPC pair to `b12774` (the same
+  commit; the pair keeps a build-number tag because the web UI download is keyed by one) — so the coordinator and every
+  part speak one protocol. The Intel pair follows upstream's recipe at this release: oneAPI 2026.2.0 and level-zero
+  1.34.0, whose packages are now `libze1` and `libze-dev`. Every flag core renders for llama-server and rpc-server, and
+  `/props` `total_slots`, are unchanged at this release. The RPC pair images (`llama-rpc-<vendor>:b12774`) must be built
+  once before the worker images.
 - **A batch keeps the leader fed (T34.1; feature `admission_cap_header`).** `opod batch run` sent at most
   `--concurrency` requests, 8 by default, so a 256-slot vLLM worker batched 8 and a pipeline-parallel gang got two
   micro-batches of 4; and a 503 the admission gate wrote when a higher class took the hold was written as the line's

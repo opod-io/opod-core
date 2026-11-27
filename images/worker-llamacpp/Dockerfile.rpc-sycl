@@ -26,14 +26,14 @@
 #     CWD; the base's WORKDIR=/app holds FOREIGN ggml backends, so the wrappers
 #     cd to /opt/llama-rpc before exec. GGML_BACKEND_PATH is not set: in ggml
 #     it names ONE extra backend file, and a directory only logs an error.
-ARG BASE=ghcr.io/ggml-org/llama.cpp:full-intel@sha256:d7c421aa93c8997b184e1b31ea8b81455ddc78e0ba2470213943d4d65f0cd452
-ARG LLAMA_RELEASE=b9934
+ARG BASE=ghcr.io/ggml-org/llama.cpp:full-intel@sha256:bc5cb9bb2615b4c31e445e9a6f2135df5dc784a78507d61f8aaf423bd6b99980
+ARG LLAMA_RELEASE=b12774
 # Upstream's pins for this release (.devops/intel.Dockerfile @ LLAMA_RELEASE).
 # The base image is built from the same oneAPI image, so the runtime the
 # SYCL backend links against is the one it was compiled with. Re-read both
 # when bumping LLAMA_RELEASE.
-ARG ONEAPI_BASE=docker.io/intel/deep-learning-essentials:2025.3.3-0-devel-ubuntu24.04@sha256:2363f73a031b0c71746bf9205b4a3ae585d7ec511b50159e14aaba42c2e77f33
-ARG LEVEL_ZERO_VERSION=1.28.2
+ARG ONEAPI_BASE=docker.io/intel/deep-learning-essentials:2026.2.0-devel-ubuntu24.04@sha256:4b7ea1d2a1f9a786baaf8c6b11fda72fa2dc72da589d5cfc197b27db7641e358
+ARG LEVEL_ZERO_VERSION=1.34.0
 
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
@@ -56,9 +56,9 @@ ENV HF_UI_VERSION=${LLAMA_RELEASE}
 RUN set -eux; apt-get update; \
     apt-get install -y --no-install-recommends git cmake libssl-dev wget ca-certificates; \
     cd /tmp; \
-    wget -q "https://github.com/oneapi-src/level-zero/releases/download/v${LEVEL_ZERO_VERSION}/level-zero_${LEVEL_ZERO_VERSION}%2Bu24.04_amd64.deb" -O level-zero.deb; \
-    wget -q "https://github.com/oneapi-src/level-zero/releases/download/v${LEVEL_ZERO_VERSION}/level-zero-devel_${LEVEL_ZERO_VERSION}%2Bu24.04_amd64.deb" -O level-zero-devel.deb; \
-    apt-get -o Dpkg::Options::="--force-overwrite" install -y ./level-zero.deb ./level-zero-devel.deb; \
+    wget -q "https://github.com/oneapi-src/level-zero/releases/download/v${LEVEL_ZERO_VERSION}/libze1_${LEVEL_ZERO_VERSION}%2Bu24.04_amd64.deb" -O libze1.deb; \
+    wget -q "https://github.com/oneapi-src/level-zero/releases/download/v${LEVEL_ZERO_VERSION}/libze-dev_${LEVEL_ZERO_VERSION}%2Bu24.04_amd64.deb" -O libze-dev.deb; \
+    apt-get -o Dpkg::Options::="--force-overwrite" install -y ./libze1.deb ./libze-dev.deb; \
     rm -rf /tmp/*.deb /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${LLAMA_RELEASE} https://github.com/ggml-org/llama.cpp /src
 # GGML_BACKEND_DL: the SYCL, RPC and CPU backends are loadable modules, as in
