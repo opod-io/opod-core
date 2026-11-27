@@ -219,6 +219,18 @@ const (
 	AdmissionBoundKV    = "kv"
 )
 
+// The admission gate's response headers (feature "admission_cap_header"). A
+// chat answer the gate let through carries HeaderAdmissionCap: how many
+// requests the caller's class may hold at once now, absent while admission is
+// unbounded. A 503 the gate wrote itself carries HeaderAdmission =
+// AdmissionShed: the request reached no router, so sending it again cannot
+// answer it twice.
+const (
+	HeaderAdmissionCap = "X-Opod-Admission-Cap"
+	HeaderAdmission    = "X-Opod-Admission"
+	AdmissionShed      = "shed"
+)
+
 // TierGhost counts, since the reporting workers started, the blocks their
 // engines computed and the evicted blocks they computed again, by eviction
 // depth. Buckets ascend; a returned block is counted once, in the smallest

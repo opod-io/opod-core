@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,7 +80,8 @@ func cmdBatchRun(args []string) {
 	inputURL := fs.String("input-url", os.Getenv("OPOD_BATCH_INPUT_URL"), "the batch input as an http(s) URL that carries its own authorization (a presigned GET), read WITHOUT the key (default $OPOD_BATCH_INPUT_URL)")
 	base := fs.String("base-url", os.Getenv("OPOD_BASE_URL"), "the OpenAI-compatible server, with or without /v1 (default $OPOD_BASE_URL)")
 	dir := fs.String("dir", "", "work directory: the progress record and the result files (required)")
-	conc := fs.Int("concurrency", 8, "requests in flight at once")
+	conc := fs.String("concurrency", "8", "requests in flight at once: a number, or auto — start at 8 and follow the leader's X-Opod-Admission-Cap (the batch class's share of the slots, plus a quarter, at most 16 more)")
+	maxConc := fs.Int("max-concurrency", 256, "with --concurrency auto, never more than this in flight")
 	fileOrder := fs.Bool("file-order", false, "send lines in file order (default: lines sharing a leading prompt are sent together, so an engine's prefix cache reuses it)")
 	models := fs.String("model-map", "", "rewrite a line's model: alias=id[,alias=id]; other models are sent as written")
 	caFile := fs.String("ca", os.Getenv("OPOD_LEADER_CA"), "PEM certificate an https --base-url must be signed by (default $OPOD_LEADER_CA)")
@@ -109,6 +111,13 @@ func cmdBatchRun(args []string) {
 	if key == "" {
 		key = os.Getenv("OPENAI_API_KEY")
 	}
+	start, auto, err := parseConcurrency(*conc)
+	if err != nil {
+		dieUsageOf("batch", "--concurrency: %v", err)
+	}
+	if *maxConc < 1 {
+		dieUsageOf("batch", "--max-concurrency must be at least 1 (got %d)", *maxConc)
+	}
 	mm, err := parseModelMap(*models)
 	if err != nil {
 		dieUsageOf("batch", "--model-map: %v", err)
@@ -126,7 +135,7 @@ func cmdBatchRun(args []string) {
 	})
 	defer stop()
 	res, err := batch.Run(ctx, batch.Options{
-		Input: in, InputPresigned: presigned, BaseURL: *base, Key: key, Dir: *dir, Concurrency: *conc, FileOrder: *fileOrder, ModelMap: mm, CA: ca,
+		Input: in, InputPresigned: presigned, BaseURL: *base, Key: key, Dir: *dir, Concurrency: start, Auto: auto, MaxConcurrency: *maxConc, FileOrder: *fileOrder, ModelMap: mm, CA: ca,
 		RequestTimeout: *timeout, ReadyTimeout: *ready, Drain: *drain, Log: log, StopIsCancel: judge,
 		Progress:      func(c batch.Counts) { _ = enc.Encode(map[string]any{"progress": c}) },
 		ProgressEvery: *every,
@@ -166,6 +175,19 @@ func cmdBatchRun(args []string) {
 	}
 	stop()
 	os.Exit(batch.ExitCode(res))
+}
+
+// parseConcurrency reads --concurrency: a whole number of requests in flight,
+// or "auto" (start at 8, follow the leader's cap).
+func parseConcurrency(s string) (start int, auto bool, err error) {
+	if strings.TrimSpace(s) == "auto" {
+		return 8, true, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 {
+		return 0, false, fmt.Errorf("want a number of at least 1, or auto (got %q)", s)
+	}
+	return n, false, nil
 }
 
 // parseModelMap reads "alias=id[,alias=id]".

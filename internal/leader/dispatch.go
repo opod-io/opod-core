@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/opod-io/opod-core/internal/api"
 	"github.com/opod-io/opod-core/internal/router"
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // dispatchOpenAIChat serves POST /v1/chat/completions: it reads the body's
@@ -83,8 +85,12 @@ func (s *Server) routeOneOpenAI(w http.ResponseWriter, r *http.Request, model st
 			}
 		}
 		w.Header().Set("Retry-After", "10")
+		w.Header().Set(adminapi.HeaderAdmission, adminapi.AdmissionShed)
 		writeJSONError(w, http.StatusServiceUnavailable, reason)
 		return
+	}
+	if n, ok := s.admissionCap(ctx, model); ok {
+		w.Header().Set(adminapi.HeaderAdmissionCap, strconv.Itoa(n))
 	}
 	// The slot is the request's until its answer is written — for a stream,
 	// its last byte: the handler returns only then. That return is the

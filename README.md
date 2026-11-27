@@ -1561,7 +1561,8 @@ opod cache kv-prune --dir D --max-gb N [--keep a,b] [--every 10s] [--apply] [--j
 
 # --- offline batches (a generic OpenAI batch client) ---
 opod batch run (--input <file|url> | --input-url <signed url>) --base-url <url>
-               --dir D [--concurrency 8] [--file-order] [--model-map alias=id] [--ca PEM]
+               --dir D [--concurrency 8|auto] [--max-concurrency 256] [--file-order]
+               [--model-map alias=id] [--ca PEM]
                [--ready-timeout 5m] [--drain 20s] [--timeout 10m] [--progress-every 5s]
                [--output-url <signed PUT>] [--error-url <signed PUT>]
                [--status-url <…/v1/batches/<id>>]
@@ -1574,6 +1575,13 @@ opod batch run (--input <file|url> | --input-url <signed url>) --base-url <url>
                                   Lines sharing a leading prompt are sent
                                   together, so the engine's prefix cache reuses
                                   it; --file-order sends in file order instead.
+                                  --concurrency auto starts at 8 and follows the
+                                  leader's X-Opod-Admission-Cap (the batch
+                                  class's share of the slots, plus a quarter,
+                                  at most 16 more),
+                                  up to --max-concurrency; a 503 the leader's gate
+                                  wrote (X-Opod-Admission: shed) is sent again
+                                  after its Retry-After, within --timeout.
                                   SIGINT cancels at the next line; SIGTERM cancels
                                   only when the --status-url batch is no longer
                                   in_progress, else exits 75 to be resumed.

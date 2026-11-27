@@ -1810,6 +1810,15 @@ Mechanisms a manager drives through this surface:
   `opod_admission_wait_seconds{class}` (every admitted request; 0 when a slot was free). The time to first token and
   the usage row's latency are measured from the request's arrival at the leader, before the gate, so both include
   that wait — and so does `/loadz` `ttft_p50_ms` / `ttft_p95_ms`.
+- **Admission headers** (`admission_cap_header`, PLAN T34.1; `dispatch.go`, `admission.go` `admissionCap`): an
+  admitted chat answer carries `X-Opod-Admission-Cap` — the caller's class cap now, `max(1, floor(share × slots))` —
+  absent while admission is unbounded or nothing can serve; a 503 the gate itself wrote carries
+  `X-Opod-Admission: shed`, because that request reached no router and may be sent again without being answered
+  twice. `opod batch run --concurrency auto` (`internal/batch/limit.go`) starts at 8, follows the cap to cap + a
+  quarter, at most 16 more (one request already waiting in the gate when a slot frees; bounded because the gate's
+  `maxHeld` is shared by every class, and a margin that filled it would shed a second batch on arrival), up to
+  `--max-concurrency`, and sends a marked
+  503 again after its `Retry-After` within the line's `--timeout`; any other 503 is the line's answer.
 - **KV bound on admission** (`admission_kv_bound`, T23.11; `admission_slots.go`): an engine's slots are how many
   requests it RUNS at once, not how many its KV pool holds — vLLM starts 256 slots whatever its pool. When the plan's
   `workload` states the endpoint's context (`maxContext`, else `inputTokens + outputTokens`) and an engine states its

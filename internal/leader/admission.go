@@ -533,6 +533,20 @@ func (s *Server) busyReason(cv capView, model string) string {
 	return fmt.Sprintf("every worker slot for %s is busy (%d slot(s)); retry shortly", model, cv.slots)
 }
 
+// admissionCap is how many requests the caller's class may hold at once for
+// model right now — the share canGrant enforces — for the
+// X-Opod-Admission-Cap header (feature "admission_cap_header"). False while
+// admission is unbounded (an ungoverned worker serves) or nothing can serve:
+// there is no number to follow then.
+func (s *Server) admissionCap(ctx context.Context, model string) (int, bool) {
+	cv := s.capacityFor(ctx, model)
+	if !cv.servable() || !cv.bounded() {
+		return 0, false
+	}
+	cfg := s.admission.config()
+	return cfg.shareCap(cfg.classOf(admissionIdentFrom(ctx)), cv.slots), true
+}
+
 // capacityChanged tells the gate that who-can-serve may have changed, in
 // EITHER direction: every write that adds or removes a worker, a placement or
 // a gang calls it (a heartbeat, a registration, a drain or undrain, a resume,

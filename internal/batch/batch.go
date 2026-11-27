@@ -99,6 +99,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/opod-io/opod-core/pkg/adminapi"
 )
 
 // File names inside the work directory.
@@ -135,8 +137,14 @@ type Options struct {
 	Key string
 	// Dir is the work directory: the progress record and the result files.
 	Dir string
-	// Concurrency bounds the requests in flight (default 8).
+	// Concurrency bounds the requests in flight (default 8). With Auto it is
+	// where the bound starts (see limit.go).
 	Concurrency int
+	// Auto lets the bound follow the leader's X-Opod-Admission-Cap, up to
+	// MaxConcurrency (--concurrency auto, PLAN T34.1).
+	Auto bool
+	// MaxConcurrency caps an Auto bound (default 256). Ignored without Auto.
+	MaxConcurrency int
 	// FileOrder sends lines in file order instead of grouped by their leading
 	// prompt (see "The order lines are sent in").
 	FileOrder bool
@@ -263,6 +271,12 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 	if opt.Concurrency <= 0 {
 		opt.Concurrency = 8
 	}
+	switch {
+	case !opt.Auto:
+		opt.MaxConcurrency = opt.Concurrency
+	case opt.MaxConcurrency <= 0:
+		opt.MaxConcurrency = 256
+	}
 	if opt.RequestTimeout <= 0 {
 		opt.RequestTimeout = 10 * time.Minute
 	}
@@ -385,13 +399,16 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 	var fatalOnce sync.Once
 	var fatal error
 	stopped := make(chan struct{}) // closed on the first record write that failed
-	for w := 0; w < opt.Concurrency; w++ {
+	lim := newLimiter(opt.Concurrency, opt.MaxConcurrency, opt.Auto)
+	for w := 0; w < opt.MaxConcurrency; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for n := range work {
-				out, ok := send(reqCtx, ctx, &cancelStop, opt, rec, n, lines[n])
-				if err := rec.result(n, out, ok); err != nil {
+				out, ok := send(reqCtx, ctx, &cancelStop, opt, lim, rec, n, lines[n])
+				err := rec.result(n, out, ok)
+				lim.release()
+				if err != nil {
 					fatalOnce.Do(func() { fatal = err; close(stopped) })
 					continue
 				}
@@ -417,11 +434,20 @@ dispatch:
 			res.Cancelled = true
 			break
 		}
+		// A slot first, so a line handed to a worker is always sent.
+		if !lim.acquire(ctx, stopped) {
+			if ctx.Err() != nil {
+				res.Cancelled = true
+			}
+			break
+		}
 		select {
 		case <-ctx.Done():
+			lim.release()
 			res.Cancelled = true
 			break dispatch
 		case <-stopped:
+			lim.release()
 			break dispatch
 		case work <- n:
 		}
@@ -568,7 +594,7 @@ func parseLine(raw []byte) parsedLine {
 // it is not. ok is true for a 2xx answer. dispatchCtx is the run's own
 // context: a request aborted after it stopped is "cancelled" or "interrupted"
 // (cancelStop, judged before any abort), not a transport failure.
-func send(reqCtx, dispatchCtx context.Context, cancelStop *atomic.Bool, opt Options, rec *record, n int, p parsedLine) (OutputLine, bool) {
+func send(reqCtx, dispatchCtx context.Context, cancelStop *atomic.Bool, opt Options, lim *limiter, rec *record, n int, p parsedLine) (OutputLine, bool) {
 	out := OutputLine{ID: reqID(n), CustomID: p.line.CustomID}
 	if p.invalid != "" {
 		out.Error = &LineError{Code: CodeInvalidLine, Message: p.invalid}
@@ -585,18 +611,11 @@ func send(reqCtx, dispatchCtx context.Context, cancelStop *atomic.Bool, opt Opti
 		out.Error = &LineError{Code: CodeTransport, Message: "the progress record could not be written, so the line was not sent: " + err.Error()}
 		return out, false
 	}
+	// One budget for the line, its shed retries included: a line the leader
+	// keeps shedding is answered with that 503 when the budget runs out.
 	ctx, cancel := context.WithTimeout(reqCtx, opt.RequestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(opt.BaseURL, p.line.URL), bytes.NewReader(body))
-	if err != nil {
-		out.Error = &LineError{Code: CodeInvalidLine, Message: err.Error()}
-		return out, false
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if opt.Key != "" {
-		req.Header.Set("Authorization", "Bearer "+opt.Key)
-	}
-	resp, err := opt.Client.Do(req)
+	resp, err := post(ctx, dispatchCtx, opt, p.line.URL, body)
 	if err != nil {
 		switch {
 		case dispatchCtx.Err() != nil && reqCtx.Err() != nil && cancelStop.Load():
@@ -614,6 +633,7 @@ func send(reqCtx, dispatchCtx context.Context, cancelStop *atomic.Bool, opt Opti
 		return out, false
 	}
 	defer resp.Body.Close()
+	lim.observe(resp.Header.Get(adminapi.HeaderAdmissionCap))
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil || len(raw) > maxResponse {
 		if err == nil {
@@ -629,6 +649,65 @@ func send(reqCtx, dispatchCtx context.Context, cancelStop *atomic.Bool, opt Opti
 	}
 	out.Response = &Response{StatusCode: resp.StatusCode, RequestID: resp.Header.Get("X-Request-Id"), Body: raw}
 	return out, resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// post sends one line and, while its answer is a 503 the leader's admission
+// gate wrote itself (X-Opod-Admission: shed, feature "admission_cap_header"),
+// sends it again after the answer's Retry-After. Such a request reached no
+// router, so sending it again cannot answer it twice: the record's never-twice
+// rule is about a request a server may have seen. Any other answer, a stop
+// (dispatchCtx) or the end of ctx's budget ends the loop, and the last answer
+// is the line's. A request that fails to build is returned as an error.
+func post(ctx, dispatchCtx context.Context, opt Options, path string, body []byte) (*http.Response, error) {
+	for {
+		resp, err := sendOnce(ctx, opt, path, body)
+		if err != nil || resp.StatusCode != http.StatusServiceUnavailable ||
+			resp.Header.Get(adminapi.HeaderAdmission) != adminapi.AdmissionShed {
+			return resp, err
+		}
+		wait := retryAfter(resp.Header.Get("Retry-After"))
+		if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= wait {
+			return resp, nil // no budget left to wait: the shed is the answer
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponse))
+		resp.Body.Close()
+		opt.Log.Debug("batch: the leader shed a line before routing it; sending it again", "wait", wait)
+		t := time.NewTimer(wait)
+		select {
+		case <-t.C:
+		case <-dispatchCtx.Done():
+			// A stop: send it once more now, and its answer is the line's —
+			// the stop is not held up by a wait the leader asked for.
+			t.Stop()
+			return sendOnce(ctx, opt, path, body)
+		case <-ctx.Done():
+			t.Stop()
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// sendOnce is post without the shed retry.
+func sendOnce(ctx context.Context, opt Options, path string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(opt.BaseURL, path), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if opt.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+opt.Key)
+	}
+	return opt.Client.Do(req)
+}
+
+// retryAfter reads a Retry-After of whole seconds, held to [1 s, 30 s]; the
+// leader sends 10.
+func retryAfter(v string) time.Duration {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 1 {
+		return time.Second
+	}
+	return time.Duration(min(n, 30)) * time.Second
 }
 
 // rewriteModel sets the body's `model` to its mapped value, leaving every

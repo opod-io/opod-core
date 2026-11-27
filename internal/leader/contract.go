@@ -491,6 +491,15 @@ func contractFeatures() map[string]bool {
 		// reach it. Without this key a manager must assume the leader serves its
 		// API on one listener only, and a second port it points at is closed.
 		"plain_listen": true,
+		// A chat answer the admission gate let through carries
+		// X-Opod-Admission-Cap: how many requests the caller's class may hold
+		// at once right now (maxShare of the model's slots), absent while
+		// admission is unbounded; a 503 the gate itself wrote carries
+		// X-Opod-Admission: shed — the request reached no router, so a client
+		// may send it again. `opod batch run --concurrency auto` follows the
+		// first and retries the second (PLAN T34.1). Without this key a client
+		// has no cap to follow and must treat every 503 as an answer.
+		"admission_cap_header": true,
 	}
 }
 

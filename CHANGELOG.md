@@ -7,6 +7,15 @@ the last section.
 
 ## Unreleased
 
+- **A batch keeps the leader fed (T34.1; feature `admission_cap_header`).** `opod batch run` sent at most
+  `--concurrency` requests, 8 by default, so a 256-slot vLLM worker batched 8 and a pipeline-parallel gang got two
+  micro-batches of 4; and a 503 the admission gate wrote when a higher class took the hold was written as the line's
+  answer, so the line failed although no engine saw it. The leader now states the caller's class cap on every admitted
+  chat answer (`X-Opod-Admission-Cap`) and marks its own 503 (`X-Opod-Admission: shed`). `--concurrency auto` starts at
+  8 and follows the cap to cap + a quarter (at most 16 more), up to the new `--max-concurrency` (default 256); a marked 503 is sent again
+  after its `Retry-After`, within `--timeout`. `--concurrency N` keeps the fixed bound, for any OpenAI server.
+  **Go API:** `pkg/adminapi.HeaderAdmissionCap`, `HeaderAdmission`, `AdmissionShed`; `batch.Options.Auto` and
+  `MaxConcurrency`.
 - **The prefix-cache block index is salted (T28.9, ADR-122; feature `kv_block_salt`).** With `routing.prefixBlockWeight`
   on, a worker that held caller A's blocks won caller B's request for the same prompt and then prefilled it cold: the
   engine keys its cache by the `cache_salt` the leader sends, but the worker re-hashed the engine's events from token
