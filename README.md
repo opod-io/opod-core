@@ -1094,9 +1094,9 @@ opod shard create llama-3.3-70b-sharded 2
 What Opod does:
 
 1. Picks 2 workers (highest RAM among the rows that can take a part) and refuses up front, with the numbers, if it cannot find them
-2. Sends `POST /v1/process/start` to each worker → launches `rpc-server -p 50052`
-3. Waits for both rpc-servers to be TCP-reachable (readiness probe)
-4. On the coordinator host — the shard worker with the most GPU memory, or the one named by `head` in `POST /admin/v1/shards/create` / `OPOD_COORDINATOR_NODE` — launches `llama-server -m <gguf> --rpc <worker1>:50052,<worker2>:50052 --port 9001 --metrics`
+2. Picks the coordinator host — the shard worker with the most GPU memory, or the one named by `head` in `POST /admin/v1/shards/create` / `OPOD_COORDINATOR_NODE`
+3. Sends `POST /v1/process/start` to every OTHER worker → launches `rpc-server -p 50052`, and waits for each to be TCP-reachable (readiness probe). The coordinator's own worker runs no rpc-server: llama-server serves that part's layers on its host's GPU, so one card never holds two parts (with `OPOD_COORDINATOR_NODE=local` the coordinator is no part and every worker runs one)
+4. On the coordinator host, launches `llama-server -m <gguf> --rpc <worker2>:50052 --port 9001 --metrics` — `--rpc` lists the other parts
 5. Waits for the coordinator to be reachable
 6. Persists shard rows + a `placements` row pointing the model at the coordinator
 7. The Router routes any request for `llama-3.3-70b-sharded` to that gang's coordinator, which fans out to the rpc-server parts internally

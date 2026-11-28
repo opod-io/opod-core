@@ -7,6 +7,12 @@ the last section.
 
 ## Unreleased
 
+- **A llama.cpp gang's head no longer holds two parts (T34.18).** The coordinator was given `--rpc` for every part,
+  the head's own rpc-server included, and llama-server also offloads to the devices of the host it runs on — so the
+  head card held two devices, two CUDA contexts and two parts' layers (4485 MiB against a 4 GB part, measured). The
+  coordinator host is now picked first and its worker runs no rpc-server: the coordinator serves that part's layers on
+  its own GPU and `--rpc` lists the other parts. A leader-hosted coordinator (`OPOD_COORDINATOR_NODE=local`) is no part,
+  so every worker keeps its rpc-server. A `tensor_split` names the head's own device first.
 - **A park is not a dead engine (T11.34).** A worker on its way out says goodbye with its engine `stopped`, and
   `/loadz` `engines_unhealthy` counted that sample for the 30 s it lived — so every intended scale-down to zero read as
   degraded to a manager and raised "a worker holds a card with a dead engine". A `stopped` now counts only once a

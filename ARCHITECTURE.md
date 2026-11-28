@@ -442,7 +442,7 @@ backend (below the table):
 
 | `sharding.engine` | Scheme | What runs on each machine |
 |---|---|---|
-| `llamacpp` (default, and what an entry with no `engine` gets) | llama.cpp **RPC parts** — layer-split | an `rpc-server` per part, plus one coordinator `llama-server --rpc` that fronts them. No tensor split: `tp > 1` is refused here, naming the backends that have one |
+| `llamacpp` (default, and what an entry with no `engine` gets) | llama.cpp **RPC parts** — layer-split | an `rpc-server` per part but the head's, plus one coordinator `llama-server --rpc` on the head that serves the head's layers on its own GPU and fronts the others (`rpcHosts`). No tensor split: `tp > 1` is refused here, naming the backends that have one |
 | `vllm` | a **Ray cluster** the engine then discovers | a Ray daemon per part; `vllm serve … --distributed-executor-backend ray --tensor-parallel-size <TP> --pipeline-parallel-size <PP>` on the head (`vllmray.go`) |
 | `sglang` (`sglang-native`) | SGLang's **own distributed launcher** (feature `shard_sglang`, T8.10) | the same `python -m sglang.launch_server` on every machine with `--dist-init-addr <rank0>` / `--nnodes` / `--node-rank`, `--tp-size` over the WHOLE gang and `--pp-size` for stages; **rank 0 serves the group's API and is the coordinator row** (`sglang.go`) |
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/opod-io/opod-core/internal/agent"
+	"github.com/opod-io/opod-core/internal/store"
 )
 
 // T11.3, found on a cluster: the leader scrapes a gang's coordinator for the
@@ -85,5 +86,30 @@ func TestTheCoordinatorRowRecordsItsKVLayout(t *testing.T) {
 		if got := llamaCoordConfig(c.flags); got != c.want {
 			t.Errorf("%v: %s, want %s", c.flags, got, c.want)
 		}
+	}
+}
+
+// T34.18: the coordinator's own part runs no rpc-server. llama-server offloads
+// to its host's devices, so an rpc-server there was a second device on the same
+// card: on the design-partner cell the head card held two parts' layers and two
+// CUDA contexts. A leader-hosted coordinator is no part, so every worker keeps
+// its rpc-server.
+func TestTheCoordinatorsPartRunsNoRPCServer(t *testing.T) {
+	ws := []store.Node{{ID: "n_head"}, {ID: "n_b"}, {ID: "n_c"}}
+	ids := func(ns []store.Node) string {
+		out := make([]string, len(ns))
+		for i, n := range ns {
+			out[i] = n.ID
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(rpcHosts(ws, coordinatorChoice{nodeID: "n_head", node: &ws[0]})); got != "n_b,n_c" {
+		t.Fatalf("a worker-hosted coordinator serves its own part: rpc on %q, want n_b,n_c", got)
+	}
+	if got := ids(rpcHosts(ws, coordinatorChoice{nodeID: "n_c", node: &ws[2]})); got != "n_head,n_b" {
+		t.Fatalf("whichever part heads, it is the one left out: %q", got)
+	}
+	if got := ids(rpcHosts(ws, coordinatorChoice{nodeID: "local", local: true})); got != "n_head,n_b,n_c" {
+		t.Fatalf("a leader-hosted coordinator is no part: rpc on every worker, got %q", got)
 	}
 }

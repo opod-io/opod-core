@@ -439,11 +439,33 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 		entry.Source.Path = localPath
 	}
 
-	// Launch one rpc-server per worker — only when there is an actual split.
-	// With a single shard the coordinator (below) serves the whole model by
-	// itself on the one chosen host, so no rpc-servers at all.
+	// Pick the coordinator host. Default: whichever node (leader or worker)
+	// has the most RAM, so the strongest box owns the cross-node aggregation
+	// instead of always pinning to the leader. Override via env
+	// OPOD_COORDINATOR_NODE=<node_id> (use "local" for the leader).
+	//
+	// Single shard: the coordinator IS the placement — it must run on the one
+	// selected worker, so the OPOD_COORDINATOR_NODE override is ignored here
+	// (honoring a leftover override would silently serve the model on a
+	// different machine than the one the user pinned with --nodes).
+	var coordHost coordinatorChoice
+	if shardCount == 1 {
+		w := workers[0]
+		coordHost = coordinatorChoice{nodeID: w.ID, node: &w}
+		if ov := o.coordinatorOverride(par); ov != "" && ov != w.ID {
+			o.Log.Warn("coordinator override ignored for single-shard placement — coordinator runs on the selected node",
+				"override", ov, "node", w.ID)
+		}
+	} else {
+		coordHost = o.pickCoordinatorHost(ctx, workers, par)
+	}
+
+	// Launch one rpc-server per part that is not the coordinator's own
+	// (rpcHosts) — only when there is an actual split. With a single shard the
+	// coordinator (below) serves the whole model by itself on the one chosen
+	// host, so no rpc-servers at all.
 	if shardCount > 1 {
-		for i, w := range workers {
+		for i, w := range rpcHosts(workers, coordHost) {
 			// A port free on THIS node: two gangs of one model may share a
 			// worker, and rpcPortBase is a catalog scalar they both start from.
 			port := ports.take(w.ID, rpcPortBase+i)
@@ -503,27 +525,6 @@ func (o *Orchestrator) formGang(ctx context.Context, entry models.Entry, gangID 
 			}
 			created = append(created, rec)
 		}
-	}
-
-	// Pick the coordinator host. Default: whichever node (leader or worker)
-	// has the most RAM, so the strongest box owns the cross-node aggregation
-	// instead of always pinning to the leader. Override via env
-	// OPOD_COORDINATOR_NODE=<node_id> (use "local" for the leader).
-	//
-	// Single shard: the coordinator IS the placement — it must run on the one
-	// selected worker, so the OPOD_COORDINATOR_NODE override is ignored here
-	// (honoring a leftover override would silently serve the model on a
-	// different machine than the one the user pinned with --nodes).
-	var coordHost coordinatorChoice
-	if shardCount == 1 {
-		w := workers[0]
-		coordHost = coordinatorChoice{nodeID: w.ID, node: &w}
-		if ov := o.coordinatorOverride(par); ov != "" && ov != w.ID {
-			o.Log.Warn("coordinator override ignored for single-shard placement — coordinator runs on the selected node",
-				"override", ov, "node", w.ID)
-		}
-	} else {
-		coordHost = o.pickCoordinatorHost(ctx, workers, par)
 	}
 
 	// Avoid port collisions with shards already running on the same host —
@@ -938,6 +939,24 @@ func coordinatorArgs(modelPath string, port int, host string, rpcEndpoints []str
 		args = append(args, "--rpc", strings.Join(rpcEndpoints, ","))
 	}
 	return append(args, extra...)
+}
+
+// rpcHosts is the workers that run an rpc-server: every part but the one the
+// coordinator runs on. llama-server offloads to the devices of its own host,
+// so an rpc-server beside it put a second device on the same card — two CUDA
+// contexts, and that card holding two parts' layers: 4485 MiB against a 4 GB
+// part on the design-partner cell (PLAN T34.18). The coordinator serves its
+// part's layers itself and --rpc lists the others. A leader-hosted coordinator
+// is not a part, so every worker keeps its rpc-server.
+func rpcHosts(workers []store.Node, coord coordinatorChoice) []store.Node {
+	out := make([]store.Node, 0, len(workers))
+	for _, w := range workers {
+		if !coord.local && w.ID == coord.nodeID {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // llamaCoordConfig is the llama.cpp coordinator row's config: the engine, and

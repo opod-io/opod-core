@@ -117,7 +117,7 @@ OPOD_ENGINE=llamacpp OPOD_LOAD_MODEL=llama-3.2-3b-gguf opod join "http://<leader
 As a gang across machines: join each machine with no model, then on the leader:
 
 ```bash
-opod shard create llama-3.2-3b-sharded 2      # the leader starts an rpc-server on each worker and a coordinator
+opod shard create llama-3.2-3b-sharded 2      # a coordinator on the head worker, an rpc-server on the other
 ```
 
 ### Check it worked
