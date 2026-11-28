@@ -34,6 +34,13 @@ ARG LLAMA_RELEASE=b12774
 # when bumping LLAMA_RELEASE.
 ARG ONEAPI_BASE=docker.io/intel/deep-learning-essentials:2026.2.0-devel-ubuntu24.04@sha256:4b7ea1d2a1f9a786baaf8c6b11fda72fa2dc72da589d5cfc197b27db7641e358
 ARG LEVEL_ZERO_VERSION=1.34.0
+# oneDNN: from b12774 the SYCL backend refuses to configure without it
+# (GGML_SYCL_DNN defaults ON). Upstream installs this offline package in its
+# build stage and copies /opt/intel/oneapi/dnnl into the base image above, so
+# the runtime has the library this build links. The sha256 is ours: upstream
+# does not check it.
+ARG ONEDNN_URL=https://registrationcenter-download.intel.com/akdlm/IRC_NAS/46452a4a-7b7f-49f2-be4c-602a900180bb/intel-onednn-2026.1.0.625_offline.sh
+ARG ONEDNN_SHA256=38c2585bc01b62e011cc1678e090be68ed1574c7a9fc9d775b09cb6ebd041427
 
 # --- 1) opod binary ---------------------------------------------------------
 # Stage `opod` = the binary. The LOCAL lane (images/build.sh) overrides it with
@@ -52,7 +59,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 FROM ${ONEAPI_BASE} AS rpc-sycl
 ARG LLAMA_RELEASE
 ARG LEVEL_ZERO_VERSION
+ARG ONEDNN_URL
+ARG ONEDNN_SHA256
 ENV HF_UI_VERSION=${LLAMA_RELEASE}
+RUN set -eux; cd /tmp; wget -q "${ONEDNN_URL}" -O onednn.sh; \
+    echo "${ONEDNN_SHA256}  onednn.sh" | sha256sum -c -; \
+    bash onednn.sh -s -a --silent --eula accept; rm -f onednn.sh
 RUN set -eux; apt-get update; \
     apt-get install -y --no-install-recommends git cmake libssl-dev wget ca-certificates; \
     cd /tmp; \

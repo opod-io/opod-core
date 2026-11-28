@@ -20,7 +20,8 @@ the last section.
   llama.cpp image moves together — the `full*` bases to their `v1.1.0` digests and the RPC pair to `b12774` (the same
   commit; the pair keeps a build-number tag because the web UI download is keyed by one) — so the coordinator and every
   part speak one protocol. The Intel pair follows upstream's recipe at this release: oneAPI 2026.2.0 and level-zero
-  1.34.0, whose packages are now `libze1` and `libze-dev`. Every flag core renders for llama-server and rpc-server, and
+  1.34.0, whose packages are now `libze1` and `libze-dev`, plus oneDNN 2026.1, which the SYCL backend requires from this
+  release (the installer is pinned by sha256). Every flag core renders for llama-server and rpc-server, and
   `/props` `total_slots`, are unchanged at this release. The RPC pair images (`llama-rpc-<vendor>:b12774`) must be built
   once before the worker images.
 - **A batch keeps the leader fed (T34.1; feature `admission_cap_header`).** `opod batch run` sent at most
