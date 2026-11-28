@@ -218,3 +218,17 @@ func TestSpeculativeDecodingIsRenderedPerEngine(t *testing.T) {
 		t.Errorf("a token count out of 1–16 falls back to the default: %q", got)
 	}
 }
+
+// T34.5: log_verbosity is llama-server's -lv, 0 to 5; anything else is dropped,
+// and no flag means llama-server's own default (no -lv on the line).
+func TestLlamaLogVerbosityIsTheEnginesLv(t *testing.T) {
+	for _, tc := range []struct{ v, want string }{{"4", "-lv 4"}, {"0", "-lv 0"}, {"5", "-lv 5"}, {"6", ""}, {"-1", ""}, {"loud", ""}} {
+		got := strings.Join(EngineFlags{"log_verbosity": tc.v}.LlamaServerArgs(), " ")
+		if tc.want == "" && strings.Contains(got, "-lv") || tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("log_verbosity %q: %q, want %q", tc.v, got, tc.want)
+		}
+	}
+	if got := strings.Join(EngineFlags{}.LlamaServerArgs(), " "); strings.Contains(got, "-lv") {
+		t.Errorf("no flag, no -lv: %q", got)
+	}
+}

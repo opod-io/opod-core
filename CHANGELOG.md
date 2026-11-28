@@ -7,6 +7,10 @@ the last section.
 
 ## Unreleased
 
+- **`log_verbosity`, a llama.cpp engine flag (T34.5).** Rendered as llama-server's `-lv` (0–5; anything else is
+  dropped). At 4 the library prints its buffer sizes and `sched_reserve: … sched copies = N`, which says whether a gang
+  pipelines — lines the default level 3 drops. It writes about four times the lines per request (28 against 7,
+  measured), so it is off unless a plan sets it.
 - **A llama.cpp gang's head no longer holds two parts (T34.18).** The coordinator was given `--rpc` for every part,
   the head's own rpc-server included, and llama-server also offloads to the devices of the host it runs on — so the
   head card held two devices, two CUDA contexts and two parts' layers (4485 MiB against a 4 GB part, measured). The

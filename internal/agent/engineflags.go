@@ -11,7 +11,8 @@ package agent
 //	           max_model_len, max_num_seqs, kv_cache_dtype, extra (raw args)
 //	llama.cpp: ctx (-c), ngl (--n-gpu-layers), parallel (-np), kv_cache_type (-ctk/-ctv),
 //	           kv_unified (true → --kv-unified, false → --no-kv-unified),
-//	           tensor_split (--tensor-split: uneven shares per device), extra (raw args)
+//	           tensor_split (--tensor-split: uneven shares per device),
+//	           log_verbosity (-lv 0–5: 4 prints the library's buffer and pipelining lines), extra (raw args)
 //	SGLang:    tp, mem_fraction_static, max_model_len (--context-length), max_running_requests,
 //	           kv_cache_dtype (--kv-cache-dtype), extra (raw args)
 //	TensorRT-LLM: tp (--tp_size), max_num_seqs (--max_batch_size, always set), max_model_len
@@ -419,6 +420,14 @@ func (f EngineFlags) llamaArgs() []string {
 	// model that would fit across them.
 	if v, ok := f.get("tensor_split"); ok && isSplitList(v) {
 		args = append(args, "--tensor-split", v)
+	}
+	// log_verbosity: llama-server's -lv. The library's own lines — every
+	// buffer size and "sched_reserve: … sched copies = N", which says whether a
+	// gang pipelines — are printed at 4; the default is 3. 4 also writes about
+	// four times the lines per request (28 against 7, measured on the
+	// design-partner cell, PLAN T34.5), so it is the plan's to ask for.
+	if n, ok := f.posInt("log_verbosity", 0, 5); ok {
+		args = append(args, "-lv", strconv.Itoa(n))
 	}
 	args = append(args, f.llamaSpecArgs()...)
 	if v, ok := f.get("extra"); ok {

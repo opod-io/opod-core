@@ -268,7 +268,7 @@ All pull from `ghcr.io/opod-io/` without a login. Set `OPOD_ENGINE` to match the
 |---|---|
 | vLLM | `tp`, `gpu_memory_utilization` (0.05–0.95), `max_model_len`, `max_num_seqs`, `kv_cache_dtype`, `pp_layer_partition`, `extra` (raw args) |
 | SGLang | `tp`, `mem_fraction_static`, `max_model_len`, `max_running_requests`, `kv_cache_dtype`, `pp_layer_partition`, `extra` |
-| llama.cpp | `ctx`, `ngl`, `parallel`, `kv_cache_type`, `kv_unified`, `tensor_split`, `extra` |
+| llama.cpp | `ctx`, `ngl`, `parallel`, `kv_cache_type`, `kv_unified`, `tensor_split`, `log_verbosity`, `extra` |
 | TensorRT-LLM | `tp`, `max_num_seqs`, `max_model_len`, `kv_cache_free_gpu_memory_fraction`, `kv_cache_dtype`, `extra` |
 
 Example: `OPOD_ENGINE_FLAGS='{"tp":"2","max_model_len":"16384"}'`.
